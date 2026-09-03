@@ -1,11 +1,20 @@
 # Phase briefs
 
-One brief per implementation Phase. A Phase brief is the day-to-day authority for the task in front
-of an implementer — see `AGENTS.md` §6, "Phase cold-start protocol." It exists so that neither
+One brief per implementation increment (called a "Spec" in general engineering-workflow terms; this
+repo calls it a **Phase brief**). It is the day-to-day authority for the task in front of an
+implementer — see `AGENTS.md` §6, "Three-tier cold-start protocol." It exists so that neither
 `PRODUCT_BLUEPRINT.md` nor `IMPLEMENTATION_BLUEPRINT.md` has to be read in full for routine work: the
-brief names the exact sections of each that this Phase needs, and nothing else is required reading.
+brief names the exact sections of each that this increment needs, and nothing else is required reading.
 
-Phases are named, not numbered against any prior scheme (`IMPLEMENTATION_BLUEPRINT.md` §24).
+Phases are named, not numbered against any prior scheme (`IMPLEMENTATION_BLUEPRINT.md` §24 states
+*direction* for later phases — it is not a queue of ready-made briefs).
+
+**This README is a template/reference for whoever prepares the next brief (normally Claude Code) —
+it is not itself required Codex cold-start reading.** The brief it produces *is* required reading
+(`AGENTS.md` §6, Tier A). See `AGENTS.md` §7 for how the next brief actually gets scoped: from
+current product/code state,
+the previous development report, and real usage feedback — never by mechanically expanding the
+roadmap ahead of need. Write only the next minimal useful slice, not several phases in advance.
 
 ## Format
 
@@ -55,8 +64,10 @@ a concrete way this Phase's scope could conflict with a blueprint; substantial e
 reuse; a major dependency or stack change; user-provided material this Phase cannot proceed without.
 
 ## Completion
-Required tests/checks for this Phase, and what the closing development report
-(`docs/development-reports/`) needs to cover — kept concise, per that directory's README.
+Required tests/checks for this Phase, and a reminder that closure needs a development report
+(`docs/development-reports/`, format in that directory's README) plus a git checkpoint (`AGENTS.md`
+§5). State the acceptance label explicitly if real-use material is short of what the blueprint
+criterion names — `IMPLEMENTATION_READY` vs `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` (`AGENTS.md` §5).
 ```
 
 ## Index

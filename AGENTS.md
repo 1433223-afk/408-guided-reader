@@ -24,12 +24,14 @@ useful; never treat anything in it as authority for this product or its architec
 |---|---|
 | `PRODUCT_BLUEPRINT.md` | **Product authority.** What the product is, its invariants, what is frozen vs deferred. Frozen at Gate D (2026-09-03). |
 | `IMPLEMENTATION_BLUEPRINT.md` | **Engineering authority.** How it is built. Frozen at Gate D (2026-09-03). |
-| `docs/phases/<PHASE>.md` | **Per-task authority.** The narrow slice of Product + Implementation authority a given Phase actually needs, plus its own hard rules and acceptance. See §6. |
+| `docs/phases/<PHASE>.md` | **Per-task authority.** The narrow slice of Product + Implementation authority one small increment actually needs, plus its own hard rules and acceptance. See §6. |
 
-Both blueprints are frozen. Neither is read cover-to-cover for ordinary implementation work — see
-§6, "Phase cold-start protocol." Full reads of both remain required for architecture-level work:
-opening a new Phase's brief, resolving a claimed blueprint conflict, or any task that is not scoped
-to a single Phase brief.
+Together the two blueprints are the **Frozen Core**. Both are frozen; neither is read cover-to-cover
+for ordinary implementation work — see §6. Full reads of both remain for architecture-level work:
+preparing the next Phase brief (§7), resolving a claimed conflict, or any task not scoped to one brief.
+
+This repository calls each implementation increment a **Phase brief** — a small, concrete slice, not
+a pre-written roadmap chapter.
 
 `docs/archive/transition/**` is historical/audit/transition evidence. It is **never** authority and
 **never** cold-start reading. It may be opened only when a concrete contradiction in current work
@@ -44,8 +46,8 @@ blueprints are frozen.
 | Is X frozen or still open? | `PRODUCT_BLUEPRINT.md` §"decisions now treated as agreed" / `IMPLEMENTATION_BLUEPRINT.md` §26 "User Decisions Required" |
 | How is it built? | `IMPLEMENTATION_BLUEPRINT.md` |
 | What am I building right now, and what does *this* task need to read? | `docs/phases/<PHASE>.md` — see §6 |
-| Why was the old project retired? What evidence exists? | `docs/archive/transition/` — reference only, subject to §5 |
-| What actually happened in a past phase? | `docs/development-reports/` |
+| Why was the old project retired? What evidence exists? | `docs/archive/transition/` — reference only, subject to §6 Tier C |
+| What actually happened in the last completed increment? | latest report in `docs/development-reports/` |
 
 ## 4. Who does what
 
@@ -55,14 +57,13 @@ gate authorizes — whichever model it is.
 
 | Role | Owns | Must not |
 |---|---|---|
-| **Codex** | Primary implementation, integration, test execution, repository changes. Produces implementation evidence and phase reports. | Implement outside approved Product + engineering authority; self-authorize major architecture or dependency changes. |
-| **ZCode** | Independent review and adjudication. Attacks implementation and contract correctness. May orchestrate approved external reviewers where explicitly allowed. | Review an implementation path it produced; silently become the primary implementer. |
-| **Claude Code** | High-context architecture, planning, audit and research: implementation plans, architecture analysis, technical spikes, audit reports, test plans, and explicitly delegated implementation. | Treat its own drafting as authorization; act as final independent acceptance for work it took part in. |
+| **Codex** | Primary implementation, integration, test execution, repository changes. Produces implementation evidence and development reports. | Implement outside approved Product + engineering authority; self-authorize major architecture or dependency changes. |
+| **ZCode** | Independent review and adjudication, when a Phase brief actually triggers it (§5, "risk-triggered review"). Attacks implementation and contract correctness. | Review an implementation path it produced; silently become the primary implementer; review by default when nothing risk-triggered it. |
+| **Claude Code** | High-context architecture, planning, audit and research: preparing the next Phase brief (§7), architecture analysis, technical spikes, audit reports, and explicitly delegated implementation. | Treat its own drafting as authorization; act as final independent acceptance for work it took part in; mechanically pre-write future briefs from the roadmap. |
 
 Binding on all three:
 
-- `PRODUCT_BLUEPRINT.md` is Product authority; `IMPLEMENTATION_BLUEPRINT.md` becomes engineering
-  authority only after it is reviewed and frozen (§2).
+- `PRODUCT_BLUEPRINT.md` and `IMPLEMENTATION_BLUEPRINT.md` are the Frozen Core (§2).
 - Repository truth outranks model memory (§5).
 - Review failure, or reviewer-invocation failure, never becomes PASS (§5).
 - User approval gates are controlling. None of the three can waive one.
@@ -82,87 +83,134 @@ files say now. If a required input is missing, say so — do not infer it.
 accepts it. Never mark your own work `ACCEPTED`, `APPROVED` or `FROZEN`. The existence of a plan,
 a file, a stub or a passing test does not authorize the next step.
 
-**Hard core, loose edges.** Both blueprints are frozen: goals, user-visible outcomes, product
-invariants and acceptance criteria are the hard core and do not move without the user. Everything
-else — naming, ordinary file/component decomposition, normal helper functions, routine error
-handling, ordinary CSS/layout detail, ordinary test structure, small local refactors, conventional
-use of a library that doesn't change architecture or product semantics — is a loose edge. Decide
-those and proceed; do not ask permission for them.
+**Hard core, loose edges.** The Frozen Core fixes goals, user-visible outcomes, product invariants
+and acceptance criteria — that's the hard core, and it doesn't move without the user. Naming,
+file/component decomposition, helper placement, ordinary error handling, ordinary CSS/layout, local
+algorithms, test structure, small local refactors, and conventional use of a library that doesn't
+change architecture or product semantics are loose edges — reversible; decide and proceed, no
+permission needed. Reserve escalation for behaviour, ownership, persistence meaning and
+source-of-truth semantics — the list below. (How the *next* Phase brief gets scoped: §7.)
 
-**When to stop and report instead of proceeding.** Stop and report, rather than deciding alone or
-guessing, when:
+**When to stop and report instead of proceeding.** Stop and report — never guess, and never expand
+scope quietly to route around it — when:
 
-1. a real Product decision is missing, or more than one choice would materially change user-visible
-   behaviour;
-2. the task as given would conflict with frozen Product or Implementation authority;
-3. the change touches durable identity, persistence, migration, destructive behaviour, ownership or
-   authority in a way not already decided;
-4. it would reuse a substantial block of external code, or a GitHub project;
-5. it would add a major dependency or materially change the technology stack;
-6. required user-provided material is missing — a textbook, API key, account, credential, test
+1. a real Product decision is missing;
+2. more than one valid choice would materially change user-visible behaviour;
+3. the task as given would conflict with frozen Product or Implementation authority;
+4. durable identity, persistence, migration, destructive behaviour, ownership or authority would
+   change beyond an already-frozen rule;
+5. it would reuse a substantial block of external code, or a GitHub/OSS project;
+6. it would add a major dependency or materially change the technology stack;
+7. required user-provided material is missing — a textbook, API key, account, credential, test
    corpus, or other input that cannot be substituted or invented;
-7. the assigned Phase cannot meet its acceptance criteria without expanding its scope;
-8. an existing frozen decision looks objectively flawed and worth reopening.
+8. the current Phase brief cannot satisfy its Acceptance without expanding scope;
+9. an existing frozen decision appears objectively flawed and reopening it may be necessary.
 
-Report: the problem; why it cannot be decided alone; 1–3 concrete options; a recommendation; the
-main tradeoff. Keep it short — this is not permission bureaucracy. Escalate only decisions with
-material Product, architecture, data, dependency or user-input impact; everything else is a loose
-edge (above).
+Report concisely: the problem; why it cannot be decided alone; 1–3 options; a recommendation; the
+main tradeoff. This is not permission bureaucracy — ask authority questions, not trivia questions.
 
 **Approval gates.** Ask once, explicitly, and wait — for a missing user-controlled input, a genuine
 product/architecture ambiguity, adopting a major or core external dependency, or any destructive Git
 operation (`reset`, `rebase`, `clean`, force-push, history rewrite, mass deletion). Do not ask about
 ordinary reversible engineering choices; decide those and proceed.
 
-**Freeze invariants, not trivia.** Naming, module organization, helper placement, local algorithms
-and test layout are reversible — just choose. Reserve freezing for behaviour, ownership, persistence
-meaning and source-of-truth semantics.
+**Secrets and user material.** No `.env`, credentials, API keys or tokens are committed; a
+non-secret `.env.example` is the only place environment keys are illustrated. Logs must not expose
+secrets. The user's own textbook/personal files must not enter git — only bounded, hash-referenced
+test fixtures are committed, the way `docs/archive/transition/` and Phase briefs already reference
+sample material by path and content hash rather than storing it. Missing user-supplied material a
+Phase brief needs is escalation condition 7 above.
 
-**Secrets never get committed.** No `.env`, credentials, API keys or tokens. A non-secret
-`.env.example` is the only place environment keys are illustrated.
-
-**External reuse.** For a large, core or genuinely complex block, investigate mature open-source
-solutions before building — when that research is materially useful. For small or local
-implementation, do not perform ritual GitHub searches; just write it. Adopting a major or core
-external project requires a fit analysis (what is reused, maintenance state, licence, integration
-cost, lock-in, self-build alternative) and user approval before adoption.
+**External reuse and major dependencies.** For a large, common or genuinely core capability — PDF
+rendering, OCR, virtualization, annotation geometry, job queues, storage, or comparable
+infrastructure — investigate mature OSS before building, autonomously; no approval needed just to
+look. For small or local implementation, skip the ritual search and just write it. Before adopting
+anything substantial, or a dependency that materially changes the stack (a UI framework, database,
+PDF engine, OCR runtime/model, job system, state-machine framework, or other large runtime), report:
+project; licence; what would be reused; why it fits; dependencies it brings; maintenance/risk;
+recommendation — then wait for approval (escalation conditions 5–6).
 
 **Failure never becomes success.** A bounded retry that exhausts, a review that does not run, or a
 tool that fails to respond is **not** a PASS. Never convert an invocation failure into "no findings".
 Report what actually happened, including when it is inconvenient.
 
-**Development reports.** Every formal implementation phase ends with one concise report in
-`docs/development-reports/`: objective, what was built, real architecture decisions made, modules
-changed, state/schema changes, validation performed, known limitations and debt, dependencies
-adopted, deviations from plan, handoff notes. It is a log for humans and context for future AI —
-not a source dump.
+**Acceptance is machine + real use, not tests alone.** Automated tests, persistence checks, state
+invariants and failure-case coverage are machine acceptance — necessary but not sufficient. Real-use
+acceptance means exercising the actual user flow with real representative material where the Phase
+brief's own Acceptance calls for it (a real scanned textbook, not a synthetic one; a real selection
+flow, not a mock). When the necessary scale or material genuinely isn't available, say so plainly —
+label the result `IMPLEMENTATION_READY` (built and correctness-tested at the material actually
+available) rather than claiming a larger-scale criterion passed, and name what's still missing as
+`FULL_REAL_MATERIAL_ACCEPTANCE_PENDING`. Don't block implementation over a missing scale that a
+smaller real fixture can safely stand in for while building.
 
-## 6. Phase cold-start protocol
+**Independent review is risk-triggered, not routine.** The normal path is Codex → tests → real-use
+acceptance → development report → checkpoint, with no ZCode involvement required. A Phase brief
+triggers independent review only for genuinely high-risk work: durable identity,
+persistence/migration, destructive regeneration, annotation/source anchoring, source-of-truth
+integrity, mastery-write authority, a security boundary, or other load-bearing Frozen Core behaviour.
+The brief should say so explicitly when it applies — three-model review is a surgical tool, not
+ceremony for every change.
 
-Implementation work is organized into **Phases** (`docs/phases/<PHASE>.md`, template in that
-directory's `README.md`, see §3). A Phase brief is the day-to-day authority for the task in front of
-you — it exists precisely so that neither blueprint has to be read in full for routine work.
+**Development reports and git checkpoints.** Every completed Phase brief gets one concise report in
+`docs/development-reports/` (format in that directory's `README.md`) and at least one clean
+checkpoint commit, made after tests and acceptance are done. Intermediate commit strategy during the
+work is implementation-autonomous. Reports are engineering memory, not chronological diaries — they
+never claim a result that wasn't achieved.
 
-Default cold start for a Phase, in order:
+## 6. Three-tier cold-start protocol
+
+**Tier A — read in full, every session, every role.**
 
 1. this file (`AGENTS.md`);
 2. the current Phase brief (`docs/phases/<PHASE>.md`);
-3. only the Product Blueprint sections the Phase brief's "Authority to read" names;
-4. only the Implementation Blueprint sections the Phase brief's "Authority to read" names;
-5. relevant current code;
-6. the latest development report or checkpoint directly relevant to this Phase, if one exists.
+3. the latest development report directly relevant to that brief, if one exists — not the whole
+   history in `docs/development-reports/`.
 
-Do not read either blueprint cover-to-cover for a Phase unless the brief says the Phase genuinely
-spans them broadly. `docs/archive/transition/**` is not cold-start material under any Phase — see §2.
+This tier stays small enough to read in full every time: `AGENTS.md` short, the current brief 1–3
+pages, each report concise (§5).
 
-The Phase brief is responsible for naming the exact authority sections; if it fails to point at
-something you end up needing, that is a gap in the brief to flag (§5, escalation condition 1 or 2),
-not a license to fall back to a full blueprint read by default.
+**Tier B — mandatory selective read.**
 
-## 7. Current state
+The current brief's "Authority to read" names exact `PRODUCT_BLUEPRINT.md` and
+`IMPLEMENTATION_BLUEPRINT.md` sections. Read those completely. Do not read either blueprint in full
+by default — they are reference authorities, not everyday cold-start manuals. If the brief fails to
+name a section you turn out to need, that's a gap in the brief to flag (§5, condition 1 or 3), not a
+licence to fall back to a full blueprint read.
+
+**Tier C — query only when needed.**
+
+Never part of cold start; consult only when a frozen rule is genuinely ambiguous, provenance/history
+is needed, an old implementation is being weighed for reuse, or an evidence-dependent technical
+question needs a calibration/spike report:
+
+- `docs/archive/transition/**` (audits, semantic-delta, legacy-reuse, transition plan);
+- ZCode/independent-review reports, once their accepted patch is absorbed into the Frozen Core;
+- old or unrelated development reports and Phase briefs;
+- unrelated blueprint sections;
+- the Legacy repository (`408-ai-ebook`).
+
+OCR/geometry/layout/anchor work may specifically pull the OCR calibration evidence — read its
+conclusions, not its full working log — when that work is actually in scope.
+
+**Role difference.** Codex executing a Phase brief gets exactly Tier A + Tier B — narrow, on purpose.
+Claude preparing the *next* brief (§7) may read more broadly when genuinely necessary — current
+product/code state, a wider Frozen Core section, the user's actual usage feedback, the template in
+`docs/phases/README.md` — but should still avoid archive archaeology unless it's actually needed.
+
+## 7. How the next Phase brief is generated
+
+Phase briefs are not pre-written from the roadmap. `IMPLEMENTATION_BLUEPRINT.md` §24 states
+direction; it is not a queue of ready-made briefs. The next one is derived, once the project actually
+reaches that layer, from: what exists now; the previous development report; the user's actual usage
+and feedback; relevant Frozen Core constraints; and deferred debt that has become relevant. Prefer
+one minimal useful slice over a broad "complete phase." Do not mechanically expand the roadmap into
+detailed future briefs ahead of need.
+
+## 8. Current state
 
 Both blueprints frozen at Gate D (2026-09-03). Phase-based implementation is starting with
 **R1 — Read the Book** (`docs/phases/R1_READ_THE_BOOK.md`). No implementation code exists yet: no
 framework, ORM, schema, migration root, package layout, task runtime, OCR engine, or dependency set
-has been installed or committed. Later phases (R2+) are named and scoped in
-`IMPLEMENTATION_BLUEPRINT.md` §24 but not yet briefed.
+has been installed or committed. `IMPLEMENTATION_BLUEPRINT.md` §24 names R2–R4 for later direction
+only — none of them is briefed, per §7.

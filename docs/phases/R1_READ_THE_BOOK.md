@@ -106,7 +106,11 @@ Nothing else in either blueprint is required reading for this Phase.
   frozen acceptance criterion calls for opening *"a real 700-page scanned textbook."* No asset of
   that scale is currently available to Codex (see below); use the largest available real excerpt for
   everything gradable at small scale, and flag the full-scale gap rather than fabricating a
-  substitute or silently downgrading the criterion.
+  substitute or silently downgrading the criterion. This does **not** block R1 implementation: build
+  and correctness-test against the 29-page excerpt, close R1 as `IMPLEMENTATION_READY`, and record
+  the 700-page criterion as `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` in the development report
+  (`AGENTS.md` §5) until a full scan is supplied or the user explicitly accepts the smaller sample as
+  final.
 
 ## Autonomy
 
@@ -135,11 +139,12 @@ approval needed:
   short of the ~700-page target the acceptance criterion names, and full-scale checks (sustained
   virtualization performance, navigation across hundreds of pages, position persistence deep into a
   large book) cannot be genuinely exercised without one. Two unrelated reference PDFs exist
-  (唐朔飞/白中英 DMA excerpts) but are a different textbook/author and not a substitute. **Codex should
-  build and validate R1 against the 29-page excerpt and report this gap rather than treat the
-  700-page criterion as satisfied; the user should supply a full scanned textbook (or confirm the
-  29-page excerpt is accepted as sufficient for R1 closure, with full-scale validation deferred) before
-  R1 is called fully accepted at its intended scale.**
+  (唐朔飞/白中英 DMA excerpts) but are a different textbook/author and not a substitute. **This is
+  reported, not blocking: build and validate R1 against the 29-page excerpt, close as
+  `IMPLEMENTATION_READY`, and record `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` for the 700-page
+  criterion in the development report.** The user should supply a full scanned textbook, or
+  explicitly accept the 29-page excerpt as sufficient for R1 closure, before R1 is called fully
+  accepted at its intended scale.
 - Any case where a real product decision turns out to be missing, or a task would conflict with
   frozen Product/Implementation authority, or would require a major dependency/stack change not
   already implied by §3.4/§3.5 (Python backend, Chromium-class browser, no shell) — per `AGENTS.md`
@@ -151,8 +156,11 @@ approval needed:
   "PDF geometry" rows) passing.
 - An end-to-end Reader test (import → read → close → reopen → same position; duplicate import is a
   no-op) passing, structured so R2+ can extend it with OCR/selection later.
-- A concise development report in `docs/development-reports/` per its README: objective, what was
-  built, real architecture decisions made (e.g. which rendering library, which ORM/DB-access
-  pattern), modules changed, schema as actually implemented, validation performed and its results
-  (explicitly noting the 29-page-vs-700-page acceptance gap and what was actually exercised),
-  known limitations/debt, dependencies adopted, deviations from this brief, handoff notes for R2.
+- One development report in `docs/development-reports/` (format in that directory's README) and a
+  git checkpoint commit (`AGENTS.md` §5). Its Acceptance evidence must explicitly record the
+  29-page-vs-700-page gap and label the result `IMPLEMENTATION_READY` /
+  `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` per the "Acceptance" section above — not silently omitted.
+- No independent (ZCode) review is required by default for R1 — nothing in its scope is on the
+  risk-triggered list (`AGENTS.md` §5). If something durable-identity- or persistence-shaped turns up
+  during implementation that wasn't anticipated here, that's escalation condition 3 or 4, not a
+  silent expansion.

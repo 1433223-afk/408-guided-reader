@@ -1,22 +1,54 @@
 # Development reports
 
-One concise report per completed implementation phase.
+One concise report per completed Phase brief. Engineering memory, not a chronological diary — it
+states what's true now and never claims a result that wasn't achieved.
 
-None exist yet — no implementation phase has started, and none may start before
-`IMPLEMENTATION_BLUEPRINT.md` is frozen.
+None exist yet — no Phase brief has been completed.
 
-Each report should record:
+Only the **latest** report directly relevant to the current Phase brief is required Codex cold-start
+reading (`AGENTS.md` §6, Tier A). Older or unrelated reports are Tier C — query only, when genuinely
+needed.
 
-1. phase objective;
-2. what was actually built;
-3. architecture decisions genuinely made along the way;
-4. modules materially changed;
-5. state/schema changes;
-6. validation performed and its results;
-7. known limitations and retained debt, labelled honestly;
-8. external dependencies adopted;
-9. deviations from the plan, and why;
-10. handoff notes for whoever picks this up next.
+## Format
 
-It is a log for humans and working context for future AI. It is not a source dump, and it never
-claims a result that was not achieved.
+```markdown
+# <Phase> Development Report
+
+## Result
+The user-visible outcome that now exists.
+
+## Implemented
+The core implementation delivered.
+
+## Important implementation decisions
+Only decisions with future engineering significance — not routine choices already covered by
+"Autonomy" in the Phase brief.
+
+## Deviations from Spec
+What changed from the brief, and why.
+
+## Acceptance evidence
+- automated tests run, and their result;
+- real fixtures/material actually used;
+- the user-visible/manual flow actually exercised;
+- what was **not** genuinely tested — say so plainly.
+
+Label the overall result `IMPLEMENTATION_READY`, or, if a larger-scale/material acceptance named by
+the brief is still outstanding, `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` and name what's missing
+(`AGENTS.md` §5).
+
+## Known limitations / deferred debt
+Only real remaining issues: what, why deferred, when it becomes relevant. Not a debt essay.
+
+## Reproducible entry points
+How to run it; how to test it; which fixtures/samples it depends on; the manual acceptance path a
+future session should replay rather than reverse-engineer.
+
+## Important files / architecture entry points
+What the next developer or Codex session actually needs to orient itself.
+
+## Git checkpoint
+Commit hash.
+```
+
+It never claims a result that was not achieved.
