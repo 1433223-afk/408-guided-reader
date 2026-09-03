@@ -1,11 +1,33 @@
 # 408 Guided Reader｜Product Blueprint
 
-> **Status: PRODUCT BASELINE — APPROVED**  
-> **Date: 2026-09-02**  
+> **Status: FROZEN — PRODUCT AUTHORITY, GATE D CLOSED**  
+> **Baseline date: 2026-09-02** · **Frozen at Gate D: 2026-09-03**  
 > **Project identity: NEW PROJECT — not “V2” of the legacy project**  
-> **Authority:** canonical product-direction blueprint for the new project.  
+> **Authority:** canonical product-direction blueprint for the new project. Frozen as of Gate D closure (independent ZCode review: `PASS_WITH_P2`, P0=0, P1=0); non-blocking P2 debt is tracked in `IMPLEMENTATION_BLUEPRINT.md` §27, not here.  
 > **Purpose:** self-contained product/architecture baseline for a fresh model or human who knows nothing about the legacy implementation.  
 > **Does not replace:** `IMPLEMENTATION_BLUEPRINT.md` or `LEGACY_TRANSITION_PLAN.md`; those remain separate downstream authorities.
+
+> **Closure patch, 2026-09-03:** following `LEGACY_PRODUCT_SEMANTICS_DELTA_AUDIT.md` and independent
+> ZCode Implementation Blueprint review, this revision adds explicit Assistant recursion semantics
+> (§24.4–§24.7), Master Topic/mastery-authority semantics (§26.1–§26.3), Review rework/terminal-failure
+> and published-version-safety semantics (§23.1, §33.2.1–§33.2.3), Section/Chapter failure-isolation
+> and atomic-publication rules (§14.1, §17.2), Outline incremental-publication and correction-
+> granularity rules (§9.2–§9.3), foundation-version staleness scoping (§7.1.1), optional annotation KP
+> bookkeeping (§8.1), a Teaching closure quality bar (§20.4), and a User Style structural boundary
+> (§35, renumbering all sections from the old §35 onward by one). Every addition carries forward a
+> user-adjudicated **behavior**, never legacy architecture — no SourceBlock, Stable Semantic Anchor,
+> KnowledgeDataset, old RenderTree, old EbookSession, or old Window UI is restored by this patch.
+
+> **Outline conceptual correction, 2026-09-03 (same day, follow-up):** the closure patch above
+> introduced a "publish the Outline per region" model to let Chapter KP Preparation start before the
+> whole book's Outline was done. That model conflated **logical directory structure** with **physical
+> range resolution**. §9 is rewritten: the logical tree (Chapter/Section identity, title, order) is
+> now established early — normally from PDF bookmarks/TOC, independent of body OCR — while physical
+> resolution (start/end position) improves progressively per node without ever minting a new logical
+> node or gating directory visibility. The regional-publication framing is removed from Product
+> authority; `IMPLEMENTATION_BLUEPRINT.md`'s `OutlineRegion` mechanism is demoted accordingly (see its
+> own revision note). This also removes the book-level `outline_version` as a staleness authority —
+> see the new §19.2b there.
 
 ---
 
@@ -348,6 +370,17 @@ Dependent artifacts are either:
 
 Exact remap algorithms belong in `IMPLEMENTATION_BLUEPRINT.md`, not here.
 
+## 7.1.1 Staleness is scoped to what an artifact actually used
+
+A single global foundation-version counter may exist for ordering, but **artifact staleness depends
+only on the page/region footprint that artifact actually consumed** (§23 states this principle
+generally for dependency declaration; this is its specific application to the OCR/layout foundation).
+A text correction confined to one page must not make an unrelated whole-book Teaching asset stale.
+Reprocessing that changes geometry is treated more conservatively than a text-only correction (the
+remap-vs-retain-vs-mark-stale choice above), and a Chapter Knowledge Map that is currently `READY`
+and structure-locked (§15.2) is retained against its recorded foundation version rather than silently
+invalidated by an unrelated correction elsewhere in the book.
+
 ## 7.2 Different textbook/PDF revision
 
 Replacing the PDF bytes with a different edition/source is **not OCR correction**.
@@ -389,9 +422,27 @@ If a correction cannot be remapped confidently:
 
 > keep the original PDF geometry and mark the semantic anchor as needing review; never silently move a user's note to a guessed location.
 
+## 8.1 Optional KP association for structure-protection bookkeeping
+
+An annotation's authority remains geometry + quote/context (above) — this never changes. An
+annotation **may additionally record**, as bookkeeping rather than authority, which KP (if any) it is
+associated with, so Chapter-structure protection (§15.2) can correctly detect "this Chapter has a
+durable KP-linked asset." This association is derived/optional metadata: if it is missing, stale, or
+the Chapter structure it referenced is later replaced under an explicit migration (§15.2), the
+annotation still renders correctly from its geometry and quote alone. The KP association is never
+required for the annotation to remain valid or visible.
+
 ---
 
-# 9. Stable Outline must include physical ranges
+# 9. Stable Outline: logical structure and physical resolution
+
+> **Revised, 2026-09-03 (Outline conceptual correction).** The Outline is primarily the textbook's
+> **logical directory** — its Chapter/Section hierarchy, titles and order. That logical tree is
+> intended to exist early, established from PDF bookmarks and/or TOC pages, largely independent of
+> how much body OCR has completed. This section previously conflated logical structure with physical
+> range resolution and gated the whole directory on per-Chapter body evidence; §9.1 below makes the
+> distinction explicit, §9.2–§9.3 restate the bootstrap and resolution rules against it, and §9.5
+> restates correction granularity against it.
 
 The Outline is based on **explicit textbook structure**, not an AI-invented replacement hierarchy.
 
@@ -402,28 +453,100 @@ Typical nodes:
 - Subsection / 三级标题;
 - recognized special content nodes such as exercises/answers when needed for navigation.
 
-Every meaningful Outline node must know its physical range in the PDF, conceptually:
+## 9.1 Two classes of information
+
+An Outline node conceptually carries two distinct classes of information, and the product must not
+conflate them:
+
+**A. Logical identity / directory structure** — stable node identity, title, level, parent/child
+relation, sibling order, Chapter/Section kind. This is *what the book's table of contents says*, and
+should be established as early as reasonably possible from:
+
+1. embedded PDF bookmarks / outline metadata;
+2. textbook TOC pages;
+3. other high-confidence structural evidence.
+
+**B. Physical resolution** — start `pdf_page_index` + geometry, end `pdf_page_index` + geometry,
+and a resolution state (§9.3). This is *where that structure actually sits in the scanned pages*, and
+it may improve progressively, independently of and after the logical node already exists.
+
+**The product does not require whole-book body OCR to finish before the logical directory tree is
+usable.** For an ordinary textbook with a usable TOC or bookmarks, the logical tree exists essentially
+at intake; only physical resolution is progressive. A book that genuinely lacks sufficient TOC/bookmark
+evidence for some part of its structure falls back to progressive logical discovery for *that part
+only* — heading detection during body OCR then establishes logical nodes as it goes, exactly as
+before. That fallback is the exception, not the intended default path.
+
+Physical resolution improving does **not** create a new logical node, and does not change the identity
+of an existing one. Example: `4.2 主存储器` already exists with a stable identity when its end position
+is still unresolved; once body OCR later confirms the `4.3` heading, `4.2`'s end position resolves —
+`4.2` remains the same node throughout.
+
+## 9.2 Early logical establishment
+
+Intended bootstrap for an ordinary textbook:
 
 ```text
-start: pdf_page_index + y/bbox
-end:   pdf_page_index + y/bbox
+PDF intake
+→ inspect embedded PDF bookmarks if available
+→ prioritize TOC / directory pages
+→ OCR/parse TOC
+→ establish the book's logical Chapter/Section hierarchy early
+→ directory becomes usable
+→ body OCR/layout continues progressively
+→ physical ranges for Outline nodes are resolved/refined as evidence becomes available
 ```
 
-This enables:
+**Directory navigation is immediate once the logical tree is established** — this does not wait for
+body OCR. If a node's physical range is not yet fully resolved, navigation may use the best safe
+target currently available; the system must never fabricate a precise range it doesn't have.
+Directory *visibility* and physical-range *readiness* are separate questions — a Chapter can appear
+in the directory, and be opened, before its own body OCR is complete.
 
-- directory jump;
-- determining current Section;
-- Section-scoped Assistant;
-- System context;
-- Section Learning Check placement.
+Capabilities that genuinely require an exact physical range (Section-scoped Assistant, Chapter KP
+Preparation, Section Learning Check placement) wait for that specific node's resolution to be
+sufficient — never for the whole book's.
 
-## 9.1 Section lead-in
+## 9.3 Progressive physical resolution
+
+Each node's physical resolution may be conceptually:
+
+```text
+UNRESOLVED
+PARTIAL
+RESOLVED
+```
+
+Exact state names are not frozen. Example: `4.2`'s start may be `RESOLVED` while its end is still
+`PARTIAL` until the next heading is confirmed; resolving further never mints a new `4.2` node.
+
+## 9.4 Section lead-in
 
 Text between a Section heading and its first Subsection:
 
 - remains part of the Section content envelope;
 - is visible to System/Assistant;
 - does not need a separate Outline node or KP merely because it exists.
+
+## 9.5 Outline correction granularity
+
+Not every Outline correction carries the same risk. Three tiers:
+
+1. **Logical/cosmetic** — title text, punctuation/spacing, a non-boundary metadata fix. Applies
+   directly; never disturbs dependents.
+2. **Physical boundary** — a node's start/end position moves without changing what the node *is*.
+   If it affects a Section or Chapter that already has a durable dependent — a published Chapter
+   Knowledge Map, KP Progress, or a KP-linked annotation — it must either trigger explicit
+   revalidation/re-preparation of that dependent, or be blocked under the same durable-asset
+   protection rule that already governs Chapter structure (§15.2).
+3. **True structural identity** — a missing Section is discovered, the hierarchy was wrong, two
+   Sections were incorrectly merged, or a Section was assigned to the wrong Chapter. This changes
+   *what exists*, not just where it sits, and after any durable asset depends on the affected
+   identity it requires the same stronger protection/migration semantics as Chapter-structure
+   identity changes (§15.2) — never a silent re-ID.
+
+Correction is never globally frozen by the mere existence of *any* Book asset — protection is scoped
+to the specific node whose boundary or identity would actually change.
 
 ---
 
@@ -545,6 +668,12 @@ KnowledgePoint generation is lazy and Chapter-scoped.
 
 > **Maximum KP generation scope = one Chapter / 一级标题.**
 
+Chapter KP Preparation requires that Chapter's own logical Outline identity and sufficient physical
+range resolution (§9.1, §9.3), plus body OCR evidence for that Chapter. It does **not** require
+full-book OCR, other Chapters' physical ranges, or the whole book's Outline to be finished. Chapter 4
+may begin preparation once Chapter 4 itself has enough resolved range and OCR evidence, while Chapter
+9's body OCR remains incomplete.
+
 When a user first chooses a Section in an unprepared Chapter:
 
 ```text
@@ -576,6 +705,14 @@ If Chapter Preparation is `FAILED`:
 - KP-dependent Mastery/Progress capabilities remain unavailable for that Chapter;
 - the user/system may explicitly retry preparation;
 - a partial or failed draft must never masquerade as a `READY` Chapter Knowledge Map.
+
+## 14.1 Atomic Chapter Map publication
+
+A Chapter Knowledge Map publishes **atomically as one coherent version** — `READY` means the whole
+Chapter's KP structure is internally consistent and complete for that version. The system never
+publishes an internally incomplete Chapter Knowledge Map merely to claim partial readiness: a
+Chapter's map is either `READY` as a full, coherent version, or it is `FAILED` / remains at its
+previous `READY` version if one already existed. There is no partial-Chapter `READY` state.
 
 ---
 
@@ -662,6 +799,13 @@ Only teaching artifacts that explicitly rely on KP structure must wait for the C
 - Guidance whose meaning depends on a specific KP identity/boundary.
 
 The implementation must not invent KP semantics while Chapter Preparation is still pending.
+
+## 17.2 Section Teaching failure isolation
+
+One Section's Teaching generation/review failure never blocks or destabilizes independent Sections.
+Section Teaching is generated, versioned, and can fail **independently** per Section — the same
+isolation principle that already governs Chapter-level failure (§14) applies one level down, between
+sibling Sections within an otherwise healthy Chapter.
 
 ---
 
@@ -823,6 +967,14 @@ Conceptually:
 
 Future teacher opinions must remain attributed to their source rather than being presented as objective exam-frequency facts.
 
+## 20.4 Closure
+
+A Section's Reading Guide is not complete unless a learner working through it could, for each KP the
+Section primarily owns, explain the exit criteria the 退出标准 module describes for that KP. This is a
+quality bar on what the Guide/Guidance collectively achieve — not a requirement for a dedicated,
+separately-labeled "summary" segment. If the material doesn't need a distinct summary, don't
+manufacture one merely to satisfy a template.
+
 ---
 
 # 21. ExamTopic first-version rule
@@ -936,6 +1088,16 @@ It must not be silently rewritten or silently remapped with low confidence.
 
 The user may continue using an older saved Guide until explicitly regenerating it, unless it is no longer safely anchorable.
 
+## 23.1 Published-version safety during regeneration
+
+If a published Teaching version (e.g. `v1`, `PASS`) exists and the user requests regeneration, the new
+candidate (`v2`) is a `DRAFT` until it completes Review and publication. If `v2` fails at any point —
+semantic rework exhaustion (§33.2.1) or otherwise — **`v1` remains the published, user-visible asset.**
+A new candidate may replace the current published version only after completing its required Review
+and publication transition; regeneration must never destroy a valid published version before its
+replacement is accepted. Historical versions may later be cleaned up per a retention policy, but never
+as part of an unsafe pre-publication overwrite.
+
 ---
 
 # 24. Assistant: Reader-native, temporary, Section-isolated
@@ -981,9 +1143,8 @@ Assistant may explain:
 - Assistant's own previous answer text;
 - other visible/selectable textual content.
 
-Recursive explanation is a product capability.
-
-Exact depth limits belong to implementation safeguards, not this product invariant.
+Recursive explanation is a product capability, governed by the depth, Root/Child, and context rules
+in §24.4–§24.7.
 
 ## 24.3 Temporary lifetime
 
@@ -999,6 +1160,127 @@ A user may explicitly:
 > **Save to Notes**
 
 Saved content then becomes a durable user asset anchored to its source context where possible.
+
+## 24.4 Recursive explanation: depth model
+
+These are **logical interaction-state semantics** — they do not require the legacy multi-window UI.
+Root/Child are a logical relationship; the first-version UI may render them as one AI Dock with
+breadcrumb/back navigation, cards, or another compact interaction model (§24.5).
+
+1. Recursive explanation has **maximum nesting depth = 5**.
+2. Depth is **nesting depth**, not message count. Ordinary multi-turn follow-up within the same level
+   never increases depth.
+3. A new Child level is created only when the user selects content **from the current Assistant
+   answer** and requests a new explanation of that selection.
+4. At depth 5, the user may continue normal multi-turn conversation at that level; creating depth 6
+   is prohibited.
+5. A parent has **at most one active Child branch at a time** (§24.7).
+6. Concurrent attempts to create a Child from the same parent must preserve that invariant
+   atomically — at most one succeeds; the other is rejected, not silently dropped or duplicated.
+7. Assistant-answer content must never be reopened as a fresh Root merely to reset depth and bypass
+   the limit (§24.5 item 3 states the corresponding Root-creation rule).
+8. Technical retry preserves the same logical interaction identity, does not increase depth, and does
+   not create a new Child.
+9. Provider failure at any depth must not alter Progress or Mastery, create Learning History, or
+   create a Master record, merely because Assistant failed.
+
+## 24.5 Multiple Root contexts, focus, and close
+
+A user may have a recursive Assistant chain open and then select a new passage from the textbook or
+another non-Assistant visible source. **The user is never forced to close an existing Assistant
+context to ask about something new.**
+
+1. **Multiple temporary Assistant Root contexts may coexist** during the current Reader/app
+   interaction lifetime. Example:
+
+   ```text
+   Root A: textbook selection about DMA → Child A2 → Child A3
+   Root B: later textbook selection about interrupt response
+   ```
+
+   Both remain temporarily available.
+
+2. Only **one** Root/Child chain has current UI focus at a time. **Existing temporary context** and
+   **currently focused context** are distinct concepts.
+
+3. Starting a request from a **non-Assistant** source (Original PDF, Reading Guide, Inline Guidance,
+   Master answer, or other visible/selectable non-Assistant content) always creates a **new Root at
+   depth 1** — never a Child of whatever chain currently has focus. Example: while focused on
+   `Root A → Child A2 → Child A3`, selecting new textbook text creates **Root B** at depth 1, not
+   `Child A4`. Root A's tree remains preserved unless explicitly closed.
+
+4. Starting a request from **Assistant answer content** never creates a new Root — it creates a Child
+   of the relevant Assistant level, under §24.4's normal depth rules.
+
+5. Switching focus does **not** destroy the previous context. Opening a new Root, navigating back to
+   a parent level, switching Assistant ↔ Master tabs, returning to the Reader, or selecting another
+   existing Root from recent contexts all preserve what was left behind.
+
+6. **Explicit Close is destructive**: closing a Root destroys that Root and its descendant Child
+   tree. Close never means "permission to open another Root" — a new Root may always be created
+   without closing anything.
+
+7. The Reader/app close lifecycle remains the outer cleanup boundary (§24.3); unsaved Assistant
+   contexts clear there. Switching focus alone is never equivalent to close.
+
+8. The Product must provide a discoverable way to: see which context is currently focused; navigate
+   to a Child's parent; identify current recursion depth, especially near the limit (e.g. `3 / 5`);
+   switch among retained Root contexts; and explicitly close a retained Root. **No specific visual
+   design is frozen** — breadcrumb, back-navigation, a recent-context list, context cards, a focused
+   header, or another pattern are all acceptable.
+
+9. The user never needs to see or understand internal terms like "Root," "Child," or "Window." The
+   visible UI presents meaningful labels derived from the selected topic/text, e.g.:
+
+   ```text
+   DMA 工作方式
+     > 周期窃取
+       > 总线控制权
+   ```
+
+   not `Window 1` / `Window 2` / `Window 3`.
+
+10. A Root and its Child chain retain enough temporary state that the user can switch away and later
+    return to the same point in the chain. **Current UI focus is never the authority for whether
+    temporary state persists** — losing focus must not lose state; only explicit close (item 6) or
+    Reader/app close (item 7) does.
+
+## 24.6 Child context construction
+
+When the user selects text from an Assistant answer and creates a Child, the Child receives:
+
+1. the selected text/range;
+2. the **complete parent Assistant answer turn** containing that selection;
+3. the parent's source lineage sufficient to understand where the discussion originated;
+4. current relevant Reader scope where needed;
+5. minimal necessary reference context;
+6. the parent/child relationship;
+7. new depth = parent.depth + 1.
+
+It must **not** automatically receive: the entire Root conversation; every previous turn at the
+parent level; the entire ancestor conversation tree; or the full Section text merely because the Root
+originated there.
+
+Context must be sufficient for semantic continuity without recursively accumulating all history. If
+answering correctly genuinely requires more ancestor context, it may be included **selectively and
+explicitly** by the Context Builder — never by a blind "dump all ancestor history" default.
+
+## 24.7 One-active-child scope
+
+"One active child per parent" constrains branching **from the same parent node only** — it does not
+mean only one Assistant context may exist globally. These are all valid simultaneously:
+
+```text
+Root A → Child A2
+Root B → Child B2
+Root C
+```
+
+If the user selects a different phrase from a parent that already has an active Child, the
+implementation must handle this explicitly (e.g. return-and-replace, mark the old branch historical,
+or prompt the user to switch) rather than silently creating two simultaneous active Children from one
+parent. The exact UX is an implementation decision; the invariant — never silently fork multiple
+active children from one parent — is not.
 
 ---
 
@@ -1037,6 +1319,66 @@ Its durable relationship is with:
 Unlike Assistant, Master threads/history are **persistent across Reader/app sessions**.
 
 The system may additionally maintain structured summaries/status alongside the visible thread so future reasoning does not need to replay every raw token.
+
+## 26.1 Master Topic lifecycle
+
+A **Master Topic** is a cluster of turns around one condensable learning question. It is distinct
+from a Master *answer* (one reply), a *Mastery update* (a KP status change), and *long-term
+attribution/summary* (where a resolved Topic gets recorded).
+
+Topic state, conceptually:
+
+```text
+ACTIVE → RESOLVED
+```
+
+A Topic becomes `RESOLVED` only through **explicit user evidence** that the issue is now clear, or a
+future formally-defined assessment mechanism. Closing the Master panel, the Reader, the application,
+or switching tabs **does not** resolve a Topic — resolution is independent of any UI/session
+lifecycle event.
+
+If the user continues the same question-cluster while a Topic is being finalized, the in-flight work
+uses its own frozen basis; new messages on the same cluster form a distinct continuation linked back
+to the original, rather than being lost or silently altering what was already finalized. A parent
+Topic awaiting resolution of such a continuation must not itself mark a KP as understood — the
+continuation's own resolution governs that.
+
+## 26.2 Evidence-gated mastery authority
+
+Master may identify, from a real user question, one or more related KPs as `NOT_FULLY_CLEAR` when
+evidence supports that association.
+
+Master must **not** autonomously set a KP to `UNDERSTOOD` merely because it provided an explanation,
+the conversation appears to have gone well, the model believes the user now understands, or the Topic
+was summarized. `UNDERSTOOD` requires either **explicit user confirmation** or a future
+formally-authorized assessment rule — answering a question is never, by itself, sufficient evidence.
+
+Once a KP reaches `UNDERSTOOD` through Master's evidence-gated path, it is **never automatically
+downgraded** because a later, unrelated question surfaces confusion elsewhere; a new unresolved Topic
+may coexist with a prior `UNDERSTOOD` KP without silently reversing it. Any future explicit downgrade
+mechanism is a separate, deliberately designed product rule — Master does not invent one on its own.
+
+When a Topic is later resolved, current unclear/mastery state may change according to these rules, but
+historical questions and prior unclear evidence remain in Learning History regardless (§29).
+
+A structured Topic summary/condensation may additionally be created for retrieval, weakness analysis,
+or later context-building. **Condensation is never permission to delete the user's meaningful
+historical learning thread** — summarizing augments Learning History, it does not replace it.
+
+## 26.3 Answer policy is separate from attribution
+
+Whether Master **should answer** a question is a different question from **where** it gets attributed
+in long-term learning structure, and the first must never be gated on the second.
+
+Master answers course-relevant questions normally regardless of perceived question quality — simple
+terms, "what does this mean," recall, comparison, synthesis, and reasonably-clarifiable vague
+questions are all answered, not filtered.
+
+A question may end up attributed to the current KP, another KP, multiple KPs, the Section generally,
+course-related-but-currently-unmapped, or outside the course entirely — and that attribution outcome
+never determines whether Master was allowed to answer it in the first place. Only genuinely
+non-learning content (a safety/capability limit, not course relevance) may justify a refusal to
+answer.
 
 ---
 
@@ -1168,7 +1510,8 @@ Even in the fastest mode, Master/Assistant must:
 - ground textbook claims in the available PDF/OCR/figure/Section/KP context;
 - distinguish textbook content from AI explanation and external extension;
 - never fabricate textbook quotes, printed pages, figure/table identifiers, syllabus claims, past-exam evidence or citations;
-- state uncertainty when the available source is uncertain rather than inventing missing evidence.
+- state uncertainty when the available source is uncertain rather than inventing missing evidence;
+- never present material drawn from outside the primary textbook — background knowledge, supplementary references, or a future Reference Corpus — as if the textbook itself said it; such material must remain distinguishable as external explanation.
 
 `Review = OFF/Fast` therefore means:
 
@@ -1297,6 +1640,11 @@ must not automatically set KP `UNDERSTOOD` or `NOT_FULLY_CLEAR`.
 
 Mastery remains controlled by explicit learning-state interactions until a future assessment model is deliberately designed.
 
+A Recall prompt should carry enough evidence reference to verify it only draws on content already
+shown to the learner at that point, and should appear where it carries real teaching value rather than
+mechanically at every content boundary. It never blocks reading and never scores the learner by
+default.
+
 ---
 
 # 33. Four Product Agents
@@ -1332,6 +1680,32 @@ For interactive Master/Assistant answers it may also perform the lighter or risk
 Generation and Review contexts remain independent. A stronger/different reviewer model is preferred where justified.
 
 Normal-path rework is bounded; the first implementation should use a finite retry principle rather than open-ended loops.
+
+### 33.2.1 Semantic rework limit and terminal failure
+
+For a candidate generation attempt/version of a formal System Teaching asset, semantic/content rework
+is bounded: **maximum 3 completed semantic rework cycles**. If blocking semantic defects remain after
+the third cycle, that candidate/version reaches a terminal `FAILED` state.
+
+`FAILED` Teaching:
+
+- is never published;
+- cannot silently become `PASS`;
+- cannot fall back to unreviewed AI text as a "degraded" delivery;
+- cannot replace the currently published `PASS` version (§23.1);
+- does not block Original PDF reading, unrelated Sections, Notes, Highlights, or Learning History.
+
+### 33.2.2 Technical failure is not semantic rework
+
+Technical failures — timeout, network failure, rate limiting, authentication/provider unavailability,
+5xx errors, reviewer invocation failure — are **never** counted as semantic rework. Technical retries
+do not consume the rework count in §33.2.1, and exhausting technical retries does not itself become a
+content rejection.
+
+### 33.2.3 Review judges; it does not author
+
+Review must not rewrite a candidate and then pass its own rewrite. System produces and fixes Teaching;
+Review judges it. This separation is what keeps the rework count in §33.2.1 meaningful.
 
 ## 33.3 Master
 
@@ -1377,7 +1751,26 @@ Product role count is not determined by model-call count.
 
 ---
 
-# 35. User navigation and returning to old content
+# 35. User Style boundary
+
+User-configurable presentation/expression preferences (language, tone, brevity, example style) may
+affect **how** Master and Assistant phrase their responses. They must never change:
+
+- Assistant recursion depth or one-active-child rules (§24.4, §24.7);
+- context-inheritance rules (§24.6);
+- source identity/trust rules (§30);
+- persistence boundaries (§24.3, §26);
+- Mastery authority (§26.2, §28);
+- System Teaching logic (§17, §20);
+- Review acceptance rules (§33.2);
+- Agent authority boundaries (§33).
+
+System and Review never accept user-style input at all — style is exclusively a Master/Assistant
+expression-layer concept.
+
+---
+
+# 36. User navigation and returning to old content
 
 The directory is always navigable.
 
@@ -1402,7 +1795,7 @@ If the Guide is stale:
 
 ---
 
-# 36. High-confidence first-version product flow
+# 37. High-confidence first-version product flow
 
 ```text
 Upload PDF
@@ -1441,7 +1834,7 @@ End of teaching content for Section
 
 ---
 
-# 37. Decisions now treated as agreed
+# 38. Decisions now treated as agreed
 
 Unless explicitly reopened, the following are current product baseline decisions:
 
@@ -1493,10 +1886,30 @@ Unless explicitly reopened, the following are current product baseline decisions
 46. Assistant defaults to no independent Review; user can enable verification and bounded high-risk cases may escalate automatically.
 47. Persisting AI-authored Assistant content as a durable note triggers verification.
 48. Reviewer acceptance never changes user Mastery by itself.
+49. Assistant recursion has maximum nesting depth 5, counted by nesting level not message count; ordinary same-level multi-turn never increases depth.
+50. Only selecting content from the current Assistant answer creates a Child; Assistant answers can never be reopened as a fresh Root to bypass the depth limit.
+51. A parent has at most one active Child branch at a time, enforced atomically under concurrent requests.
+52. Multiple temporary Assistant Root contexts may coexist; only one has current UI focus; switching focus never destroys other contexts; explicit Close is the only destructive action, and it never grants permission to open another Root.
+53. A new request from a non-Assistant source (Original, Guide, Guidance, Master answer, other visible content) always creates a new Root at depth 1, never a Child of the currently focused chain.
+54. A Child receives the selected range, the complete triggering parent answer turn, source lineage, relevant scope, and minimal reference context — never the full ancestor conversation tree by default.
+55. Technical retry preserves the same logical interaction identity and never increases depth or creates a Child; provider failure never alters Progress, Mastery, Learning History, or creates a Master record.
+56. A Master Topic is ACTIVE until explicitly RESOLVED by user evidence or a future formal assessment rule; closing any panel/app/tab is never itself resolution.
+57. Master may attribute NOT_FULLY_CLEAR to evidenced KPs but may never autonomously mark UNDERSTOOD merely because it answered; UNDERSTOOD requires explicit user confirmation or a future formal assessment rule, and is never auto-downgraded later.
+58. Whether Master answers a question is independent of where that question is attributed in long-term learning structure; course-relevant questions are answered regardless of attribution outcome.
+59. Formal System Teaching semantic rework is bounded at 3 cycles per candidate; exhaustion is terminal FAILED, never a silent PASS or unreviewed fallback; technical failure never consumes rework count.
+60. A published Teaching version is never destroyed by a failed or in-progress regeneration candidate; replacement occurs only after the candidate completes Review and publication.
+61. Section Teaching failure isolation extends the existing Chapter-failure isolation one level down: one Section's Teaching failure never affects sibling Sections.
+62. A Chapter Knowledge Map publishes atomically as one coherent version; there is no partial-Chapter READY state.
+63. The Outline's logical directory structure (identity, title, order, hierarchy) is distinct from its physical range resolution; the logical tree is established early, normally from bookmarks/TOC, independent of body OCR completion, and physical resolution improves progressively per node without ever creating a new logical node.
+64. OCR/layout artifact staleness depends only on the page/region footprint an artifact actually used, never on a single global version counter changing elsewhere in the book.
+65. An annotation may optionally record a KP association as structure-protection bookkeeping; this association is never required for the annotation to remain valid, and geometry + quote/context remain its sole durable authority.
+66. User Style affects only Master/Assistant expression; it can never change recursion/authority/persistence/trust/Review structural rules, and System/Review never accept style input at all.
+67. Outline correction has three risk tiers — logical/cosmetic, physical boundary, and true structural identity — with protection scoped to the specific node whose boundary or identity would change, never globally triggered by the existence of any Book asset.
+68. An artifact that used a specific Outline node's physical range depends on that node's own identity and resolution state, never on a book-wide Outline version; another Chapter's range resolving, or unrelated node metadata correcting, never makes such an artifact stale.
 
 ---
 
-# 38. Deferred, not forgotten
+# 39. Deferred, not forgotten
 
 These are intentionally deferred rather than unresolved blockers for the product skeleton:
 
@@ -1516,7 +1929,7 @@ These are intentionally deferred rather than unresolved blockers for the product
 
 ---
 
-# 39. What this document intentionally does not decide
+# 40. What this document intentionally does not decide
 
 Do not infer implementation choices from product semantics.
 
@@ -1539,7 +1952,7 @@ Those belong to engineering/audit work after this Product Blueprint is approved.
 
 ---
 
-# 40. Next document sequence
+# 41. Next document sequence
 
 This Product Blueprint has passed closure at the product-authority level.
 
@@ -1555,6 +1968,6 @@ The audit artifact is evidence. `PRODUCT_BLUEPRINT.md` and `IMPLEMENTATION_BLUEP
 
 ---
 
-# 41. One-sentence architecture
+# 42. One-sentence architecture
 
 > **408 Guided Reader keeps the original textbook as the permanent reading surface, progressively builds a machine-readable layer around it, creates stable learning structure only when needed, and adds optional AI teaching exactly where the learner needs a teacher—without replacing the book.**
