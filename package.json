@@ -1,0 +1,15 @@
+{
+  "name": "408-guided-reader-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests-js/*.test.js",
+    "test:e2e": "node tests-e2e/reader.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.3.289"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
+  }
+}

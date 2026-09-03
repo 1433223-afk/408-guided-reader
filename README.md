@@ -23,16 +23,32 @@ decisions and domain model carry **no authority here**.
 | Document | Role | Status |
 |---|---|---|
 | `AGENTS.md` | Entry point and routing — identifies current authority and working rules | Active |
-| `PRODUCT_BLUEPRINT.md` | **Product authority** — what the product is and must do | Active |
-| `IMPLEMENTATION_BLUEPRINT.md` | **Engineering authority** — architecture, contracts, phases | **Does not exist yet.** Becomes authority only once written, reviewed and frozen. |
+| `PRODUCT_BLUEPRINT.md` | **Product authority** — what the product is and must do | Frozen at Gate D |
+| `IMPLEMENTATION_BLUEPRINT.md` | **Engineering authority** — architecture, contracts, phases | Frozen at Gate D |
 | `docs/archive/transition/**` | Historical / audit / transition evidence | **Never authority.** Not cold-start reading. |
 
 Read `AGENTS.md` first. It is short and tells you where to go next.
 
-## Current state
+## Run the R1 reader
 
-Repository baseline only. **No engineering architecture has been chosen** — no framework, ORM,
-database schema, migration root, package layout, task runtime, OCR engine or dependency set. Those
-decisions belong to `IMPLEMENTATION_BLUEPRINT.md` and have not been made.
+Prerequisites: Python 3.11+, Node.js 20+, and Chrome or Edge.
 
-No implementation code is present, and none should be added before that document is frozen.
+```powershell
+python -m pip install -e .[test]
+npm install
+guided-reader
+```
+
+The command starts the Core Service on loopback and opens the tokenized Reader URL. Runtime data is
+stored outside the repository by default under the user's local application-data directory. Override
+it for development with `guided-reader --data-dir D:\some\reader-data`.
+
+Run the deterministic and service tests with `pytest` and the geometry tests with `npm test`. The
+real-browser R1 flow is exercised with:
+
+```powershell
+$env:READER_REAL_PDF='D:\path\to\a-real-scan.pdf'
+npm run test:e2e
+```
+
+R1 deliberately contains no OCR, selection, outline, annotations, or AI code.

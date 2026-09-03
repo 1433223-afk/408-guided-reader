@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guided-reader"
+version = "0.1.0"
+description = "Local-first original-PDF reader for 408 textbooks"
+requires-python = ">=3.11"
+dependencies = [
+  "pypdf>=6.15,<7",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.3,<10",
+]
+
+[project.scripts]
+guided-reader = "reader_service.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+reader_service = ["static/*"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+testpaths = ["tests"]

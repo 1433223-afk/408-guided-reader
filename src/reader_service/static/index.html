@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>408 Guided Reader</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <aside class="library" aria-label="Book library">
+      <header class="brand">
+        <div class="brand-mark" aria-hidden="true">408</div>
+        <div><strong>Guided Reader</strong><span>The PDF stays the book.</span></div>
+      </header>
+      <label class="import-button" for="import-input">Import PDF</label>
+      <input id="import-input" type="file" accept="application/pdf,.pdf" hidden>
+      <div class="library-heading"><span>Your books</span><span id="book-count">0</span></div>
+      <div id="book-list" class="book-list"></div>
+      <p class="local-note">Stored privately on this computer</p>
+    </aside>
+
+    <main class="workspace">
+      <section id="empty-state" class="empty-state">
+        <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p class="eyebrow">Original pages. Nothing rewritten.</p>
+        <h1>Bring your textbook.<br>Start reading.</h1>
+        <p>Open a PDF and return to the same place whenever you come back.</p>
+        <label class="primary-action" for="import-input">Choose a PDF</label>
+      </section>
+
+      <section id="reader" class="reader" hidden>
+        <header class="toolbar">
+          <div class="book-heading">
+            <button id="sidebar-toggle" class="icon-button sidebar-toggle" aria-label="Show library">☰</button>
+            <div><span class="eyebrow">Now reading</span><h1 id="reader-title"></h1></div>
+          </div>
+          <div class="reader-controls" aria-label="Reader controls">
+            <button id="previous-page" class="icon-button" aria-label="Previous page">←</button>
+            <label class="page-control"><span class="sr-only">PDF page</span><input id="page-number" type="number" min="1" value="1"><span id="page-total">/ 1</span></label>
+            <button id="next-page" class="icon-button" aria-label="Next page">→</button>
+            <span class="control-divider"></span>
+            <button id="zoom-out" class="icon-button" aria-label="Zoom out">−</button>
+            <output id="zoom-value">100%</output>
+            <button id="zoom-in" class="icon-button" aria-label="Zoom in">＋</button>
+          </div>
+        </header>
+        <div id="viewer" class="viewer" tabindex="0" aria-label="PDF pages">
+          <div id="pages" class="pages"></div>
+        </div>
+      </section>
+    </main>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -29,3 +29,13 @@ tmp/
 # Note: language- and tool-specific ignore rules are deliberately omitted.
 # They belong with the toolchain that IMPLEMENTATION_BLUEPRINT.md selects,
 # and are added when that toolchain is actually introduced.
+
+# Python / Node toolchains selected for R1
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+node_modules/
+test-results/
+playwright-report/
