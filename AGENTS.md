@@ -12,8 +12,12 @@ disagrees with a blueprint, the blueprint wins and the offending line here shoul
 **408 Guided Reader** — a new project. Not a version, fork or continuation of `408-ai-ebook`.
 
 The earlier repository at `D:\codex\408-ai-ebook` is **frozen historical evidence**. Its product
-documents, phase decisions, domain model and code carry **no authority here**. Its commits are
-useful only as provenance citations.
+documents, phase decisions, domain model and code carry **no authority here**.
+
+It may still be consulted when materially relevant — for generic engineering or governance
+principles, Skills, tests, implementation evidence and provenance. Mine it for what is genuinely
+useful; never treat anything in it as authority for this product or its architecture. §5 adds one
+time-bounded restriction that applies while the architecture is being drafted.
 
 ## 2. Current authority
 
@@ -29,7 +33,7 @@ frozen. Until then there is no approved architecture, and none may be assumed. O
 required reading becomes those three files.
 
 `docs/archive/transition/**` is historical/audit/transition evidence. It is **never** authority and
-**never** cold-start reading. See §4 for the one situation in which it may be opened.
+**never** cold-start reading. See §5 for the one situation in which it may be opened.
 
 ## 3. Where to look
 
@@ -38,10 +42,35 @@ required reading becomes those three files.
 | What should the product do? | `PRODUCT_BLUEPRINT.md` |
 | Is X frozen or still open? | `PRODUCT_BLUEPRINT.md` — its "decisions now treated as agreed" and "deferred" sections |
 | How is it built? | `IMPLEMENTATION_BLUEPRINT.md` — **unanswerable until that exists** |
-| Why was the old project retired? What evidence exists? | `docs/archive/transition/` — reference only, subject to §4 |
+| Why was the old project retired? What evidence exists? | `docs/archive/transition/` — reference only, subject to §5 |
 | What actually happened in a past phase? | `docs/development-reports/` |
 
-## 4. Working rules
+## 4. Who does what
+
+Three coding/review models collaborate here. **Model identity does not confer authority.** Authority
+comes from the current task and its approval gate, and an agent may perform only the actions that
+gate authorizes — whichever model it is.
+
+| Role | Owns | Must not |
+|---|---|---|
+| **Codex** | Primary implementation, integration, test execution, repository changes. Produces implementation evidence and phase reports. | Implement outside approved Product + engineering authority; self-authorize major architecture or dependency changes. |
+| **ZCode** | Independent review and adjudication. Attacks implementation and contract correctness. May orchestrate approved external reviewers where explicitly allowed. | Review an implementation path it produced; silently become the primary implementer. |
+| **Claude Code** | High-context architecture, planning, audit and research: implementation plans, architecture analysis, technical spikes, audit reports, test plans, and explicitly delegated implementation. | Treat its own drafting as authorization; act as final independent acceptance for work it took part in. |
+
+Binding on all three:
+
+- `PRODUCT_BLUEPRINT.md` is Product authority; `IMPLEMENTATION_BLUEPRINT.md` becomes engineering
+  authority only after it is reviewed and frozen (§2).
+- Repository truth outranks model memory (§5).
+- Review failure, or reviewer-invocation failure, never becomes PASS (§5).
+- User approval gates are controlling. None of the three can waive one.
+- **Independence is a property of the work, not the model.** Whoever produced a change cannot also
+  be its independent acceptance — this applies to all three roles symmetrically.
+
+Per-model role documents may be introduced later **only if they materially help**, and this file
+would then route to them. They should not exist for symmetry. This file stays a router.
+
+## 5. Working rules
 
 **Repository truth outranks model memory.** Inspect the current repository before planning or
 implementing. Never substitute chat history, recollection, or a previously seen state for what the
@@ -84,7 +113,7 @@ changed, state/schema changes, validation performed, known limitations and debt,
 adopted, deviations from plan, handoff notes. It is a log for humans and context for future AI —
 not a source dump.
 
-## 5. Current state
+## 6. Current state
 
 Baseline only. **No engineering architecture has been selected** — no framework, ORM, schema,
 migration root, package layout, task runtime, OCR engine, or dependency set. No implementation code
