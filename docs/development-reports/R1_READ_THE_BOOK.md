@@ -2,10 +2,10 @@
 
 ## Result
 
-`IMPLEMENTATION_READY` — a user can import an original PDF, read it immediately in the browser,
-navigate by page or scroll, zoom, close the Reader, and reopen on the same PDF page and in-page
-position. Byte-identical re-import is a no-op; a different PDF can be attached as a new immutable
-source revision.
+`IMPLEMENTATION_READY` — a user can manage books on Library/Home, open an original PDF into a
+separate Reader surface, navigate by page or scroll, zoom without losing the reading anchor, return
+to Library, and reopen the book on the same PDF page and in-page position. Byte-identical re-import is
+a no-op; a different PDF can be attached as a new immutable source revision.
 
 `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` — the required ~700-page scanned textbook was not available.
 R1 was exercised with the largest available real excerpt (29 pages), so sustained virtualization and
@@ -23,7 +23,10 @@ deep navigation at the intended full-book scale have not genuinely been tested.
 - Token-protected loopback HTTP Core Service with library, intake, PDF range-serving, position, and
   deletion endpoints.
 - Browser Reader using the original PDF canvas as its only reading surface: scroll and page navigation,
-  responsive zoom, mixed-size placeholders, and viewport-window canvas virtualization.
+  DPR-aware rendering, anchor-preserving mouse/keyboard/button zoom, mixed-size placeholders, and
+  viewport-window canvas virtualization.
+- Separate Library/Home and Reader surfaces. Import, book list, revision, and removal stay on Home;
+  Reader contains only return navigation, current-book identity, page/zoom controls, and the PDF.
 - One normalized top-left geometry module covering PDF media-box origins and 0/90/180/270-degree
   rotation. No OCR, text layer, selection, outline, annotations, or AI code exists in R1.
 
@@ -44,6 +47,26 @@ deep navigation at the intended full-book scale have not genuinely been tested.
 None in implemented scope. The 700-page material gap is an explicitly declared acceptance limitation,
 not a downgraded criterion.
 
+## R1 real-use correction
+
+Real use found that the Codex-started service did not remain available to an external browser after
+the tool execution ended, high-DPI canvases could be undersampled, zoom could move the reading point,
+and the permanent Library sidebar diluted the Reader surface.
+
+- The server's `127.0.0.1` bind was already correct. Installed Chrome reached the loopback service
+  while it was running. The access failure was the transient Codex execution lifecycle, not a
+  repository networking defect; README now gives a direct user-PowerShell startup path and explains
+  that the terminal must remain open and the complete printed tokenized URL can be pasted into normal
+  Chrome/Edge.
+- Canvas output no longer caps DPR at 2 or rounds backing dimensions down. Backing dimensions round up
+  and the PDF.js render transform uses the exact backing/CSS ratio on every virtualized re-render.
+- Zoom captures a page-local normalized `(x, y)` plus its viewport position and restores that anchor
+  after relayout. Toolbar/keyboard zoom uses the viewport center; Ctrl+wheel uses the point under the
+  pointer. Ctrl+`+`/`=` and Ctrl+`-` are handled only while the Reader viewport has focus.
+- Manual image comparison used PDF page 12 at approximately the same displayed width in the corrected
+  Reader and Chrome's built-in PDF viewer. No additional softness attributable to canvas undersampling
+  was visible after the fix.
+
 ## Acceptance evidence
 
 - `pytest`: **11 passed**. Covers containment (including Windows post-creation path
@@ -55,9 +78,12 @@ not a downgraded criterion.
 - `npm run test:e2e`: **PASS** in installed Google Chrome with AI absent. Used
   `D:\codex\408-ai-ebook-samples\phase03\primary\2026计算机组成原理_第1-29页.pdf`, 12,582,672 bytes,
   SHA-256 `327da74eef4c0ee7ad0fb3bf4752907f71dff9c2d9877faf49d1b3201c7e0aa1`.
-  The browser imported and rendered the scan immediately, kept 3 canvases for 29 page placeholders,
-  navigated to PDF page 12, zoomed to 110%, closed/reopened, restored page 12 and 110%, and verified a
-  second import remained one library book. The resulting Reader screen was visually inspected.
+  The browser verified Library → Reader → Library transitions, no permanent Library sidebar, import,
+  duplicate no-op, removal, and reopen at PDF page 12 / 120% zoom. At simulated Windows DPR 2.5 the
+  canvas output scale was 2.5 with 3 resident canvases for 29 placeholders. Toolbar anchor drift was
+  ~0.00017 normalized page units and pointer anchor drift ~0.00011. Ctrl+wheel, Ctrl+`+`, and Ctrl+`-`
+  passed. Corrected Reader, Library, and Chrome built-in-viewer comparison screens were visually
+  inspected.
 - A materially different source revision is covered deterministically with synthetic PDFs whose
   geometry and identity are exact. The available second 29-page real excerpt was not required to prove
   the source-identity rule and was not used as a substitute for the missing complete textbook.
@@ -91,10 +117,12 @@ $env:READER_REAL_PDF='D:\codex\408-ai-ebook-samples\phase03\primary\2026计算�
 npm run test:e2e
 ```
 
-Manual acceptance: start `guided-reader`; open the printed tokenized URL in Chrome/Edge; import the
-hash-verified 29-page sample; scroll and jump among PDF pages; change zoom; close the tab; reopen the
-printed URL; confirm page/offset/zoom restoration; import the same file again and confirm the library
-still has one book. Repeat at hundreds-of-pages scale when the missing full scan becomes available.
+Manual acceptance: start `guided-reader` in the user's own PowerShell and leave it running; open the
+printed tokenized URL in normal Chrome/Edge; import the hash-verified 29-page sample; open it from
+Library; scroll and jump among PDF pages; compare page 12 with Chrome's built-in viewer; exercise
+button, Ctrl+wheel, Ctrl+`+`, and Ctrl+`-` zoom; return to Library; reopen the book and confirm
+page/offset/zoom restoration. Repeat at hundreds-of-pages scale when the missing full scan becomes
+available.
 
 ## Important files / architecture entry points
 
@@ -112,3 +140,4 @@ still has one book. Repeat at hundreds-of-pages scale when the missing full scan
 
 Implementation checkpoint: `88ec5bc` (`feat: deliver R1 original PDF reader`). Windows packaged-app
 data-directory compatibility follow-up: `14f45f0` (`fix: handle virtualized Windows data directory`).
+Real-use correction checkpoint: `b2ea679` (`fix: apply R1 real-use reader corrections`).
