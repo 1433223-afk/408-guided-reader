@@ -2,7 +2,7 @@
 
 ## Result
 
-`IMPLEMENTATION_READY` — scanned textbook pages prepare progressively in the background. A prepared
+`READY_FOR_R2_CLOSURE: YES` — scanned textbook pages prepare progressively in the background. A prepared
 page gains a line/cell overlay that supports pointer hit-testing, mouse or keyboard range extension,
 cross-line selection, native DOM text selection, and normal keyboard or context-menu browser copy.
 Selection painting is presentation-only: adjacent fragments on the same visual row are coalesced into
@@ -12,6 +12,13 @@ The original PDF canvas remains the only reading
 surface and continues rendering, scrolling, zooming, and navigating before preparation finishes or
 when one page fails.
 
+`USER_REAL_USE_ACCEPTANCE: PASS` — final hands-on use of the real textbook confirmed precise
+selection, cross-line selection, normal right-click copy, and the polished selection presentation.
+
+`ZCode P1-1 delta closure: CLOSED` — ZCode completed the incremental closure verification for the
+original P1-1 and found no new P0/P1 issues. R2 closure status is
+`READY_FOR_R2_CLOSURE: YES`.
+
 `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` — the available 29-page real scan completed successfully,
 including a real process-kill/restart run. The frozen ~700-page criterion is still untestable because
 that material has not been supplied; sustained preparation and recovery at full-book scale remain
@@ -20,7 +27,8 @@ pending.
 The narrow independent ZCode review was completed. Its P1 finding about unsafe EMBEDDED geometry on
 rotated or non-zero-origin effective page boxes was independently reproduced and corrected. Its P2
 observation that `static/geometry.js` is not yet the live single conversion authority remains
-non-blocking deferred debt; the correction did not require a broad geometry refactor.
+non-blocking deferred debt; the correction did not require a broad geometry refactor. ZCode's final
+P1-1 delta verification closed that finding with no new P0/P1.
 
 ## Implemented
 
@@ -119,6 +127,11 @@ not a small extension of the current page-scoped pointer-capture and range model
 
 ## Acceptance evidence
 
+- Final user real-use acceptance: **PASS** (`USER_REAL_USE_ACCEPTANCE: PASS`). Precise selection,
+  cross-line selection, normal right-click copy, and selection presentation were accepted on the real
+  textbook.
+- ZCode P1-1 delta closure: **closed, no new P0/P1**. Independent incremental verification reports
+  `READY_FOR_R2_CLOSURE: YES`.
 - `pytest` without external material: **25 passed, 2 skipped**. Covers the R1 suite plus R1→R2
   migration, version baseline, schema-enforced anonymous cells, trustworthy embedded routing,
   persisted selection-geometry reload, deterministic column reading order, page failure isolation,
