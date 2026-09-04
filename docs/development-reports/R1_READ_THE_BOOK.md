@@ -130,6 +130,7 @@ Further normal-browser use showed that the first conclusion was incomplete in tw
 
 ## Known limitations / deferred debt
 
+- PDF.js 与 PDFium/Skia 存在轻微栅格化差异，经真实 A/B 使用后接受为 V1 renderer difference，不阻塞 R1。
 - Full-book scale acceptance needs a representative ~700-page scan. No complete book was available.
 - Packaging remains deferred by the Frozen Core; R1 runs as a standalone local Python service plus the
   supported installed Chrome/Edge browser.
