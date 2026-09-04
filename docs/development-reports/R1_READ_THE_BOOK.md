@@ -46,7 +46,8 @@ not a downgraded criterion.
 
 ## Acceptance evidence
 
-- `pytest`: **10 passed**. Covers containment, atomic/deduplicated intake behavior, immutable revision
+- `pytest`: **11 passed**. Covers containment (including Windows post-creation path
+  canonicalization), atomic/deduplicated intake behavior, immutable revision
   creation, shared-blob deletion, retryable delete failure, corrupt/encrypted rejection with no commit,
   position validation/persistence, token enforcement, and PDF byte-range serving.
 - `npm test`: **25 passed**. Covers normalized point/rect round trips for all four rotations, non-zero
@@ -109,4 +110,5 @@ still has one book. Repeat at hundreds-of-pages scale when the missing full scan
 
 ## Git checkpoint
 
-Implementation checkpoint: `88ec5bc` (`feat: deliver R1 original PDF reader`).
+Implementation checkpoint: `88ec5bc` (`feat: deliver R1 original PDF reader`). Windows packaged-app
+data-directory compatibility follow-up: `14f45f0` (`fix: handle virtualized Windows data directory`).
