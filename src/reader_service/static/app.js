@@ -7,7 +7,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "selection-actions", "copy-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "selection-actions", "copy-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -24,6 +24,7 @@ const state = {
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
   annotationData: new Map(), selection: null, selecting: false, selectionMenuPoint: null,
+  searchRequest: 0,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -35,8 +36,8 @@ async function api(path, options = {}) {
     headers: { "X-Reader-Token": launchToken, ...(options.headers || {}) },
   });
   if (response.status === 204) return null;
-  const payload = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
-  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+  const payload = await response.json().catch(() => ({ error: `请求失败（${response.status}）` }));
+  if (!response.ok) throw new Error(payload.error || `请求失败（${response.status}）`);
   return payload;
 }
 
@@ -68,15 +69,15 @@ function renderLibrary() {
     const meta = document.createElement("span");
     meta.className = "book-card-meta";
     const pages = document.createElement("span");
-    pages.textContent = active ? `${book.active_revision.page_count} PDF pages` : "Removal incomplete";
+    pages.textContent = active ? `${book.active_revision.page_count} 个 PDF 页面` : "删除未完成";
     const actions = document.createElement("span");
     actions.className = "book-actions";
     if (active) {
       const revision = document.createElement("button");
       revision.type = "button";
       revision.className = "book-action";
-      revision.textContent = book.revision_count > 1 ? `${book.revision_count} revisions · add` : "new revision";
-      revision.title = "Import a different PDF as a new immutable revision of this book";
+      revision.textContent = book.revision_count > 1 ? `${book.revision_count} 个版本 · 添加` : "添加新版本";
+      revision.title = "为本书导入另一份 PDF，作为不可变的新版本";
       revision.addEventListener("click", (event) => {
         event.stopPropagation();
         chooseRevision(book);
@@ -86,7 +87,7 @@ function renderLibrary() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "book-action danger";
-    remove.textContent = active ? "remove" : "retry removal";
+    remove.textContent = active ? "删除" : "重试删除";
     remove.addEventListener("click", (event) => {
       event.stopPropagation();
       removeBook(book);
@@ -110,10 +111,10 @@ function chooseRevision(book) {
 
 async function importPdf(file, bookId = null) {
   if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
-    announce("Choose a PDF file.", true);
+    announce("请选择 PDF 文件。", true);
     return;
   }
-  announce(bookId ? "Validating the new source revision…" : "Validating and importing the PDF…");
+  announce(bookId ? "正在验证新来源版本……" : "正在验证并导入 PDF……");
   const parameters = new URLSearchParams();
   if (bookId) parameters.set("book_id", bookId);
   try {
@@ -126,26 +127,26 @@ async function importPdf(file, bookId = null) {
     await loadBooks();
     const refreshed = state.books.find((book) => book.id === result.book.id) || result.book;
     await openBook(refreshed);
-    announce(result.duplicate ? "Already in your library — nothing was duplicated." : (bookId ? "New source revision added." : "PDF imported. Ready to read."));
-  } catch (error) {
-    announce(error.message, true);
+    announce(result.duplicate ? "书库中已有这份文件，没有重复导入。" : (bookId ? "已添加新来源版本。" : "PDF 已导入，可以开始阅读。"));
+  } catch (_error) {
+    announce("导入失败，请检查 PDF 后重试。", true);
   } finally {
     elements["import-input"].value = "";
   }
 }
 
 async function removeBook(book) {
-  const confirmed = window.confirm(`Remove “${book.title}”?\n\nThis permanently deletes its saved PDF revisions, reading position, highlights, and notes from this app. This cannot be undone.`);
+  const confirmed = window.confirm(`删除《${book.title}》？\n\n这会永久删除本应用中保存的 PDF 版本、阅读位置、高亮和笔记，且无法撤销。`);
   if (!confirmed) return;
   try {
     await api(`/api/books/${book.id}`, { method: "DELETE" });
     if (state.book?.id === book.id) state.book = null;
     await loadBooks();
-    announce("Book, reading position, highlights, and notes removed.");
-  } catch (error) {
+    announce("已删除教材、阅读位置、高亮和笔记。");
+  } catch (_error) {
     if (state.book?.id === book.id) state.book = null;
     await loadBooks();
-    announce(error.message, true);
+    announce("删除未完成，请重试。", true);
   }
 }
 
@@ -178,13 +179,13 @@ async function openBook(book) {
     const pdf = await loading.promise;
     if (generation !== state.generation) return;
     state.pdf = pdf;
-    if (pdf.numPages !== state.revision.page_count) throw new Error("Stored PDF metadata no longer matches the source file");
+    if (pdf.numPages !== state.revision.page_count) throw new Error("保存的 PDF 元数据与来源文件不再一致");
     await nextFrame();
     applyRestoredPosition();
     scheduleViewportUpdate();
     startPreparation();
-  } catch (error) {
-    announce(`Could not open this PDF: ${error.message}`, true);
+  } catch (_error) {
+    announce("无法打开这份 PDF，请重试。", true);
   }
 }
 
@@ -198,6 +199,8 @@ function closeReader() {
   state.pdf = null;
   elements.reader.hidden = true;
   elements["marks-panel"].hidden = true;
+  elements["search-panel"].hidden = true;
+  elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
   elements["library-home"].hidden = false;
   elements.pages.replaceChildren();
@@ -364,7 +367,7 @@ async function renderPage(index) {
       ensureOverlay(index);
     }
   } catch (error) {
-    if (error?.name !== "RenderingCancelledException") announce(`Page ${index + 1} could not render: ${error.message}`, true);
+    if (error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
   } finally {
     state.renderTasks.delete(index);
     wrapper?.classList.remove("loading");
@@ -494,7 +497,7 @@ async function savePosition() {
     });
     state.revision.position = { pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom: state.zoom };
   } catch (error) {
-    announce(`Reading position was not saved: ${error.message}`, true);
+    announce("阅读位置未保存，请稍后重试。", true);
   }
 }
 
@@ -525,7 +528,7 @@ async function startPreparation() {
       body: JSON.stringify({ current_page: state.currentPage, visible_pages: [state.currentPage] }),
     });
   } catch (error) {
-    elements["preparation-status"].textContent = "Text unavailable";
+    elements["preparation-status"].textContent = "文字不可用";
     elements["preparation-status"].className = "preparation-status failed";
     return;
   }
@@ -551,7 +554,7 @@ function closePreparationStream() {
   state.overlayData.clear();
   state.annotationData.clear();
   clearTimeout(state.priorityTimer);
-  elements["preparation-status"].textContent = "Preparing text…";
+  elements["preparation-status"].textContent = "正在准备文字…";
   elements["preparation-status"].className = "preparation-status";
 }
 
@@ -569,6 +572,51 @@ function applyPreparationStatuses(pages) {
   updatePreparationLabel();
 }
 
+function coverageText(coverage) {
+  const failed = coverage.statuses.FAILED || 0;
+  if (coverage.complete) return `已检索全书 ${coverage.total_pages} 页`;
+  const suffix = failed ? `，其中 ${failed} 页准备失败` : "";
+  return `已检索 ${coverage.ready_pages} / ${coverage.total_pages} 页，其余页面仍在准备${suffix}`;
+}
+
+async function runSearch() {
+  const revisionId = state.revision?.id;
+  if (!revisionId) return;
+  const request = ++state.searchRequest;
+  const queryText = elements["search-query"].value.trim();
+  elements["search-coverage"].textContent = "正在读取搜索范围…";
+  elements["search-empty"].textContent = queryText ? "正在搜索…" : "输入关键词以搜索已准备页面。";
+  elements["search-empty"].hidden = false;
+  elements["search-results"].replaceChildren();
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/search?q=${encodeURIComponent(queryText)}`);
+    if (request !== state.searchRequest || state.revision?.id !== revisionId) return;
+    elements["search-coverage"].textContent = coverageText(payload.coverage);
+    const rows = payload.results.map((result) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "search-result";
+      const page = document.createElement("strong");
+      page.textContent = `PDF 第 ${result.pdf_page_index + 1} 页`;
+      const snippet = document.createElement("span");
+      snippet.textContent = result.snippet;
+      button.append(page, snippet);
+      button.addEventListener("click", () => goToPage(result.pdf_page_index));
+      return button;
+    });
+    elements["search-results"].replaceChildren(...rows);
+    elements["search-empty"].hidden = rows.length > 0;
+    if (!rows.length) {
+      elements["search-empty"].textContent = queryText ? "在当前已检索页面中没有找到结果。" : "输入关键词以搜索已准备页面。";
+    }
+    if (payload.truncated) announce("结果较多，当前显示前 100 个匹配页面。");
+  } catch (_error) {
+    if (request !== state.searchRequest) return;
+    elements["search-coverage"].textContent = "暂时无法读取搜索范围";
+    elements["search-empty"].textContent = "搜索失败，请稍后重试。";
+  }
+}
+
 function syncPagePreparationUi(index) {
   const wrapper = elements.pages.children[index];
   if (!wrapper) return;
@@ -577,21 +625,21 @@ function syncPagePreparationUi(index) {
   const retry = document.createElement("button");
   retry.type = "button";
   retry.className = "preparation-retry";
-  retry.textContent = "Text preparation failed · Retry";
+  retry.textContent = "文字准备失败 · 重试";
   retry.addEventListener("click", async (event) => {
     event.stopPropagation();
     retry.disabled = true;
-    retry.textContent = "Retry queued…";
+    retry.textContent = "已加入重试队列……";
     try {
       await api(`/api/revisions/${state.revision.id}/preparation/retry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdf_page_index: index }),
       });
-    } catch (error) {
+    } catch (_error) {
       retry.disabled = false;
-      retry.textContent = "Text preparation failed · Retry";
-      announce(error.message, true);
+      retry.textContent = "文字准备失败 · 重试";
+      announce("重试未能加入队列，请稍后再试。", true);
     }
   });
   wrapper.append(retry);
@@ -603,13 +651,13 @@ function updatePreparationLabel() {
   const failed = pages.filter((page) => page.status === "FAILED").length;
   const output = elements["preparation-status"];
   if (!pages.length) {
-    output.textContent = "Preparing text…";
+    output.textContent = "正在准备文字…";
     output.className = "preparation-status";
   } else if (ready + failed === pages.length) {
-    output.textContent = failed ? `${ready} ready · ${failed} failed` : "Text ready";
+    output.textContent = failed ? `${ready} 页就绪 · ${failed} 页失败` : "文字已就绪";
     output.className = `preparation-status ${failed ? "failed" : "ready"}`;
   } else {
-    output.textContent = `${ready} / ${pages.length} selectable`;
+    output.textContent = `${ready} / ${pages.length} 页可选择`;
     output.className = "preparation-status";
   }
 }
@@ -662,7 +710,7 @@ async function ensureOverlay(index) {
   if (!wrapper.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
   const overlay = document.createElement("div");
   overlay.className = "text-overlay";
-  overlay.setAttribute("aria-label", `Selectable text for PDF page ${index + 1}`);
+  overlay.setAttribute("aria-label", `PDF 第 ${index + 1} 页可选择文字`);
   overlay.dataset.pageIndex = String(index);
   for (const line of data.lines) {
     const bounds = lineBounds(line);
@@ -705,7 +753,7 @@ function updateMarksPanel() {
   elements["marks-count"].textContent = String(values.length);
   elements["marks-count"].hidden = values.length === 0;
   elements["marks-toggle"].setAttribute(
-    "aria-label", `Marks on this page${values.length ? ` (${values.length})` : ""}`,
+    "aria-label", `本页标记${values.length ? `（${values.length}）` : ""}`,
   );
   elements["marks-page"].textContent = String(state.currentPage + 1);
   const cards = values.map((annotation) => {
@@ -724,7 +772,7 @@ function updateMarksPanel() {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "mark-remove";
-    remove.textContent = "Delete mark";
+    remove.textContent = "删除标记";
     remove.addEventListener("click", () => deleteAnnotation(annotation));
     card.append(remove);
     return card;
@@ -734,7 +782,7 @@ function updateMarksPanel() {
 }
 
 async function deleteAnnotation(annotation) {
-  if (!window.confirm("Delete this mark and its note?")) return;
+  if (!window.confirm("删除这条标记及其笔记？")) return;
   const revisionId = state.revision?.id;
   if (!revisionId) return;
   try {
@@ -746,9 +794,9 @@ async function deleteAnnotation(annotation) {
     );
     renderAnnotations(pageIndex);
     updateMarksPanel();
-    announce("Mark deleted.");
-  } catch (error) {
-    announce(`Mark was not deleted: ${error.message}`, true);
+    announce("标记已删除。");
+  } catch (_error) {
+    announce("标记未删除，请稍后重试。", true);
   }
 }
 
@@ -924,9 +972,9 @@ async function saveAnnotation(body = null) {
     clearSelection();
     renderAnnotations(pageIndex);
     updateMarksPanel();
-    announce(payload.annotation.body ? "Note saved." : "Highlight saved.");
-  } catch (error) {
-    announce(`Mark was not saved: ${error.message}`, true);
+    announce(payload.annotation.body ? "笔记已保存。" : "高亮已保存。");
+  } catch (_error) {
+    announce("标记未保存，请稍后重试。", true);
   } finally {
     elements["save-highlight"].disabled = false;
     elements["save-note"].disabled = false;
@@ -939,9 +987,9 @@ async function copySelection() {
   try {
     await navigator.clipboard.writeText(text);
     hideSelectionActions();
-    announce("Selected text copied.");
-  } catch (error) {
-    announce(`Selected text was not copied: ${error.message}`, true);
+    announce("已复制所选文字。");
+  } catch (_error) {
+    announce("所选文字未复制，请重试。", true);
   }
 }
 
@@ -1005,9 +1053,33 @@ elements["page-number"].addEventListener("keydown", (event) => {
 elements["zoom-out"].addEventListener("click", () => setZoom(adjacentZoom(-1)));
 elements["zoom-in"].addEventListener("click", () => setZoom(adjacentZoom(1)));
 elements["back-to-library"].addEventListener("click", returnToLibrary);
+elements["search-toggle"].addEventListener("click", () => {
+  const opening = elements["search-panel"].hidden;
+  elements["search-panel"].hidden = !opening;
+  elements["search-toggle"].setAttribute("aria-expanded", String(opening));
+  if (opening) {
+    elements["marks-panel"].hidden = true;
+    elements["marks-toggle"].setAttribute("aria-expanded", "false");
+    runSearch();
+    elements["search-query"].focus({ preventScroll: true });
+  }
+});
+elements["search-close"].addEventListener("click", () => {
+  elements["search-panel"].hidden = true;
+  elements["search-toggle"].setAttribute("aria-expanded", "false");
+});
+elements["search-form"].addEventListener("submit", (event) => {
+  event.preventDefault();
+  runSearch();
+});
 elements["marks-toggle"].addEventListener("click", () => {
-  elements["marks-panel"].hidden = !elements["marks-panel"].hidden;
-  elements["marks-toggle"].setAttribute("aria-expanded", String(!elements["marks-panel"].hidden));
+  const opening = elements["marks-panel"].hidden;
+  elements["marks-panel"].hidden = !opening;
+  elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
+  if (opening) {
+    elements["search-panel"].hidden = true;
+    elements["search-toggle"].setAttribute("aria-expanded", "false");
+  }
   updateMarksPanel();
 });
 elements["marks-close"].addEventListener("click", () => {
@@ -1072,7 +1144,7 @@ document.addEventListener("copy", (event) => {
   if (!text) return;
   event.preventDefault();
   event.clipboardData.setData("text/plain", text);
-  announce("Selected text copied.");
+  announce("已复制所选文字。");
 });
 document.addEventListener("pointerdown", (event) => {
   if (!elements["selection-actions"].hidden
@@ -1086,4 +1158,4 @@ window.addEventListener("resize", () => {
 document.addEventListener("visibilitychange", () => document.hidden && savePosition());
 window.addEventListener("pagehide", savePositionKeepalive);
 
-loadBooks().catch((error) => announce(error.message, true));
+loadBooks().catch(() => announce("书库加载失败，请刷新后重试。", true));

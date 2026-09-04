@@ -134,6 +134,9 @@ recommendation — then wait for approval (escalation conditions 5–6).
 tool that fails to respond is **not** a PASS. Never convert an invocation failure into "no findings".
 Report what actually happened, including when it is inconvenient.
 
+**User-facing language.** User-visible UI defaults to Simplified Chinese. Code identifiers, logs,
+internal state names and engineering documents are exempt.
+
 **Acceptance is machine + real use, not tests alone.** Automated tests, persistence checks, state
 invariants and failure-case coverage are machine acceptance — necessary but not sufficient. Real-use
 acceptance means exercising the actual user flow with real representative material where the Phase
@@ -209,9 +212,9 @@ detailed future briefs ahead of need.
 
 ## 8. Current state
 
-Both blueprints are frozen at Gate D (2026-09-03). R1 and R2 are closed. **R3 — My Marks (core)**
-(`docs/phases/R3_MY_MARKS.md`) is the current implemented slice and is `IMPLEMENTATION_READY` for
-user real-use review; its required narrow independent review passed with no P0/P1/P2. The complete
-348-page real textbook is now available and formal same-version R3 acceptance passed at both 29- and
-348-page scale. Cross-version annotation round-trip remains a pending capability gap because OCR
-reprocessing does not exist. No later Phase brief is authorized; derive the next one per §7.
+Both blueprints are frozen at Gate D (2026-09-03). R1, R2 and R3 are closed. **Find in Book**
+(`docs/phases/FIND_IN_BOOK.md`) is the current independently named implemented slice and is
+`IMPLEMENTATION_READY` for user real-use review. Its READY-only OCR search and real-PDF page jump
+passed formal browser acceptance on both the 29-page sample and the complete 348-page textbook.
+Cross-version annotation round-trip remains a pending capability gap because OCR reprocessing does
+not exist. R4 is not authorized; derive the next Phase brief per §7.

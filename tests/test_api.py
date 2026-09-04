@@ -16,10 +16,12 @@ from conftest import make_pdf
 
 
 @contextmanager
-def running_server(service, annotations=None):
+def running_server(service, annotations=None, preparation=None):
     token = "test-launch-token"
     server = ReaderServer(
-        ("127.0.0.1", 0), handler_factory(service, token, annotations=annotations)
+        ("127.0.0.1", 0), handler_factory(
+            service, token, annotations=annotations, preparation=preparation
+        )
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -97,6 +99,24 @@ def test_api_requires_launch_token(service):
             assert error.code == 401
         else:
             raise AssertionError("API accepted a request without the per-launch token")
+
+
+def test_search_api_returns_results_and_authoritative_coverage(service):
+    from types import SimpleNamespace
+
+    from test_search import prepared_search
+
+    _book, revision, foundation = prepared_search(service)
+    preparation = SimpleNamespace(foundation=foundation)
+    with running_server(service, preparation=preparation) as (base, token):
+        status, result = request_json(
+            f"{base}/api/revisions/{revision['id']}/search?q=%E4%B8%AD%E6%96%AD%E5%90%91%E9%87%8F",
+            token,
+        )
+    assert status == 200
+    assert result["coverage"]["ready_pages"] == 1
+    assert result["coverage"]["statuses"]["FAILED"] == 1
+    assert result["results"][0]["pdf_page_index"] == 0
 
 
 def test_plain_browser_entry_bootstraps_same_origin_api_session(service):

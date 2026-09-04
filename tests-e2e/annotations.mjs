@@ -79,7 +79,7 @@ try {
       } else {
         await page.locator("#save-highlight").click();
       }
-      await page.getByText(body ? "Note saved." : "Highlight saved.").waitFor();
+      await page.getByText(body ? "笔记已保存。" : "高亮已保存。").waitFor();
       const beforeIds = new Set(before.map((value) => value.id));
       const annotation = await waitForNewAnnotation(
         page, book.active_revision.id, pageIndex, beforeIds,
@@ -148,7 +148,7 @@ try {
   assert.equal(await page.locator("#selection-actions").isHidden(), true);
   await rightClickSelection(page, regression.pageIndex, line, 0, end);
   await page.locator("#copy-selection").click();
-  await page.getByText("Selected text copied.").waitFor();
+  await page.getByText("已复制所选文字。").waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedCopy);
   await page.keyboard.press("Control+C");
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedCopy);
@@ -159,7 +159,7 @@ try {
   const card = page.locator(".mark-card").filter({ hasText: regression.annotation.quote }).first();
   page.once("dialog", (dialog) => dialog.accept());
   await card.locator(".mark-remove").click();
-  await page.getByText("Mark deleted.").waitFor();
+  await page.getByText("标记已删除。").waitFor();
   assert.equal((await annotationsOnPage(page, regression.revisionId, regression.pageIndex))
     .some((value) => value.id === regression.annotation.id), false);
   await page.locator("#back-to-library").click();
@@ -241,7 +241,7 @@ try {
 }
 
 async function openBook(page, pageCount) {
-  await page.locator(".book-card").filter({ hasText: `${pageCount} PDF pages` }).click();
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
   await page.locator("#reader").waitFor({ state: "visible" });
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
 }

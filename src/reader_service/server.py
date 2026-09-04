@@ -28,6 +28,7 @@ _REVISION_PREPARATION_RETRY = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/preparation/retry$"
 )
 _REVISION_OVERLAY = re.compile(r"^/api/revisions/([0-9a-f-]+)/overlay$")
+_REVISION_SEARCH = re.compile(r"^/api/revisions/([0-9a-f-]+)/search$")
 _REVISION_ANNOTATIONS = re.compile(r"^/api/revisions/([0-9a-f-]+)/annotations$")
 _REVISION_ANNOTATION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)$"
@@ -71,6 +72,24 @@ def handler_factory(
                 if not self._authorized():
                     return
                 self._json(HTTPStatus.OK, {"books": service.list_books()})
+                return
+            match = _REVISION_SEARCH.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if preparation is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Search is unavailable"})
+                    return
+                try:
+                    query_text = _first(parse_qs(parsed.query, keep_blank_values=True), "q") or ""
+                    result = preparation.foundation.search(match.group(1), query_text)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
                 return
             match = _REVISION_ANNOTATIONS.fullmatch(parsed.path)
             if match:

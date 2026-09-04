@@ -41,6 +41,34 @@ class FoundationRepository:
             )
             return [dict(row) for row in rows]
 
+    def search_snapshot(self, revision_id: str) -> tuple[dict[str, int], list[dict]]:
+        """Read search coverage and READY-page text from one database snapshot."""
+        with self.database.connect() as connection:
+            counts = {status: 0 for status in ("READY", "NOT_PREPARED", "PREPARING", "FAILED")}
+            for row in connection.execute(
+                """
+                SELECT status, COUNT(*) AS count
+                FROM ocr_pages
+                WHERE book_source_revision_id = ?
+                GROUP BY status
+                """,
+                (revision_id,),
+            ):
+                counts[row["status"]] = row["count"]
+            rows = connection.execute(
+                """
+                SELECT lines.pdf_page_index, lines.line_ordinal, lines.text
+                FROM ocr_lines AS lines
+                JOIN ocr_pages AS pages
+                  ON pages.book_source_revision_id = lines.book_source_revision_id
+                 AND pages.pdf_page_index = lines.pdf_page_index
+                WHERE lines.book_source_revision_id = ? AND pages.status = 'READY'
+                ORDER BY lines.pdf_page_index, lines.line_ordinal
+                """,
+                (revision_id,),
+            )
+            return counts, [dict(row) for row in rows]
+
     def page_status(self, revision_id: str, page_index: int) -> str | None:
         with self.database.connect() as connection:
             row = connection.execute(

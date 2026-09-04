@@ -144,7 +144,7 @@ try {
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   await page.locator("#import-input").setInputFiles(pdfPath);
-  await page.getByText("Already in your library").waitFor();
+  await page.getByText("书库中已有这份文件").waitFor();
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   assert.equal(await page.locator(".book-card").count(), 1, "duplicate import created another book");
@@ -165,7 +165,7 @@ try {
   // UI deletion remains functional after the surface split.
   page.once("dialog", (dialog) => dialog.accept());
   await page.locator(".book-action.danger").click();
-  await page.getByText("No books yet.").waitFor();
+  await page.getByText("还没有教材。").waitFor();
   assert.equal(await page.locator(".book-card").count(), 0);
   assert.deepEqual(apiFailures, [], `normal-browser API requests failed: ${JSON.stringify(apiFailures)}`);
   assert.ok(apiResponses.length >= 8, "normal-browser flow did not exercise the expected API operations");
