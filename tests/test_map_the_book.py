@@ -54,11 +54,12 @@ def publish(repository, revision_id, page_index, lines):
 
 def bookmarked_pdf():
     writer = PdfWriter()
-    for _ in range(4):
+    for _ in range(5):
         writer.add_blank_page(width=612, height=792)
     chapter = writer.add_outline_item("第1章 基础", 0)
-    writer.add_outline_item("1.1 第一节", 1, parent=chapter)
-    writer.add_outline_item("1.1.1 小节", 2, parent=chapter)
+    section = writer.add_outline_item("1.1 第一节", 1, parent=chapter)
+    subsection = writer.add_outline_item("1.1.1 小节", 2, parent=section)
+    writer.add_outline_item("1.1.1.1 深层标题", 3, parent=subsection)
     output = BytesIO()
     writer.write(output)
     return output.getvalue()
@@ -82,7 +83,10 @@ def test_bookmarks_mint_stable_tree_and_book_delete_cascades(service):
         (node["outline_node_id"], node["parent_id"], node["depth"], node["order_index"])
         for node in second["nodes"]
     ]
-    assert len(first_shape) == 3
+    assert len(first_shape) == 4
+    assert [node["depth"] for node in first["nodes"]] == [0, 1, 2, 3]
+    by_title = {node["title"]: node for node in first["nodes"]}
+    assert by_title["1.1.1.1 深层标题"]["parent_id"] == by_title["1.1.1 小节"]["outline_node_id"]
     assert all(node["identity_revision"] == node["physical_revision"] == 1 for node in first["nodes"])
 
     service.delete_book(book["id"])

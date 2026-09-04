@@ -12,7 +12,8 @@ shows its printed-page label when a validated per-page mapping exists and otherw
 
 `READY_FOR_NARROW_ZCODE_REVIEW: YES` — review scope is identity minting, logical-commit validation,
 label-inference honesty, and delete cascade correctness. UI polish and broader architecture are out
-of scope for that review.
+of scope for that review. The user explicitly deferred invoking this review until after the current
+real-use correction is re-exercised; no independent review has run yet.
 
 This is Outline Pass 1 plus printed-page mapping and Reader navigation only. It does not claim R4
 complete and does not implement Pass 2 physical resolution or D-3 layout detection.
@@ -25,6 +26,15 @@ complete and does not implement Pass 2 physical resolution or D-3 layout detecti
 - Outline is a separate bounded context. It prefers embedded PDF bookmarks when present; otherwise
   it parses only a complete contiguous block of READY TOC pages. It never reads body headings as
   node-minting evidence.
+- Reader presentation now keeps the formal textbook Chapters at the top level and moves the measured
+  front/end-matter roots (cover/title/copyright/resource pages, preface, reader note, training-camp
+  promotion, TOC itself, references, and comparable named matter) into one default-collapsed
+  `其他内容` group. This is a transient UI projection: all 211 durable nodes remain stored with the
+  same IDs, parents, depths, and order.
+- Embedded bookmark hierarchy is no longer capped at depth 2 during minting. Arbitrarily deep body
+  bookmark nodes keep their source depth and parent chain; `SUBSECTION` remains the frozen kind for
+  depth 2 and deeper. The two accepted real trees contained no bookmark deeper than depth 2, so this
+  correction did not alter or conflict with either existing durable tree.
 - Stable IDs are deterministic UUIDv5 values scoped to immutable source revision + evidence source +
   logical evidence key. A committed tree records its structural digest. A later derivation that
   would change node set, title, hierarchy, kind, or order sets `identity_conflict` and leaves the
@@ -60,8 +70,13 @@ complete and does not implement Pass 2 physical resolution or D-3 layout detecti
   minting heuristics; changing them for an already-committed revision is an IDENTITY-tier operation,
   not ordinary tuning.
 - Bookmarks are preferred when present because the Frozen Core names them as authoritative for title,
-  hierarchy, and start page. TOC parsing remains independently sufficient for the 29-page source
-  that has no bookmarks.
+  hierarchy, order, and start page. For a book with usable bookmarks, TOC OCR is not used to
+  re-derive a competing tree. TOC parsing remains an unchanged fallback for the 29-page source that
+  has no bookmarks; no fallback heuristic or threshold was added or broadened in this correction.
+- Front/end-matter grouping is intentionally presentation-only. It is based on conservative named
+  root-title classification, defaults closed, and preserves the original nodes and their complete
+  descendant hierarchy inside the group. Body descendants are never hidden based on depth; third
+  level is a minimum expectation, not a display maximum.
 - Page-label inference computes local relation hypotheses in memory but persists only per-page rows;
   no global offset constant, setting, or stored mapping formula exists.
 - Bookmark parsing owns and deterministically closes its PDF stream. This is required on Windows so
@@ -78,15 +93,15 @@ correction UI/tier workflow, KP/Teaching/Assistant, AI, or structure-scoped sear
 ## Acceptance evidence
 
 - `python -m compileall -q src`: **PASS**.
-- `pytest -o addopts= -q -ra`: **46 passed, 2 skipped**. The two skips are the pre-existing optional
+- Correction rerun: `pytest -o addopts= -q -ra`: **46 passed, 2 skipped**. The two skips are the pre-existing optional
   external-path OCR calibration tests; the same hash-verified real books were exercised in browser
   acceptance below. Coverage includes schema shape, embedded-bookmark trees, TOC parsing with a
   watermark-contaminated line, stored-text immutability, complete-block waiting, stable re-bootstrap
   after more READY pages, identity-conflict blocking, monotonic target rejection, validated label
-  runs, UNKNOWN pages, MANUAL precedence after reconstructed service objects, API contracts, and
-  Outline/PageLabel cascade with no ghost rows after book deletion.
-- `npm test`: **30 passed** — geometry and selection regressions remain green.
-- `npm run test:e2e:map`: **PASS** on an isolated copy of the prepared acceptance library.
+  runs, UNKNOWN pages, MANUAL precedence after reconstructed service objects, arbitrary embedded
+  bookmark depth, API contracts, and Outline/PageLabel cascade with no ghost rows after book deletion.
+- Correction rerun: `npm test`: **30 passed** — geometry and selection regressions remain green.
+- Correction rerun: `npm run test:e2e:map`: **PASS** on an isolated copy of the prepared acceptance library.
   - 29-page scan, SHA-256
     `327da74eef4c0ee7ad0fb3bf4752907f71dff9c2d9877faf49d1b3201c7e0aa1`: evidence source `TOC`,
     203 logical nodes, 22 `INFERRED` page labels, 7 honest UNKNOWN rows. Clicking
@@ -95,16 +110,25 @@ correction UI/tier workflow, KP/Teaching/Assistant, AI, or structure-scoped sear
     `6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`: evidence source
     `BOOKMARK`, 211 logical nodes, 340 `INFERRED` page labels, 8 honest UNKNOWN rows. Clicking
     `6.2.1 总线事务` navigated to original PDF page 303 and displayed printed page 291.
+    Its main presentation has exactly the seven formal Chapters plus one default-collapsed
+    `其他内容` group containing the eight measured non-body root nodes. The raw API still returns all
+    211 nodes.
   - Both trees' complete `(outline_node_id, parent_id, depth, order_index, title)` snapshots were
     byte-for-byte stable after service restart; all node revision counters remained 1.
   - A manual `封面` label on an UNKNOWN page remained `MANUAL` after book close/reopen and after a
     Core Service restart. The test operated on a copied data directory and did not alter user data.
   - The target page's actual PDF.js canvas was rendered; no OCR/reconstructed reading surface was
     used for navigation.
-- Final real regressions: `npm run test:e2e` **PASS**; `npm run test:e2e:r2` **PASS** with 29/29 READY
+- Correction final real regressions: `npm run test:e2e` **PASS**; `npm run test:e2e:r2` **PASS** with 29/29 READY
   and precise `6.2.1` selection; `npm run test:e2e:r3` **PASS** on both books with restart,
   selection/copy, six temporary marks, deletion, cleanup, and restored reading positions;
-  `npm run test:e2e:find` **PASS** with 6 and 10 matches at 29/348-page scale (91.4 ms / 267 ms).
+  `npm run test:e2e:find` **PASS** with 6 and 10 matches at 29/348-page scale (125.6 ms / 393.5 ms).
+- One correction-cycle R2 invocation is explicitly **not** counted as PASS: it reproduced the
+  previously observed SQLite writer contention while reprioritizing preparation during OCR page
+  publication, and page 29's overlay consequently timed out. A full bounded rerun passed. The
+  failure caused no persistent data damage, but remains reported evidence rather than being converted
+  into a clean first-attempt result; this UI/source-priority correction did not expand into unrelated
+  queue/database concurrency work.
 - One post-implementation R1 run is explicitly **not** counted as PASS: concurrent preparation
   scheduling and initial map bootstrap reproduced the previously deferred SQLite write lock and
   produced two empty preparation responses. Scheduling/map request ordering and process-local job
@@ -128,6 +152,12 @@ real books. User real-use review and the required narrow independent ZCode revie
 - TOC parsing is deterministic but corpus-bounded to the frozen numbered forms above. A future
   heuristic/threshold change that alters an existing tree must follow the IDENTITY-tier path; the
   runtime guard will not silently apply it.
+- The Reader's `其他内容` classification is deliberately conservative and presentation-only. An
+  unfamiliar non-body root title may remain in the main list until observed in real material; fixing
+  that list does not remint or edit OutlineNodes.
+- A correction-cycle R2 run reproduced transient SQLite writer contention once; its complete rerun
+  passed. The recurrence remains a bounded reliability observation outside this directory-presentation
+  correction, not a claimed clean result.
 - Page labels remain UNKNOWN when a locally validated run cannot be established. OCR recognition
   errors are not guessed around; manual override is the supported recovery in this slice.
 - Pass 2 start-y/end-range resolution, RESOLVED transitions, body heading detection, exact deferred

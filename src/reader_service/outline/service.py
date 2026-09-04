@@ -16,7 +16,7 @@ from reader_service.library import LibraryService
 from .repository import OutlineRepository
 
 
-PARSER_VERSION = "toc-geometry-v1"
+PARSER_VERSION = "bookmark-depth-v2+toc-geometry-v1"
 _NODE_NAMESPACE = UUID("496c8afc-233d-4ccd-a2ce-c86ca4d060ac")
 _CHAPTER = re.compile(r"^第\s*(\d+)\s*章\s*(.+)$")
 _NUMBERED = re.compile(r"^[*＊]?\s*(\d+(?:\.\d+){1,2})\s+(.+)$")
@@ -287,7 +287,9 @@ class OutlineService:
         sibling_counts: dict[str | None, int] = {}
         seen_keys: dict[str, int] = {}
         for item in raw:
-            depth = min(max(int(item["depth"]), 0), 2)
+            # Bookmark depth is textbook evidence, not a display limit. Preserve it
+            # exactly so fourth-or-deeper body nodes keep their source hierarchy.
+            depth = max(int(item["depth"]), 0)
             parent_id = stack.get(depth - 1) if depth else None
             # An orphan cannot be silently attached to an invented parent.
             if depth and parent_id is None:

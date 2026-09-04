@@ -623,10 +623,10 @@ function renderOutline(payload) {
     values.sort((a, b) => a.order_index - b.order_index);
   }
 
-  function branch(parentId, depth) {
+  function branch(values, depth) {
     const list = document.createElement("ul");
-    list.className = `outline-level outline-level-${Math.min(depth, 2)}`;
-    for (const node of children.get(parentId || "ROOT") || []) {
+    list.className = `outline-level outline-level-${depth}`;
+    for (const node of values) {
       const item = document.createElement("li");
       item.dataset.nodeId = node.outline_node_id;
       const row = document.createElement("div");
@@ -659,7 +659,7 @@ function renderOutline(payload) {
       row.append(disclosure, target);
       item.append(row);
       if (descendants.length) {
-        const nested = branch(node.outline_node_id, depth + 1);
+        const nested = branch(descendants, depth + 1);
         nested.hidden = true;
         disclosure.addEventListener("click", () => {
           const opening = nested.hidden;
@@ -674,7 +674,12 @@ function renderOutline(payload) {
     return list;
   }
 
-  elements["outline-tree"].replaceChildren(branch(null, 0));
+  const roots = children.get("ROOT") || [];
+  const otherRoots = roots.filter(isAuxiliaryOutlineRoot);
+  const mainRoots = roots.filter((node) => !isAuxiliaryOutlineRoot(node));
+  const main = branch(mainRoots, 0);
+  if (otherRoots.length) main.append(makeAuxiliaryOutlineGroup(otherRoots, branch));
+  elements["outline-tree"].replaceChildren(main);
   elements["outline-empty"].hidden = nodes.length > 0;
   if (payload.identity_conflict) {
     elements["outline-status"].textContent = "检测到目录结构变化，已保留原有稳定目录，未自动覆盖。";
@@ -686,6 +691,32 @@ function renderOutline(payload) {
   } else {
     elements["outline-status"].textContent = "未发现可用的 PDF 书签或已准备目录页。";
   }
+}
+
+function isAuxiliaryOutlineRoot(node) {
+  const title = node.title.normalize("NFKC").replace(/[\s·•:：—_\-]/g, "");
+  return /^(?:封面|扉页|版权页|版权信息|本书配套资源介绍|配套资源介绍|前言|序言|序|致读者|王道训练营|目录|目次|参考文献|参考资料|索引|后记|附录.*)$/.test(title);
+}
+
+function makeAuxiliaryOutlineGroup(nodes, branch) {
+  const item = document.createElement("li");
+  item.className = "outline-other-group";
+  item.dataset.outlineGroup = "other";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "outline-other-toggle";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.innerHTML = `<span aria-hidden="true">▸</span><strong>其他内容</strong><small>${nodes.length} 项</small>`;
+  const nested = branch(nodes, 1);
+  nested.hidden = true;
+  toggle.addEventListener("click", () => {
+    const opening = nested.hidden;
+    nested.hidden = !opening;
+    toggle.querySelector("span").textContent = opening ? "▾" : "▸";
+    toggle.setAttribute("aria-expanded", String(opening));
+  });
+  item.append(toggle, nested);
+  return item;
 }
 
 function updatePrintedPageLabel() {

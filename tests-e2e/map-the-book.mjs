@@ -56,6 +56,18 @@ try {
     assert.equal(outline.evidence_source, target.source);
     assert.equal(outline.identity_conflict, false);
     assert.ok(outline.nodes.length >= 200, "real logical directory is unexpectedly incomplete");
+    const visibleRoots = page.locator("#outline-tree > .outline-level-0 > li");
+    if (pageCount === 348) {
+      assert.equal(await visibleRoots.count(), 8, "main directory should show seven chapters plus one auxiliary group");
+      assert.equal(await page.locator('#outline-tree > .outline-level-0 > li[data-node-id]').count(), 7);
+      const other = page.locator('[data-outline-group="other"]');
+      await other.getByText("其他内容", { exact: true }).waitFor();
+      assert.equal(await other.locator(":scope > ul").isHidden(), true, "auxiliary content should default collapsed");
+      assert.equal(await other.locator(":scope > ul > li").count(), 8);
+    } else {
+      assert.equal(await visibleRoots.count(), 7, "TOC-derived main directory should show its seven chapters");
+      assert.equal(await page.locator('[data-outline-group="other"]').count(), 0);
+    }
     assert.equal(labels.labels.length, pageCount, "printed labels are not represented per PDF page");
     assert.ok(labels.unknown_count > 0, "real corpus must preserve honest UNKNOWN pages");
     assert.ok(labels.inferred_count > pageCount / 2, "validated printed-label coverage is unexpectedly low");
@@ -68,6 +80,7 @@ try {
     assert.equal(targetNode.start_page, target.pdfPageIndex);
     assert.equal(targetNode.resolution_state, "PARTIAL");
     await expandAncestors(page, outline.nodes, targetNode);
+    assert.ok(targetNode.depth >= 2, "real-use target must exercise at least a third-level entry");
     await page.locator(`li[data-node-id="${targetNode.outline_node_id}"] > .outline-row .outline-target`).click();
     await page.waitForFunction(
       (number) => document.querySelector("#page-number").value === String(number),
