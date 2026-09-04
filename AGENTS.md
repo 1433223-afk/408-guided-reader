@@ -212,9 +212,10 @@ detailed future briefs ahead of need.
 
 ## 8. Current state
 
-Both blueprints are frozen at Gate D (2026-09-03). R1, R2 and R3 are closed. **Find in Book**
-(`docs/phases/FIND_IN_BOOK.md`) is the current independently named implemented slice and is
-`IMPLEMENTATION_READY` for user real-use review. Its READY-only OCR search and real-PDF page jump
-passed formal browser acceptance on both the 29-page sample and the complete 348-page textbook.
-Cross-version annotation round-trip remains a pending capability gap because OCR reprocessing does
-not exist. R4 is not authorized; derive the next Phase brief per §7.
+Both blueprints are frozen at Gate D (2026-09-03). R1, R2, R3 and Find in Book are closed; Find in
+Book passed user real-use acceptance 2026-09-04. **Map the Book** (`docs/phases/MAP_THE_BOOK.md`) is
+the current Phase brief — accepted 2026-09-04, awaiting implementation: Outline Pass 1 logical
+directory, printed-page mapping, and Reader navigation. Cross-version annotation round-trip remains a
+pending capability gap because OCR reprocessing does not exist. Map the Book does not authorize the
+rest of the frozen §24 R4 entry (Pass 2 physical resolution, layout detection **D-3**) or anything
+beyond its own scope; derive later briefs per §7.
