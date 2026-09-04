@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from reader_service.annotation import AnnotationService
 from reader_service.library import IntakeError, LibraryService
 from reader_service.jobs import PreparationCoordinator
+from reader_service.outline import OutlineService
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -29,6 +30,11 @@ _REVISION_PREPARATION_RETRY = re.compile(
 )
 _REVISION_OVERLAY = re.compile(r"^/api/revisions/([0-9a-f-]+)/overlay$")
 _REVISION_SEARCH = re.compile(r"^/api/revisions/([0-9a-f-]+)/search$")
+_REVISION_OUTLINE = re.compile(r"^/api/revisions/([0-9a-f-]+)/outline$")
+_REVISION_PAGE_LABELS = re.compile(r"^/api/revisions/([0-9a-f-]+)/page-labels$")
+_REVISION_PAGE_LABEL = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/page-labels/(\d+)$"
+)
 _REVISION_ANNOTATIONS = re.compile(r"^/api/revisions/([0-9a-f-]+)/annotations$")
 _REVISION_ANNOTATION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)$"
@@ -53,6 +59,7 @@ def handler_factory(
     project_root: Path | None = None,
     preparation: PreparationCoordinator | None = None,
     annotations: AnnotationService | None = None,
+    outline: OutlineService | None = None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -72,6 +79,34 @@ def handler_factory(
                 if not self._authorized():
                     return
                 self._json(HTTPStatus.OK, {"books": service.list_books()})
+                return
+            match = _REVISION_OUTLINE.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if outline is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Outline is unavailable"})
+                    return
+                try:
+                    result = outline.bootstrap(match.group(1))
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            match = _REVISION_PAGE_LABELS.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if outline is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Page labels are unavailable"})
+                    return
+                try:
+                    result = outline.page_label_snapshot(match.group(1))
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
                 return
             match = _REVISION_SEARCH.fullmatch(parsed.path)
             if match:
@@ -279,6 +314,26 @@ def handler_factory(
 
         def do_PUT(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            label_match = _REVISION_PAGE_LABEL.fullmatch(parsed.path)
+            if label_match:
+                if not self._authorized():
+                    return
+                if outline is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Page labels are unavailable"})
+                    return
+                try:
+                    payload = self._read_json()
+                    label = outline.set_manual_page_label(
+                        label_match.group(1), int(label_match.group(2)), payload["printed_label"]
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"page_label": label})
+                return
             match = _REVISION_POSITION.fullmatch(parsed.path)
             if not match:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -466,7 +521,11 @@ def handler_factory(
             previous = None
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
-                pages = coordinator.foundation.statuses(revision_id)
+                try:
+                    pages = coordinator.foundation.statuses(revision_id)
+                except LookupError:
+                    # The book may be deleted while an already-open SSE stream winds down.
+                    return
                 signature = tuple(
                     (page["pdf_page_index"], page["status"], page["prepared_at"], page["failure_code"])
                     for page in pages

@@ -47,6 +47,8 @@
           <button id="next-page" class="icon-button" aria-label="下一页">→</button>
           <span class="control-divider"></span>
           <output id="preparation-status" class="preparation-status">正在准备文字…</output>
+          <button id="printed-page-edit" class="printed-page" type="button" title="设置本页印刷页码"><span id="printed-page-label">印刷页未知</span></button>
+          <button id="outline-toggle" class="outline-toggle" type="button" aria-expanded="false" aria-label="目录" title="目录">目录</button>
           <button id="search-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="书内搜索" title="书内搜索">⌕</button>
           <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="本页标记" title="本页标记"><span aria-hidden="true">✦</span><span id="marks-count" class="marks-count" hidden>0</span></button>
           <span class="control-divider"></span>
@@ -58,6 +60,12 @@
       <div id="viewer" class="viewer" tabindex="0" aria-label="PDF 页面">
         <div id="pages" class="pages"></div>
       </div>
+      <aside id="outline-panel" class="outline-panel" aria-label="目录" hidden>
+        <div class="marks-panel-heading"><strong>目录</strong><button id="outline-close" type="button" aria-label="关闭目录">×</button></div>
+        <p id="outline-status" class="outline-status">正在读取教材目录…</p>
+        <nav id="outline-tree" class="outline-tree" aria-label="教材目录"></nav>
+        <p id="outline-empty" class="marks-empty">尚未从教材书签或目录页建立目录。</p>
+      </aside>
       <aside id="search-panel" class="search-panel" aria-label="书内搜索" hidden>
         <div class="marks-panel-heading"><strong>书内搜索</strong><button id="search-close" type="button" aria-label="关闭书内搜索">×</button></div>
         <form id="search-form" class="search-form"><input id="search-query" type="search" maxlength="120" placeholder="搜索总线、中断向量……" aria-label="搜索本书"><button type="submit">搜索</button></form>

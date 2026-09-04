@@ -209,6 +209,66 @@ MIGRATIONS = (
             ON annotations(book_source_revision_id, pdf_page_index, created_at, id);
         """,
     ),
+    (
+        6,
+        """
+        CREATE TABLE page_labels (
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            pdf_page_index INTEGER NOT NULL CHECK (pdf_page_index >= 0),
+            printed_label TEXT,
+            confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+            method TEXT NOT NULL CHECK (method IN ('INFERRED', 'MANUAL', 'NONE')),
+            evidence_ref TEXT,
+            PRIMARY KEY (book_source_revision_id, pdf_page_index)
+        );
+        CREATE INDEX ix_page_labels_revision_label
+            ON page_labels(book_source_revision_id, printed_label);
+
+        CREATE TABLE outline_nodes (
+            outline_node_id TEXT PRIMARY KEY,
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            identity_revision INTEGER NOT NULL DEFAULT 1 CHECK (identity_revision >= 1),
+            parent_id TEXT,
+            depth INTEGER NOT NULL CHECK (depth >= 0),
+            order_index INTEGER NOT NULL CHECK (order_index >= 0),
+            kind TEXT NOT NULL CHECK (kind IN (
+                'CHAPTER', 'SECTION', 'SUBSECTION', 'EXERCISES', 'ANSWERS',
+                'FRONT_MATTER', 'OTHER'
+            )),
+            title TEXT NOT NULL CHECK (length(title) > 0),
+            printed_label_hint TEXT,
+            start_page INTEGER CHECK (start_page IS NULL OR start_page >= 0),
+            start_y REAL CHECK (start_y IS NULL OR (start_y >= 0 AND start_y <= 1)),
+            end_page INTEGER CHECK (end_page IS NULL OR end_page >= 0),
+            end_y REAL CHECK (end_y IS NULL OR (end_y >= 0 AND end_y <= 1)),
+            resolution_state TEXT NOT NULL
+                CHECK (resolution_state IN ('UNRESOLVED', 'PARTIAL', 'RESOLVED')),
+            physical_revision INTEGER NOT NULL DEFAULT 1 CHECK (physical_revision >= 1),
+            confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+            evidence_json TEXT NOT NULL,
+            UNIQUE (book_source_revision_id, outline_node_id),
+            UNIQUE (book_source_revision_id, parent_id, order_index),
+            FOREIGN KEY (book_source_revision_id, parent_id)
+                REFERENCES outline_nodes(book_source_revision_id, outline_node_id)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX ix_outline_nodes_revision_order
+            ON outline_nodes(book_source_revision_id, depth, order_index);
+
+        CREATE TABLE outline_bootstrap_records (
+            book_source_revision_id TEXT PRIMARY KEY
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            parser_version TEXT NOT NULL,
+            evidence_source TEXT NOT NULL CHECK (evidence_source IN ('BOOKMARK', 'TOC')),
+            evidence_digest TEXT NOT NULL,
+            structure_digest TEXT NOT NULL,
+            last_conflict_digest TEXT,
+            committed_at TEXT NOT NULL
+        );
+        """,
+    ),
 )
 
 

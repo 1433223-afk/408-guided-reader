@@ -167,7 +167,7 @@ def test_r1_database_upgrade_initializes_existing_revision_at_foundation_version
         "SELECT foundation_version FROM book_source_revisions WHERE id = 'revision'"
     ).fetchone()[0] == 1
     assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [
-        (1,), (2,), (3,), (4,), (5,)
+        (version,) for version, _ in MIGRATIONS
     ]
     connection.close()
 

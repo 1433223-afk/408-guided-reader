@@ -233,7 +233,7 @@ def test_v5_style_migration_preserves_existing_annotation_and_ownership(tmp_path
     assert migrated == original
     assert connection.execute(
         "SELECT version FROM schema_migrations ORDER BY version"
-    ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
+    ).fetchall() == [(version,) for version, _ in MIGRATIONS]
     connection.execute(
         """
         INSERT INTO annotations(

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import threading
+from typing import TYPE_CHECKING
 
 from reader_service.foundation import FoundationService
 from reader_service.library import LibraryService
 
 from .repository import JobRepository
+
+if TYPE_CHECKING:
+    from reader_service.outline import OutlineService
 
 
 class PreparationCoordinator:
@@ -15,6 +19,7 @@ class PreparationCoordinator:
         foundation: FoundationService,
         jobs: JobRepository,
         worker_count: int = 1,
+        outline: "OutlineService | None" = None,
     ):
         if worker_count < 1 or worker_count > 4:
             raise ValueError("Worker count must be between 1 and 4")
@@ -22,8 +27,10 @@ class PreparationCoordinator:
         self.foundation = foundation
         self.jobs = jobs
         self.worker_count = worker_count
+        self.outline = outline
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._dispatch_lock = threading.Lock()
         self._threads: list[threading.Thread] = []
 
     def start(self) -> None:
@@ -51,11 +58,16 @@ class PreparationCoordinator:
         self, revision_id: str, visible_pages: set[int] | None = None, current_page: int = 0
     ) -> None:
         revision = self.foundation.ensure_revision(revision_id)
-        self.jobs.cancel_other_revisions(revision_id)
-        self.jobs.enqueue_pages(
-            revision_id, revision["page_count"], revision["foundation_version"]
-        )
-        self.jobs.prioritize(revision_id, visible_pages or {current_page}, current_page)
+        # Keep the worker from claiming a newly enqueued row between enqueue and
+        # the priority update. This is process-local scheduling coordination, not
+        # a second persistence authority.
+        with self._dispatch_lock:
+            self.jobs.cancel_other_revisions(revision_id)
+            self.jobs.enqueue_pages(
+                revision_id, revision["page_count"], revision["foundation_version"]
+            )
+            self.jobs.prioritize(revision_id, visible_pages or {current_page}, current_page)
+        self._refresh_map(revision_id)
         self._wake.set()
 
     def cancel_revision(self, revision_id: str) -> None:
@@ -82,7 +94,8 @@ class PreparationCoordinator:
 
     def _run(self) -> None:
         while not self._stop.is_set():
-            job = self.jobs.claim()
+            with self._dispatch_lock:
+                job = self.jobs.claim()
             if job is None:
                 self._wake.wait(0.25)
                 self._wake.clear()
@@ -92,5 +105,19 @@ class PreparationCoordinator:
                 if self._stop.is_set() or self.jobs.cancellation_requested(job["id"]):
                     cancelled = True
                     break
-                self.foundation.prepare_page(job["book_source_revision_id"], page_index)
+                status = self.foundation.prepare_page(job["book_source_revision_id"], page_index)
+                if status == "READY" and (
+                    page_index < 20 or page_index % 16 == 15
+                ):
+                    self._refresh_map(job["book_source_revision_id"])
             self.jobs.complete(job["id"], cancelled=cancelled)
+
+    def _refresh_map(self, revision_id: str) -> None:
+        if self.outline is None:
+            return
+        try:
+            self.outline.bootstrap(revision_id)
+        except Exception as exc:
+            # Mapping is an optional capability. PDF/OCR publication remains valid and
+            # a later API/bootstrap attempt can retry; never expose source text or paths.
+            print(f"Map bootstrap failed for revision {revision_id}: {type(exc).__name__}")

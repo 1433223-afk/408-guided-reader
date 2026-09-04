@@ -16,11 +16,11 @@ from conftest import make_pdf
 
 
 @contextmanager
-def running_server(service, annotations=None, preparation=None):
+def running_server(service, annotations=None, preparation=None, outline=None):
     token = "test-launch-token"
     server = ReaderServer(
         ("127.0.0.1", 0), handler_factory(
-            service, token, annotations=annotations, preparation=preparation
+            service, token, annotations=annotations, preparation=preparation, outline=outline
         )
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -201,3 +201,31 @@ def test_annotation_api_resolves_runtime_selection_and_persists_durable_anchor(s
             f"{base}/api/revisions/{revision['id']}/annotations?page=0", token
         )
         assert listed == {"annotations": []}
+
+
+def test_outline_and_manual_page_label_api(service):
+    from reader_service.foundation import PageLabelRepository, PageLabelService
+    from reader_service.outline import OutlineRepository, OutlineService
+
+    pdf = make_pdf(((612, 792), (612, 792)))
+    imported = service.intake(BytesIO(pdf), content_length=len(pdf), filename="map-api.pdf")
+    revision_id = imported["book"]["active_revision"]["id"]
+    labels = PageLabelService(service, PageLabelRepository(service.database))
+    outline = OutlineService(service, OutlineRepository(service.database), labels)
+    with running_server(service, outline=outline) as (base, token):
+        status, tree = request_json(f"{base}/api/revisions/{revision_id}/outline", token)
+        assert status == 200
+        assert tree["nodes"] == []
+
+        body = json.dumps({"printed_label": "封二"}).encode()
+        status, saved = request_json(
+            f"{base}/api/revisions/{revision_id}/page-labels/1",
+            token,
+            method="PUT",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        assert status == 200
+        assert saved["page_label"]["method"] == "MANUAL"
+        _, snapshot = request_json(f"{base}/api/revisions/{revision_id}/page-labels", token)
+        assert snapshot["labels"][1]["printed_label"] == "封二"

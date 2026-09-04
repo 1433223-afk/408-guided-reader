@@ -7,7 +7,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "selection-actions", "copy-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "selection-actions", "copy-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -25,6 +25,7 @@ const state = {
   preparation: new Map(), overlayData: new Map(), eventSource: null,
   annotationData: new Map(), selection: null, selecting: false, selectionMenuPoint: null,
   searchRequest: 0, searchMatch: null,
+  outlineRequest: 0, outlineNodes: [], pageLabels: new Map(), mapTimer: 0,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -183,7 +184,8 @@ async function openBook(book) {
     await nextFrame();
     applyRestoredPosition();
     scheduleViewportUpdate();
-    startPreparation();
+    await startPreparation();
+    await loadBookMap();
   } catch (_error) {
     announce("无法打开这份 PDF，请重试。", true);
   }
@@ -201,10 +203,16 @@ function closeReader() {
   elements.reader.hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-panel"].hidden = true;
+  elements["outline-panel"].hidden = true;
+  elements["outline-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
   elements["library-home"].hidden = false;
   elements.pages.replaceChildren();
+  state.outlineRequest += 1;
+  state.outlineNodes = [];
+  state.pageLabels.clear();
+  clearTimeout(state.mapTimer);
   renderLibrary();
 }
 
@@ -395,6 +403,7 @@ function setCurrentPage(index) {
   state.currentPage = Math.max(0, Math.min(index, (state.revision?.page_count || 1) - 1));
   elements["page-number"].value = String(state.currentPage + 1);
   updateMarksPanel();
+  updatePrintedPageLabel();
 }
 
 function goToPage(index, offset = 0) {
@@ -579,6 +588,137 @@ function coverageText(coverage) {
   if (coverage.complete) return `已检索全书 ${coverage.total_pages} 页`;
   const suffix = failed ? `，其中 ${failed} 页准备失败` : "";
   return `已检索 ${coverage.ready_pages} / ${coverage.total_pages} 页，其余页面仍在准备${suffix}`;
+}
+
+async function loadBookMap() {
+  const revisionId = state.revision?.id;
+  if (!revisionId) return;
+  const request = ++state.outlineRequest;
+  elements["outline-status"].textContent = "正在读取教材目录…";
+  try {
+    const outline = await api(`/api/revisions/${revisionId}/outline`);
+    const labels = outline.page_labels;
+    if (request !== state.outlineRequest || state.revision?.id !== revisionId) return;
+    state.outlineNodes = outline.nodes;
+    state.pageLabels = new Map(labels.labels.map((row) => [row.pdf_page_index, row]));
+    renderOutline(outline);
+    updatePrintedPageLabel();
+  } catch (_error) {
+    if (request !== state.outlineRequest) return;
+    elements["outline-status"].textContent = "目录暂时不可用，可以稍后重试。";
+    elements["outline-empty"].hidden = false;
+    updatePrintedPageLabel();
+  }
+}
+
+function renderOutline(payload) {
+  const nodes = payload.nodes || [];
+  const children = new Map();
+  for (const node of nodes) {
+    const key = node.parent_id || "ROOT";
+    if (!children.has(key)) children.set(key, []);
+    children.get(key).push(node);
+  }
+  for (const values of children.values()) {
+    values.sort((a, b) => a.order_index - b.order_index);
+  }
+
+  function branch(parentId, depth) {
+    const list = document.createElement("ul");
+    list.className = `outline-level outline-level-${Math.min(depth, 2)}`;
+    for (const node of children.get(parentId || "ROOT") || []) {
+      const item = document.createElement("li");
+      item.dataset.nodeId = node.outline_node_id;
+      const row = document.createElement("div");
+      row.className = "outline-row";
+      const descendants = children.get(node.outline_node_id) || [];
+      const disclosure = document.createElement("button");
+      disclosure.type = "button";
+      disclosure.className = "outline-disclosure";
+      disclosure.textContent = descendants.length ? "▸" : "";
+      disclosure.disabled = !descendants.length;
+      disclosure.setAttribute("aria-label", descendants.length ? "折叠此目录项" : "没有下级目录");
+
+      const target = document.createElement("button");
+      target.type = "button";
+      target.className = "outline-target";
+      target.disabled = node.start_page === null;
+      const title = document.createElement("span");
+      title.textContent = node.title;
+      const meta = document.createElement("small");
+      meta.textContent = node.start_page === null
+        ? (node.printed_label_hint ? `印刷页 ${node.printed_label_hint} · 位置未知` : "位置未知")
+        : (node.printed_label_hint ? `印刷页 ${node.printed_label_hint}` : `PDF 第 ${node.start_page + 1} 页`);
+      target.append(title, meta);
+      if (node.start_page !== null) {
+        target.addEventListener("click", () => {
+          goToPage(node.start_page);
+          elements.viewer.focus({ preventScroll: true });
+        });
+      }
+      row.append(disclosure, target);
+      item.append(row);
+      if (descendants.length) {
+        const nested = branch(node.outline_node_id, depth + 1);
+        nested.hidden = true;
+        disclosure.addEventListener("click", () => {
+          const opening = nested.hidden;
+          nested.hidden = !opening;
+          disclosure.textContent = opening ? "▾" : "▸";
+          disclosure.setAttribute("aria-label", opening ? "折叠此目录项" : "展开此目录项");
+        });
+        item.append(nested);
+      }
+      list.append(item);
+    }
+    return list;
+  }
+
+  elements["outline-tree"].replaceChildren(branch(null, 0));
+  elements["outline-empty"].hidden = nodes.length > 0;
+  if (payload.identity_conflict) {
+    elements["outline-status"].textContent = "检测到目录结构变化，已保留原有稳定目录，未自动覆盖。";
+  } else if (nodes.length) {
+    const source = payload.evidence_source === "BOOKMARK" ? "PDF 内嵌书签" : "教材目录页";
+    elements["outline-status"].textContent = `依据：${source} · ${nodes.length} 项`;
+  } else if (payload.waiting_for_toc_completion) {
+    elements["outline-status"].textContent = "已发现目录页，正在等待连续目录页准备完成。";
+  } else {
+    elements["outline-status"].textContent = "未发现可用的 PDF 书签或已准备目录页。";
+  }
+}
+
+function updatePrintedPageLabel() {
+  const row = state.pageLabels.get(state.currentPage);
+  elements["printed-page-label"].textContent = row?.printed_label
+    ? `印刷页 ${row.printed_label}`
+    : "印刷页未知";
+  elements["printed-page-edit"].title = row?.method === "MANUAL"
+    ? "本页使用手工印刷页码；点击修改"
+    : "设置本页印刷页码";
+}
+
+async function editPrintedPageLabel() {
+  if (!state.revision) return;
+  const current = state.pageLabels.get(state.currentPage)?.printed_label || "";
+  const value = window.prompt(`设置 PDF 第 ${state.currentPage + 1} 页对应的印刷页码`, current);
+  if (value === null) return;
+  const printedLabel = value.trim();
+  if (!printedLabel) {
+    announce("印刷页码不能为空；未知页会保持“印刷页未知”。", true);
+    return;
+  }
+  try {
+    await api(`/api/revisions/${state.revision.id}/page-labels/${state.currentPage}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ printed_label: printedLabel }),
+    });
+    await loadBookMap();
+    announce("本页印刷页码已手工保存。");
+  } catch (_error) {
+    announce("印刷页码未保存，请重试。", true);
+  }
 }
 
 async function runSearch() {
@@ -1102,11 +1242,32 @@ elements["page-number"].addEventListener("keydown", (event) => {
 elements["zoom-out"].addEventListener("click", () => setZoom(adjacentZoom(-1)));
 elements["zoom-in"].addEventListener("click", () => setZoom(adjacentZoom(1)));
 elements["back-to-library"].addEventListener("click", returnToLibrary);
+elements["printed-page-edit"].addEventListener("click", editPrintedPageLabel);
+elements["outline-toggle"].addEventListener("click", async () => {
+  const opening = elements["outline-panel"].hidden;
+  elements["outline-panel"].hidden = !opening;
+  elements["outline-toggle"].setAttribute("aria-expanded", String(opening));
+  if (opening) {
+    elements["search-panel"].hidden = true;
+    elements["marks-panel"].hidden = true;
+    elements["search-toggle"].setAttribute("aria-expanded", "false");
+    elements["marks-toggle"].setAttribute("aria-expanded", "false");
+    state.searchRequest += 1;
+    clearSearchMatch();
+    await loadBookMap();
+  }
+});
+elements["outline-close"].addEventListener("click", () => {
+  elements["outline-panel"].hidden = true;
+  elements["outline-toggle"].setAttribute("aria-expanded", "false");
+});
 elements["search-toggle"].addEventListener("click", () => {
   const opening = elements["search-panel"].hidden;
   elements["search-panel"].hidden = !opening;
   elements["search-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    elements["outline-panel"].hidden = true;
+    elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-panel"].hidden = true;
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
     runSearch();
@@ -1140,6 +1301,8 @@ elements["marks-toggle"].addEventListener("click", () => {
   elements["marks-panel"].hidden = !opening;
   elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    elements["outline-panel"].hidden = true;
+    elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["search-panel"].hidden = true;
     elements["search-toggle"].setAttribute("aria-expanded", "false");
     state.searchRequest += 1;

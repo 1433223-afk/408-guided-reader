@@ -9,9 +9,15 @@ from pathlib import Path
 
 from reader_service.annotation import AnnotationRepository, AnnotationService
 from reader_service.library import LibraryService
-from reader_service.foundation import FoundationRepository, FoundationService
+from reader_service.foundation import (
+    FoundationRepository,
+    FoundationService,
+    PageLabelRepository,
+    PageLabelService,
+)
 from reader_service.foundation.rapidocr_adapter import RapidOcrEngine
 from reader_service.jobs import JobRepository, PreparationCoordinator
+from reader_service.outline import OutlineRepository, OutlineService
 from reader_service.server import ReaderServer, handler_factory
 from reader_service.storage import ManagedPaths
 
@@ -45,17 +51,22 @@ def main() -> None:
         RapidOcrEngine,
         render_dpi=args.render_dpi,
     )
+    page_labels = PageLabelService(service, PageLabelRepository(service.database))
+    outline = OutlineService(service, OutlineRepository(service.database), page_labels)
     preparation = PreparationCoordinator(
         service,
         foundation,
         JobRepository(service.database),
         worker_count=args.prepare_workers,
+        outline=outline,
     )
     annotations = AnnotationService(foundation, AnnotationRepository(service.database))
     preparation.start()
     server = ReaderServer(
         (args.host, args.port),
-        handler_factory(service, token, preparation=preparation, annotations=annotations),
+        handler_factory(
+            service, token, preparation=preparation, annotations=annotations, outline=outline
+        ),
     )
     host, port = server.server_address[:2]
     url = f"http://{host}:{port}/"
