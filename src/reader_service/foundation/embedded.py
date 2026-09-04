@@ -15,6 +15,25 @@ class EmbeddedProbe:
 def probe_embedded_text(page, width: float, height: float) -> EmbeddedProbe:
     """Conservatively accept positioned embedded text; otherwise return no evidence."""
 
+    # PDFium character boxes are in PDF user space.  The simple conversion below
+    # is exact only for an unrotated effective page box whose origin is (0, 0).
+    # Falling back to rendered-page OCR is preferable to publishing a plausible
+    # but misplaced overlay for every other case.
+    try:
+        left, bottom, right, top = map(float, page.get_bbox())
+        rotation = int(page.get_rotation()) % 360
+    except Exception:
+        return EmbeddedProbe(False, ())
+    tolerance = 1e-4
+    if (
+        rotation != 0
+        or abs(left) > tolerance
+        or abs(bottom) > tolerance
+        or abs((right - left) - width) > tolerance
+        or abs((top - bottom) - height) > tolerance
+    ):
+        return EmbeddedProbe(False, ())
+
     text_page = page.get_textpage()
     count = text_page.count_chars()
     if count == 0:
@@ -35,8 +54,9 @@ def probe_embedded_text(page, width: float, height: float) -> EmbeddedProbe:
             continue
         if right > left and top > bottom:
             positioned += 1
-            # PDFium exposes bottom-left PDF coordinates. Foundation is normalized
-            # top-left display space, matching the rendered page image and Reader.
+            # This branch is guarded above: PDFium exposes bottom-left PDF
+            # coordinates on an unrotated, zero-origin effective page box.
+            # Foundation is normalized top-left display space.
             characters.append(
                 (
                     character,

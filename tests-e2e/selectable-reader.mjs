@@ -114,6 +114,59 @@ try {
   assert.equal(completed.jobs.RUNNING, 0);
   assert.equal(completed.jobs.QUEUED, 0);
 
+  // Real TOC pages contain separately detected number/title fragments on the
+  // same visual row.  Selection must hit the number by both axes, preserve the
+  // left-to-right reading order, and expose a native DOM range for the normal
+  // browser context-menu copy path.
+  await page.reload();
+  await page.locator(".book-card").click();
+  await page.locator("#page-number").fill("12");
+  await page.locator("#page-number").press("Enter");
+  await page.locator('.page[data-index="11"] canvas').waitFor({ state: "visible", timeout: 30_000 });
+  await page.locator('.page[data-index="11"] .text-overlay').waitFor({ state: "attached", timeout: 15_000 });
+  const tocOverlay = await page.evaluate(async ({ revisionId }) => (
+    await (await fetch(`/api/revisions/${revisionId}/overlay?page=11`)).json()
+  ).page, { revisionId });
+  const numberLine = tocOverlay.lines
+    .filter((candidate) => /^\d+\.\d+\.\d+$/.test(candidate.text) && candidate.cells.length)
+    .sort((left, right) => Math.abs(centerY(left.quad) - 0.378) - Math.abs(centerY(right.quad) - 0.378))[0];
+  assert.ok(numberLine, "real TOC page did not expose a selectable dotted section number");
+  const numberBounds = bounds(numberLine.quad);
+  const titleLine = tocOverlay.lines.find((candidate) => {
+    if (candidate === numberLine) return false;
+    const candidateBounds = bounds(candidate.quad);
+    const overlap = Math.min(numberBounds.y1, candidateBounds.y1) - Math.max(numberBounds.y0, candidateBounds.y0);
+    return overlap > 0 && candidateBounds.x0 > numberBounds.x0;
+  });
+  assert.ok(titleLine, "real TOC number did not have the expected same-row title fragment");
+  assert.ok(numberLine.line_ordinal < titleLine.line_ordinal, "same-row TOC fragments were not ordered left-to-right");
+
+  const tocPageBox = await page.locator('.page[data-index="11"]').boundingBox();
+  const numberCell = numberLine.cells[0];
+  const numberY = tocPageBox.y + ((numberBounds.y0 + numberBounds.y1) / 2) * tocPageBox.height;
+  const numberStartX = tocPageBox.x + numberCell[0] * tocPageBox.width;
+  const numberEndX = tocPageBox.x + numberLine.cells.at(-1)[1] * tocPageBox.width;
+  await page.mouse.move(numberStartX, numberY);
+  await page.mouse.down();
+  await page.mouse.move(numberEndX, numberY, { steps: 8 });
+  await page.mouse.up();
+  const nativeText = await page.evaluate(() => window.getSelection().toString());
+  assert.equal(nativeText, numberLine.text, "precise TOC selection included an adjacent fragment");
+  const contextState = await page.evaluate(({ x, y }) => {
+    const overlay = document.querySelector('.page[data-index="11"] .text-overlay');
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: x, clientY: y,
+    });
+    overlay.dispatchEvent(event);
+    return { text: window.getSelection().toString(), defaultPrevented: event.defaultPrevented };
+  }, { x: (numberStartX + numberEndX) / 2, y: numberY });
+  assert.equal(contextState.text, numberLine.text, "right-click did not preserve the native text selection");
+  assert.equal(contextState.defaultPrevented, false, "selected text replaced the browser context menu");
+  await page.keyboard.press("Control+C");
+  const tocClipboard = await page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(tocClipboard, numberLine.text, "TOC copy included an adjacent title fragment");
+  await page.screenshot({ path: path.join(artifacts, "r2-precise-toc-selection.png"), fullPage: false });
+
   console.log(JSON.stringify({
     result: "PASS",
     pagesReady: completed.pages.length,
@@ -122,6 +175,8 @@ try {
     selectedLine: line.line_ordinal,
     selectedCellCount: chosen.length,
     copiedCharacterCount: [...clipboard].length,
+    preciseTocSelection: numberLine.text,
+    contextMenuUsesNativeSelection: true,
     screenshot: path.join(artifacts, "r2-selectable-page-29.png"),
   }));
 } finally {
@@ -151,6 +206,17 @@ async function waitForPreparation(page, revisionId, predicate, timeout) {
 
 function requireExists(candidate) {
   return os.platform() === "win32" && process.getBuiltinModule("node:fs").existsSync(candidate);
+}
+
+function bounds(quad) {
+  const xs = quad.map(([x]) => x);
+  const ys = quad.map(([, y]) => y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+function centerY(quad) {
+  const value = bounds(quad);
+  return (value.y0 + value.y1) / 2;
 }
 
 function readyUrl(child) {

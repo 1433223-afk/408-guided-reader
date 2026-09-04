@@ -4,7 +4,8 @@
 
 `IMPLEMENTATION_READY` — scanned textbook pages prepare progressively in the background. A prepared
 page gains a line/cell overlay that supports pointer hit-testing, mouse or keyboard range extension,
-cross-line selection, and normal browser copy. The original PDF canvas remains the only reading
+cross-line selection, native DOM text selection, and normal keyboard or context-menu browser copy.
+The original PDF canvas remains the only reading
 surface and continues rendering, scrolling, zooming, and navigating before preparation finishes or
 when one page fails.
 
@@ -13,9 +14,10 @@ including a real process-kill/restart run. The frozen ~700-page criterion is sti
 that material has not been supplied; sustained preparation and recovery at full-book scale remain
 pending.
 
-The implementation is `READY_FOR_NARROW_ZCODE_REVIEW`. That review has not been run. Its scope remains
-exactly the R2 brief's three load-bearing contracts: storage/geometry shape, the anti-fragment
-invariant, and the OCR adapter boundary.
+The narrow independent ZCode review was completed. Its P1 finding about unsafe EMBEDDED geometry on
+rotated or non-zero-origin effective page boxes was independently reproduced and corrected. Its P2
+observation that `static/geometry.js` is not yet the live single conversion authority remains
+non-blocking deferred debt; the correction did not require a broad geometry refactor.
 
 ## Implemented
 
@@ -40,8 +42,36 @@ invariant, and the OCR adapter boundary.
 - Same-origin per-page status SSE and overlay JSON. Prepared visible pages gain selection immediately;
   failed pages show a retry control without covering or disabling the PDF.
 - Reader selection resolves pointer positions to nearest cell boundaries, represents cross-line
-  selections as per-line ranges, draws normalized quads, and writes the resolved text to the browser
-  clipboard. Reload reconstructs geometry from persisted lines.
+  selections as per-line ranges, draws normalized quads, and exposes the same range as transparent
+  native DOM text. Keyboard copy and the browser's normal context-menu copy path both receive the
+  resolved OCR text. Reload reconstructs geometry from persisted lines.
+- Hit-testing uses two-dimensional distance to the line's actual selectable cell extent. Strongly
+  overlapping OCR fragments on one visual row are ordered left-to-right before the next row. This
+  keeps separately detected TOC numbers and titles independently selectable without changing cell
+  persistence or identity.
+- The EMBEDDED route is now deliberately conservative: it accepts only unrotated, zero-origin
+  effective page boxes whose dimensions match the page coordinate space. Rotation, non-zero origin,
+  or an indeterminate box falls back to rendered-page OCR rather than publishing suspect geometry.
+
+## Correction findings from real use and narrow review
+
+- Manual use found that TOC numbers such as `6.2.1` could not reliably be selected without adjacent
+  title text. Inspection of the real persisted page showed `6.2.1` was already a legitimate anonymous
+  five-character token-cell in its own `OCRLine`; increasing storage granularity was not the answer.
+  The number and title were separate, vertically overlapping lines. Y-only line hit-testing always
+  preferred whichever appeared first, while a sub-pixel top-edge difference could also put the title
+  before the number in reading order. The correction uses cell-aware 2D distance and visual-row
+  left-to-right ordering.
+- Manual use also found that the blue custom range had no corresponding DOM `Selection`, so the
+  browser treated the page as canvas imagery and offered screenshot/image behavior. OCR line text now
+  lives in a transparent native text layer; every resolved custom range is mirrored into a DOM Range.
+  Right-click inside the selected geometry refreshes that native range without cancelling or replacing
+  the browser's context menu, while right-click elsewhere retains the original PDF Reader behavior.
+- ZCode's P1 was correct. The accepted EMBEDDED conversion divided PDF user-space coordinates by
+  page width/height without subtracting the effective box origin or applying rotation. Such pages
+  could look plausible enough to pass the probe while their overlay was wrong. The smallest reliable
+  fix is conservative fallback OCR for those coordinate spaces, covered by real PDFium synthetic
+  regressions rather than mocks.
 
 ## Important implementation decisions
 
@@ -57,24 +87,34 @@ invariant, and the OCR adapter boundary.
   transition. This prevents navigation/status reconnects from causing an unbounded retry loop.
 - Replacing a book's active source cancels pending work for superseded sibling revisions. Deleting a
   book cancels every revision's pending work before Library removal.
+- Migration 3 performs one pre-anchor R2 compatibility reset for active machine-layer data: old
+  lines are removed and existing page jobs are requeued at `foundation_version = 1`. This is not a
+  reusable reprocessing/version-bump workflow. It is a bounded correction while no annotation or
+  source-anchor assets exist, and leaves the original PDF, Library identity, and reading position
+  untouched.
 
 ## Deviations from Spec
 
-None in implemented scope. Corrections, reprocessing/version bumps, cross-version anchoring,
+None in implemented scope. General corrections, reprocessing/version bumps, cross-version anchoring,
 highlights, notes, Outline, other job types, layout regions, printed labels, and AI remain absent.
+Cross-page continuous selection is a required Reader capability but remains deferred because it is
+not a small extension of the current page-scoped pointer-capture and range model.
 
 ## Acceptance evidence
 
-- `pytest` without external material: **22 passed, 2 skipped**. Covers the R1 suite plus R1→R2
+- `pytest` without external material: **25 passed, 2 skipped**. Covers the R1 suite plus R1→R2
   migration, version baseline, schema-enforced anonymous cells, trustworthy embedded routing,
   persisted selection-geometry reload, deterministic column reading order, page failure isolation,
-  explicit retry, priority, single-winner claim, and recovery that skips a ready page.
+  explicit retry, priority, single-winner claim, and recovery that skips a ready page. The correction
+  adds visual-row fragment ordering, the one-time pre-anchor invalidation, and synthetic rotated plus
+  non-zero-origin EMBEDDED fallback regressions.
 - `pytest tests/test_real_ocr_acceptance.py` with both external hash-verified PDFs: **2 passed**. It ran
   the inherited nine real pages (DMA indices 0/5/7/8/9/15/16; Primary indices 0/4) and asserted
   structural line/quad/cell/selectability properties only — never exact OCR strings. Primary SHA-256:
   `327da74eef4c0ee7ad0fb3bf4752907f71dff9c2d9877faf49d1b3201c7e0aa1`; DMA SHA-256:
   `6cae19dfe20fc35dc3a61f2625a4cfcd6850a7e92a7dd44afbb43414bd6dcdc6`.
-- `npm test`: **28 passed**. Includes R1 normalized PDF geometry plus cell-boundary hit-testing,
+- `npm test`: **29 passed**. Includes R1 normalized PDF geometry plus two-dimensional selectable
+  extent hit-testing for overlapping same-row fragments, cell-boundary hit-testing,
   forward/backward cross-line range resolution, copied text, and normalized quad construction.
 - `npm run test:e2e`: **PASS** on installed Chrome with the 29-page Primary scan, preserving the full
   R1 import/read/virtualize/zoom/position/reopen/delete flow while background OCR ran.
@@ -83,15 +123,22 @@ highlights, notes, Outline, other job types, layout regions, printed labels, and
   state), selected five real cells across six characters, copied the resolved text through the system
   clipboard, reloaded the page from persisted geometry, and required all 29 pages/jobs to finish
   `READY`/`SUCCEEDED`. All 29 pages correctly used the OCR route because the sample has no embedded
-  text. The captured selection visually aligns with the printed page-header glyphs.
+  text. It then reloaded again, opened real TOC page 12, selected only `6.2.1` from a separately
+  detected number/title row, verified the native DOM selection and clipboard contained only that
+  number, and verified the context-menu event preserved the native selection without suppressing the
+  browser menu. Both captured selections visually align with the printed glyphs.
 - `npm run test:e2e:recovery`: **PASS** against the same real scan. The service was killed with two
   pages committed and one page in flight; after restart the ready count stayed **2 → 2**, preparation
   reached **29/29**, exactly one batch was redone, and maximum job attempts was **2**.
 - A deliberately failing page-preparation path produced `READY / FAILED / READY` across three pages;
   the original PDF bytes remained servable. The browser failure state adds a retry button rather than
   replacing the canvas.
-- The final R2 screenshot was visually inspected. The translucent range sits on the expected printed
-  glyphs and the copy confirmation is visible.
+- The final R2 screenshots were visually inspected. The page-29 range sits on the expected printed
+  glyphs, and the TOC screenshot shows a tight native selection around only `6.2.1`, with the adjacent
+  title unselected. The copy confirmation is visible.
+- The user's existing 29-page Library record was upgraded in place on the live `8766` service. It
+  retained the original PDF and 80% reading zoom, re-prepared 29/29 pages, and exposed the corrected
+  page-12 number-before-title text order.
 - `pip check` still reports the pre-existing, unrelated system-wide `httpcore2` requirement for
   `h11>=0.16` against installed `h11 0.14.0`. R2 imports neither package; this is not recorded as a
   clean environment result.
@@ -107,8 +154,13 @@ highlights, notes, Outline, other job types, layout regions, printed labels, and
 - The measured render-DPI curve below 200 DPI, cross-engine-version geometry stability, watermark
   contamination, and rotated in-figure OCR errors remain the Frozen Core's recorded residual unknowns.
   None is silently redesigned in R2.
-- Selection is page-scoped. Cross-line ranges on one page are supported; dragging one selection across
-  a PDF page boundary is not part of this slice.
+- Selection is page-scoped. Cross-line ranges on one page are supported. Continuous dragging across a
+  PDF page boundary is **required but deferred**, not optional and not permanently unsupported; it
+  needs a multi-page selection owner beyond the current per-overlay pointer-capture model and was not
+  pulled into this narrow correction.
+- `static/geometry.js` remains the tested normalized PDF/viewport conversion module but is not yet the
+  live single authority for Foundation's server-side EMBEDDED conversion. This ZCode P2 is non-blocking;
+  the P1 is contained by conservative OCR fallback rather than a broad geometry architecture change.
 - OCR correction/error-report workflow and foundation-version bumps remain deferred to their own
   authorized slice.
 

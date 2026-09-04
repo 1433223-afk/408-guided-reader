@@ -106,6 +106,33 @@ MIGRATIONS = (
             ON jobs(status, cancel_requested, priority DESC, created_at);
         """,
     ),
+    (
+        3,
+        """
+        -- R2 pre-anchor compatibility reset.  Earlier prepared geometry used a
+        -- Y-only hit-test reading order and an unsafe embedded-text transform.
+        -- No user anchor assets exist yet, so invalidate only the active
+        -- machine layer and reuse the baseline foundation version.
+        DELETE FROM ocr_lines
+        WHERE book_source_revision_id IN (
+            SELECT id FROM book_source_revisions WHERE status = 'ACTIVE'
+        );
+
+        UPDATE ocr_pages
+        SET status = 'NOT_PREPARED', route = NULL, engine_profile = NULL,
+            confidence = NULL, prepared_at = NULL, failure_code = NULL
+        WHERE book_source_revision_id IN (
+            SELECT id FROM book_source_revisions WHERE status = 'ACTIVE'
+        );
+
+        UPDATE jobs
+        SET status = 'QUEUED', priority = 0, cancel_requested = 0, attempts = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE book_source_revision_id IN (
+            SELECT id FROM book_source_revisions WHERE status = 'ACTIVE'
+        );
+        """,
+    ),
 )
 
 

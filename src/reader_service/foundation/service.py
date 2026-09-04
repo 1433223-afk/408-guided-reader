@@ -85,7 +85,7 @@ class FoundationService:
             if embedded.trustworthy:
                 page.close()
                 document.close()
-                return "EMBEDDED", "embedded-positioned-text:v1", list(embedded.lines)
+                return "EMBEDDED", "embedded-positioned-text:v2", list(embedded.lines)
             bitmap = page.render(scale=self.render_dpi / 72)
             image = bitmap.to_numpy().copy()
             bitmap.close()

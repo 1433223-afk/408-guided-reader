@@ -653,12 +653,15 @@ async function ensureOverlay(index) {
     marker.className = "ocr-line";
     marker.dataset.lineOrdinal = String(line.line_ordinal);
     marker.style.cssText = `left:${bounds.x0 * 100}%;top:${bounds.y0 * 100}%;width:${(bounds.x1 - bounds.x0) * 100}%;height:${(bounds.y1 - bounds.y0) * 100}%`;
+    marker.textContent = line.text;
+    marker.setAttribute("aria-hidden", "true");
     overlay.append(marker);
   }
   overlay.addEventListener("pointerdown", beginSelection);
   overlay.addEventListener("pointermove", extendSelection);
   overlay.addEventListener("pointerup", finishSelection);
   overlay.addEventListener("pointercancel", finishSelection);
+  overlay.addEventListener("contextmenu", preserveTextSelectionForContextMenu);
   wrapper.append(overlay);
 }
 
@@ -669,7 +672,7 @@ function selectionPoint(event, overlay) {
   const rect = overlay.getBoundingClientRect();
   const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
   const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
-  const line = nearestLine(data.lines, y);
+  const line = nearestLine(data.lines, x, y);
   return { pageIndex: index, lineOrdinal: line.line_ordinal, boundary: nearestCellBoundary(line, x) };
 }
 
@@ -716,10 +719,42 @@ function renderSelection() {
       overlay.append(marker);
     }
   }
+  syncNativeSelection(overlay);
+}
+
+function syncNativeSelection(overlay) {
+  const nativeSelection = window.getSelection();
+  nativeSelection.removeAllRanges();
+  if (!state.selection?.resolved.length) return;
+  const first = state.selection.resolved[0];
+  const last = state.selection.resolved.at(-1);
+  const start = overlay.querySelector(`.ocr-line[data-line-ordinal="${first.line_ordinal}"]`)?.firstChild;
+  const end = overlay.querySelector(`.ocr-line[data-line-ordinal="${last.line_ordinal}"]`)?.firstChild;
+  if (!start || !end) return;
+  const range = document.createRange();
+  range.setStart(start, first.char_start);
+  range.setEnd(end, last.char_end);
+  nativeSelection.addRange(range);
+}
+
+function preserveTextSelectionForContextMenu(event) {
+  if (!state.selection?.resolved.length) return;
+  const overlay = event.currentTarget;
+  const rect = overlay.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+  const inside = state.selection.resolved.some((range) => range.quads.some((quad) => {
+    const xs = quad.map(([value]) => value);
+    const ys = quad.map(([, value]) => value);
+    return x >= Math.min(...xs) && x <= Math.max(...xs)
+      && y >= Math.min(...ys) && y <= Math.max(...ys);
+  }));
+  if (inside) syncNativeSelection(overlay);
 }
 
 function clearSelection() {
   document.querySelectorAll(".selection-quad").forEach((node) => node.remove());
+  window.getSelection()?.removeAllRanges();
   state.selection = null;
   state.selecting = false;
 }

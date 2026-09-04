@@ -48,6 +48,22 @@ def test_reading_order_detects_columns_before_sorting_top_to_bottom():
     ]
 
 
+def test_reading_order_puts_strongly_overlapping_row_fragments_left_to_right():
+    title = DetectedLine(
+        quad=((0.248, 0.368), (0.333, 0.368), (0.333, 0.386), (0.248, 0.386)),
+        text="title",
+        confidence=1,
+        cells=((0.259, 0.333, 0, 5),),
+    )
+    number = DetectedLine(
+        quad=((0.2, 0.369), (0.26, 0.369), (0.26, 0.386), (0.2, 0.386)),
+        text="6.2.1",
+        confidence=1,
+        cells=((0.205, 0.243, 0, 5),),
+    )
+    assert [line.text for line in reading_order([title, number])] == ["6.2.1", "title"]
+
+
 class FixedEngine:
     profile = "fixture-engine:v1"
 
@@ -68,9 +84,17 @@ def import_pdf(service, pages=1):
     return result["book"]["active_revision"]
 
 
-def import_embedded_text_pdf(service):
+def import_embedded_text_pdf(service, *, rotation=0, origin=(0, 0)):
     writer = PdfWriter()
     page = writer.add_blank_page(width=612, height=792)
+    if origin != (0, 0):
+        x, y = origin
+        page.mediabox.lower_left = (x, y)
+        page.mediabox.upper_right = (x + 612, y + 792)
+        page.cropbox.lower_left = (x, y)
+        page.cropbox.upper_right = (x + 612, y + 792)
+    if rotation:
+        page.rotate(rotation)
     font = writer._add_object(DictionaryObject(
         {
             NameObject("/Type"): NameObject("/Font"),
@@ -143,8 +167,76 @@ def test_r1_database_upgrade_initializes_existing_revision_at_foundation_version
         "SELECT foundation_version FROM book_source_revisions WHERE id = 'revision'"
     ).fetchone()[0] == 1
     assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall() == [
-        (1,), (2,)
+        (1,), (2,), (3,)
     ]
+    connection.close()
+
+
+def test_r2_geometry_correction_invalidates_active_machine_layer_without_version_bump(tmp_path):
+    path = tmp_path / "r2-before-correction.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    for version, sql in MIGRATIONS[:2]:
+        connection.executescript(sql)
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+    connection.execute(
+        "INSERT INTO books(id, title, status, created_at) VALUES ('book', 'R2', 'ACTIVE', 'now')"
+    )
+    connection.execute(
+        """
+        INSERT INTO book_source_revisions(
+            id, book_id, blob_sha256, byte_size, page_count, page_geometry_json,
+            label, status, created_at, foundation_version
+        ) VALUES ('revision', 'book', ?, 1, 1, '[]', 'R2', 'ACTIVE', 'now', 1)
+        """,
+        ("b" * 64,),
+    )
+    connection.execute(
+        """
+        INSERT INTO ocr_pages(
+            book_source_revision_id, pdf_page_index, status, route,
+            foundation_version, engine_profile, confidence, prepared_at
+        ) VALUES ('revision', 0, 'READY', 'EMBEDDED', 1,
+                  'embedded-positioned-text:v1', 1, 'now')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO ocr_lines(
+            book_source_revision_id, pdf_page_index, line_ordinal,
+            quad_json, text, confidence, cells_json
+        ) VALUES ('revision', 0, 0, '[[0,0],[1,0],[1,1],[0,1]]', 'old', 1,
+                  '[[0,1,0,3]]')
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO jobs(
+            id, job_type, book_source_revision_id, page_start, page_end,
+            foundation_version, status, priority, cancel_requested, attempts,
+            created_at, updated_at
+        ) VALUES ('job', 'PAGE_PREPARE', 'revision', 0, 0, 1,
+                  'SUCCEEDED', 12, 0, 1, 'now', 'now')
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    Database(path).initialize()
+
+    connection = sqlite3.connect(path)
+    assert connection.execute(
+        "SELECT foundation_version FROM book_source_revisions WHERE id = 'revision'"
+    ).fetchone() == (1,)
+    assert connection.execute(
+        "SELECT status, route, engine_profile FROM ocr_pages"
+    ).fetchone() == ("NOT_PREPARED", None, None)
+    assert connection.execute("SELECT COUNT(*) FROM ocr_lines").fetchone() == (0,)
+    assert connection.execute(
+        "SELECT status, priority, attempts FROM jobs"
+    ).fetchone() == ("QUEUED", 0, 0)
     connection.close()
 
 
@@ -185,8 +277,22 @@ def test_trustworthy_positioned_text_uses_embedded_route_without_ocr(service):
     assert foundation.prepare_page(revision["id"], 0) == "READY"
     overlay = foundation.overlay(revision["id"], 0)
     assert overlay["route"] == "EMBEDDED"
-    assert overlay["engine_profile"] == "embedded-positioned-text:v1"
+    assert overlay["engine_profile"] == "embedded-positioned-text:v2"
     assert overlay["lines"] and overlay["lines"][0]["cells"]
+
+
+def test_rotated_and_non_zero_origin_embedded_text_fall_back_to_ocr(service):
+    for rotation, origin in ((90, (0, 0)), (0, (50, 100))):
+        revision = import_embedded_text_pdf(service, rotation=rotation, origin=origin)
+        calls = []
+        foundation = FoundationService(
+            service, FoundationRepository(service.database), lambda: FixedEngine(calls)
+        )
+        assert foundation.prepare_page(revision["id"], 0) == "READY"
+        overlay = foundation.overlay(revision["id"], 0)
+        assert overlay["route"] == "OCR"
+        assert overlay["engine_profile"] == "fixture-engine:v1"
+        assert calls
 
 
 def test_one_page_failure_does_not_block_other_pages_or_pdf_reading(service):

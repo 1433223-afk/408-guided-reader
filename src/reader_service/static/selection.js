@@ -4,13 +4,30 @@ export function lineBounds(line) {
   return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
 }
 
-export function nearestLine(lines, normalizedY) {
+function axisDistance(value, start, end) {
+  if (value < start) return start - value;
+  if (value > end) return value - end;
+  return 0;
+}
+
+export function selectableBounds(line) {
+  const bounds = lineBounds(line);
+  if (!line.cells.length) return bounds;
+  return {
+    ...bounds,
+    x0: Math.min(...line.cells.map((cell) => cell[0])),
+    x1: Math.max(...line.cells.map((cell) => cell[1])),
+  };
+}
+
+export function nearestLine(lines, normalizedX, normalizedY) {
   let best = null;
   let distance = Infinity;
   for (const line of lines) {
-    const bounds = lineBounds(line);
-    const candidate = normalizedY < bounds.y0 ? bounds.y0 - normalizedY
-      : normalizedY > bounds.y1 ? normalizedY - bounds.y1 : 0;
+    const bounds = selectableBounds(line);
+    const dx = axisDistance(normalizedX, bounds.x0, bounds.x1);
+    const dy = axisDistance(normalizedY, bounds.y0, bounds.y1);
+    const candidate = (dx * dx) + (dy * dy);
     if (candidate < distance) { distance = candidate; best = line; }
   }
   return best;
@@ -18,7 +35,11 @@ export function nearestLine(lines, normalizedY) {
 
 export function nearestCellBoundary(line, normalizedX) {
   if (!line.cells.length) return 0;
-  const boundaries = [line.cells[0][0], ...line.cells.map((cell) => cell[1])];
+  const boundaries = [line.cells[0][0]];
+  for (let index = 1; index < line.cells.length; index += 1) {
+    boundaries.push((line.cells[index - 1][1] + line.cells[index][0]) / 2);
+  }
+  boundaries.push(line.cells.at(-1)[1]);
   let best = 0;
   for (let index = 1; index < boundaries.length; index += 1) {
     if (Math.abs(boundaries[index] - normalizedX) < Math.abs(boundaries[best] - normalizedX)) best = index;
@@ -55,6 +76,8 @@ export function resolveSelection(lines, anchor, focus) {
       line_ordinal: line.line_ordinal,
       cell_start: cellStart,
       cell_end: cellEnd,
+      char_start: start,
+      char_end: end,
       text: line.text.slice(start, end),
       quads: [[[x0, bounds.y0], [x1, bounds.y0], [x1, bounds.y1], [x0, bounds.y1]]],
     };

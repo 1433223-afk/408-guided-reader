@@ -26,8 +26,30 @@ const lines = [
 ];
 
 test("hit testing snaps to a line and anonymous cell boundary", () => {
-  assert.equal(nearestLine(lines, 0.35).line_ordinal, 1);
+  assert.equal(nearestLine(lines, 0.3, 0.35).line_ordinal, 1);
   assert.equal(nearestCellBoundary(lines[0], 0.49), 4);
+});
+
+test("hit testing distinguishes OCR fragments on the same visual row", () => {
+  const toc = [
+    {
+      line_ordinal: 0,
+      quad: [[0.248, 0.368], [0.333, 0.368], [0.333, 0.386], [0.248, 0.386]],
+      text: "存储系统",
+      cells: [[0.259, 0.278, 0, 1], [0.279, 0.298, 1, 2]],
+    },
+    {
+      line_ordinal: 1,
+      quad: [[0.2, 0.369], [0.26, 0.369], [0.26, 0.386], [0.2, 0.386]],
+      text: "6.2.1",
+      cells: [[0.205, 0.243, 0, 5]],
+    },
+  ];
+  const number = nearestLine(toc, 0.22, 0.378);
+  assert.equal(number.text, "6.2.1");
+  assert.equal(nearestCellBoundary(number, 0.205), 0);
+  assert.equal(nearestCellBoundary(number, 0.243), 1);
+  assert.equal(resolveSelection(toc, { lineOrdinal: 1, boundary: 0 }, { lineOrdinal: 1, boundary: 1 })[0].text, "6.2.1");
 });
 
 test("cross-line selection is represented as per-line ranges", () => {
