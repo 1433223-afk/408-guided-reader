@@ -53,12 +53,51 @@ try {
     await page.locator(".search-result").first().waitFor();
     timings.push({ pageCount, query: term, milliseconds: Math.round((performance.now() - started) * 10) / 10, matches: payload.results.length });
     assert.ok(payload.results.length > 0, `${term} did not match the real ${pageCount}-page OCR corpus`);
+    assert.ok(payload.results.length > 1, `${term} needs two real results for replacement-highlighting acceptance`);
     assert.equal(payload.coverage.ready_pages, pageCount);
     assert.equal(payload.coverage.complete, true);
-    const target = payload.results[0].pdf_page_index;
+    assert.ok(payload.results[0].match_ranges.length > 0, "search result lacks transient match ranges");
+    const targets = payload.results.slice(0, 2).map((result) => result.pdf_page_index);
+    const annotationsBefore = await annotationsForPages(page, book.active_revision.id, targets);
+    const target = targets[0];
     await page.locator(".search-result").first().click();
     await page.waitForFunction((number) => document.querySelector("#page-number").value === String(number), target + 1);
     await page.locator(`.page[data-index="${target}"] canvas`).waitFor({ state: "visible", timeout: 30_000 });
+    const firstMarkers = page.locator(`.page[data-index="${target}"] .search-match-quad`);
+    await firstMarkers.first().waitFor({ state: "visible", timeout: 15_000 });
+    assert.ok(await firstMarkers.count() >= 1, "clicked result did not paint a transient match");
+    const markerStyle = await firstMarkers.first().evaluate((node) => ({
+      position: getComputedStyle(node).position,
+      borderColor: getComputedStyle(node).borderColor,
+      annotation: node.classList.contains("annotation-quad"),
+    }));
+    assert.equal(markerStyle.position, "absolute");
+    assert.equal(markerStyle.annotation, false, "transient match reused durable Annotation presentation identity");
+    assert.notEqual(markerStyle.borderColor, "rgba(0, 0, 0, 0)");
+    const markerBox = await firstMarkers.first().boundingBox();
+    const viewerBox = await page.locator("#viewer").boundingBox();
+    assert.ok(markerBox.y < viewerBox.y + viewerBox.height && markerBox.y + markerBox.height > viewerBox.y,
+      "clicked match was painted outside the visible Reader viewport");
+
+    const replacement = targets[1];
+    await page.locator(".search-result").nth(1).click();
+    await page.waitForFunction((number) => document.querySelector("#page-number").value === String(number), replacement + 1);
+    await page.locator(`.page[data-index="${replacement}"] .search-match-quad`).first().waitFor({ state: "visible", timeout: 15_000 });
+    assert.equal(await page.locator(`.page[data-index="${target}"] .search-match-quad`).count(), 0,
+      "switching results left the previous transient match painted");
+
+    await page.locator("#search-close").click();
+    assert.equal(await page.locator(".search-match-quad").count(), 0, "closing search left transient paint");
+    await page.locator("#search-toggle").click();
+    await page.locator(".search-result").first().waitFor();
+    await page.locator(".search-result").first().click();
+    await page.locator(".search-match-quad").first().waitFor({ state: "visible", timeout: 15_000 });
+    await page.locator("#search-query").fill("");
+    assert.equal(await page.locator(".search-match-quad").count(), 0, "clearing search left transient paint");
+    assert.deepEqual(
+      await annotationsForPages(page, book.active_revision.id, targets), annotationsBefore,
+      "transient search highlighting changed durable Annotations",
+    );
 
     await page.locator("#search-query").fill("绝不会存在的检索词XYZ987654");
     await page.locator("#search-form button").click();
@@ -71,6 +110,17 @@ try {
   if (browser) await browser.close();
   await stopService(running.child);
   if (running.errors.trim()) process.stderr.write(running.errors);
+}
+
+async function annotationsForPages(page, revisionId, pageIndexes) {
+  return page.evaluate(async ({ revisionId, pageIndexes }) => {
+    const values = {};
+    for (const pageIndex of [...new Set(pageIndexes)]) {
+      const payload = await (await fetch(`/api/revisions/${revisionId}/annotations?page=${pageIndex}`)).json();
+      values[pageIndex] = payload.annotations;
+    }
+    return values;
+  }, { revisionId, pageIndexes });
 }
 
 async function startService() {

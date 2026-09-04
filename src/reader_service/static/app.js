@@ -24,7 +24,7 @@ const state = {
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
   annotationData: new Map(), selection: null, selecting: false, selectionMenuPoint: null,
-  searchRequest: 0,
+  searchRequest: 0, searchMatch: null,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -194,6 +194,7 @@ function closeReader() {
   cancelRenders();
   closePreparationStream();
   clearSelection();
+  clearSearchMatch();
   state.book = null;
   state.revision = null;
   state.pdf = null;
@@ -401,6 +402,7 @@ function goToPage(index, offset = 0) {
   const page = elements.pages.children[bounded];
   elements.viewer.scrollTop = snapScroll(page.offsetTop + page.offsetHeight * offset);
   setCurrentPage(bounded);
+  scheduleViewportUpdate();
   scheduleSave();
 }
 
@@ -584,6 +586,7 @@ async function runSearch() {
   if (!revisionId) return;
   const request = ++state.searchRequest;
   const queryText = elements["search-query"].value.trim();
+  clearSearchMatch();
   elements["search-coverage"].textContent = "正在读取搜索范围…";
   elements["search-empty"].textContent = queryText ? "正在搜索…" : "输入关键词以搜索已准备页面。";
   elements["search-empty"].hidden = false;
@@ -601,7 +604,7 @@ async function runSearch() {
       const snippet = document.createElement("span");
       snippet.textContent = result.snippet;
       button.append(page, snippet);
-      button.addEventListener("click", () => goToPage(result.pdf_page_index));
+      button.addEventListener("click", () => activateSearchResult(result));
       return button;
     });
     elements["search-results"].replaceChildren(...rows);
@@ -614,6 +617,51 @@ async function runSearch() {
     if (request !== state.searchRequest) return;
     elements["search-coverage"].textContent = "暂时无法读取搜索范围";
     elements["search-empty"].textContent = "搜索失败，请稍后重试。";
+  }
+}
+
+function clearSearchMatch() {
+  document.querySelectorAll(".search-match-quad").forEach((node) => node.remove());
+  state.searchMatch = null;
+}
+
+function activateSearchResult(result) {
+  clearSearchMatch();
+  state.searchMatch = {
+    pageIndex: result.pdf_page_index,
+    ranges: result.match_ranges || [],
+    focusPending: true,
+  };
+  goToPage(result.pdf_page_index);
+  renderSearchMatch(
+    result.pdf_page_index,
+    elements.pages.children[result.pdf_page_index]?.querySelector(".text-overlay"),
+  );
+}
+
+function renderSearchMatch(index, overlay = elements.pages.children[index]?.querySelector(".text-overlay")) {
+  const match = state.searchMatch;
+  const data = state.overlayData.get(index);
+  if (!overlay || !data || match?.pageIndex !== index) return;
+  overlay.querySelectorAll(".search-match-quad").forEach((node) => node.remove());
+  const resolved = match.ranges.flatMap((range) => resolveSelection(
+    data.lines,
+    { lineOrdinal: range.line_ordinal, boundary: range.cell_start },
+    { lineOrdinal: range.line_ordinal, boundary: range.cell_end },
+  ));
+  let firstMarker = null;
+  for (const quad of selectionPresentationQuads(resolved)) {
+    const xs = quad.map(([x]) => x);
+    const ys = quad.map(([, y]) => y);
+    const marker = document.createElement("span");
+    marker.className = "search-match-quad";
+    marker.style.cssText = `left:${Math.min(...xs) * 100}%;top:${Math.min(...ys) * 100}%;width:${(Math.max(...xs) - Math.min(...xs)) * 100}%;height:${(Math.max(...ys) - Math.min(...ys)) * 100}%`;
+    overlay.append(marker);
+    firstMarker ||= marker;
+  }
+  if (firstMarker && match.focusPending) {
+    match.focusPending = false;
+    requestAnimationFrame(() => firstMarker.isConnected && firstMarker.scrollIntoView({ block: "center", inline: "nearest" }));
   }
 }
 
@@ -729,6 +777,7 @@ async function ensureOverlay(index) {
   overlay.addEventListener("contextmenu", openSelectionContextMenu);
   wrapper.append(overlay);
   renderAnnotations(index, overlay);
+  renderSearchMatch(index, overlay);
   if (index === state.currentPage) updateMarksPanel();
 }
 
@@ -1062,15 +1111,29 @@ elements["search-toggle"].addEventListener("click", () => {
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
     runSearch();
     elements["search-query"].focus({ preventScroll: true });
+  } else {
+    state.searchRequest += 1;
+    clearSearchMatch();
   }
 });
 elements["search-close"].addEventListener("click", () => {
   elements["search-panel"].hidden = true;
   elements["search-toggle"].setAttribute("aria-expanded", "false");
+  state.searchRequest += 1;
+  clearSearchMatch();
 });
 elements["search-form"].addEventListener("submit", (event) => {
   event.preventDefault();
   runSearch();
+});
+elements["search-query"].addEventListener("input", () => {
+  if (!elements["search-query"].value.trim()) {
+    state.searchRequest += 1;
+    clearSearchMatch();
+    elements["search-results"].replaceChildren();
+    elements["search-empty"].textContent = "输入关键词以搜索已准备页面。";
+    elements["search-empty"].hidden = false;
+  }
 });
 elements["marks-toggle"].addEventListener("click", () => {
   const opening = elements["marks-panel"].hidden;
@@ -1079,6 +1142,8 @@ elements["marks-toggle"].addEventListener("click", () => {
   if (opening) {
     elements["search-panel"].hidden = true;
     elements["search-toggle"].setAttribute("aria-expanded", "false");
+    state.searchRequest += 1;
+    clearSearchMatch();
   }
   updateMarksPanel();
 });

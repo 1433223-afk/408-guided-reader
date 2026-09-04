@@ -15,11 +15,15 @@ class UnusedEngine:
 
 
 def line(text: str) -> DetectedLine:
+    cell_width = 0.8 / max(1, len(text))
     return DetectedLine(
         quad=((0.1, 0.1), (0.9, 0.1), (0.9, 0.2), (0.1, 0.2)),
         text=text,
         confidence=1,
-        cells=((0.1, 0.9, 0, len(text)),),
+        cells=tuple(
+            (0.1 + index * cell_width, 0.1 + (index + 1) * cell_width, index, index + 1)
+            for index in range(len(text))
+        ),
     )
 
 
@@ -65,6 +69,9 @@ def test_search_normalizes_chinese_phrase_and_only_reads_ready_pages(service):
 
     term = foundation.search(revision["id"], "总线")
     assert [row["pdf_page_index"] for row in term["results"]] == [0]
+    assert term["results"][0]["match_ranges"] == [
+        {"line_ordinal": 0, "cell_start": 5, "cell_end": 7}
+    ]
     assert term["coverage"] == {
         "ready_pages": 1,
         "total_pages": 4,
@@ -73,6 +80,10 @@ def test_search_normalizes_chinese_phrase_and_only_reads_ready_pages(service):
     }
     phrase = foundation.search(revision["id"], "中断向量")
     assert phrase["results"][0]["pdf_page_index"] == 0
+    assert phrase["results"][0]["match_ranges"] == [
+        {"line_ordinal": 1, "cell_start": 0, "cell_end": 2},
+        {"line_ordinal": 2, "cell_start": 0, "cell_end": 2},
+    ]
     assert "中断 向量" in phrase["results"][0]["snippet"]
     assert foundation.search(revision["id"], "不存在的词")["results"] == []
 

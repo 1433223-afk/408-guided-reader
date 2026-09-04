@@ -58,13 +58,13 @@ class FoundationService:
         if not needle:
             return {"query": query, "coverage": coverage, "results": [], "truncated": False}
 
-        pages: dict[int, list[str]] = {}
+        pages: dict[int, list[dict]] = {}
         for line in lines:
-            pages.setdefault(line["pdf_page_index"], []).append(line["text"])
+            pages.setdefault(line["pdf_page_index"], []).append(line)
         matches = []
         truncated = False
         for page_index, page_lines in pages.items():
-            source = "\n".join(page_lines)
+            source = "\n".join(line["text"] for line in page_lines)
             normalized, offsets = self._normalized_with_offsets(source)
             position = normalized.find(needle)
             if position < 0:
@@ -79,7 +79,15 @@ class FoundationService:
             prefix = "…" if snippet_start else ""
             suffix = "…" if snippet_end < len(source) else ""
             snippet = source[snippet_start:snippet_end].replace("\n", " ").strip()
-            matches.append({"pdf_page_index": page_index, "snippet": prefix + snippet + suffix})
+            matches.append({
+                "pdf_page_index": page_index,
+                "snippet": prefix + snippet + suffix,
+                # These are transient runtime positions nested in the search response. They are
+                # never persisted or treated as durable anchor identity.
+                "match_ranges": self._search_match_ranges(
+                    self.repository.search_page_lines(revision_id, page_index), start, end
+                ),
+            })
         return {"query": query, "coverage": coverage, "results": matches, "truncated": truncated}
 
     @staticmethod
@@ -95,6 +103,31 @@ class FoundationService:
             characters.extend(normalized)
             offsets.extend([index] * len(normalized))
         return "".join(characters), offsets
+
+    @staticmethod
+    def _search_match_ranges(
+        lines: list[dict], source_start: int, source_end: int
+    ) -> list[dict]:
+        ranges = []
+        line_start = 0
+        for line in lines:
+            text = line["text"]
+            line_end = line_start + len(text)
+            local_start = max(0, source_start - line_start)
+            local_end = min(len(text), source_end - line_start)
+            if local_end > local_start:
+                selected = [
+                    index for index, cell in enumerate(line["cells"])
+                    if int(cell[3]) > local_start and int(cell[2]) < local_end
+                ]
+                if selected:
+                    ranges.append({
+                        "line_ordinal": line["line_ordinal"],
+                        "cell_start": selected[0],
+                        "cell_end": selected[-1] + 1,
+                    })
+            line_start = line_end + 1
+        return ranges
 
     def overlay(self, revision_id: str, page_index: int) -> dict:
         revision = self.ensure_revision(revision_id)

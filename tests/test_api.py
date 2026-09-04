@@ -117,6 +117,7 @@ def test_search_api_returns_results_and_authoritative_coverage(service):
     assert result["coverage"]["ready_pages"] == 1
     assert result["coverage"]["statuses"]["FAILED"] == 1
     assert result["results"][0]["pdf_page_index"] == 0
+    assert len(result["results"][0]["match_ranges"]) == 2
 
 
 def test_plain_browser_entry_bootstraps_same_origin_api_session(service):
