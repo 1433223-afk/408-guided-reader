@@ -6,7 +6,6 @@ import secrets
 import threading
 import webbrowser
 from pathlib import Path
-from urllib.parse import quote
 
 from reader_service.library import LibraryService
 from reader_service.server import ReaderServer, handler_factory
@@ -36,9 +35,12 @@ def main() -> None:
     service = LibraryService(ManagedPaths(args.data_dir))
     server = ReaderServer((args.host, args.port), handler_factory(service, token))
     host, port = server.server_address[:2]
-    url = f"http://{host}:{port}/?token={quote(token)}"
+    url = f"http://{host}:{port}/"
     print(f"READY {url}", flush=True)
-    print("Keep this terminal open while reading. Copy the READY URL into Chrome or Edge if no browser opens.", flush=True)
+    print(
+        "Keep this terminal open while reading. Copy the READY URL into Chrome or Edge if no browser opens.",
+        flush=True,
+    )
     if not args.no_open:
         threading.Timer(0.2, lambda: webbrowser.open(url)).start()
     try:

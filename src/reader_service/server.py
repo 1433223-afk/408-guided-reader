@@ -4,6 +4,7 @@ import hmac
 import json
 import mimetypes
 import re
+from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +17,7 @@ from reader_service.library import IntakeError, LibraryService
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
 _REVISION_POSITION = re.compile(r"^/api/revisions/([0-9a-f-]+)/position$")
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
+_SESSION_COOKIE = "reader_launch"
 
 
 class ReaderServer(ThreadingHTTPServer):
@@ -146,7 +148,12 @@ def handler_factory(
 
         def _authorized(self) -> bool:
             supplied = self.headers.get("X-Reader-Token", "")
-            if hmac.compare_digest(supplied, token):
+            cookie = SimpleCookie()
+            cookie.load(self.headers.get("Cookie", ""))
+            cookie_token = cookie.get(_SESSION_COOKIE)
+            if hmac.compare_digest(supplied, token) or (
+                cookie_token is not None and hmac.compare_digest(cookie_token.value, token)
+            ):
                 return True
             self._json(HTTPStatus.UNAUTHORIZED, {"error": "Missing or invalid launch token"})
             return False
@@ -171,9 +178,22 @@ def handler_factory(
             content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             if target.suffix in (".js", ".mjs"):
                 content_type = "text/javascript; charset=utf-8"
-            self._file(target, content_type)
+            headers = None
+            if filename == "index.html":
+                headers = {
+                    "Set-Cookie": (
+                        f"{_SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"
+                    )
+                }
+            self._file(target, content_type, headers=headers)
 
-        def _file(self, path: Path, content_type: str, ranged: bool = False) -> None:
+        def _file(
+            self,
+            path: Path,
+            content_type: str,
+            ranged: bool = False,
+            headers: dict[str, str] | None = None,
+        ) -> None:
             size = path.stat().st_size
             start, end = 0, size - 1
             status = HTTPStatus.OK
@@ -199,6 +219,8 @@ def handler_factory(
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(end - start + 1))
             self.send_header("Cache-Control", "no-store")
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             if ranged:
                 self.send_header("Accept-Ranges", "bytes")
                 if status == HTTPStatus.PARTIAL_CONTENT:

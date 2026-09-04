@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import contextmanager
+from http.cookiejar import CookieJar
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
 from reader_service.server import ReaderServer, handler_factory
 
@@ -91,3 +92,16 @@ def test_api_requires_launch_token(service):
             assert error.code == 401
         else:
             raise AssertionError("API accepted a request without the per-launch token")
+
+
+def test_plain_browser_entry_bootstraps_same_origin_api_session(service):
+    with running_server(service) as (base, _):
+        opener = build_opener(HTTPCookieProcessor(CookieJar()))
+        with opener.open(f"{base}/") as response:
+            assert response.status == 200
+            assert "reader_launch=" in response.headers["Set-Cookie"]
+            assert "HttpOnly" in response.headers["Set-Cookie"]
+            assert "SameSite=Strict" in response.headers["Set-Cookie"]
+        with opener.open(f"{base}/api/books") as response:
+            assert response.status == 200
+            assert json.load(response) == {"books": []}

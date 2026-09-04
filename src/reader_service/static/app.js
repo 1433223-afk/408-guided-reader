@@ -20,9 +20,12 @@ const state = {
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0,
 };
 
+const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
+    credentials: "same-origin",
     headers: { "X-Reader-Token": launchToken, ...(options.headers || {}) },
   });
   if (response.status === 204) return null;
@@ -163,6 +166,7 @@ async function openBook(book) {
     const loading = pdfjsLib.getDocument({
       url: `/api/revisions/${state.revision.id}/pdf`,
       httpHeaders: { "X-Reader-Token": launchToken },
+      withCredentials: true,
     });
     const pdf = await loading.promise;
     if (generation !== state.generation) return;
@@ -204,15 +208,57 @@ function pageWidth() {
   return Math.max(240, Math.min(920, elements.viewer.clientWidth - 72)) * state.zoom;
 }
 
+function snappedPageSize(ratio) {
+  const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
+  const targetWidth = pageWidth();
+  const width = alignedCssDimension(targetWidth, pixelRatio);
+  const height = alignedCssDimension(width.css * ratio, pixelRatio);
+  return {
+    pixelRatio,
+    backingWidth: width.backing,
+    backingHeight: height.backing,
+    cssWidth: width.css,
+    cssHeight: height.css,
+  };
+}
+
+function alignedCssDimension(target, pixelRatio) {
+  const center = Math.round(target * 64);
+  let exact = null;
+  let closest = null;
+  for (let offset = -512; offset <= 512; offset += 1) {
+    const css = (center + offset) / 64;
+    const physical = css * pixelRatio;
+    const backing = Math.round(physical);
+    const pixelError = Math.abs(physical - backing);
+    const distance = Math.abs(css - target);
+    const candidate = { css, backing, distance, pixelError };
+    if (pixelError <= 1e-7 && (!exact || distance < exact.distance)) exact = candidate;
+    if (!closest || pixelError < closest.pixelError - 1e-9 || (
+      Math.abs(pixelError - closest.pixelError) <= 1e-9 && distance < closest.distance
+    )) closest = candidate;
+  }
+  return exact || closest;
+}
+
+function applyPageSize(wrapper, size) {
+  wrapper.style.width = `${size.cssWidth}px`;
+  wrapper.style.height = `${size.cssHeight}px`;
+  const fits = size.cssWidth <= elements.viewer.clientWidth - 64;
+  const naturalLeft = fits ? (elements.viewer.clientWidth - size.cssWidth) / 2 : 32;
+  const alignedLeft = alignedCssDimension(naturalLeft, size.pixelRatio).css;
+  wrapper.style.marginLeft = `${Math.max(0, alignedLeft - 32)}px`;
+  wrapper.style.marginRight = "0";
+}
+
 function buildPlaceholders() {
-  const width = pageWidth();
   const pages = state.revision.page_geometry.map((geometry, index) => {
+    const size = snappedPageSize(displayedRatio(geometry));
     const page = document.createElement("article");
     page.className = "page";
     page.dataset.index = String(index);
     page.dataset.page = String(index + 1);
-    page.style.width = `${width}px`;
-    page.style.height = `${width * displayedRatio(geometry)}px`;
+    applyPageSize(page, size);
     return page;
   });
   elements.pages.replaceChildren(...pages);
@@ -222,7 +268,7 @@ function applyRestoredPosition() {
   const page = elements.pages.children[state.currentPage];
   if (!page) return;
   const offset = state.revision.position.normalized_offset || 0;
-  elements.viewer.scrollTop = page.offsetTop + page.offsetHeight * offset;
+  elements.viewer.scrollTop = snapScroll(page.offsetTop + page.offsetHeight * offset);
   setCurrentPage(state.currentPage);
 }
 
@@ -271,26 +317,31 @@ async function renderPage(index) {
     const page = await state.pdf.getPage(index + 1);
     if (generation !== state.generation) return;
     const base = page.getViewport({ scale: 1 });
-    const cssWidth = pageWidth();
-    const cssScale = cssWidth / base.width;
-    const viewport = page.getViewport({ scale: cssScale });
-    const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
+    const size = snappedPageSize(base.height / base.width);
+    const viewport = page.getViewport({ scale: size.backingWidth / base.width });
     const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(viewport.width * pixelRatio);
-    canvas.height = Math.ceil(viewport.height * pixelRatio);
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    const outputScaleX = canvas.width / viewport.width;
-    const outputScaleY = canvas.height / viewport.height;
-    canvas.dataset.outputScaleX = String(outputScaleX);
-    canvas.dataset.outputScaleY = String(outputScaleY);
-    wrapper.style.width = `${viewport.width}px`;
-    wrapper.style.height = `${viewport.height}px`;
+    canvas.width = size.backingWidth;
+    canvas.height = size.backingHeight;
+    canvas.style.width = `${size.cssWidth}px`;
+    canvas.style.height = `${size.cssHeight}px`;
+    canvas.dataset.outputScaleX = String(size.pixelRatio);
+    canvas.dataset.outputScaleY = String(size.pixelRatio);
+    applyPageSize(wrapper, size);
     wrapper.replaceChildren(canvas);
+    const canvasContext = canvas.getContext("2d", { alpha: false });
+    canvasContext.imageSmoothingEnabled = true;
+    canvasContext.imageSmoothingQuality = "high";
     const task = page.render({
-      canvasContext: canvas.getContext("2d", { alpha: false }),
+      canvasContext,
       viewport,
-      transform: [outputScaleX, 0, 0, outputScaleY, 0, 0],
+      transform: [
+        canvas.width / viewport.width,
+        0,
+        0,
+        canvas.height / viewport.height,
+        0,
+        0,
+      ],
     });
     state.renderTasks.set(index, task);
     await task.promise;
@@ -326,27 +377,32 @@ function setCurrentPage(index) {
 function goToPage(index, offset = 0) {
   const bounded = Math.max(0, Math.min(index, state.revision.page_count - 1));
   const page = elements.pages.children[bounded];
-  elements.viewer.scrollTop = page.offsetTop + page.offsetHeight * offset;
+  elements.viewer.scrollTop = snapScroll(page.offsetTop + page.offsetHeight * offset);
   setCurrentPage(bounded);
   scheduleSave();
 }
 
 function setZoom(value, anchor = captureZoomAnchor()) {
-  const newZoom = Math.max(0.5, Math.min(4, Math.round(value * 10) / 10));
+  const newZoom = Math.max(0.5, Math.min(4, Math.round(value * 100) / 100));
   if (newZoom === state.zoom || !state.revision) return;
   state.zoom = newZoom;
   elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
   relayoutPages(anchor);
 }
 
+function adjacentZoom(direction) {
+  const tolerance = 0.001;
+  if (direction > 0) return ZOOM_LEVELS.find((level) => level > state.zoom + tolerance) ?? 4;
+  return [...ZOOM_LEVELS].reverse().find((level) => level < state.zoom - tolerance) ?? 0.5;
+}
+
 function relayoutPages(anchor = captureZoomAnchor()) {
   if (!state.revision) return;
   cancelRenders();
-  const width = pageWidth();
   [...elements.pages.children].forEach((wrapper, index) => {
+    const size = snappedPageSize(displayedRatio(state.revision.page_geometry[index]));
     wrapper.replaceChildren();
-    wrapper.style.width = `${width}px`;
-    wrapper.style.height = `${width * displayedRatio(state.revision.page_geometry[index])}px`;
+    applyPageSize(wrapper, size);
   });
   restoreZoomAnchor(anchor);
   scheduleViewportUpdate();
@@ -387,9 +443,18 @@ function restoreZoomAnchor(anchor) {
   const pageRect = page.getBoundingClientRect();
   const pointX = pageRect.left + anchor.normalizedX * pageRect.width;
   const pointY = pageRect.top + anchor.normalizedY * pageRect.height;
-  elements.viewer.scrollLeft += pointX - (viewerRect.left + anchor.viewportX);
-  elements.viewer.scrollTop += pointY - (viewerRect.top + anchor.viewportY);
+  elements.viewer.scrollLeft = snapScroll(
+    elements.viewer.scrollLeft + pointX - (viewerRect.left + anchor.viewportX),
+  );
+  elements.viewer.scrollTop = snapScroll(
+    elements.viewer.scrollTop + pointY - (viewerRect.top + anchor.viewportY),
+  );
   setCurrentPage(anchor.pageIndex);
+}
+
+function snapScroll(value) {
+  const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
+  return alignedCssDimension(value, pixelRatio).css;
 }
 
 function scheduleSave() {
@@ -420,6 +485,7 @@ function savePositionKeepalive() {
   if (!page) return;
   fetch(`/api/revisions/${state.revision.id}/position`, {
     method: "PUT",
+    credentials: "same-origin",
     headers: { "X-Reader-Token": launchToken, "Content-Type": "application/json" },
     body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: currentNormalizedOffset(page), zoom: state.zoom }),
     keepalive: true,
@@ -449,24 +515,24 @@ elements["page-number"].addEventListener("keydown", (event) => {
     elements.viewer.focus();
   }
 });
-elements["zoom-out"].addEventListener("click", () => setZoom(state.zoom - 0.1));
-elements["zoom-in"].addEventListener("click", () => setZoom(state.zoom + 0.1));
+elements["zoom-out"].addEventListener("click", () => setZoom(adjacentZoom(-1)));
+elements["zoom-in"].addEventListener("click", () => setZoom(adjacentZoom(1)));
 elements["back-to-library"].addEventListener("click", returnToLibrary);
 elements.viewer.addEventListener("pointerdown", () => elements.viewer.focus({ preventScroll: true }));
 elements.viewer.addEventListener("wheel", (event) => {
   if (!event.ctrlKey) return;
   event.preventDefault();
-  const direction = event.deltaY < 0 ? 0.1 : -0.1;
-  setZoom(state.zoom + direction, captureZoomAnchor(event.clientX, event.clientY));
+  const direction = event.deltaY < 0 ? 1 : -1;
+  setZoom(adjacentZoom(direction), captureZoomAnchor(event.clientX, event.clientY));
 }, { passive: false });
 elements.viewer.addEventListener("keydown", (event) => {
   if (!event.ctrlKey) return;
   if (event.key === "+" || event.key === "=") {
     event.preventDefault();
-    setZoom(state.zoom + 0.1);
+    setZoom(adjacentZoom(1));
   } else if (event.key === "-") {
     event.preventDefault();
-    setZoom(state.zoom - 0.1);
+    setZoom(adjacentZoom(-1));
   }
 });
 window.addEventListener("resize", () => {
@@ -476,5 +542,4 @@ window.addEventListener("resize", () => {
 document.addEventListener("visibilitychange", () => document.hidden && savePosition());
 window.addEventListener("pagehide", savePositionKeepalive);
 
-if (!launchToken) announce("Open the tokenized URL printed by the Core Service.", true);
-else loadBooks().catch((error) => announce(error.message, true));
+loadBooks().catch((error) => announce(error.message, true));

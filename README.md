@@ -40,8 +40,10 @@ npm install
 guided-reader
 ```
 
-Keep that PowerShell window open. The service binds only to `127.0.0.1:8765`, prints an exact
-tokenized `READY http://127.0.0.1:8765/?token=...` URL, and asks Windows to open the default browser.
+Keep that PowerShell window open. This single Core Service process serves both the frontend and API,
+binds only to `127.0.0.1:8765`, prints `READY http://127.0.0.1:8765/`, and asks Windows to open the
+default browser. Opening that plain localhost URL establishes an HttpOnly, same-site launch session;
+there is no second frontend/API process or port to start.
 If it does not open Chrome/Edge automatically, copy the complete printed URL into a normal Chrome or
 Edge address bar. `python -m reader_service` is an equivalent startup command if the
 `guided-reader` script is not on `PATH`.
