@@ -46,6 +46,93 @@ class FoundationService:
             raise LookupError("Preparation state not found")
         return result
 
+    def resolve_text_selection(
+        self,
+        revision_id: str,
+        page_index: int,
+        *,
+        start: dict,
+        end: dict,
+        context_length: int = 12,
+    ) -> dict:
+        """Resolve transient line/cell positions into a provider-neutral durable anchor."""
+        page = self.overlay(revision_id, page_index)
+        if page["status"] != "READY":
+            raise ValueError("Text selection is not available until this page is prepared")
+        lines = page["lines"]
+        if not lines:
+            raise ValueError("This page has no selectable text")
+        first = self._selection_point(start, lines)
+        last = self._selection_point(end, lines)
+        if (first[0], first[1]) > (last[0], last[1]):
+            first, last = last, first
+
+        line_offsets: list[int] = []
+        offset = 0
+        for line_index, line in enumerate(lines):
+            line_offsets.append(offset)
+            offset += len(line["text"])
+            if line_index + 1 < len(lines):
+                offset += 1
+        page_text = "\n".join(line["text"] for line in lines)
+
+        selected: list[str] = []
+        quads: list[list[list[float]]] = []
+        global_start = None
+        global_end = None
+        for line_index in range(first[0], last[0] + 1):
+            line = lines[line_index]
+            cell_start = first[1] if line_index == first[0] else 0
+            cell_end = last[1] if line_index == last[0] else len(line["cells"])
+            if cell_end <= cell_start:
+                continue
+            cells = line["cells"][cell_start:cell_end]
+            char_start = int(cells[0][2])
+            char_end = int(cells[-1][3])
+            if char_start < 0 or char_end > len(line["text"]) or char_end <= char_start:
+                raise ValueError("Stored selectable geometry is inconsistent with its text")
+            selected.append(line["text"][char_start:char_end])
+            ys = [point[1] for point in line["quad"]]
+            x0 = min(float(cell[0]) for cell in cells)
+            x1 = max(float(cell[1]) for cell in cells)
+            quads.append(
+                [[x0, min(ys)], [x1, min(ys)], [x1, max(ys)], [x0, max(ys)]]
+            )
+            if global_start is None:
+                global_start = line_offsets[line_index] + char_start
+            global_end = line_offsets[line_index] + char_end
+
+        if not selected or global_start is None or global_end is None:
+            raise ValueError("Select at least one character to create a highlight")
+        quote = "\n".join(selected)
+        return {
+            "quads": quads,
+            "quote": quote,
+            "context_before": page_text[max(0, global_start - context_length):global_start],
+            "context_after": page_text[global_end:global_end + context_length],
+            "foundation_version": page["foundation_version"],
+        }
+
+    @staticmethod
+    def _selection_point(point: dict, lines: list[dict]) -> tuple[int, int]:
+        if not isinstance(point, dict):
+            raise ValueError("Selection endpoints must be objects")
+        line_ordinal = point.get("line_ordinal")
+        boundary = point.get("boundary")
+        if isinstance(line_ordinal, bool) or not isinstance(line_ordinal, int):
+            raise ValueError("Selection line ordinal must be an integer")
+        if isinstance(boundary, bool) or not isinstance(boundary, int):
+            raise ValueError("Selection cell boundary must be an integer")
+        line_index = next(
+            (index for index, line in enumerate(lines) if line["line_ordinal"] == line_ordinal),
+            None,
+        )
+        if line_index is None:
+            raise ValueError("Selection line is not part of this prepared page")
+        if boundary < 0 or boundary > len(lines[line_index]["cells"]):
+            raise ValueError("Selection cell boundary is outside its line")
+        return line_index, boundary
+
     def prepare_page(self, revision_id: str, page_index: int) -> str:
         revision = self.ensure_revision(revision_id)
         if page_index < 0 or page_index >= revision["page_count"]:

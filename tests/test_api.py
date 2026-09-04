@@ -4,18 +4,23 @@ import json
 import threading
 from contextlib import contextmanager
 from http.cookiejar import CookieJar
+from io import BytesIO
 from urllib.error import HTTPError
 from urllib.request import HTTPCookieProcessor, Request, build_opener, urlopen
 
+from reader_service.annotation import AnnotationRepository, AnnotationService
+from reader_service.foundation import DetectedLine, FoundationRepository, FoundationService
 from reader_service.server import ReaderServer, handler_factory
 
 from conftest import make_pdf
 
 
 @contextmanager
-def running_server(service):
+def running_server(service, annotations=None):
     token = "test-launch-token"
-    server = ReaderServer(("127.0.0.1", 0), handler_factory(service, token))
+    server = ReaderServer(
+        ("127.0.0.1", 0), handler_factory(service, token, annotations=annotations)
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -105,3 +110,71 @@ def test_plain_browser_entry_bootstraps_same_origin_api_session(service):
         with opener.open(f"{base}/api/books") as response:
             assert response.status == 200
             assert json.load(response) == {"books": []}
+
+
+def test_annotation_api_resolves_runtime_selection_and_persists_durable_anchor(service):
+    pdf = make_pdf()
+    imported = service.intake(
+        BytesIO(pdf), content_length=len(pdf), filename="api-marks.pdf"
+    )
+    revision = imported["book"]["active_revision"]
+    repository = FoundationRepository(service.database)
+
+    class UnusedEngine:
+        def prepare_page(self, page_image, page_size):
+            raise AssertionError("not used")
+
+    foundation = FoundationService(service, repository, UnusedEngine)
+    foundation.ensure_revision(revision["id"])
+    assert repository.mark_preparing(revision["id"], 0)
+    repository.publish_page(
+        revision["id"],
+        0,
+        route="OCR",
+        foundation_version=1,
+        engine_profile="fixture:v1",
+        lines=[DetectedLine(
+            quad=((0.1, 0.2), (0.5, 0.2), (0.5, 0.3), (0.1, 0.3)),
+            text="ABCD",
+            confidence=1,
+            cells=((0.1, 0.2, 0, 1), (0.2, 0.3, 1, 2), (0.3, 0.4, 2, 3), (0.4, 0.5, 3, 4)),
+        )],
+    )
+    annotations = AnnotationService(foundation, AnnotationRepository(service.database))
+
+    with running_server(service, annotations) as (base, token):
+        body = json.dumps({
+            "pdf_page_index": 0,
+            "start": {"line_ordinal": 0, "boundary": 1},
+            "end": {"line_ordinal": 0, "boundary": 3},
+            "body": "API note",
+        }).encode()
+        status, created = request_json(
+            f"{base}/api/revisions/{revision['id']}/annotations",
+            token,
+            method="POST",
+            data=body,
+            headers={"Content-Type": "application/json"},
+        )
+        assert status == 201
+        assert created["annotation"]["quote"] == "BC"
+        assert created["annotation"]["quads"] == [
+            [[0.2, 0.2], [0.4, 0.2], [0.4, 0.3], [0.2, 0.3]]
+        ]
+
+        _, listed = request_json(
+            f"{base}/api/revisions/{revision['id']}/annotations?page=0", token
+        )
+        assert listed["annotations"] == [created["annotation"]]
+
+        request = Request(
+            f"{base}/api/revisions/{revision['id']}/annotations/{created['annotation']['id']}",
+            method="DELETE",
+            headers={"X-Reader-Token": token},
+        )
+        with urlopen(request) as response:
+            assert response.status == 204
+        _, listed = request_json(
+            f"{base}/api/revisions/{revision['id']}/annotations?page=0", token
+        )
+        assert listed == {"annotations": []}

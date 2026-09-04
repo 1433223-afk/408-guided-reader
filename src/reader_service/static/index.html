@@ -47,6 +47,7 @@
           <button id="next-page" class="icon-button" aria-label="Next page">→</button>
           <span class="control-divider"></span>
           <output id="preparation-status" class="preparation-status">Preparing text…</output>
+          <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false">Marks <span id="marks-count">0</span></button>
           <span class="control-divider"></span>
           <button id="zoom-out" class="icon-button" aria-label="Zoom out">−</button>
           <output id="zoom-value">100%</output>
@@ -56,7 +57,18 @@
       <div id="viewer" class="viewer" tabindex="0" aria-label="PDF pages">
         <div id="pages" class="pages"></div>
       </div>
+      <aside id="marks-panel" class="marks-panel" aria-label="Marks on current page" hidden>
+        <div class="marks-panel-heading"><strong>Marks on page <span id="marks-page">1</span></strong><button id="marks-close" type="button" aria-label="Close marks panel">×</button></div>
+        <div id="marks-list" class="marks-list"></div>
+        <p id="marks-empty" class="marks-empty">No marks on this page.</p>
+      </aside>
     </section>
+    <form id="annotation-composer" class="annotation-composer" hidden>
+      <label for="annotation-note">Optional note</label>
+      <input id="annotation-note" type="text" maxlength="1000" placeholder="Add a short note…">
+      <button id="save-highlight" type="submit">Save highlight</button>
+      <button id="cancel-highlight" type="button" aria-label="Cancel highlight">×</button>
+    </form>
     <div id="status" class="status" role="status" aria-live="polite"></div>
     <script type="module" src="/app.js"></script>
   </body>

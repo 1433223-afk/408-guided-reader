@@ -67,11 +67,20 @@ npm run test:e2e:r2
 npm run test:e2e:recovery
 ```
 
+R3's formal annotation walkthrough reuses an app data directory that already contains the prepared,
+hash-verified 29-page sample and 348-page complete scan:
+
+```powershell
+$env:READER_DATA_DIR='D:\path\to\reader-data'
+npm run test:e2e:r3
+```
+
 Opening a book schedules progressive page preparation. The visible page and nearby pages take
 priority; the original PDF canvas remains readable while preparation runs or if one page fails. A
 prepared page has a transparent text overlay: drag across one or more lines, then use the normal
-copy shortcut. `--prepare-workers` (1–4, default 1) and `--render-dpi` (default 200) are development
-tuning controls.
+copy shortcut or save the selection as a highlight with an optional short note. The page's **Marks**
+button shows saved quotes/notes and the delete affordance. `--prepare-workers` (1–4, default 1) and
+`--render-dpi` (default 200) are development tuning controls.
 
 The inherited nine-page real OCR suite uses external, hash-checked textbook files and runs only when
 both paths are supplied:
@@ -82,5 +91,6 @@ $env:READER_REAL_DMA='D:\path\to\2026计算机组成原理_第320-348页.pdf'
 pytest tests/test_real_ocr_acceptance.py
 ```
 
-R2 deliberately contains no corrections, reprocessing/version bump, highlights, notes, outline,
-layout regions, printed-page inference, or AI code.
+R3 deliberately contains no corrections, reprocessing/version bump, cross-version anchor
+re-resolution, `NEEDS_REVIEW`, region notes, AI-saved notes, outline, layout regions, printed-page
+inference, or AI code.

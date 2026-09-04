@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
+from reader_service.annotation import AnnotationService
 from reader_service.library import IntakeError, LibraryService
 from reader_service.jobs import PreparationCoordinator
 
@@ -27,6 +28,10 @@ _REVISION_PREPARATION_RETRY = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/preparation/retry$"
 )
 _REVISION_OVERLAY = re.compile(r"^/api/revisions/([0-9a-f-]+)/overlay$")
+_REVISION_ANNOTATIONS = re.compile(r"^/api/revisions/([0-9a-f-]+)/annotations$")
+_REVISION_ANNOTATION = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)$"
+)
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
 _SESSION_COOKIE = "reader_launch"
 
@@ -46,6 +51,7 @@ def handler_factory(
     token: str,
     project_root: Path | None = None,
     preparation: PreparationCoordinator | None = None,
+    annotations: AnnotationService | None = None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -65,6 +71,24 @@ def handler_factory(
                 if not self._authorized():
                     return
                 self._json(HTTPStatus.OK, {"books": service.list_books()})
+                return
+            match = _REVISION_ANNOTATIONS.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if annotations is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Annotations are unavailable"})
+                    return
+                try:
+                    page_index = int(_first(parse_qs(parsed.query), "page") or "")
+                    values = annotations.list_page(match.group(1), page_index)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"annotations": values})
                 return
             match = _REVISION_PREPARATION_EVENTS.fullmatch(parsed.path)
             if match:
@@ -134,6 +158,30 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            annotation_match = _REVISION_ANNOTATIONS.fullmatch(parsed.path)
+            if annotation_match:
+                if not self._authorized():
+                    return
+                if annotations is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Annotations are unavailable"})
+                    return
+                try:
+                    payload = self._read_json()
+                    annotation = annotations.create_text(
+                        annotation_match.group(1),
+                        page_index=int(payload["pdf_page_index"]),
+                        start=payload["start"],
+                        end=payload["end"],
+                        body=payload.get("body"),
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.CREATED, {"annotation": annotation})
+                return
             retry_match = _REVISION_PREPARATION_RETRY.fullmatch(parsed.path)
             if retry_match:
                 if not self._authorized():
@@ -235,6 +283,21 @@ def handler_factory(
 
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            annotation_match = _REVISION_ANNOTATION.fullmatch(parsed.path)
+            if annotation_match:
+                if not self._authorized():
+                    return
+                if annotations is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Annotations are unavailable"})
+                    return
+                try:
+                    annotations.delete(annotation_match.group(1), annotation_match.group(2))
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.end_headers()
+                return
             match = _BOOK.fullmatch(parsed.path)
             if not match:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})

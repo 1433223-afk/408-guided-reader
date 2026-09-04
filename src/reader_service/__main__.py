@@ -7,6 +7,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
+from reader_service.annotation import AnnotationRepository, AnnotationService
 from reader_service.library import LibraryService
 from reader_service.foundation import FoundationRepository, FoundationService
 from reader_service.foundation.rapidocr_adapter import RapidOcrEngine
@@ -50,9 +51,11 @@ def main() -> None:
         JobRepository(service.database),
         worker_count=args.prepare_workers,
     )
+    annotations = AnnotationService(foundation, AnnotationRepository(service.database))
     preparation.start()
     server = ReaderServer(
-        (args.host, args.port), handler_factory(service, token, preparation=preparation)
+        (args.host, args.port),
+        handler_factory(service, token, preparation=preparation, annotations=annotations),
     )
     host, port = server.server_address[:2]
     url = f"http://{host}:{port}/"

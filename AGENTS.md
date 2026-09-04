@@ -209,8 +209,9 @@ detailed future briefs ahead of need.
 
 ## 8. Current state
 
-Both blueprints frozen at Gate D (2026-09-03). Phase-based implementation is starting with
-**R1 — Read the Book** (`docs/phases/R1_READ_THE_BOOK.md`). No implementation code exists yet: no
-framework, ORM, schema, migration root, package layout, task runtime, OCR engine, or dependency set
-has been installed or committed. `IMPLEMENTATION_BLUEPRINT.md` §24 names R2–R4 for later direction
-only — none of them is briefed, per §7.
+Both blueprints are frozen at Gate D (2026-09-03). R1 and R2 are closed. **R3 — My Marks (core)**
+(`docs/phases/R3_MY_MARKS.md`) is the current implemented slice and is `IMPLEMENTATION_READY` for
+user real-use review; its required narrow independent review passed with no P0/P1/P2. The complete
+348-page real textbook is now available and formal same-version R3 acceptance passed at both 29- and
+348-page scale. Cross-version annotation round-trip remains a pending capability gap because OCR
+reprocessing does not exist. No later Phase brief is authorized; derive the next one per §7.

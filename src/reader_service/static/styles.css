@@ -74,6 +74,11 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .preparation-status { min-width: 92px; color: #777166; font-size: 10px; text-align: center; }
 .preparation-status.ready { color: #34704f; }
 .preparation-status.failed { color: #9a3f37; }
+.marks-toggle {
+  margin-left: 5px; padding: 6px 9px; cursor: pointer; color: #6b552e; background: #f2e5bf;
+  border: 1px solid #dec98f; border-radius: 6px; font-size: 10px; font-weight: 800;
+}
+.marks-toggle:hover { background: #ead8a6; }
 .viewer { position: relative; min-height: 0; overflow: auto; outline: none; background: #d7d4cd; scrollbar-color: #aaa69c transparent; }
 .viewer:focus-visible { box-shadow: inset 0 0 0 2px rgb(105 91 68 / 25%); }
 .pages { min-width: 100%; padding: 8px 32px 60px; }
@@ -82,14 +87,41 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .page canvas { display: block; width: 100%; height: 100%; background: white; image-rendering: auto; }
 .text-overlay { position: absolute; z-index: 2; inset: 0; cursor: text; touch-action: none; }
 .ocr-line {
-  position: absolute; overflow: hidden; color: transparent; white-space: pre;
+  z-index: 2; position: absolute; overflow: hidden; color: transparent; white-space: pre;
   user-select: text; line-height: 1; pointer-events: auto;
 }
 .ocr-line::selection { color: transparent; background: transparent; }
 .selection-quad {
-  position: absolute; background: rgb(65 126 211 / 20%); border-radius: 2px;
+  z-index: 1; position: absolute; background: rgb(65 126 211 / 20%); border-radius: 2px;
   pointer-events: none;
 }
+.annotation-quad {
+  position: absolute; background: rgb(244 203 73 / 38%); border-bottom: 1px solid rgb(170 126 19 / 44%);
+  border-radius: 2px; pointer-events: none;
+}
+.annotation-composer {
+  z-index: 12; position: fixed; left: 50%; bottom: 22px; display: flex; align-items: center; gap: 8px;
+  width: min(620px, calc(100% - 32px)); padding: 10px; color: #e9e4d8; background: #28312d;
+  border: 1px solid rgb(255 255 255 / 10%); border-radius: 10px; box-shadow: 0 10px 36px rgb(0 0 0 / 28%);
+}
+.annotation-composer label { padding-left: 4px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+.annotation-composer input { min-width: 0; flex: 1; padding: 8px 10px; border: 0; border-radius: 6px; }
+.annotation-composer button { padding: 8px 11px; cursor: pointer; border: 0; border-radius: 6px; }
+#save-highlight { color: #352b17; background: #e5be69; font-weight: 800; white-space: nowrap; }
+#cancel-highlight { color: #ddd7ca; background: transparent; font-size: 18px; }
+.marks-panel {
+  z-index: 6; position: fixed; top: 78px; right: 14px; width: min(320px, calc(100% - 28px));
+  max-height: calc(100% - 94px); overflow: auto; padding: 13px; background: rgb(250 248 242 / 98%);
+  border: 1px solid #cdc5b4; border-radius: 10px; box-shadow: 0 10px 32px rgb(52 46 34 / 22%);
+}
+.marks-panel-heading { display: flex; align-items: center; justify-content: space-between; color: #514a3c; font: 13px Georgia, serif; }
+.marks-panel-heading button { cursor: pointer; color: #756d60; background: none; border: 0; font-size: 20px; }
+.marks-list { display: grid; gap: 8px; margin-top: 10px; }
+.mark-card { padding: 10px; background: #fffaf0; border-left: 4px solid #e0b84d; border-radius: 5px; }
+.mark-quote { margin: 0; color: #4c473d; font: 12px/1.4 Georgia, serif; white-space: pre-wrap; }
+.mark-note { margin: 7px 0 0; color: #756448; font-size: 11px; white-space: pre-wrap; }
+.mark-remove { margin-top: 8px; padding: 3px 0; cursor: pointer; color: #95453c; background: none; border: 0; font-size: 10px; font-weight: 800; }
+.marks-empty { margin: 16px 2px 3px; color: #898277; font: 12px Georgia, serif; }
 .preparation-retry {
   z-index: 3; position: absolute; cursor: pointer;
   left: 10px; bottom: 8px; padding: 4px 7px; color: #733b36; background: rgb(255 247 243 / 88%);

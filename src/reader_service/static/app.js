@@ -7,7 +7,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "annotation-composer", "annotation-note", "save-highlight", "cancel-highlight"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -23,7 +23,7 @@ const state = {
   currentPage: 0, generation: 0, renderTasks: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
-  selection: null, selecting: false,
+  annotationData: new Map(), selection: null, selecting: false,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -135,13 +135,13 @@ async function importPdf(file, bookId = null) {
 }
 
 async function removeBook(book) {
-  const confirmed = window.confirm(`Remove “${book.title}”?\n\nThis permanently deletes its saved PDF revisions and reading position from this app. This cannot be undone.`);
+  const confirmed = window.confirm(`Remove “${book.title}”?\n\nThis permanently deletes its saved PDF revisions, reading position, highlights, and notes from this app. This cannot be undone.`);
   if (!confirmed) return;
   try {
     await api(`/api/books/${book.id}`, { method: "DELETE" });
     if (state.book?.id === book.id) state.book = null;
     await loadBooks();
-    announce("Book and its saved reading position removed.");
+    announce("Book, reading position, highlights, and notes removed.");
   } catch (error) {
     if (state.book?.id === book.id) state.book = null;
     await loadBooks();
@@ -197,6 +197,8 @@ function closeReader() {
   state.revision = null;
   state.pdf = null;
   elements.reader.hidden = true;
+  elements["marks-panel"].hidden = true;
+  elements["marks-toggle"].setAttribute("aria-expanded", "false");
   elements["library-home"].hidden = false;
   elements.pages.replaceChildren();
   renderLibrary();
@@ -388,6 +390,7 @@ function cancelRenders() {
 function setCurrentPage(index) {
   state.currentPage = Math.max(0, Math.min(index, (state.revision?.page_count || 1) - 1));
   elements["page-number"].value = String(state.currentPage + 1);
+  updateMarksPanel();
 }
 
 function goToPage(index, offset = 0) {
@@ -546,6 +549,7 @@ function closePreparationStream() {
   state.eventSource = null;
   state.preparation.clear();
   state.overlayData.clear();
+  state.annotationData.clear();
   clearTimeout(state.priorityTimer);
   elements["preparation-status"].textContent = "Preparing text…";
   elements["preparation-status"].className = "preparation-status";
@@ -643,6 +647,18 @@ async function ensureOverlay(index) {
       return;
     }
   }
+  let annotations = state.annotationData.get(index);
+  if (!annotations) {
+    try {
+      const payload = await api(`/api/revisions/${revisionId}/annotations?page=${index}`);
+      if (state.revision?.id !== revisionId) return;
+      annotations = payload.annotations;
+      state.annotationData.set(index, annotations);
+    } catch (_error) {
+      // A marks-list failure must not take away R2's selectable text overlay.
+      annotations = [];
+    }
+  }
   if (!wrapper.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
   const overlay = document.createElement("div");
   overlay.className = "text-overlay";
@@ -664,6 +680,72 @@ async function ensureOverlay(index) {
   overlay.addEventListener("pointercancel", finishSelection);
   overlay.addEventListener("contextmenu", preserveTextSelectionForContextMenu);
   wrapper.append(overlay);
+  renderAnnotations(index, overlay);
+  if (index === state.currentPage) updateMarksPanel();
+}
+
+function renderAnnotations(index, overlay = elements.pages.children[index]?.querySelector(".text-overlay")) {
+  if (!overlay) return;
+  overlay.querySelectorAll(".annotation-quad").forEach((node) => node.remove());
+  for (const annotation of state.annotationData.get(index) || []) {
+    for (const quad of annotation.quads) {
+      const xs = quad.map(([x]) => x);
+      const ys = quad.map(([, y]) => y);
+      const marker = document.createElement("span");
+      marker.className = "annotation-quad";
+      marker.dataset.annotationId = annotation.id;
+      marker.style.cssText = `left:${Math.min(...xs) * 100}%;top:${Math.min(...ys) * 100}%;width:${(Math.max(...xs) - Math.min(...xs)) * 100}%;height:${(Math.max(...ys) - Math.min(...ys)) * 100}%`;
+      overlay.append(marker);
+    }
+  }
+}
+
+function updateMarksPanel() {
+  const values = state.annotationData.get(state.currentPage) || [];
+  elements["marks-count"].textContent = String(values.length);
+  elements["marks-page"].textContent = String(state.currentPage + 1);
+  const cards = values.map((annotation) => {
+    const card = document.createElement("article");
+    card.className = "mark-card";
+    const quote = document.createElement("p");
+    quote.className = "mark-quote";
+    quote.textContent = annotation.quote;
+    card.append(quote);
+    if (annotation.body) {
+      const note = document.createElement("p");
+      note.className = "mark-note";
+      note.textContent = annotation.body;
+      card.append(note);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "mark-remove";
+    remove.textContent = "Delete mark";
+    remove.addEventListener("click", () => deleteAnnotation(annotation));
+    card.append(remove);
+    return card;
+  });
+  elements["marks-list"].replaceChildren(...cards);
+  elements["marks-empty"].hidden = values.length > 0;
+}
+
+async function deleteAnnotation(annotation) {
+  if (!window.confirm("Delete this highlight and its note?")) return;
+  const revisionId = state.revision?.id;
+  if (!revisionId) return;
+  try {
+    await api(`/api/revisions/${revisionId}/annotations/${annotation.id}`, { method: "DELETE" });
+    const pageIndex = annotation.pdf_page_index;
+    state.annotationData.set(
+      pageIndex,
+      (state.annotationData.get(pageIndex) || []).filter((value) => value.id !== annotation.id),
+    );
+    renderAnnotations(pageIndex);
+    updateMarksPanel();
+    announce("Highlight deleted.");
+  } catch (error) {
+    announce(`Highlight was not deleted: ${error.message}`, true);
+  }
 }
 
 function selectionPoint(event, overlay) {
@@ -701,6 +783,9 @@ function finishSelection(event) {
   if (!state.selecting) return;
   extendSelection(event);
   state.selecting = false;
+  if (state.selection?.resolved.length) {
+    elements["annotation-composer"].hidden = false;
+  }
 }
 
 function renderSelection() {
@@ -719,6 +804,7 @@ function renderSelection() {
     overlay.append(marker);
   }
   syncNativeSelection(overlay);
+  elements["annotation-composer"].hidden = state.selection.resolved.length === 0;
 }
 
 function syncNativeSelection(overlay) {
@@ -756,6 +842,49 @@ function clearSelection() {
   window.getSelection()?.removeAllRanges();
   state.selection = null;
   state.selecting = false;
+  elements["annotation-composer"].hidden = true;
+  elements["annotation-note"].value = "";
+}
+
+async function saveHighlight(event) {
+  event.preventDefault();
+  const selection = state.selection;
+  const revisionId = state.revision?.id;
+  if (!selection?.resolved.length || !revisionId) return;
+  const button = elements["save-highlight"];
+  button.disabled = true;
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/annotations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pdf_page_index: selection.pageIndex,
+        start: {
+          line_ordinal: selection.anchor.lineOrdinal,
+          boundary: selection.anchor.boundary,
+        },
+        end: {
+          line_ordinal: selection.focus.lineOrdinal,
+          boundary: selection.focus.boundary,
+        },
+        body: elements["annotation-note"].value,
+      }),
+    });
+    if (state.revision?.id !== revisionId) return;
+    const values = state.annotationData.get(selection.pageIndex) || [];
+    state.annotationData.set(selection.pageIndex, [...values, payload.annotation]);
+    const pageIndex = selection.pageIndex;
+    clearSelection();
+    renderAnnotations(pageIndex);
+    updateMarksPanel();
+    elements["marks-panel"].hidden = false;
+    elements["marks-toggle"].setAttribute("aria-expanded", "true");
+    announce(payload.annotation.body ? "Highlight and note saved." : "Highlight saved.");
+  } catch (error) {
+    announce(`Highlight was not saved: ${error.message}`, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function moveSelectionFocus(key) {
@@ -818,6 +947,17 @@ elements["page-number"].addEventListener("keydown", (event) => {
 elements["zoom-out"].addEventListener("click", () => setZoom(adjacentZoom(-1)));
 elements["zoom-in"].addEventListener("click", () => setZoom(adjacentZoom(1)));
 elements["back-to-library"].addEventListener("click", returnToLibrary);
+elements["marks-toggle"].addEventListener("click", () => {
+  elements["marks-panel"].hidden = !elements["marks-panel"].hidden;
+  elements["marks-toggle"].setAttribute("aria-expanded", String(!elements["marks-panel"].hidden));
+  updateMarksPanel();
+});
+elements["marks-close"].addEventListener("click", () => {
+  elements["marks-panel"].hidden = true;
+  elements["marks-toggle"].setAttribute("aria-expanded", "false");
+});
+elements["annotation-composer"].addEventListener("submit", saveHighlight);
+elements["cancel-highlight"].addEventListener("click", clearSelection);
 elements.viewer.addEventListener("pointerdown", () => elements.viewer.focus({ preventScroll: true }));
 elements.viewer.addEventListener("wheel", (event) => {
   if (!event.ctrlKey) return;
