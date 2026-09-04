@@ -110,18 +110,32 @@ Machine:
 - Schema/contract test: a `REGION`-kind annotation or an `AI_SAVED`/re-resolution code path is either
   absent or explicitly rejected — not half-built.
 
-Real-use, with the current real sample (29-page Primary scan):
+Real-use, basic (29-page Primary scan):
 - Select real OCR text on a prepared page, create a highlight, add a short note on a second
   selection, close and reopen the book, and confirm both render correctly on their pages.
 - Delete one highlight and confirm it's gone after reopening.
-- **Two named, non-blocking gaps, carried forward honestly rather than papered over:**
-  - No ~700-page scan exists — full-book-scale annotation volume/performance is untested
-    (`FULL_REAL_MATERIAL_ACCEPTANCE_PENDING`, same inherited gap as R1/R2).
-  - The cross-version regeneration round-trip (§23, "the single most important test in the system")
-    cannot be executed because reprocessing doesn't exist yet. Close this Phase as
-    `IMPLEMENTATION_READY` for same-version creation/persistence/render/delete, and record the
-    cross-version gap explicitly as pending on a future reprocessing Phase — not as passed, and not
-    as this Phase's fault.
+
+Real-use, full-scale (**material gap closed**): a complete real scan of the target textbook now
+exists — 348 real pages, not encrypted, sha256
+`6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd` (currently held in the app's own
+blob store from a manual import; the earlier "~700-page" figure was the frozen blueprint's
+illustrative example, not an exact page-count gate — a real, complete, non-excerpt scan of the actual
+target textbook satisfies that intent regardless of its exact count). The user has already opened and
+used this file in the Reader as an informal smoke check with no problems observed — real signal, but
+not a substitute for this Phase's own formal acceptance record. Before closing this Phase:
+- Repeat the create/reopen/delete walkthrough above against this full book specifically: annotate
+  several highlights and notes spread across widely separated pages, close and reopen, confirm every
+  one renders correctly with nothing degraded at this scale, then delete one and confirm.
+- Record the result in the development report as actual evidence (what was annotated, what was
+  checked) — do not report full-scale acceptance as passed on the strength of the user's manual
+  smoke check alone.
+
+**One gap remains, and it is not a material gap:** the cross-version regeneration round-trip (§23,
+"the single most important test in the system") still cannot be executed, because reprocessing
+doesn't exist yet — unchanged by the new material. Close this Phase as `IMPLEMENTATION_READY` for
+same-version creation/persistence/render/delete at both scales above, and record the cross-version
+gap explicitly as pending on a future reprocessing Phase — not as passed, and not as this Phase's
+fault.
 
 ## Autonomy
 
@@ -144,13 +158,32 @@ refactors.
 ## Completion
 
 - Tests above passing.
-- Real-use check on the 29-page sample as described in "Acceptance."
+- Real-use check at both scales (29-page and the full 348-page real book) as described in
+  "Acceptance," with the full-scale walkthrough actually recorded — not inferred from the user's
+  earlier informal use of the book in Reader.
 - One development report in `docs/development-reports/` (format in that directory's README),
-  labeling the result `IMPLEMENTATION_READY` and explicitly naming both gaps above (full-scale
-  material and the cross-version round-trip) rather than omitting either.
+  labeling the result `IMPLEMENTATION_READY` and explicitly naming the one remaining gap (the
+  cross-version round-trip) rather than omitting it. The full-scale material gap is closed — the
+  report should say so, with the sha256/page-count above, not repeat the old pending language.
 - One git checkpoint commit.
-- **No independent (ZCode) review required by default.** Unlike R2, this Phase does not establish a
-  new geometry/storage contract — it consumes R2's Foundation geometry as-is and adds one
-  straightforward entity with no reprocessing logic to get subtly wrong. If fingerprint re-resolution
-  or any `NEEDS_REVIEW` transition gets written despite "Not now," that is durable/persistence-shaped
-  scope beyond this brief — escalate per condition 4, don't ship it unreviewed.
+- **This Phase requires a narrow independent (ZCode) review, after implementation and the real-use
+  checks above — reversing the original judgment on this brief.** R2 introduced no new geometry
+  contract, so no review was required there; R3 is different — it is the first Phase to persist real,
+  irreplaceable user assets (highlights/notes) anchored to source geometry, which is `AGENTS.md` §5's
+  "annotation/source anchoring" risk category by name, not a borderline or catch-all fit. Scope the
+  review to exactly these, and nothing else in the Phase:
+  1. `Annotation` durable identity and ownership (creation, lookup, deletion are unambiguous and
+     correctly scoped to their owning book/revision);
+  2. the anchor storage itself — `book_source_revision_id` + `pdf_page_index` + `quads` +
+     `quote`/`context_before`/`context_after` — matches Implementation §16.1 exactly;
+  3. no OCR line/cell runtime identity is persisted as part of the anchor (Implementation §16.1's
+     "no OCR identifier is durable authority");
+  4. `foundation_version_at_creation` is recorded and left alone — no bump, comparison, or
+     re-resolution trigger anywhere in the code path;
+  5. book- and annotation-deletion semantics — deleting a book removes its annotations, no orphaned
+     rows, no partial deletion state;
+  6. re-resolution and `NEEDS_REVIEW` were **not** pre-built despite being named in the frozen §24 R3
+     entry — confirm "Not now" was actually honored, not quietly implemented "for completeness."
+
+  This is not a full Phase code review — ordinary Reader UI, selection→highlight interaction details,
+  and test structure stay off this list.
