@@ -87,3 +87,39 @@ export function resolveSelection(lines, anchor, focus) {
 export function resolvedText(resolved) {
   return resolved.map((range) => range.text).join("\n");
 }
+
+function quadBounds(quad) {
+  const xs = quad.map(([x]) => x);
+  const ys = quad.map(([, y]) => y);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+function boundsQuad({ x0, y0, x1, y1 }) {
+  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+}
+
+export function selectionPresentationQuads(resolved) {
+  const rects = resolved.flatMap((range) => range.quads.map(quadBounds));
+  const merged = [];
+  for (const rect of rects) {
+    const previous = merged.at(-1);
+    if (previous) {
+      const previousHeight = previous.y1 - previous.y0;
+      const height = rect.y1 - rect.y0;
+      const overlap = Math.max(0, Math.min(previous.y1, rect.y1) - Math.max(previous.y0, rect.y0));
+      const minHeight = Math.min(previousHeight, height);
+      const heightRatio = minHeight / Math.max(previousHeight, height);
+      const gap = rect.x0 - previous.x1;
+      const adjacentGap = Math.max(0.006, minHeight * 0.5);
+      if (minHeight > 0 && overlap / minHeight >= 0.7 && heightRatio >= 0.65 && gap <= adjacentGap) {
+        previous.x0 = Math.min(previous.x0, rect.x0);
+        previous.y0 = Math.min(previous.y0, rect.y0);
+        previous.x1 = Math.max(previous.x1, rect.x1);
+        previous.y1 = Math.max(previous.y1, rect.y1);
+        continue;
+      }
+    }
+    merged.push({ ...rect });
+  }
+  return merged.map(boundsQuad);
+}

@@ -5,6 +5,9 @@
 `IMPLEMENTATION_READY` — scanned textbook pages prepare progressively in the background. A prepared
 page gains a line/cell overlay that supports pointer hit-testing, mouse or keyboard range extension,
 cross-line selection, native DOM text selection, and normal keyboard or context-menu browser copy.
+Selection painting is presentation-only: adjacent fragments on the same visual row are coalesced into
+lightweight translucent runs, while the native DOM Range remains available for browser semantics
+without adding a second blue paint layer.
 The original PDF canvas remains the only reading
 surface and continues rendering, scrolling, zooming, and navigating before preparation finishes or
 when one page fails.
@@ -45,6 +48,10 @@ non-blocking deferred debt; the correction did not require a broad geometry refa
   selections as per-line ranges, draws normalized quads, and exposes the same range as transparent
   native DOM text. Keyboard copy and the browser's normal context-menu copy path both receive the
   resolved OCR text. Reload reconstructs geometry from persisted lines.
+- Selection presentation suppresses the browser's otherwise-duplicated native Range paint and merges
+  only adjacent/overlapping, similarly sized selected rectangles on the same visual row. This produces
+  continuous translucent runs without modifying resolved selection ranges, anonymous cell geometry,
+  hit-testing, copied text, or persistence.
 - Hit-testing uses two-dimensional distance to the line's actual selectable cell extent. Strongly
   overlapping OCR fragments on one visual row are ordered left-to-right before the next row. This
   keeps separately detected TOC numbers and titles independently selectable without changing cell
@@ -67,6 +74,13 @@ non-blocking deferred debt; the correction did not require a broad geometry refa
   lives in a transparent native text layer; every resolved custom range is mirrored into a DOM Range.
   Right-click inside the selected geometry refreshes that native range without cancelling or replacing
   the browser's context menu, while right-click elsewhere retains the original PDF Reader behavior.
+- Follow-up manual review confirmed selection precision, cross-line selection, and right-click copy,
+  but exposed an overly heavy visual result: the browser's native blue `::selection` paint was stacked
+  with opaque-looking per-cell custom quads, revealing OCR token fragmentation and obscuring print.
+  The correction makes native Range painting transparent while retaining the live DOM selection, uses
+  a lighter 20% custom tint, and coalesces adjacent same-row quads only in the presentation path.
+  Different rows, distant fragments, and materially different-size title glyphs remain separate so
+  the UI does not invent selection geometry.
 - ZCode's P1 was correct. The accepted EMBEDDED conversion divided PDF user-space coordinates by
   page width/height without subtracting the effective box origin or applying rotation. Such pages
   could look plausible enough to pass the probe while their overlay was wrong. The smallest reliable
@@ -92,6 +106,9 @@ non-blocking deferred debt; the correction did not require a broad geometry refa
   reusable reprocessing/version-bump workflow. It is a bounded correction while no annotation or
   source-anchor assets exist, and leaves the original PDF, Library identity, and reading position
   untouched.
+- Presentation coalescing is deliberately downstream of `resolveSelection`. It has no durable output
+  and cannot become a source for copy, reload, anchoring, or cell identity; it is safe to tune as Reader
+  UI without changing the Foundation storage/geometry contract.
 
 ## Deviations from Spec
 
@@ -113,9 +130,10 @@ not a small extension of the current page-scoped pointer-capture and range model
   structural line/quad/cell/selectability properties only — never exact OCR strings. Primary SHA-256:
   `327da74eef4c0ee7ad0fb3bf4752907f71dff9c2d9877faf49d1b3201c7e0aa1`; DMA SHA-256:
   `6cae19dfe20fc35dc3a61f2625a4cfcd6850a7e92a7dd44afbb43414bd6dcdc6`.
-- `npm test`: **29 passed**. Includes R1 normalized PDF geometry plus two-dimensional selectable
+- `npm test`: **30 passed**. Includes R1 normalized PDF geometry plus two-dimensional selectable
   extent hit-testing for overlapping same-row fragments, cell-boundary hit-testing,
-  forward/backward cross-line range resolution, copied text, and normalized quad construction.
+  forward/backward cross-line range resolution, copied text, normalized quad construction, and a
+  non-mutating presentation-only same-row merge regression.
 - `npm run test:e2e`: **PASS** on installed Chrome with the 29-page Primary scan, preserving the full
   R1 import/read/virtualize/zoom/position/reopen/delete flow while background OCR ran.
 - `npm run test:e2e:r2`: **PASS**. The browser opened and rendered the PDF while preparation was
@@ -126,7 +144,8 @@ not a small extension of the current page-scoped pointer-capture and range model
   text. It then reloaded again, opened real TOC page 12, selected only `6.2.1` from a separately
   detected number/title row, verified the native DOM selection and clipboard contained only that
   number, and verified the context-menu event preserved the native selection without suppressing the
-  browser menu. Both captured selections visually align with the printed glyphs.
+  browser menu. It additionally verified that native selection paint is transparent and the custom
+  paint is `rgba(65, 126, 211, 0.2)`, then captured TOC, large-heading, and ordinary-body selections.
 - `npm run test:e2e:recovery`: **PASS** against the same real scan. The service was killed with two
   pages committed and one page in flight; after restart the ready count stayed **2 → 2**, preparation
   reached **29/29**, exactly one batch was redone, and maximum job attempts was **2**.
@@ -134,8 +153,10 @@ not a small extension of the current page-scoped pointer-capture and range model
   the original PDF bytes remained servable. The browser failure state adds a retry button rather than
   replacing the canvas.
 - The final R2 screenshots were visually inspected. The page-29 range sits on the expected printed
-  glyphs, and the TOC screenshot shows a tight native selection around only `6.2.1`, with the adjacent
-  title unselected. The copy confirmation is visible.
+  glyphs; the TOC screenshot shows a tight selection around only `6.2.1`, with the adjacent title
+  unselected; and the large-heading and ordinary-body fixtures show lightweight, readable selection
+  runs instead of stacked solid token blocks. Differently sized `第` / `1` / `章` fragments are not
+  incorrectly unioned into one oversized rectangle.
 - The user's existing 29-page Library record was upgraded in place on the live `8766` service. It
   retained the original PDF and 80% reading zoom, re-prepared 29/29 pages, and exposed the corrected
   page-12 number-before-title text order.
@@ -187,7 +208,9 @@ npm run test:e2e:recovery
 Manual acceptance: start `guided-reader` in the user's PowerShell, import the hash-verified 29-page
 Primary sample, immediately scroll/jump while the toolbar reports partial selectability, drag across
 prepared text and paste it into another application, reload and repeat, and verify any failed-page
-retry affordance leaves the PDF canvas readable. Repeat at ~700-page scale when that material exists.
+retry affordance leaves the PDF canvas readable. For selection presentation, inspect page 12 (TOC and
+number), page 13 (large heading), and page 14 (ordinary body) for a continuous, translucent result
+that leaves the original print legible. Repeat at ~700-page scale when that material exists.
 
 ## Important files / architecture entry points
 

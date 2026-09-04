@@ -1,6 +1,7 @@
 import * as pdfjsLib from "/vendor/pdf.mjs";
 import {
   lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
+  selectionPresentationQuads,
 } from "/selection.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
@@ -709,15 +710,13 @@ function renderSelection() {
   state.selection.resolved = resolveSelection(data.lines, state.selection.anchor, state.selection.focus);
   const overlay = elements.pages.children[state.selection.pageIndex]?.querySelector(".text-overlay");
   if (!overlay) return;
-  for (const range of state.selection.resolved) {
-    for (const quad of range.quads) {
-      const xs = quad.map(([x]) => x);
-      const ys = quad.map(([, y]) => y);
-      const marker = document.createElement("span");
-      marker.className = "selection-quad";
-      marker.style.cssText = `left:${Math.min(...xs) * 100}%;top:${Math.min(...ys) * 100}%;width:${(Math.max(...xs) - Math.min(...xs)) * 100}%;height:${(Math.max(...ys) - Math.min(...ys)) * 100}%`;
-      overlay.append(marker);
-    }
+  for (const quad of selectionPresentationQuads(state.selection.resolved)) {
+    const xs = quad.map(([x]) => x);
+    const ys = quad.map(([, y]) => y);
+    const marker = document.createElement("span");
+    marker.className = "selection-quad";
+    marker.style.cssText = `left:${Math.min(...xs) * 100}%;top:${Math.min(...ys) * 100}%;width:${(Math.max(...xs) - Math.min(...xs)) * 100}%;height:${(Math.max(...ys) - Math.min(...ys)) * 100}%`;
+    overlay.append(marker);
   }
   syncNativeSelection(overlay);
 }

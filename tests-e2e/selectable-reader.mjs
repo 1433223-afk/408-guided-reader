@@ -167,6 +167,45 @@ try {
   assert.equal(tocClipboard, numberLine.text, "TOC copy included an adjacent title fragment");
   await page.screenshot({ path: path.join(artifacts, "r2-precise-toc-selection.png"), fullPage: false });
 
+  const selectionPaint = await page.evaluate(() => {
+    const nativeLine = document.querySelector('.page[data-index="11"] .ocr-line');
+    const customQuad = document.querySelector('.page[data-index="11"] .selection-quad');
+    return {
+      nativeBackground: getComputedStyle(nativeLine, "::selection").backgroundColor,
+      customBackground: getComputedStyle(customQuad).backgroundColor,
+    };
+  });
+  assert.ok(
+    ["transparent", "rgba(0, 0, 0, 0)"].includes(selectionPaint.nativeBackground),
+    `native selection paint leaked through: ${selectionPaint.nativeBackground}`,
+  );
+  assert.equal(selectionPaint.customBackground, "rgba(65, 126, 211, 0.2)");
+
+  // Visual QA fixtures: a large split heading plus body, then ordinary body
+  // lines.  These retain native selection/copy but must be painted only by the
+  // lightweight presentation layer.
+  await page.keyboard.press("Escape");
+  await goToPreparedPage(page, 12);
+  const headingOverlay = await overlayPage(page, revisionId, 12);
+  const headingLines = headingOverlay.lines.filter((candidate) => (
+    candidate.cells.length && centerY(candidate.quad) >= 0.1 && centerY(candidate.quad) <= 0.56
+  ));
+  assert.ok(headingLines.length > 8, "large-heading visual fixture lacked enough selectable lines");
+  await dragLineRange(page, 12, headingLines[0], headingLines.at(-1));
+  assert.ok((await page.evaluate(() => window.getSelection().toString())).length > 20);
+  await page.screenshot({ path: path.join(artifacts, "r2-polished-large-heading-selection.png"), fullPage: false });
+
+  await page.keyboard.press("Escape");
+  await goToPreparedPage(page, 13);
+  const bodyOverlay = await overlayPage(page, revisionId, 13);
+  const bodyLines = bodyOverlay.lines.filter((candidate) => (
+    candidate.cells.length >= 10 && centerY(candidate.quad) >= 0.18 && centerY(candidate.quad) <= 0.7
+  ));
+  assert.ok(bodyLines.length >= 3, "ordinary-body visual fixture lacked selectable lines");
+  await dragLineRange(page, 13, bodyLines[0], bodyLines[2]);
+  assert.ok((await page.evaluate(() => window.getSelection().toString())).length > 20);
+  await page.screenshot({ path: path.join(artifacts, "r2-polished-body-selection.png"), fullPage: false });
+
   console.log(JSON.stringify({
     result: "PASS",
     pagesReady: completed.pages.length,
@@ -177,7 +216,14 @@ try {
     copiedCharacterCount: [...clipboard].length,
     preciseTocSelection: numberLine.text,
     contextMenuUsesNativeSelection: true,
-    screenshot: path.join(artifacts, "r2-selectable-page-29.png"),
+    nativeSelectionPaint: selectionPaint.nativeBackground,
+    customSelectionPaint: selectionPaint.customBackground,
+    screenshots: [
+      path.join(artifacts, "r2-selectable-page-29.png"),
+      path.join(artifacts, "r2-precise-toc-selection.png"),
+      path.join(artifacts, "r2-polished-large-heading-selection.png"),
+      path.join(artifacts, "r2-polished-body-selection.png"),
+    ],
   }));
 } finally {
   if (browser) await browser.close();
@@ -202,6 +248,33 @@ async function waitForPreparation(page, revisionId, predicate, timeout) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`Preparation timed out: ${JSON.stringify(latest)}`);
+}
+
+async function overlayPage(page, revisionId, pageIndex) {
+  return page.evaluate(async ({ id, index }) => (
+    await (await fetch(`/api/revisions/${id}/overlay?page=${index}`)).json()
+  ).page, { id: revisionId, index: pageIndex });
+}
+
+async function goToPreparedPage(page, pageIndex) {
+  await page.locator("#page-number").fill(String(pageIndex + 1));
+  await page.locator("#page-number").press("Enter");
+  await page.locator(`.page[data-index="${pageIndex}"] canvas`).waitFor({ state: "visible", timeout: 30_000 });
+  await page.locator(`.page[data-index="${pageIndex}"] .text-overlay`).waitFor({ state: "attached", timeout: 15_000 });
+}
+
+async function dragLineRange(page, pageIndex, startLine, endLine) {
+  const pageBox = await page.locator(`.page[data-index="${pageIndex}"]`).boundingBox();
+  const startBounds = bounds(startLine.quad);
+  const endBounds = bounds(endLine.quad);
+  const startX = pageBox.x + startLine.cells[0][0] * pageBox.width;
+  const startY = pageBox.y + ((startBounds.y0 + startBounds.y1) / 2) * pageBox.height;
+  const endX = pageBox.x + endLine.cells.at(-1)[1] * pageBox.width;
+  const endY = pageBox.y + ((endBounds.y0 + endBounds.y1) / 2) * pageBox.height;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(endX, endY, { steps: 16 });
+  await page.mouse.up();
 }
 
 function requireExists(candidate) {

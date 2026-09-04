@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  nearestCellBoundary, nearestLine, resolveSelection, resolvedText, selectionRanges,
+  nearestCellBoundary, nearestLine, resolveSelection, resolvedText, selectionPresentationQuads,
+  selectionRanges,
 } from "../src/reader_service/static/selection.js";
 
 const lines = [
@@ -69,4 +70,19 @@ test("backward selection resolves identically", () => {
     resolveSelection(lines, { lineOrdinal: 1, boundary: 2 }, { lineOrdinal: 0, boundary: 1 }),
     resolveSelection(lines, { lineOrdinal: 0, boundary: 1 }, { lineOrdinal: 1, boundary: 2 }),
   );
+});
+
+test("presentation merges only adjacent selected fragments on the same visual row", () => {
+  const resolved = [
+    { quads: [[[0.2, 0.1], [0.26, 0.1], [0.26, 0.12], [0.2, 0.12]]] },
+    { quads: [[[0.255, 0.101], [0.4, 0.101], [0.4, 0.121], [0.255, 0.121]]] },
+    { quads: [[[0.8, 0.1], [0.9, 0.1], [0.9, 0.12], [0.8, 0.12]]] },
+    { quads: [[[0.2, 0.14], [0.5, 0.14], [0.5, 0.16], [0.2, 0.16]]] },
+  ];
+  assert.deepEqual(selectionPresentationQuads(resolved), [
+    [[0.2, 0.1], [0.4, 0.1], [0.4, 0.121], [0.2, 0.121]],
+    [[0.8, 0.1], [0.9, 0.1], [0.9, 0.12], [0.8, 0.12]],
+    [[0.2, 0.14], [0.5, 0.14], [0.5, 0.16], [0.2, 0.16]],
+  ]);
+  assert.equal(resolved[0].quads[0][1][0], 0.26, "presentation must not mutate resolved geometry");
 });

@@ -85,7 +85,11 @@ button, label { -webkit-tap-highlight-color: transparent; }
   position: absolute; overflow: hidden; color: transparent; white-space: pre;
   user-select: text; line-height: 1; pointer-events: auto;
 }
-.selection-quad { position: absolute; background: rgb(73 132 207 / 32%); border-radius: 1px; pointer-events: none; }
+.ocr-line::selection { color: transparent; background: transparent; }
+.selection-quad {
+  position: absolute; background: rgb(65 126 211 / 20%); border-radius: 2px;
+  pointer-events: none;
+}
 .preparation-retry {
   z-index: 3; position: absolute; cursor: pointer;
   left: 10px; bottom: 8px; padding: 4px 7px; color: #733b36; background: rgb(255 247 243 / 88%);
