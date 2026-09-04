@@ -22,6 +22,10 @@ class ManagedPaths:
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
+        # Windows packaged-app execution can virtualize LocalAppData only when the directory is
+        # first created. Re-resolve after creation so containment compares canonical paths on both
+        # sides of that redirection boundary.
+        self.root = self.root.resolve()
         self.blob_root().mkdir(parents=True, exist_ok=True)
         self.temp_root().mkdir(parents=True, exist_ok=True)
 
