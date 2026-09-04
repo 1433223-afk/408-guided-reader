@@ -23,7 +23,7 @@ const state = {
   currentPage: 0, generation: 0, renderTasks: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
-  annotationData: new Map(), selection: null, selecting: false,
+  annotationData: new Map(), selection: null, selecting: false, selectionMenuPoint: null,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -678,7 +678,7 @@ async function ensureOverlay(index) {
   overlay.addEventListener("pointermove", extendSelection);
   overlay.addEventListener("pointerup", finishSelection);
   overlay.addEventListener("pointercancel", finishSelection);
-  overlay.addEventListener("contextmenu", preserveTextSelectionForContextMenu);
+  overlay.addEventListener("contextmenu", openSelectionContextMenu);
   wrapper.append(overlay);
   renderAnnotations(index, overlay);
   if (index === state.currentPage) updateMarksPanel();
@@ -787,9 +787,7 @@ function finishSelection(event) {
   if (!state.selecting) return;
   extendSelection(event);
   state.selecting = false;
-  if (state.selection?.resolved.length) {
-    showSelectionActions();
-  }
+  hideSelectionActions();
 }
 
 function renderSelection() {
@@ -808,37 +806,39 @@ function renderSelection() {
     overlay.append(marker);
   }
   syncNativeSelection(overlay);
-  if (state.selection.resolved.length && !state.selecting) showSelectionActions();
-  else elements["selection-actions"].hidden = true;
+  hideSelectionActions();
 }
 
-function showSelectionActions() {
+function showSelectionActions(clientX, clientY) {
+  state.selectionMenuPoint = { x: clientX, y: clientY };
   elements["selection-actions"].hidden = false;
   positionSelectionActions();
 }
 
 function positionSelectionActions() {
-  if (!state.selection?.resolved.length || elements["selection-actions"].hidden) return;
-  const overlay = elements.pages.children[state.selection.pageIndex]?.querySelector(".text-overlay");
-  if (!overlay) return;
-  const quads = selectionPresentationQuads(state.selection.resolved);
-  if (!quads.length) return;
-  const target = quads.at(-1);
-  const xs = target.map(([x]) => x);
-  const ys = target.map(([, y]) => y);
-  const rect = overlay.getBoundingClientRect();
+  if (!state.selection?.resolved.length || !state.selectionMenuPoint
+      || elements["selection-actions"].hidden) return;
+  const point = state.selectionMenuPoint;
   const menu = elements["selection-actions"];
   requestAnimationFrame(() => {
     if (menu.hidden || !state.selection) return;
     const width = menu.offsetWidth;
     const height = menu.offsetHeight;
-    const anchorX = rect.left + ((Math.min(...xs) + Math.max(...xs)) / 2) * rect.width;
-    const below = rect.top + Math.max(...ys) * rect.height + 8;
-    const above = rect.top + Math.min(...ys) * rect.height - height - 8;
+    const below = point.y + 5;
+    const above = point.y - height - 5;
     const top = below + height <= window.innerHeight - 8 ? below : above;
-    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, anchorX - width / 2))}px`;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, point.x + 5))}px`;
     menu.style.top = `${Math.max(76, Math.min(window.innerHeight - height - 8, top))}px`;
   });
+}
+
+function hideSelectionActions() {
+  elements["selection-actions"].hidden = true;
+  elements["note-editor"].hidden = true;
+  elements["add-note"].setAttribute("aria-expanded", "false");
+  elements["annotation-note"].value = "";
+  document.querySelector('input[name="highlight-style"][value="YELLOW"]').checked = true;
+  state.selectionMenuPoint = null;
 }
 
 function syncNativeSelection(overlay) {
@@ -856,8 +856,12 @@ function syncNativeSelection(overlay) {
   nativeSelection.addRange(range);
 }
 
-function preserveTextSelectionForContextMenu(event) {
-  if (!state.selection?.resolved.length) return;
+function openSelectionContextMenu(event) {
+  if (!state.selection?.resolved.length
+      || state.selection.pageIndex !== Number(event.currentTarget.dataset.pageIndex)) {
+    hideSelectionActions();
+    return;
+  }
   const overlay = event.currentTarget;
   const rect = overlay.getBoundingClientRect();
   const x = (event.clientX - rect.left) / rect.width;
@@ -868,7 +872,13 @@ function preserveTextSelectionForContextMenu(event) {
     return x >= Math.min(...xs) && x <= Math.max(...xs)
       && y >= Math.min(...ys) && y <= Math.max(...ys);
   }));
-  if (inside) syncNativeSelection(overlay);
+  if (!inside) {
+    hideSelectionActions();
+    return;
+  }
+  syncNativeSelection(overlay);
+  event.preventDefault();
+  showSelectionActions(event.clientX, event.clientY);
 }
 
 function clearSelection() {
@@ -876,11 +886,7 @@ function clearSelection() {
   window.getSelection()?.removeAllRanges();
   state.selection = null;
   state.selecting = false;
-  elements["selection-actions"].hidden = true;
-  elements["note-editor"].hidden = true;
-  elements["add-note"].setAttribute("aria-expanded", "false");
-  elements["annotation-note"].value = "";
-  document.querySelector('input[name="highlight-style"][value="YELLOW"]').checked = true;
+  hideSelectionActions();
 }
 
 function selectedHighlightStyle() {
@@ -932,6 +938,7 @@ async function copySelection() {
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
+    hideSelectionActions();
     announce("Selected text copied.");
   } catch (error) {
     announce(`Selected text was not copied: ${error.message}`, true);
@@ -1029,7 +1036,10 @@ elements["selection-actions"].addEventListener("keydown", (event) => {
   }
 });
 elements.viewer.addEventListener("pointerdown", () => elements.viewer.focus({ preventScroll: true }));
-elements.viewer.addEventListener("scroll", positionSelectionActions, { passive: true });
+elements.viewer.addEventListener("contextmenu", (event) => {
+  if (!event.defaultPrevented) hideSelectionActions();
+});
+elements.viewer.addEventListener("scroll", hideSelectionActions, { passive: true });
 elements.viewer.addEventListener("wheel", (event) => {
   if (!event.ctrlKey) return;
   event.preventDefault();
@@ -1064,6 +1074,10 @@ document.addEventListener("copy", (event) => {
   event.clipboardData.setData("text/plain", text);
   announce("Selected text copied.");
 });
+document.addEventListener("pointerdown", (event) => {
+  if (!elements["selection-actions"].hidden
+      && !elements["selection-actions"].contains(event.target)) hideSelectionActions();
+}, true);
 window.addEventListener("resize", () => {
   positionSelectionActions();
   clearTimeout(state.resizeTimer);

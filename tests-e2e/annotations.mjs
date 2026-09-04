@@ -59,6 +59,10 @@ try {
       const highlightStyle = highlightStyles[created.length];
       const before = await annotationsOnPage(page, book.active_revision.id, pageIndex);
       await dragCells(page, pageIndex, line, 0, Math.min(5, line.cells.length));
+      assert.equal(await page.locator("#selection-actions").isHidden(), true,
+        "finishing a selection must not open Annotation actions");
+      if (created.length === 0) await assertOutsideContextMenuIsNative(page);
+      await rightClickSelection(page, pageIndex, line, 0, Math.min(5, line.cells.length));
       await page.locator("#selection-actions").waitFor({ state: "visible" });
       assert.equal(await page.locator("#marks-panel").isHidden(), true, "Marks must stay collapsed while saving");
       await page.locator(`label:has(input[name="highlight-style"][value="${highlightStyle}"])`).click();
@@ -141,6 +145,8 @@ try {
   const end = Math.min(4, line.cells.length);
   const expectedCopy = line.text.slice(line.cells[0][2], line.cells[end - 1][3]);
   await dragCells(page, regression.pageIndex, line, 0, end);
+  assert.equal(await page.locator("#selection-actions").isHidden(), true);
+  await rightClickSelection(page, regression.pageIndex, line, 0, end);
   await page.locator("#copy-selection").click();
   await page.getByText("Selected text copied.").waitFor();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), expectedCopy);
@@ -202,6 +208,8 @@ try {
     serviceRestartPersistence: true,
     readerSelectionCopyRegression: true,
     selectionActionCopy: true,
+    selectionCompletionIsQuiet: true,
+    outsideContextMenuPreserved: true,
     marksCollapsedByDefault: true,
     deletedAndGoneAfterReopen: { pages: 348, page: regression.pageIndex + 1 },
     pageLoadTimings: loadTimings,
@@ -264,6 +272,30 @@ async function dragCells(page, pageIndex, line, start, end) {
   await page.mouse.down();
   await page.mouse.move(box.x + line.cells[end - 1][1] * box.width, y, { steps: 8 });
   await page.mouse.up();
+}
+
+async function rightClickSelection(page, pageIndex, line, start, end) {
+  const box = await page.locator(`.page[data-index="${pageIndex}"]`).boundingBox();
+  const ys = line.quad.map(([, y]) => y);
+  const x = box.x + ((line.cells[start][0] + line.cells[end - 1][1]) / 2) * box.width;
+  const y = box.y + ((Math.min(...ys) + Math.max(...ys)) / 2) * box.height;
+  await page.mouse.click(x, y, { button: "right" });
+}
+
+async function assertOutsideContextMenuIsNative(page) {
+  await page.evaluate(() => {
+    window.__outsideContextMenuPrevented = null;
+    document.addEventListener("contextmenu", (event) => {
+      window.__outsideContextMenuPrevented = event.defaultPrevented;
+    }, { once: true });
+  });
+  const viewer = await page.locator("#viewer").boundingBox();
+  await page.mouse.click(viewer.x + 5, viewer.y + viewer.height / 2, { button: "right" });
+  await page.waitForFunction(() => window.__outsideContextMenuPrevented !== null);
+  assert.equal(await page.evaluate(() => window.__outsideContextMenuPrevented), false,
+    "right-click outside the selected text was prevented");
+  assert.equal(await page.locator("#selection-actions").isHidden(), true,
+    "right-click outside the selected text opened Annotation actions");
 }
 
 async function library(page) {

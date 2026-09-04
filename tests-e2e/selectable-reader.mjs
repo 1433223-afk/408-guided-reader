@@ -150,6 +150,8 @@ try {
   await page.mouse.down();
   await page.mouse.move(numberEndX, numberY, { steps: 8 });
   await page.mouse.up();
+  assert.equal(await page.locator("#selection-actions").isHidden(), true,
+    "selection completion opened Annotation actions without a right-click");
   const nativeText = await page.evaluate(() => window.getSelection().toString());
   assert.equal(nativeText, numberLine.text, "precise TOC selection included an adjacent fragment");
   const contextState = await page.evaluate(({ x, y }) => {
@@ -161,7 +163,9 @@ try {
     return { text: window.getSelection().toString(), defaultPrevented: event.defaultPrevented };
   }, { x: (numberStartX + numberEndX) / 2, y: numberY });
   assert.equal(contextState.text, numberLine.text, "right-click did not preserve the native text selection");
-  assert.equal(contextState.defaultPrevented, false, "selected text replaced the browser context menu");
+  assert.equal(contextState.defaultPrevented, true, "selected text did not open selection actions");
+  assert.equal(await page.locator("#selection-actions").isVisible(), true,
+    "right-click on selected text did not open selection actions");
   await page.keyboard.press("Control+C");
   const tocClipboard = await page.evaluate(() => navigator.clipboard.readText());
   assert.equal(tocClipboard, numberLine.text, "TOC copy included an adjacent title fragment");
@@ -215,7 +219,7 @@ try {
     selectedCellCount: chosen.length,
     copiedCharacterCount: [...clipboard].length,
     preciseTocSelection: numberLine.text,
-    contextMenuUsesNativeSelection: true,
+    contextMenuUsesSelectionActions: true,
     nativeSelectionPaint: selectionPaint.nativeBackground,
     customSelectionPaint: selectionPaint.customBackground,
     screenshots: [

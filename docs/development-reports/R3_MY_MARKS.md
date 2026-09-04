@@ -3,10 +3,11 @@
 ## Result
 
 `IMPLEMENTATION_READY` — a Reader selection can now become a durable text highlight, with an optional
-short note. Copy, Highlight, and Add note are peer actions in a compact menu beside the selection;
-the old fixed bottom composer is gone. Marks render from persisted normalized quads on their original
-PDF page, survive closing and reopening the book and a real Core Service process restart, and can be
-deleted. The Reader keeps Marks behind a small toolbar entry until the user explicitly opens it.
+short note. Completing a text selection remains visually quiet; only an explicit right-click inside
+that selection opens a compact menu with Copy, Highlight, and Add note as peer actions. The old fixed
+bottom composer is gone. Marks render from persisted normalized quads on their original PDF page,
+survive closing and reopening the book and a real Core Service process restart, and can be deleted.
+The Reader keeps Marks behind a small toolbar entry until the user explicitly opens it.
 
 `READY_FOR_USER_REAL_USE_REVIEW: YES`
 
@@ -36,8 +37,9 @@ reprocessing/version-bump path exists. It is explicitly pending, not claimed as 
   `NONE` (no visible paint).
 - Revision/page-scoped create/list/delete API. Deletion is scoped by both annotation UUID and owning
   revision so another revision cannot delete or retrieve the mark accidentally.
-- Reader UI for selection → Copy / Highlight / Add note in a selection-adjacent menu, inline
-  persisted style rendering, a collapsed-by-default current-page Marks panel, and explicit deletion.
+- Reader UI for quiet text selection → selection-scoped right-click → Copy / Highlight / Add note,
+  inline persisted style rendering, a collapsed-by-default current-page Marks panel, and explicit
+  deletion. A right-click without a valid selection, or outside the selected quads, remains native.
 - Migration 5 expands only the presentation-style constraint. It copies every existing Annotation
   column one-for-one, recreates the owning-revision cascade and page index, and commits the user-asset
   rebuild and schema marker atomically.
@@ -56,8 +58,9 @@ reprocessing/version-bump path exists. It is explicitly pending, not claimed as 
   versions, or attempt any form of matching/re-resolution.
 - Highlight style is presentation state, not anchor state. `NONE` still retains the same durable
   quads/quote/context and optional body; it suppresses only visible page paint.
-- The selection menu supplements rather than replaces native browser copy. The custom Copy action,
-  Ctrl+C, and the browser context menu all use the resolved R2 selection; note input receives focus
+- The selection menu is opened only by a context-menu event whose coordinates fall within the current
+  resolved R2 selection. That narrow event is prevented; unrelated Reader/PDF context-menu events are
+  not. The custom Copy action and Ctrl+C use the same resolved selection, and note input receives focus
   only after the user explicitly chooses Add note.
 - Deferred entity values remain visible in the schema shape where required, but are constrained to
   R3's only valid values: `kind=TEXT`, `source_kind=USER`, `anchor_state=OK`, with verification and KP
@@ -93,31 +96,37 @@ then passed.
   is not counted as a pass.
 - `npm run test:e2e:r2`: **PASS** on the real 29-page Primary scan after removing focus-stealing from
   the note composer: 29/29 OCR pages ready, selection/copy/reload passed, the precise `6.2.1` TOC
-  selection remained intact, the browser context menu kept native selection, and the custom paint
-  remained `rgba(65, 126, 211, 0.2)`. The first invocation correctly failed because auto-focusing the
-  note input cleared native selection; that regression was fixed and not reclassified as success.
+  selection remained intact, selection completion stayed quiet, right-click opened the scoped action
+  menu while preserving native selection, and the custom paint remained `rgba(65, 126, 211, 0.2)`.
+  The final interaction-refinement invocation passed after one bounded retry: its first independent
+  temporary OCR library hit a real `database is locked` failure during job-priority update and is not
+  counted as a pass. The earlier first invocation also correctly failed because auto-focusing the note
+  input cleared native selection; that regression was fixed and not reclassified as success.
 - `npm run test:e2e:r3`: **PASS** against the app's hash-verified prepared Library after the interaction
   refinement. The run created six annotations on PDF pages **1/12/29** of the 29-page scan and
   **1/174/348** of the 348-page scan, covering yellow, green, blue, and `NONE`, plain highlights, and
-  highlight+note. It exercised the new Copy action, required Marks to stay collapsed after every
-  save, verified persisted quote/context/quads/style plus `foundation_version_at_creation=1`, `USER`,
-  and `OK`, reopened each book, restarted the Core Service, and required every stored quad—including
-  the transparent `NONE` anchor—to remain addressable in the Reader. It deleted the page-174
-  full-book note through Marks, reopened, and confirmed absence. Only acceptance-created IDs were
-  removed; original reading positions were restored.
+  highlight+note. It required selection completion to show no Annotation UI, proved an actual
+  right-click inside selected text opened the menu, exercised Copy, and proved a right-click in the
+  Reader outside the selected quads was not prevented and did not open Annotation actions. It also
+  required Marks to stay collapsed after every save, verified persisted quote/context/quads/style
+  plus `foundation_version_at_creation=1`, `USER`, and `OK`, reopened each book, restarted the Core
+  Service, and required every stored quad—including the transparent `NONE` anchor—to remain
+  addressable in the Reader. It deleted the page-174 full-book note through Marks, reopened, and
+  confirmed absence. Only acceptance-created IDs were removed; original reading positions were
+  restored.
 - Full-scale measured page navigation through canvas + OCR overlay on the final refinement run:
-  29-page pages 1/12/29 were ready in **334/273/303 ms**; 348-page pages 1/174/348 in
-  **254/281/347 ms**. Placeholder count, page-scoped annotation queries, persistence, and rendering
+  29-page pages 1/12/29 were ready in **478/258/288 ms**; 348-page pages 1/174/348 in
+  **639/390/372 ms**. Placeholder count, page-scoped annotation queries, persistence, and rendering
   showed no obvious scale problem.
 - One final harness invocation queried the just-created row too eagerly and failed its immediate ID
   difference check even though the row was present in SQLite. The harness now polls that postcondition
   for up to five seconds, the exact leaked acceptance row was removed, and the clean rerun above
   passed. This was a test-observation race, not counted as a product pass.
-- Real-material visual QA: **PASS**. The captured 348-page page-174 flow shows the compact menu anchored
-  beside real selected OCR text, the three peer actions, four style choices, and the inline short-note
-  editor with `NONE` selected. The page remains full width, and Marks is only the small toolbar glyph
-  and count badge. The automated real-browser flow then saved, reopened, restarted, and deleted that
-  exact note.
+- Real-material visual QA: **PASS**. The captured 348-page page-174 flow shows the compact menu at the
+  right-click location beside real selected OCR text, the three peer actions, four style choices, and
+  the inline short-note editor with `NONE` selected. The same selection had no menu before the tested
+  right-click. The page remains full width, and Marks is only the small toolbar glyph and count badge.
+  The automated real-browser flow then saved, reopened, restarted, and deleted that exact note.
 - Live migration evidence: the prepared Library upgraded in place to schema migrations
   `[1,2,3,4,5]`, retained all **377/377** prepared pages across the two books, passed
   `PRAGMA foreign_key_check`, and left its pre-existing user Annotation untouched while cleaning only
@@ -136,6 +145,9 @@ then passed.
 - Cross-version fingerprint re-resolution and explicit `NEEDS_REVIEW` behavior remain pending on the
   future Phase that introduces OCR reprocessing/corrections. This remains the load-bearing capability
   gap named by Frozen §16.3a/§23.
+- A clean R2 real-OCR rerun passed, but one immediately preceding temporary-library run hit SQLite
+  write contention while prioritizing preparation jobs. It did not affect the real prepared R3
+  Library or Annotation semantics, but the remaining transient preparation concurrency is known.
 - Region notes, AI-saved notes/verification, existing-note editing, and a cross-book marks browser are
   intentionally outside this core slice.
 
@@ -154,11 +166,13 @@ $env:READER_DATA_DIR='D:\path\to\reader-data'
 npm run test:e2e:r3
 ```
 
-Manual replay: open a prepared real page and drag a text selection. Use Copy, or choose a style and
-select Highlight; for a note, choose Add note and save the inline editor. Confirm Marks remains a
-small toolbar entry until explicitly opened. Return to the Library, reopen the book, and confirm the
-mark remains on the same glyphs (or remains listed without page paint for `NONE`). Delete one mark
-from its Marks card, reopen again, and confirm it stays gone.
+Manual replay: open a prepared real page and drag a text selection; no Annotation UI should appear.
+Right-click inside the selection, then use Copy or choose a style and select Highlight; for a note,
+choose Add note and save the inline editor. Right-click outside the selected text and confirm the
+browser retains its normal context-menu behavior. Confirm Marks remains a small toolbar entry until
+explicitly opened. Return to the Library, reopen the book, and confirm the mark remains on the same
+glyphs (or remains listed without page paint for `NONE`). Delete one mark from its Marks card, reopen
+again, and confirm it stays gone.
 
 ## Important files / architecture entry points
 
