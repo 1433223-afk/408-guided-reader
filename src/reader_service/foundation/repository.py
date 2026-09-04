@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+
+from reader_service.library.database import Database
+
+from .contracts import DetectedLine
+
+
+def now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+class FoundationRepository:
+    def __init__(self, database: Database):
+        self.database = database
+
+    def ensure_pages(self, revision_id: str, page_count: int, foundation_version: int) -> None:
+        with self.database.connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO ocr_pages(
+                    book_source_revision_id, pdf_page_index, status, foundation_version
+                ) VALUES (?, ?, 'NOT_PREPARED', ?)
+                ON CONFLICT(book_source_revision_id, pdf_page_index) DO NOTHING
+                """,
+                ((revision_id, index, foundation_version) for index in range(page_count)),
+            )
+
+    def page_statuses(self, revision_id: str) -> list[dict]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT pdf_page_index, status, route, foundation_version, engine_profile,
+                       confidence, prepared_at, failure_code
+                FROM ocr_pages WHERE book_source_revision_id = ?
+                ORDER BY pdf_page_index
+                """,
+                (revision_id,),
+            )
+            return [dict(row) for row in rows]
+
+    def page_status(self, revision_id: str, page_index: int) -> str | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT status FROM ocr_pages WHERE book_source_revision_id = ? "
+                "AND pdf_page_index = ?",
+                (revision_id, page_index),
+            ).fetchone()
+            return row[0] if row else None
+
+    def mark_preparing(self, revision_id: str, page_index: int) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE ocr_pages
+                SET status = 'PREPARING', failure_code = NULL
+                WHERE book_source_revision_id = ? AND pdf_page_index = ?
+                  AND status IN ('NOT_PREPARED', 'FAILED')
+                """,
+                (revision_id, page_index),
+            )
+            return cursor.rowcount == 1
+
+    def publish_page(
+        self,
+        revision_id: str,
+        page_index: int,
+        *,
+        route: str,
+        foundation_version: int,
+        engine_profile: str,
+        lines: list[DetectedLine],
+    ) -> None:
+        confidence = sum(line.confidence for line in lines) / len(lines) if lines else 0.0
+        timestamp = now()
+        with self.database.connect() as connection:
+            current = connection.execute(
+                "SELECT status FROM ocr_pages WHERE book_source_revision_id = ? "
+                "AND pdf_page_index = ?",
+                (revision_id, page_index),
+            ).fetchone()
+            if current is None or current[0] != "PREPARING":
+                raise RuntimeError("Page publication requires PREPARING state")
+            connection.execute(
+                "DELETE FROM ocr_lines WHERE book_source_revision_id = ? AND pdf_page_index = ?",
+                (revision_id, page_index),
+            )
+            connection.executemany(
+                """
+                INSERT INTO ocr_lines(
+                    book_source_revision_id, pdf_page_index, line_ordinal,
+                    quad_json, text, confidence, cells_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    (
+                        revision_id,
+                        page_index,
+                        ordinal,
+                        json.dumps(line.quad, separators=(",", ":")),
+                        line.text,
+                        line.confidence,
+                        json.dumps(line.cells, separators=(",", ":")),
+                    )
+                    for ordinal, line in enumerate(lines)
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE ocr_pages SET status = 'READY', route = ?, foundation_version = ?,
+                    engine_profile = ?, confidence = ?, prepared_at = ?, failure_code = NULL
+                WHERE book_source_revision_id = ? AND pdf_page_index = ?
+                """,
+                (
+                    route,
+                    foundation_version,
+                    engine_profile,
+                    confidence,
+                    timestamp,
+                    revision_id,
+                    page_index,
+                ),
+            )
+
+    def fail_page(self, revision_id: str, page_index: int, code: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE ocr_pages SET status = 'FAILED', failure_code = ?, prepared_at = NULL
+                WHERE book_source_revision_id = ? AND pdf_page_index = ?
+                """,
+                (code, revision_id, page_index),
+            )
+
+    def reset_interrupted_pages(self) -> int:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE ocr_pages SET status = 'NOT_PREPARED', failure_code = NULL
+                WHERE status = 'PREPARING'
+                """
+            )
+            return cursor.rowcount
+
+    def overlay(self, revision_id: str, page_index: int) -> dict | None:
+        with self.database.connect() as connection:
+            page = connection.execute(
+                """
+                SELECT status, route, foundation_version, engine_profile, confidence, prepared_at,
+                       failure_code
+                FROM ocr_pages WHERE book_source_revision_id = ? AND pdf_page_index = ?
+                """,
+                (revision_id, page_index),
+            ).fetchone()
+            if page is None:
+                return None
+            result = {"pdf_page_index": page_index, **dict(page), "lines": []}
+            if page["status"] != "READY":
+                return result
+            rows = connection.execute(
+                """
+                SELECT line_ordinal, quad_json, text, confidence, cells_json
+                FROM ocr_lines WHERE book_source_revision_id = ? AND pdf_page_index = ?
+                ORDER BY line_ordinal
+                """,
+                (revision_id, page_index),
+            )
+            result["lines"] = [
+                {
+                    "line_ordinal": row["line_ordinal"],
+                    "quad": json.loads(row["quad_json"]),
+                    "text": row["text"],
+                    "confidence": row["confidence"],
+                    # Anonymous arrays are nested in their line; there is no cell resource or ID.
+                    "cells": json.loads(row["cells_json"]),
+                }
+                for row in rows
+            ]
+            return result

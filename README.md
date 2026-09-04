@@ -29,7 +29,7 @@ decisions and domain model carry **no authority here**.
 
 Read `AGENTS.md` first. It is short and tells you where to go next.
 
-## Run the R1 reader in a normal Windows browser
+## Run the reader in a normal Windows browser
 
 Prerequisites: Python 3.11+, Node.js 20+, and Chrome or Edge.
 
@@ -58,11 +58,29 @@ interactive session in the user's normal browser, run the command above directly
 PowerShell and leave it running.
 
 Run the deterministic and service tests with `pytest` and the geometry tests with `npm test`. The
-real-browser R1 flow is exercised with:
+real-browser reading and R2 selectable-page flows are exercised with:
 
 ```powershell
 $env:READER_REAL_PDF='D:\path\to\a-real-scan.pdf'
 npm run test:e2e
+npm run test:e2e:r2
+npm run test:e2e:recovery
 ```
 
-R1 deliberately contains no OCR, selection, outline, annotations, or AI code.
+Opening a book schedules progressive page preparation. The visible page and nearby pages take
+priority; the original PDF canvas remains readable while preparation runs or if one page fails. A
+prepared page has a transparent text overlay: drag across one or more lines, then use the normal
+copy shortcut. `--prepare-workers` (1–4, default 1) and `--render-dpi` (default 200) are development
+tuning controls.
+
+The inherited nine-page real OCR suite uses external, hash-checked textbook files and runs only when
+both paths are supplied:
+
+```powershell
+$env:READER_REAL_PRIMARY='D:\path\to\2026计算机组成原理_第1-29页.pdf'
+$env:READER_REAL_DMA='D:\path\to\2026计算机组成原理_第320-348页.pdf'
+pytest tests/test_real_ocr_acceptance.py
+```
+
+R2 deliberately contains no corrections, reprocessing/version bump, highlights, notes, outline,
+layout regions, printed-page inference, or AI code.

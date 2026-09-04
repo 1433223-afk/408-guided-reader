@@ -1,9 +1,12 @@
 import * as pdfjsLib from "/vendor/pdf.mjs";
+import {
+  lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
+} from "/selection.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "status", "back-to-library"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -17,7 +20,9 @@ if (launchToken) {
 const state = {
   books: [], book: null, revision: null, pdf: null, zoom: 1,
   currentPage: 0, generation: 0, renderTasks: new Map(), rendered: new Set(),
-  scrollFrame: 0, saveTimer: 0, resizeTimer: 0,
+  scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
+  preparation: new Map(), overlayData: new Map(), eventSource: null,
+  selection: null, selecting: false,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -148,6 +153,7 @@ async function openBook(book) {
   state.generation += 1;
   const generation = state.generation;
   cancelRenders();
+  closePreparationStream();
   state.book = book;
   state.revision = book.active_revision;
   state.zoom = state.revision.position.zoom || 1;
@@ -175,6 +181,7 @@ async function openBook(book) {
     await nextFrame();
     applyRestoredPosition();
     scheduleViewportUpdate();
+    startPreparation();
   } catch (error) {
     announce(`Could not open this PDF: ${error.message}`, true);
   }
@@ -183,6 +190,8 @@ async function openBook(book) {
 function closeReader() {
   state.generation += 1;
   cancelRenders();
+  closePreparationStream();
+  clearSelection();
   state.book = null;
   state.revision = null;
   state.pdf = null;
@@ -306,6 +315,7 @@ function updateViewport() {
     if (index < keepStart || index > keepEnd) clearPage(index);
   }
   scheduleSave();
+  schedulePreparationPriority(keepStart, keepEnd);
 }
 
 async function renderPage(index) {
@@ -345,7 +355,11 @@ async function renderPage(index) {
     });
     state.renderTasks.set(index, task);
     await task.promise;
-    if (generation === state.generation) state.rendered.add(index);
+    if (generation === state.generation) {
+      state.rendered.add(index);
+      syncPagePreparationUi(index);
+      ensureOverlay(index);
+    }
   } catch (error) {
     if (error?.name !== "RenderingCancelledException") announce(`Page ${index + 1} could not render: ${error.message}`, true);
   } finally {
@@ -361,6 +375,7 @@ function clearPage(index) {
   state.rendered.delete(index);
   const wrapper = elements.pages.children[index];
   if (wrapper) wrapper.replaceChildren();
+  if (state.selection?.pageIndex === index) clearSelection();
 }
 
 function cancelRenders() {
@@ -496,6 +511,257 @@ function currentNormalizedOffset(page) {
   return Math.max(0, Math.min(1, (elements.viewer.scrollTop - page.offsetTop) / page.offsetHeight));
 }
 
+async function startPreparation() {
+  if (!state.revision) return;
+  const revisionId = state.revision.id;
+  try {
+    await api(`/api/revisions/${revisionId}/preparation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_page: state.currentPage, visible_pages: [state.currentPage] }),
+    });
+  } catch (error) {
+    elements["preparation-status"].textContent = "Text unavailable";
+    elements["preparation-status"].className = "preparation-status failed";
+    return;
+  }
+  if (state.revision?.id !== revisionId) return;
+  const stream = new EventSource(`/api/revisions/${revisionId}/preparation/events`, { withCredentials: true });
+  state.eventSource = stream;
+  stream.addEventListener("pages", (event) => {
+    if (state.revision?.id !== revisionId) return;
+    const payload = JSON.parse(event.data);
+    applyPreparationStatuses(payload.pages);
+  });
+  stream.onerror = () => {
+    // EventSource reconnects after the bounded server stream closes. Reading and
+    // already-prepared overlays remain independent of stream availability.
+    if (state.eventSource === stream) updatePreparationLabel();
+  };
+}
+
+function closePreparationStream() {
+  state.eventSource?.close();
+  state.eventSource = null;
+  state.preparation.clear();
+  state.overlayData.clear();
+  clearTimeout(state.priorityTimer);
+  elements["preparation-status"].textContent = "Preparing text…";
+  elements["preparation-status"].className = "preparation-status";
+}
+
+function applyPreparationStatuses(pages) {
+  for (const page of pages) {
+    const previous = state.preparation.get(page.pdf_page_index);
+    state.preparation.set(page.pdf_page_index, page);
+    const wrapper = elements.pages.children[page.pdf_page_index];
+    if (wrapper) {
+      wrapper.dataset.preparation = page.status;
+      syncPagePreparationUi(page.pdf_page_index);
+    }
+    if (page.status === "READY" && previous?.status !== "READY") ensureOverlay(page.pdf_page_index);
+  }
+  updatePreparationLabel();
+}
+
+function syncPagePreparationUi(index) {
+  const wrapper = elements.pages.children[index];
+  if (!wrapper) return;
+  wrapper.querySelector(".preparation-retry")?.remove();
+  if (state.preparation.get(index)?.status !== "FAILED" || !wrapper.querySelector("canvas")) return;
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "preparation-retry";
+  retry.textContent = "Text preparation failed · Retry";
+  retry.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    retry.disabled = true;
+    retry.textContent = "Retry queued…";
+    try {
+      await api(`/api/revisions/${state.revision.id}/preparation/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf_page_index: index }),
+      });
+    } catch (error) {
+      retry.disabled = false;
+      retry.textContent = "Text preparation failed · Retry";
+      announce(error.message, true);
+    }
+  });
+  wrapper.append(retry);
+}
+
+function updatePreparationLabel() {
+  const pages = [...state.preparation.values()];
+  const ready = pages.filter((page) => page.status === "READY").length;
+  const failed = pages.filter((page) => page.status === "FAILED").length;
+  const output = elements["preparation-status"];
+  if (!pages.length) {
+    output.textContent = "Preparing text…";
+    output.className = "preparation-status";
+  } else if (ready + failed === pages.length) {
+    output.textContent = failed ? `${ready} ready · ${failed} failed` : "Text ready";
+    output.className = `preparation-status ${failed ? "failed" : "ready"}`;
+  } else {
+    output.textContent = `${ready} / ${pages.length} selectable`;
+    output.className = "preparation-status";
+  }
+}
+
+function schedulePreparationPriority(first, last) {
+  if (!state.revision) return;
+  clearTimeout(state.priorityTimer);
+  const revisionId = state.revision.id;
+  state.priorityTimer = setTimeout(() => {
+    if (state.revision?.id !== revisionId) return;
+    const visiblePages = [];
+    for (let index = first; index <= last; index += 1) visiblePages.push(index);
+    api(`/api/revisions/${revisionId}/preparation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ current_page: state.currentPage, visible_pages: visiblePages }),
+    }).catch(() => {});
+  }, 180);
+}
+
+async function ensureOverlay(index) {
+  if (state.preparation.get(index)?.status !== "READY") return;
+  const revisionId = state.revision?.id;
+  if (!revisionId) return;
+  const wrapper = elements.pages.children[index];
+  if (!wrapper?.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
+  let data = state.overlayData.get(index);
+  if (!data) {
+    try {
+      const payload = await api(`/api/revisions/${revisionId}/overlay?page=${index}`);
+      if (payload.page.status !== "READY" || state.revision?.id !== revisionId) return;
+      data = payload.page;
+      state.overlayData.set(index, data);
+    } catch (_error) {
+      return;
+    }
+  }
+  if (!wrapper.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
+  const overlay = document.createElement("div");
+  overlay.className = "text-overlay";
+  overlay.setAttribute("aria-label", `Selectable text for PDF page ${index + 1}`);
+  overlay.dataset.pageIndex = String(index);
+  for (const line of data.lines) {
+    const bounds = lineBounds(line);
+    const marker = document.createElement("span");
+    marker.className = "ocr-line";
+    marker.dataset.lineOrdinal = String(line.line_ordinal);
+    marker.style.cssText = `left:${bounds.x0 * 100}%;top:${bounds.y0 * 100}%;width:${(bounds.x1 - bounds.x0) * 100}%;height:${(bounds.y1 - bounds.y0) * 100}%`;
+    overlay.append(marker);
+  }
+  overlay.addEventListener("pointerdown", beginSelection);
+  overlay.addEventListener("pointermove", extendSelection);
+  overlay.addEventListener("pointerup", finishSelection);
+  overlay.addEventListener("pointercancel", finishSelection);
+  wrapper.append(overlay);
+}
+
+function selectionPoint(event, overlay) {
+  const index = Number(overlay.dataset.pageIndex);
+  const data = state.overlayData.get(index);
+  if (!data?.lines.length) return null;
+  const rect = overlay.getBoundingClientRect();
+  const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+  const line = nearestLine(data.lines, y);
+  return { pageIndex: index, lineOrdinal: line.line_ordinal, boundary: nearestCellBoundary(line, x) };
+}
+
+function beginSelection(event) {
+  if (event.button !== 0) return;
+  const point = selectionPoint(event, event.currentTarget);
+  if (!point) return;
+  event.preventDefault();
+  clearSelection();
+  state.selection = { pageIndex: point.pageIndex, anchor: point, focus: point, resolved: [] };
+  state.selecting = true;
+  event.currentTarget.setPointerCapture(event.pointerId);
+  elements.viewer.focus({ preventScroll: true });
+}
+
+function extendSelection(event) {
+  if (!state.selecting || state.selection?.pageIndex !== Number(event.currentTarget.dataset.pageIndex)) return;
+  const point = selectionPoint(event, event.currentTarget);
+  if (!point) return;
+  state.selection.focus = point;
+  renderSelection();
+}
+
+function finishSelection(event) {
+  if (!state.selecting) return;
+  extendSelection(event);
+  state.selecting = false;
+}
+
+function renderSelection() {
+  if (!state.selection) return;
+  document.querySelectorAll(".selection-quad").forEach((node) => node.remove());
+  const data = state.overlayData.get(state.selection.pageIndex);
+  state.selection.resolved = resolveSelection(data.lines, state.selection.anchor, state.selection.focus);
+  const overlay = elements.pages.children[state.selection.pageIndex]?.querySelector(".text-overlay");
+  if (!overlay) return;
+  for (const range of state.selection.resolved) {
+    for (const quad of range.quads) {
+      const xs = quad.map(([x]) => x);
+      const ys = quad.map(([, y]) => y);
+      const marker = document.createElement("span");
+      marker.className = "selection-quad";
+      marker.style.cssText = `left:${Math.min(...xs) * 100}%;top:${Math.min(...ys) * 100}%;width:${(Math.max(...xs) - Math.min(...xs)) * 100}%;height:${(Math.max(...ys) - Math.min(...ys)) * 100}%`;
+      overlay.append(marker);
+    }
+  }
+}
+
+function clearSelection() {
+  document.querySelectorAll(".selection-quad").forEach((node) => node.remove());
+  state.selection = null;
+  state.selecting = false;
+}
+
+function moveSelectionFocus(key) {
+  if (!state.selection) return;
+  const data = state.overlayData.get(state.selection.pageIndex);
+  const lines = data.lines;
+  let lineIndex = lines.findIndex((line) => line.line_ordinal === state.selection.focus.lineOrdinal);
+  let boundary = state.selection.focus.boundary;
+  if (key === "ArrowLeft") boundary -= 1;
+  if (key === "ArrowRight") boundary += 1;
+  if (key === "ArrowUp") lineIndex -= 1;
+  if (key === "ArrowDown") lineIndex += 1;
+  lineIndex = Math.max(0, Math.min(lines.length - 1, lineIndex));
+  boundary = Math.max(0, Math.min(lines[lineIndex].cells.length, boundary));
+  state.selection.focus = {
+    pageIndex: state.selection.pageIndex,
+    lineOrdinal: lines[lineIndex].line_ordinal,
+    boundary,
+  };
+  renderSelection();
+}
+
+function initializeKeyboardSelection() {
+  const data = state.overlayData.get(state.currentPage);
+  const firstLine = data?.lines.find((line) => line.cells.length);
+  if (!firstLine) return false;
+  const point = {
+    pageIndex: state.currentPage,
+    lineOrdinal: firstLine.line_ordinal,
+    boundary: 0,
+  };
+  state.selection = {
+    pageIndex: state.currentPage,
+    anchor: point,
+    focus: { ...point },
+    resolved: [],
+  };
+  return true;
+}
+
 function nextFrame() {
   return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
@@ -526,6 +792,17 @@ elements.viewer.addEventListener("wheel", (event) => {
   setZoom(adjacentZoom(direction), captureZoomAnchor(event.clientX, event.clientY));
 }, { passive: false });
 elements.viewer.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.selection) {
+    event.preventDefault();
+    clearSelection();
+    return;
+  }
+  if (event.shiftKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+      && (state.selection || initializeKeyboardSelection())) {
+    event.preventDefault();
+    moveSelectionFocus(event.key);
+    return;
+  }
   if (!event.ctrlKey) return;
   if (event.key === "+" || event.key === "=") {
     event.preventDefault();
@@ -534,6 +811,13 @@ elements.viewer.addEventListener("keydown", (event) => {
     event.preventDefault();
     setZoom(adjacentZoom(-1));
   }
+});
+document.addEventListener("copy", (event) => {
+  const text = resolvedText(state.selection?.resolved || []);
+  if (!text) return;
+  event.preventDefault();
+  event.clipboardData.setData("text/plain", text);
+  announce("Selected text copied.");
 });
 window.addEventListener("resize", () => {
   clearTimeout(state.resizeTimer);

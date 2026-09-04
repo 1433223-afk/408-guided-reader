@@ -45,6 +45,67 @@ MIGRATIONS = (
         );
         """,
     ),
+    (
+        2,
+        """
+        ALTER TABLE book_source_revisions
+            ADD COLUMN foundation_version INTEGER NOT NULL DEFAULT 1
+            CHECK (foundation_version >= 1);
+
+        CREATE TABLE ocr_pages (
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            pdf_page_index INTEGER NOT NULL CHECK (pdf_page_index >= 0),
+            status TEXT NOT NULL DEFAULT 'NOT_PREPARED'
+                CHECK (status IN ('NOT_PREPARED', 'PREPARING', 'READY', 'FAILED')),
+            route TEXT CHECK (route IS NULL OR route IN ('EMBEDDED', 'OCR')),
+            foundation_version INTEGER NOT NULL CHECK (foundation_version >= 1),
+            engine_profile TEXT,
+            confidence REAL CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1)),
+            prepared_at TEXT,
+            failure_code TEXT,
+            PRIMARY KEY (book_source_revision_id, pdf_page_index)
+        );
+        CREATE INDEX ix_ocr_pages_revision_status
+            ON ocr_pages(book_source_revision_id, status, pdf_page_index);
+
+        CREATE TABLE ocr_lines (
+            book_source_revision_id TEXT NOT NULL,
+            pdf_page_index INTEGER NOT NULL,
+            line_ordinal INTEGER NOT NULL CHECK (line_ordinal >= 0),
+            quad_json TEXT NOT NULL,
+            text TEXT NOT NULL,
+            confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+            cells_json TEXT NOT NULL,
+            PRIMARY KEY (book_source_revision_id, pdf_page_index, line_ordinal),
+            FOREIGN KEY (book_source_revision_id, pdf_page_index)
+                REFERENCES ocr_pages(book_source_revision_id, pdf_page_index)
+                ON DELETE CASCADE
+        );
+
+        CREATE TABLE jobs (
+            id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL CHECK (job_type = 'PAGE_PREPARE'),
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            page_start INTEGER NOT NULL CHECK (page_start >= 0),
+            page_end INTEGER NOT NULL CHECK (page_end >= page_start),
+            foundation_version INTEGER NOT NULL CHECK (foundation_version >= 1),
+            status TEXT NOT NULL
+                CHECK (status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'CANCELLED')),
+            priority INTEGER NOT NULL DEFAULT 0,
+            cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+            attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE (
+                job_type, book_source_revision_id, page_start, page_end, foundation_version
+            )
+        );
+        CREATE INDEX ix_jobs_claim
+            ON jobs(status, cancel_requested, priority DESC, created_at);
+        """,
+    ),
 )
 
 

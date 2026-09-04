@@ -9,6 +9,9 @@ description = "Local-first original-PDF reader for 408 textbooks"
 requires-python = ">=3.11"
 dependencies = [
   "pypdf>=6.15,<7",
+  "pypdfium2>=5.13,<6",
+  "rapidocr==3.9.2",
+  "onnxruntime>=1.20,<2",
 ]
 
 [project.optional-dependencies]

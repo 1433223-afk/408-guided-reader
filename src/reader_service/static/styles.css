@@ -71,12 +71,24 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .page-control input::-webkit-inner-spin-button { display: none; }
 .control-divider { width: 1px; height: 21px; margin: 0 8px; background: #d2cec4; }
 #zoom-value { width: 46px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
+.preparation-status { min-width: 92px; color: #777166; font-size: 10px; text-align: center; }
+.preparation-status.ready { color: #34704f; }
+.preparation-status.failed { color: #9a3f37; }
 .viewer { position: relative; min-height: 0; overflow: auto; outline: none; background: #d7d4cd; scrollbar-color: #aaa69c transparent; }
 .viewer:focus-visible { box-shadow: inset 0 0 0 2px rgb(105 91 68 / 25%); }
 .pages { min-width: 100%; padding: 8px 32px 60px; }
 .page { position: relative; margin: 20px auto; overflow: hidden; background: #fdfcf9; box-shadow: 0 3px 18px rgb(48 44 35 / 19%); }
 .page::after { content: attr(data-page); position: absolute; right: 8px; bottom: 6px; color: #9b978d; font: 10px ui-monospace, monospace; opacity: .55; }
 .page canvas { display: block; width: 100%; height: 100%; background: white; image-rendering: auto; }
+.text-overlay { position: absolute; z-index: 2; inset: 0; cursor: text; touch-action: none; }
+.ocr-line { position: absolute; pointer-events: none; }
+.selection-quad { position: absolute; background: rgb(73 132 207 / 32%); border-radius: 1px; pointer-events: none; }
+.preparation-retry {
+  z-index: 3; position: absolute; cursor: pointer;
+  left: 10px; bottom: 8px; padding: 4px 7px; color: #733b36; background: rgb(255 247 243 / 88%);
+  border: 1px solid rgb(154 63 55 / 24%); border-radius: 4px; font-size: 9px;
+}
+.preparation-retry:hover { background: #fff3ee; }
 .page.loading::before { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 25%, rgb(223 219 208 / 65%) 45%, transparent 65%); animation: shimmer 1.2s infinite; }
 @keyframes shimmer { to { transform: translateX(80%); } }
 .status { position: fixed; z-index: 20; right: 22px; bottom: 22px; max-width: 430px; padding: 12px 15px; color: #fff; background: #28312d; border-radius: 8px; box-shadow: 0 8px 30px rgb(0 0 0 / 24%); font-size: 13px; opacity: 0; transform: translateY(8px); pointer-events: none; transition: .2s ease; }

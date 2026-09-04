@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests-js/*.test.js",
-    "test:e2e": "node tests-e2e/reader.mjs"
+    "test:e2e": "node tests-e2e/reader.mjs",
+    "test:e2e:r2": "node tests-e2e/selectable-reader.mjs",
+    "test:e2e:recovery": "node tests-e2e/preparation-recovery.mjs"
   },
   "dependencies": {
     "pdfjs-dist": "6.3.289"

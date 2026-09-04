@@ -4,6 +4,8 @@ import hmac
 import json
 import mimetypes
 import re
+import sys
+import time
 from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,10 +14,19 @@ from typing import Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 from reader_service.library import IntakeError, LibraryService
+from reader_service.jobs import PreparationCoordinator
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
 _REVISION_POSITION = re.compile(r"^/api/revisions/([0-9a-f-]+)/position$")
+_REVISION_PREPARATION = re.compile(r"^/api/revisions/([0-9a-f-]+)/preparation$")
+_REVISION_PREPARATION_EVENTS = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/preparation/events$"
+)
+_REVISION_PREPARATION_RETRY = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/preparation/retry$"
+)
+_REVISION_OVERLAY = re.compile(r"^/api/revisions/([0-9a-f-]+)/overlay$")
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
 _SESSION_COOKIE = "reader_launch"
 
@@ -23,9 +34,18 @@ _SESSION_COOKIE = "reader_launch"
 class ReaderServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def handle_error(self, request, client_address) -> None:
+        error = sys.exc_info()[1]
+        if isinstance(error, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
 
 def handler_factory(
-    service: LibraryService, token: str, project_root: Path | None = None
+    service: LibraryService,
+    token: str,
+    project_root: Path | None = None,
+    preparation: PreparationCoordinator | None = None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -45,6 +65,48 @@ def handler_factory(
                 if not self._authorized():
                     return
                 self._json(HTTPStatus.OK, {"books": service.list_books()})
+                return
+            match = _REVISION_PREPARATION_EVENTS.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if preparation is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Preparation is unavailable"})
+                    return
+                self._preparation_events(preparation, match.group(1))
+                return
+            match = _REVISION_PREPARATION.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if preparation is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Preparation is unavailable"})
+                    return
+                try:
+                    statuses = preparation.foundation.statuses(match.group(1))
+                    counts = preparation.jobs.counts(match.group(1))
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"pages": statuses, "jobs": counts})
+                return
+            match = _REVISION_OVERLAY.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if preparation is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Preparation is unavailable"})
+                    return
+                try:
+                    page_index = int(_first(parse_qs(parsed.query), "page") or "")
+                    overlay = preparation.foundation.overlay(match.group(1), page_index)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"page": overlay})
                 return
             match = _REVISION_PDF.fullmatch(parsed.path)
             if match:
@@ -72,6 +134,51 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            retry_match = _REVISION_PREPARATION_RETRY.fullmatch(parsed.path)
+            if retry_match:
+                if not self._authorized():
+                    return
+                if preparation is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Preparation is unavailable"})
+                    return
+                try:
+                    payload = self._read_json()
+                    requeued = preparation.retry_page(
+                        retry_match.group(1), int(payload["pdf_page_index"])
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(
+                    HTTPStatus.ACCEPTED if requeued else HTTPStatus.CONFLICT,
+                    {"status": "requeued" if requeued else "page is not failed"},
+                )
+                return
+            prepare_match = _REVISION_PREPARATION.fullmatch(parsed.path)
+            if prepare_match:
+                if not self._authorized():
+                    return
+                if preparation is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Preparation is unavailable"})
+                    return
+                try:
+                    payload = self._read_json()
+                    current_page = int(payload.get("current_page", 0))
+                    visible_pages = {int(value) for value in payload.get("visible_pages", [])}
+                    preparation.schedule_revision(
+                        prepare_match.group(1), visible_pages=visible_pages, current_page=current_page
+                    )
+                except (TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.ACCEPTED, {"status": "scheduled"})
+                return
             if parsed.path != "/api/books":
                 self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
                 return
@@ -98,6 +205,8 @@ def handler_factory(
             except LookupError as exc:
                 self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                 return
+            if preparation is not None:
+                preparation.schedule_revision(result["book"]["active_revision"]["id"])
             self._json(HTTPStatus.OK if result["duplicate"] else HTTPStatus.CREATED, result)
 
         def do_PUT(self) -> None:  # noqa: N802
@@ -133,6 +242,8 @@ def handler_factory(
             if not self._authorized():
                 return
             try:
+                if preparation is not None:
+                    preparation.cancel_book(match.group(1))
                 service.delete_book(match.group(1))
             except LookupError as exc:
                 self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
@@ -169,7 +280,9 @@ def handler_factory(
 
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
-            if filename is None and path in ("/app.js", "/styles.css", "/geometry.js"):
+            if filename is None and path in (
+                "/app.js", "/styles.css", "/geometry.js", "/selection.js"
+            ):
                 filename = path[1:]
             if filename is None:
                 self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
@@ -250,6 +363,42 @@ def handler_factory(
                 self.wfile.write(encoded)
             except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 pass
+
+        def _preparation_events(
+            self, coordinator: PreparationCoordinator, revision_id: str
+        ) -> None:
+            try:
+                revision = coordinator.foundation.ensure_revision(revision_id)
+                coordinator.jobs.enqueue_pages(
+                    revision_id, revision["page_count"], revision["foundation_version"]
+                )
+            except LookupError as exc:
+                self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            previous = None
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                pages = coordinator.foundation.statuses(revision_id)
+                signature = tuple(
+                    (page["pdf_page_index"], page["status"], page["prepared_at"], page["failure_code"])
+                    for page in pages
+                )
+                if signature != previous:
+                    payload = json.dumps({"pages": pages}, ensure_ascii=False, separators=(",", ":"))
+                    try:
+                        self.wfile.write(f"event: pages\ndata: {payload}\n\n".encode("utf-8"))
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                        return
+                    previous = signature
+                if pages and all(page["status"] in ("READY", "FAILED") for page in pages):
+                    return
+                time.sleep(0.25)
 
         def log_message(self, format: str, *args: object) -> None:
             # Deliberately omit URLs so the per-launch token never enters logs.

@@ -21,6 +21,7 @@ class LibraryRepository:
             SELECT b.id AS book_id, b.title, b.status AS book_status, b.created_at AS book_created_at,
                    r.id AS revision_id, r.blob_sha256, r.byte_size, r.page_count,
                    r.page_geometry_json, r.label, r.status AS revision_status,
+                   r.foundation_version,
                    r.created_at AS revision_created_at,
                    p.pdf_page_index, p.normalized_offset, p.zoom, p.updated_at,
                    (SELECT COUNT(*) FROM book_source_revisions all_r
@@ -239,6 +240,7 @@ class LibraryRepository:
                 "page_geometry": json.loads(row["page_geometry_json"]),
                 "label": row["label"],
                 "status": row["revision_status"],
+                "foundation_version": row["foundation_version"],
                 "created_at": row["revision_created_at"],
                 "position": {
                     "pdf_page_index": row["pdf_page_index"] or 0,
@@ -261,5 +263,6 @@ class LibraryRepository:
             "page_geometry": json.loads(row["page_geometry_json"]),
             "label": row["label"],
             "status": row["status"],
+            "foundation_version": row["foundation_version"],
             "created_at": row["created_at"],
         }

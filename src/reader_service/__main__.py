@@ -8,6 +8,9 @@ import webbrowser
 from pathlib import Path
 
 from reader_service.library import LibraryService
+from reader_service.foundation import FoundationRepository, FoundationService
+from reader_service.foundation.rapidocr_adapter import RapidOcrEngine
+from reader_service.jobs import JobRepository, PreparationCoordinator
 from reader_service.server import ReaderServer, handler_factory
 from reader_service.storage import ManagedPaths
 
@@ -26,6 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", type=Path, default=default_data_dir())
     parser.add_argument("--no-open", action="store_true", help="Do not launch the browser")
     parser.add_argument("--token", help=argparse.SUPPRESS)
+    parser.add_argument("--prepare-workers", type=int, default=1)
+    parser.add_argument("--render-dpi", type=int, default=200)
     return parser
 
 
@@ -33,7 +38,22 @@ def main() -> None:
     args = build_parser().parse_args()
     token = args.token or secrets.token_urlsafe(32)
     service = LibraryService(ManagedPaths(args.data_dir))
-    server = ReaderServer((args.host, args.port), handler_factory(service, token))
+    foundation = FoundationService(
+        service,
+        FoundationRepository(service.database),
+        RapidOcrEngine,
+        render_dpi=args.render_dpi,
+    )
+    preparation = PreparationCoordinator(
+        service,
+        foundation,
+        JobRepository(service.database),
+        worker_count=args.prepare_workers,
+    )
+    preparation.start()
+    server = ReaderServer(
+        (args.host, args.port), handler_factory(service, token, preparation=preparation)
+    )
     host, port = server.server_address[:2]
     url = f"http://{host}:{port}/"
     print(f"READY {url}", flush=True)
@@ -49,6 +69,7 @@ def main() -> None:
         pass
     finally:
         server.server_close()
+        preparation.stop()
 
 
 if __name__ == "__main__":
