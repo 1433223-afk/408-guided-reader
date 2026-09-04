@@ -10,6 +10,12 @@ imply whole-book absence while pages are still being prepared.
 
 `READY_FOR_USER_REAL_USE_REVIEW: YES`
 
+`USER_REAL_USE_ACCEPTANCE: PASS` — the user completed real-use validation of Find in Book,
+including the final soft-lavender transient match presentation, and explicitly accepted it on
+2026-09-04.
+
+`FIND_IN_BOOK_STATUS: CLOSED`
+
 This is the independently named Find in Book slice after closed R3 and before R4. It is not R4 and
 does not authorize R4.
 
@@ -66,6 +72,12 @@ fuzzy/semantic/AI search, cross-book search, or new persistence/index authority 
 
 ## Acceptance evidence
 
+- User real-use acceptance: **PASS**. The accepted final flow searches the current book's READY OCR
+  pages, reports coverage, jumps to the real PDF page, and shows the clicked match as a lightweight
+  soft-lavender translucent highlight without a debug-like hard border. The marker made the concrete
+  hit immediately visible, remained visually distinct from durable yellow/green/blue Annotations,
+  and retained the already-verified transient-only lifecycle. The user explicitly accepted the
+  complete Find in Book interaction.
 - `pytest -o addopts= -q -ra`: **40 passed, 2 skipped**. Search coverage/state filtering, Chinese
   phrase/substring normalization, NFKC/case/whitespace behavior, empty queries, absent terms,
   single-line cell-range resolution, cross-OCRLine multi-fragment resolution, revision existence,
