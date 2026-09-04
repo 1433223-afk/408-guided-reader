@@ -60,8 +60,10 @@ Nothing else in either blueprint is required reading for this Phase.
 
 ## Build
 
-- Foundation context: `OCRPage`, `OCRLine` (+ serialized cells) persistence, `foundation_version` per
-  `BookSourceRevision` (Implementation §8.3, §8.4, §4.1).
+- Foundation context: `OCRPage`, `OCRLine` (+ serialized cells) persistence, a baseline
+  `foundation_version` counter per `BookSourceRevision` — present and initialized, but not yet bumped
+  by anything, since no correction or reprocessing trigger exists in this Phase (Implementation §8.3,
+  §8.4, §4.1).
 - Page routing: probe for an embedded, trustworthy text layer before falling back to the OCR route
   (Implementation §8.2).
 - OCR engine adapter + RapidOCR/PP-OCRv6-on-onnxruntime as the one engine, behind the `OcrEngine`
@@ -142,7 +144,18 @@ per-page status; ordinary error handling, tests, small refactors; conventional u
 - One development report in `docs/development-reports/` (format in that directory's README),
   labeling the result `IMPLEMENTATION_READY` / `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` explicitly.
 - One git checkpoint commit.
-- No independent (ZCode) review required by default — nothing here is on the risk-triggered list
-  (`AGENTS.md` §5), since the persistence-affecting correction/reprocessing workflow is deferred. If
-  OCR reprocessing or foundation-versioning code ends up written this slice after all, treat that as
-  durable/persistence-shaped and escalate per condition 4 rather than shipping it unreviewed.
+- **This Phase requires a narrow independent (ZCode) review — not the normal no-review default.** It
+  is where the `OCRPage`/`OCRLine`/cell storage shape, the anti-fragment property, and the
+  `OcrEngine` adapter boundary are written for the first time: durable, and load-bearing for
+  everything that anchors against this geometry later (R3 highlights, Outline, Knowledge, Assistant).
+  That is `AGENTS.md` §5's "other load-bearing Frozen Core behaviour," even though it is new schema
+  rather than a migration of existing data. Scope the review to exactly three things: (1) no cell has
+  a stable ID and no code path returns one as a domain object (Implementation §4.4); (2) no engine
+  field name, output shape or library type crosses the `OcrEngine` adapter boundary
+  (Implementation §8.6); (3) the persisted entity/storage shape matches §8.3/§8.4 exactly. Ordinary
+  Jobs-scheduling correctness stays on the normal tests → real-use → report path — this is not a
+  full re-review of the Phase.
+- The version-*bump* and reprocessing/correction semantics of `foundation_version` (§8.7) are
+  deferred, not built this slice (see "Not now"). If any of that code gets written anyway, it is new
+  ground beyond this brief — durable/persistence-shaped, escalation condition 4 — not something to
+  fold into the review above or ship unreviewed.
