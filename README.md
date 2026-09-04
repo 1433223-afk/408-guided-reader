@@ -29,19 +29,31 @@ decisions and domain model carry **no authority here**.
 
 Read `AGENTS.md` first. It is short and tells you where to go next.
 
-## Run the R1 reader
+## Run the R1 reader in a normal Windows browser
 
 Prerequisites: Python 3.11+, Node.js 20+, and Chrome or Edge.
 
 ```powershell
+cd D:\codex\408-guided-reader
 python -m pip install -e .[test]
 npm install
 guided-reader
 ```
 
-The command starts the Core Service on loopback and opens the tokenized Reader URL. Runtime data is
-stored outside the repository by default under the user's local application-data directory. Override
-it for development with `guided-reader --data-dir D:\some\reader-data`.
+Keep that PowerShell window open. The service binds only to `127.0.0.1:8765`, prints an exact
+tokenized `READY http://127.0.0.1:8765/?token=...` URL, and asks Windows to open the default browser.
+If it does not open Chrome/Edge automatically, copy the complete printed URL into a normal Chrome or
+Edge address bar. `python -m reader_service` is an equivalent startup command if the
+`guided-reader` script is not on `PATH`.
+
+Runtime data is stored outside the repository under the user's local application-data directory.
+Override it for development with `guided-reader --data-dir D:\some\reader-data`. The loopback bind is
+intentional: no firewall rule, LAN exposure, container port forwarding, or `0.0.0.0` bind is needed.
+
+When a Core Service is started by a transient Codex/tool execution, that execution environment may
+terminate the child process when its task ends. That is not a repository networking failure. For an
+interactive session in the user's normal browser, run the command above directly in the user's own
+PowerShell and leave it running.
 
 Run the deterministic and service tests with `pytest` and the geometry tests with `npm test`. The
 real-browser R1 flow is exercised with:

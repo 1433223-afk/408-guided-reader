@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
 
 const pdfPath = process.env.READER_REAL_PDF;
@@ -15,9 +16,7 @@ const chromeCandidates = [
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
 ];
-const executablePath = process.env.READER_CHROMIUM || chromeCandidates.find((candidate) => {
-  try { return os.platform() === "win32" && requireExists(candidate); } catch { return false; }
-});
+const executablePath = process.env.READER_CHROMIUM || chromeCandidates.find(requireExists);
 if (!executablePath) throw new Error("Set READER_CHROMIUM to Chrome or Edge executable");
 
 const dataDir = await mkdtemp(path.join(os.tmpdir(), "guided-reader-e2e-"));
@@ -33,47 +32,138 @@ let browser;
 try {
   const url = await readyUrl(service);
   browser = await chromium.launch({ executablePath, headless: true });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1000 },
+    deviceScaleFactor: 2.5,
+  });
   let page = await context.newPage();
   await page.goto(url);
+
+  // Library and Reader are distinct surfaces.
+  assert.ok(await page.locator("#library-home").isVisible());
+  assert.equal(await page.locator("#reader").isVisible(), false);
   await page.locator("#import-input").setInputFiles(pdfPath);
-  await page.locator(".book-card").waitFor();
+  await page.locator("#reader").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#library-home").isVisible(), false);
+  assert.equal(await page.locator(".library").count(), 0, "legacy permanent sidebar still exists");
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
   assert.equal(await page.locator(".page").count(), expectedPages, "unexpected real-fixture page count");
   const initialCanvases = await page.locator(".page canvas").count();
   assert.ok(initialCanvases <= 8, "virtualization retained too many canvases");
 
+  // Canvas backing stores must meet the real device pixel ratio and never be CSS-upscaled.
+  const renderMetrics = await page.locator(".page canvas").first().evaluate((canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      dpr: window.devicePixelRatio,
+      backingWidth: canvas.width,
+      backingHeight: canvas.height,
+      cssWidth: rect.width,
+      cssHeight: rect.height,
+      scaleX: canvas.width / rect.width,
+      scaleY: canvas.height / rect.height,
+    };
+  });
+  assert.ok(renderMetrics.scaleX >= renderMetrics.dpr, "canvas width undersamples device DPR");
+  assert.ok(renderMetrics.scaleY >= renderMetrics.dpr, "canvas height undersamples device DPR");
+
   await page.locator("#page-number").fill("12");
   await page.locator("#page-number").press("Enter");
-  await page.waitForFunction(() => {
+  await page.waitForFunction(() => document.querySelector("#page-number").value === "12");
+  await page.evaluate(() => {
     const viewer = document.querySelector("#viewer");
     const target = document.querySelectorAll(".page")[11];
-    return viewer.scrollTop >= target.offsetTop - 100;
+    viewer.scrollTop = target.offsetTop + target.offsetHeight * 0.34;
+    viewer.dispatchEvent(new Event("scroll"));
   });
+  await page.waitForTimeout(500);
+
+  // Toolbar zoom preserves the PDF point at the viewport center.
+  const centerBefore = await viewportCenterAnchor(page);
   await page.locator("#zoom-in").click();
-  await page.waitForTimeout(1200);
-  assert.equal(await page.locator("#page-number").inputValue(), "12");
+  await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
+  const centerAfter = await viewportCenterAnchor(page);
+  assertAnchorStable(centerBefore, centerAfter, "toolbar zoom");
   assert.equal(await page.locator("#zoom-value").textContent(), "110%");
-  await page.screenshot({ path: path.join(artifacts, "r1-reader-page-12.png"), fullPage: false });
+
+  // Keyboard shortcuts are handled only while the Reader viewport has focus.
+  await page.locator("#viewer").focus();
+  await page.locator("#viewer").press("Control+=");
+  assert.equal(await page.locator("#zoom-value").textContent(), "120%");
+  await page.locator("#viewer").press("Control+-");
+  assert.equal(await page.locator("#zoom-value").textContent(), "110%");
+
+  // Ctrl+wheel preserves the PDF point under the pointer.
+  const viewerBox = await page.locator("#viewer").boundingBox();
+  const pointer = { x: viewerBox.x + viewerBox.width / 2, y: viewerBox.y + viewerBox.height * 0.42 };
+  const pointerBefore = await anchorAt(page, pointer.x, pointer.y);
+  await page.keyboard.down("Control");
+  await page.mouse.move(pointer.x, pointer.y);
+  await page.mouse.wheel(0, -100);
+  await page.keyboard.up("Control");
+  assert.equal(await page.locator("#zoom-value").textContent(), "120%");
+  const pointerAfter = await anchorAt(page, pointer.x, pointer.y);
+  assertAnchorStable(pointerBefore, pointerAfter, "pointer zoom");
+
+  await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
+  assert.ok(await page.locator(".page canvas").count() <= 8, "zoom broke bounded virtualization");
+  await page.screenshot({ path: path.join(artifacts, "r1-reader-corrected.png"), fullPage: false });
+
+  // Return to Library, reopen, then close/reopen the browser and select the book again.
+  await page.locator("#back-to-library").click();
+  await page.locator("#library-home").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#reader").isVisible(), false);
+  await page.screenshot({ path: path.join(artifacts, "r1-library-home.png"), fullPage: false });
+  await page.locator(".book-card").click();
+  await page.locator("#reader").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#page-number").inputValue(), "12");
 
   await page.close();
   page = await context.newPage();
   await page.goto(url);
+  assert.ok(await page.locator("#library-home").isVisible(), "startup should land on Library/Home");
+  await page.locator(".book-card").click();
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
-  await page.waitForTimeout(500);
   assert.equal(await page.locator("#page-number").inputValue(), "12", "reopen did not restore the PDF page");
-  assert.equal(await page.locator("#zoom-value").textContent(), "110%", "reopen did not restore zoom");
-  assert.ok(await page.locator("#reader").isVisible(), "reader did not reopen visibly");
-  const sidebar = await page.locator(".library").boundingBox();
-  assert.ok(sidebar && sidebar.width >= 280 && sidebar.x === 0, "desktop library sidebar is not visible");
-  assert.equal(await page.locator(".library").evaluate((node) => getComputedStyle(node).backgroundColor), "rgb(36, 42, 39)");
-  await page.screenshot({ path: path.join(artifacts, "r1-reader-reopen.png"), fullPage: false });
+  assert.equal(await page.locator("#zoom-value").textContent(), "120%", "reopen did not restore zoom");
 
+  await page.locator("#back-to-library").click();
+  await page.locator("#library-home").waitFor({ state: "visible" });
   await page.locator("#import-input").setInputFiles(pdfPath);
   await page.getByText("Already in your library").waitFor();
+  await page.locator("#back-to-library").click();
+  await page.locator("#library-home").waitFor({ state: "visible" });
   assert.equal(await page.locator(".book-card").count(), 1, "duplicate import created another book");
-  await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
-  console.log(JSON.stringify({ result: "PASS", pages: expectedPages, renderedCanvases: initialCanvases, restoredPage: 12, restoredZoom: "110%", screenshot: path.join(artifacts, "r1-reader-page-12.png") }));
+
+  // The same page at a comparable visual size in Chrome's built-in PDF viewer.
+  const builtIn = await context.newPage();
+  await builtIn.goto(`${pathToFileURL(pdfPath).href}#page=12&zoom=150`);
+  await builtIn.waitForTimeout(1200);
+  await builtIn.screenshot({ path: path.join(artifacts, "chrome-built-in-page-12.png"), fullPage: false });
+  await builtIn.close();
+
+  // UI deletion remains functional after the surface split.
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator(".book-action.danger").click();
+  await page.getByText("No books yet.").waitFor();
+  assert.equal(await page.locator(".book-card").count(), 0);
+
+  console.log(JSON.stringify({
+    result: "PASS",
+    pages: expectedPages,
+    renderedCanvases: initialCanvases,
+    devicePixelRatio: renderMetrics.dpr,
+    canvasScaleX: renderMetrics.scaleX,
+    restoredPage: 12,
+    restoredZoom: "120%",
+    toolbarAnchorDrift: Math.abs(centerAfter.normalizedY - centerBefore.normalizedY),
+    pointerAnchorDrift: Math.abs(pointerAfter.normalizedY - pointerBefore.normalizedY),
+    screenshots: [
+      path.join(artifacts, "r1-library-home.png"),
+      path.join(artifacts, "r1-reader-corrected.png"),
+      path.join(artifacts, "chrome-built-in-page-12.png"),
+    ],
+  }));
 } finally {
   if (browser) await browser.close();
   service.kill();
@@ -82,8 +172,38 @@ try {
 }
 
 function requireExists(candidate) {
-  const fs = process.getBuiltinModule("node:fs");
-  return fs.existsSync(candidate);
+  return os.platform() === "win32" && process.getBuiltinModule("node:fs").existsSync(candidate);
+}
+
+async function viewportCenterAnchor(page) {
+  const box = await page.locator("#viewer").boundingBox();
+  return anchorAt(page, box.x + box.width / 2, box.y + box.height / 2);
+}
+
+async function anchorAt(page, x, y) {
+  return page.evaluate(({ x, y }) => {
+    let best = null;
+    let distance = Infinity;
+    for (const node of document.querySelectorAll(".page")) {
+      const rect = node.getBoundingClientRect();
+      const candidate = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
+      if (candidate < distance) {
+        distance = candidate;
+        best = { node, rect };
+      }
+    }
+    return {
+      pageIndex: Number(best.node.dataset.index),
+      normalizedX: Math.max(0, Math.min(1, (x - best.rect.left) / best.rect.width)),
+      normalizedY: Math.max(0, Math.min(1, (y - best.rect.top) / best.rect.height)),
+    };
+  }, { x, y });
+}
+
+function assertAnchorStable(before, after, label) {
+  assert.equal(after.pageIndex, before.pageIndex, `${label} moved to another page`);
+  assert.ok(Math.abs(after.normalizedX - before.normalizedX) < 0.015, `${label} shifted horizontally`);
+  assert.ok(Math.abs(after.normalizedY - before.normalizedY) < 0.015, `${label} shifted vertically`);
 }
 
 function readyUrl(child) {

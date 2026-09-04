@@ -38,6 +38,7 @@ def main() -> None:
     host, port = server.server_address[:2]
     url = f"http://{host}:{port}/?token={quote(token)}"
     print(f"READY {url}", flush=True)
+    print("Keep this terminal open while reading. Copy the READY URL into Chrome or Edge if no browser opens.", flush=True)
     if not args.no_open:
         threading.Timer(0.2, lambda: webbrowser.open(url)).start()
     try:

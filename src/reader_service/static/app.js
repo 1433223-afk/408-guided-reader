@@ -3,7 +3,7 @@ import * as pdfjsLib from "/vendor/pdf.mjs";
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["import-input", "book-list", "book-count", "empty-state", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "status", "sidebar-toggle"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "status", "back-to-library"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -39,18 +39,12 @@ function announce(message, error = false) {
   announce.timer = setTimeout(() => elements.status.classList.remove("visible"), error ? 6000 : 2800);
 }
 
-async function loadBooks(openFirst = true) {
+async function loadBooks() {
   const payload = await api("/api/books");
   state.books = payload.books;
   elements["book-count"].textContent = String(state.books.length);
   renderLibrary();
-  if (!state.books.length) {
-    closeReader();
-  } else if (openFirst && !state.book) {
-    const readable = state.books.find((book) => book.status === "ACTIVE");
-    if (readable) await openBook(readable);
-    else closeReader();
-  }
+  elements["library-empty"].hidden = state.books.length > 0;
 }
 
 function renderLibrary() {
@@ -120,7 +114,7 @@ async function importPdf(file, bookId = null) {
       body: file,
     });
     state.book = null;
-    await loadBooks(false);
+    await loadBooks();
     const refreshed = state.books.find((book) => book.id === result.book.id) || result.book;
     await openBook(refreshed);
     announce(result.duplicate ? "Already in your library — nothing was duplicated." : (bookId ? "New source revision added." : "PDF imported. Ready to read."));
@@ -137,11 +131,11 @@ async function removeBook(book) {
   try {
     await api(`/api/books/${book.id}`, { method: "DELETE" });
     if (state.book?.id === book.id) state.book = null;
-    await loadBooks(true);
+    await loadBooks();
     announce("Book and its saved reading position removed.");
   } catch (error) {
     if (state.book?.id === book.id) state.book = null;
-    await loadBooks(true);
+    await loadBooks();
     announce(error.message, true);
   }
 }
@@ -157,13 +151,12 @@ async function openBook(book) {
   state.currentPage = state.revision.position.pdf_page_index || 0;
   state.pdf = null;
   elements["reader-title"].textContent = book.title;
-  elements["empty-state"].hidden = true;
+  elements["library-home"].hidden = true;
   elements.reader.hidden = false;
   elements["page-total"].textContent = `/ ${state.revision.page_count}`;
   elements["page-number"].max = String(state.revision.page_count);
   elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
   renderLibrary();
-  document.body.classList.remove("library-open");
   elements.pages.replaceChildren();
   buildPlaceholders();
   try {
@@ -190,9 +183,14 @@ function closeReader() {
   state.revision = null;
   state.pdf = null;
   elements.reader.hidden = true;
-  elements["empty-state"].hidden = false;
+  elements["library-home"].hidden = false;
   elements.pages.replaceChildren();
   renderLibrary();
+}
+
+async function returnToLibrary() {
+  await savePosition();
+  closeReader();
 }
 
 function displayedRatio(geometry) {
@@ -276,19 +274,23 @@ async function renderPage(index) {
     const cssWidth = pageWidth();
     const cssScale = cssWidth / base.width;
     const viewport = page.getViewport({ scale: cssScale });
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.floor(viewport.width * pixelRatio);
-    canvas.height = Math.floor(viewport.height * pixelRatio);
+    canvas.width = Math.ceil(viewport.width * pixelRatio);
+    canvas.height = Math.ceil(viewport.height * pixelRatio);
     canvas.style.width = `${viewport.width}px`;
     canvas.style.height = `${viewport.height}px`;
+    const outputScaleX = canvas.width / viewport.width;
+    const outputScaleY = canvas.height / viewport.height;
+    canvas.dataset.outputScaleX = String(outputScaleX);
+    canvas.dataset.outputScaleY = String(outputScaleY);
     wrapper.style.width = `${viewport.width}px`;
     wrapper.style.height = `${viewport.height}px`;
     wrapper.replaceChildren(canvas);
     const task = page.render({
       canvasContext: canvas.getContext("2d", { alpha: false }),
       viewport,
-      transform: pixelRatio === 1 ? null : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+      transform: [outputScaleX, 0, 0, outputScaleY, 0, 0],
     });
     state.renderTasks.set(index, task);
     await task.promise;
@@ -329,30 +331,16 @@ function goToPage(index, offset = 0) {
   scheduleSave();
 }
 
-function setZoom(value) {
+function setZoom(value, anchor = captureZoomAnchor()) {
   const newZoom = Math.max(0.5, Math.min(4, Math.round(value * 10) / 10));
   if (newZoom === state.zoom || !state.revision) return;
-  const page = elements.pages.children[state.currentPage];
-  const offset = page ? Math.max(0, Math.min(1, (elements.viewer.scrollTop - page.offsetTop) / page.offsetHeight)) : 0;
   state.zoom = newZoom;
   elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
-  cancelRenders();
-  const width = pageWidth();
-  [...elements.pages.children].forEach((wrapper, index) => {
-    wrapper.replaceChildren();
-    wrapper.style.width = `${width}px`;
-    wrapper.style.height = `${width * displayedRatio(state.revision.page_geometry[index])}px`;
-  });
-  requestAnimationFrame(() => {
-    goToPage(state.currentPage, offset);
-    scheduleViewportUpdate();
-  });
+  relayoutPages(anchor);
 }
 
-function relayoutPages() {
+function relayoutPages(anchor = captureZoomAnchor()) {
   if (!state.revision) return;
-  const page = elements.pages.children[state.currentPage];
-  const offset = page ? Math.max(0, Math.min(1, (elements.viewer.scrollTop - page.offsetTop) / page.offsetHeight)) : 0;
   cancelRenders();
   const width = pageWidth();
   [...elements.pages.children].forEach((wrapper, index) => {
@@ -360,10 +348,48 @@ function relayoutPages() {
     wrapper.style.width = `${width}px`;
     wrapper.style.height = `${width * displayedRatio(state.revision.page_geometry[index])}px`;
   });
-  requestAnimationFrame(() => {
-    goToPage(state.currentPage, offset);
-    scheduleViewportUpdate();
-  });
+  restoreZoomAnchor(anchor);
+  scheduleViewportUpdate();
+  scheduleSave();
+}
+
+function captureZoomAnchor(clientX, clientY) {
+  if (!state.revision || !elements.pages.children.length) return null;
+  const viewerRect = elements.viewer.getBoundingClientRect();
+  const x = clientX ?? (viewerRect.left + viewerRect.width / 2);
+  const y = clientY ?? (viewerRect.top + viewerRect.height / 2);
+  let bestPage = null;
+  let bestDistance = Infinity;
+  for (const page of elements.pages.children) {
+    const rect = page.getBoundingClientRect();
+    const distanceY = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
+    if (distanceY < bestDistance) {
+      bestDistance = distanceY;
+      bestPage = page;
+    }
+  }
+  if (!bestPage) return null;
+  const pageRect = bestPage.getBoundingClientRect();
+  return {
+    pageIndex: Number(bestPage.dataset.index),
+    normalizedX: Math.max(0, Math.min(1, (x - pageRect.left) / pageRect.width)),
+    normalizedY: Math.max(0, Math.min(1, (y - pageRect.top) / pageRect.height)),
+    viewportX: x - viewerRect.left,
+    viewportY: y - viewerRect.top,
+  };
+}
+
+function restoreZoomAnchor(anchor) {
+  if (!anchor) return;
+  const page = elements.pages.children[anchor.pageIndex];
+  if (!page) return;
+  const viewerRect = elements.viewer.getBoundingClientRect();
+  const pageRect = page.getBoundingClientRect();
+  const pointX = pageRect.left + anchor.normalizedX * pageRect.width;
+  const pointY = pageRect.top + anchor.normalizedY * pageRect.height;
+  elements.viewer.scrollLeft += pointX - (viewerRect.left + anchor.viewportX);
+  elements.viewer.scrollTop += pointY - (viewerRect.top + anchor.viewportY);
+  setCurrentPage(anchor.pageIndex);
 }
 
 function scheduleSave() {
@@ -425,7 +451,24 @@ elements["page-number"].addEventListener("keydown", (event) => {
 });
 elements["zoom-out"].addEventListener("click", () => setZoom(state.zoom - 0.1));
 elements["zoom-in"].addEventListener("click", () => setZoom(state.zoom + 0.1));
-elements["sidebar-toggle"].addEventListener("click", () => document.body.classList.toggle("library-open"));
+elements["back-to-library"].addEventListener("click", returnToLibrary);
+elements.viewer.addEventListener("pointerdown", () => elements.viewer.focus({ preventScroll: true }));
+elements.viewer.addEventListener("wheel", (event) => {
+  if (!event.ctrlKey) return;
+  event.preventDefault();
+  const direction = event.deltaY < 0 ? 0.1 : -0.1;
+  setZoom(state.zoom + direction, captureZoomAnchor(event.clientX, event.clientY));
+}, { passive: false });
+elements.viewer.addEventListener("keydown", (event) => {
+  if (!event.ctrlKey) return;
+  if (event.key === "+" || event.key === "=") {
+    event.preventDefault();
+    setZoom(state.zoom + 0.1);
+  } else if (event.key === "-") {
+    event.preventDefault();
+    setZoom(state.zoom - 0.1);
+  }
+});
 window.addEventListener("resize", () => {
   clearTimeout(state.resizeTimer);
   state.resizeTimer = setTimeout(relayoutPages, 120);
