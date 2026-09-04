@@ -76,4 +76,5 @@ criterion names — `IMPLEMENTATION_READY` vs `FULL_REAL_MATERIAL_ACCEPTANCE_PEN
 |---|---|---|
 | R1 — Read the Book | [`R1_READ_THE_BOOK.md`](./R1_READ_THE_BOOK.md) | `IMPLEMENTATION_READY` (see `docs/development-reports/R1_READ_THE_BOOK.md`) |
 | R2 — Selectable Book | [`R2_SELECTABLE_BOOK.md`](./R2_SELECTABLE_BOOK.md) | `IMPLEMENTATION_READY` (see `docs/development-reports/R2_SELECTABLE_BOOK.md`) |
-| R3 — My Marks (core) | [`R3_MY_MARKS.md`](./R3_MY_MARKS.md) | Ready for implementation |
+| R3 — My Marks (core) | [`R3_MY_MARKS.md`](./R3_MY_MARKS.md) | `IMPLEMENTATION_READY`, closed after user acceptance (see `docs/development-reports/R3_MY_MARKS.md`) |
+| Find in Book | [`FIND_IN_BOOK.md`](./FIND_IN_BOOK.md) | Ready for implementation |
