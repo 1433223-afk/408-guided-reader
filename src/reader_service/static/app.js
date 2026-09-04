@@ -7,7 +7,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "annotation-composer", "annotation-note", "save-highlight", "cancel-highlight"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "status", "back-to-library", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "selection-actions", "copy-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -692,7 +692,7 @@ function renderAnnotations(index, overlay = elements.pages.children[index]?.quer
       const xs = quad.map(([x]) => x);
       const ys = quad.map(([, y]) => y);
       const marker = document.createElement("span");
-      marker.className = "annotation-quad";
+      marker.className = `annotation-quad annotation-style-${annotation.highlight_style.toLowerCase()}`;
       marker.dataset.annotationId = annotation.id;
       marker.style.cssText = `left:${Math.min(...xs) * 100}%;top:${Math.min(...ys) * 100}%;width:${(Math.max(...xs) - Math.min(...xs)) * 100}%;height:${(Math.max(...ys) - Math.min(...ys)) * 100}%`;
       overlay.append(marker);
@@ -703,10 +703,14 @@ function renderAnnotations(index, overlay = elements.pages.children[index]?.quer
 function updateMarksPanel() {
   const values = state.annotationData.get(state.currentPage) || [];
   elements["marks-count"].textContent = String(values.length);
+  elements["marks-count"].hidden = values.length === 0;
+  elements["marks-toggle"].setAttribute(
+    "aria-label", `Marks on this page${values.length ? ` (${values.length})` : ""}`,
+  );
   elements["marks-page"].textContent = String(state.currentPage + 1);
   const cards = values.map((annotation) => {
     const card = document.createElement("article");
-    card.className = "mark-card";
+    card.className = `mark-card annotation-style-${annotation.highlight_style.toLowerCase()}`;
     const quote = document.createElement("p");
     quote.className = "mark-quote";
     quote.textContent = annotation.quote;
@@ -730,7 +734,7 @@ function updateMarksPanel() {
 }
 
 async function deleteAnnotation(annotation) {
-  if (!window.confirm("Delete this highlight and its note?")) return;
+  if (!window.confirm("Delete this mark and its note?")) return;
   const revisionId = state.revision?.id;
   if (!revisionId) return;
   try {
@@ -742,9 +746,9 @@ async function deleteAnnotation(annotation) {
     );
     renderAnnotations(pageIndex);
     updateMarksPanel();
-    announce("Highlight deleted.");
+    announce("Mark deleted.");
   } catch (error) {
-    announce(`Highlight was not deleted: ${error.message}`, true);
+    announce(`Mark was not deleted: ${error.message}`, true);
   }
 }
 
@@ -784,7 +788,7 @@ function finishSelection(event) {
   extendSelection(event);
   state.selecting = false;
   if (state.selection?.resolved.length) {
-    elements["annotation-composer"].hidden = false;
+    showSelectionActions();
   }
 }
 
@@ -804,7 +808,37 @@ function renderSelection() {
     overlay.append(marker);
   }
   syncNativeSelection(overlay);
-  elements["annotation-composer"].hidden = state.selection.resolved.length === 0;
+  if (state.selection.resolved.length && !state.selecting) showSelectionActions();
+  else elements["selection-actions"].hidden = true;
+}
+
+function showSelectionActions() {
+  elements["selection-actions"].hidden = false;
+  positionSelectionActions();
+}
+
+function positionSelectionActions() {
+  if (!state.selection?.resolved.length || elements["selection-actions"].hidden) return;
+  const overlay = elements.pages.children[state.selection.pageIndex]?.querySelector(".text-overlay");
+  if (!overlay) return;
+  const quads = selectionPresentationQuads(state.selection.resolved);
+  if (!quads.length) return;
+  const target = quads.at(-1);
+  const xs = target.map(([x]) => x);
+  const ys = target.map(([, y]) => y);
+  const rect = overlay.getBoundingClientRect();
+  const menu = elements["selection-actions"];
+  requestAnimationFrame(() => {
+    if (menu.hidden || !state.selection) return;
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    const anchorX = rect.left + ((Math.min(...xs) + Math.max(...xs)) / 2) * rect.width;
+    const below = rect.top + Math.max(...ys) * rect.height + 8;
+    const above = rect.top + Math.min(...ys) * rect.height - height - 8;
+    const top = below + height <= window.innerHeight - 8 ? below : above;
+    menu.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, anchorX - width / 2))}px`;
+    menu.style.top = `${Math.max(76, Math.min(window.innerHeight - height - 8, top))}px`;
+  });
 }
 
 function syncNativeSelection(overlay) {
@@ -842,17 +876,23 @@ function clearSelection() {
   window.getSelection()?.removeAllRanges();
   state.selection = null;
   state.selecting = false;
-  elements["annotation-composer"].hidden = true;
+  elements["selection-actions"].hidden = true;
+  elements["note-editor"].hidden = true;
+  elements["add-note"].setAttribute("aria-expanded", "false");
   elements["annotation-note"].value = "";
+  document.querySelector('input[name="highlight-style"][value="YELLOW"]').checked = true;
 }
 
-async function saveHighlight(event) {
-  event.preventDefault();
+function selectedHighlightStyle() {
+  return document.querySelector('input[name="highlight-style"]:checked')?.value || "YELLOW";
+}
+
+async function saveAnnotation(body = null) {
   const selection = state.selection;
   const revisionId = state.revision?.id;
   if (!selection?.resolved.length || !revisionId) return;
-  const button = elements["save-highlight"];
-  button.disabled = true;
+  elements["save-highlight"].disabled = true;
+  elements["save-note"].disabled = true;
   try {
     const payload = await api(`/api/revisions/${revisionId}/annotations`, {
       method: "POST",
@@ -867,7 +907,8 @@ async function saveHighlight(event) {
           line_ordinal: selection.focus.lineOrdinal,
           boundary: selection.focus.boundary,
         },
-        body: elements["annotation-note"].value,
+        body,
+        highlight_style: selectedHighlightStyle(),
       }),
     });
     if (state.revision?.id !== revisionId) return;
@@ -877,13 +918,23 @@ async function saveHighlight(event) {
     clearSelection();
     renderAnnotations(pageIndex);
     updateMarksPanel();
-    elements["marks-panel"].hidden = false;
-    elements["marks-toggle"].setAttribute("aria-expanded", "true");
-    announce(payload.annotation.body ? "Highlight and note saved." : "Highlight saved.");
+    announce(payload.annotation.body ? "Note saved." : "Highlight saved.");
   } catch (error) {
-    announce(`Highlight was not saved: ${error.message}`, true);
+    announce(`Mark was not saved: ${error.message}`, true);
   } finally {
-    button.disabled = false;
+    elements["save-highlight"].disabled = false;
+    elements["save-note"].disabled = false;
+  }
+}
+
+async function copySelection() {
+  const text = resolvedText(state.selection?.resolved || []);
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    announce("Selected text copied.");
+  } catch (error) {
+    announce(`Selected text was not copied: ${error.message}`, true);
   }
 }
 
@@ -956,9 +1007,29 @@ elements["marks-close"].addEventListener("click", () => {
   elements["marks-panel"].hidden = true;
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
 });
-elements["annotation-composer"].addEventListener("submit", saveHighlight);
-elements["cancel-highlight"].addEventListener("click", clearSelection);
+elements["copy-selection"].addEventListener("click", copySelection);
+elements["save-highlight"].addEventListener("click", () => saveAnnotation());
+elements["add-note"].addEventListener("click", () => {
+  const opening = elements["note-editor"].hidden;
+  elements["note-editor"].hidden = !opening;
+  elements["add-note"].setAttribute("aria-expanded", String(opening));
+  positionSelectionActions();
+  if (opening) elements["annotation-note"].focus({ preventScroll: true });
+});
+elements["note-editor"].addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveAnnotation(elements["annotation-note"].value);
+});
+elements["cancel-selection"].addEventListener("click", clearSelection);
+elements["selection-actions"].addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    clearSelection();
+    elements.viewer.focus({ preventScroll: true });
+  }
+});
 elements.viewer.addEventListener("pointerdown", () => elements.viewer.focus({ preventScroll: true }));
+elements.viewer.addEventListener("scroll", positionSelectionActions, { passive: true });
 elements.viewer.addEventListener("wheel", (event) => {
   if (!event.ctrlKey) return;
   event.preventDefault();
@@ -994,6 +1065,7 @@ document.addEventListener("copy", (event) => {
   announce("Selected text copied.");
 });
 window.addEventListener("resize", () => {
+  positionSelectionActions();
   clearTimeout(state.resizeTimer);
   state.resizeTimer = setTimeout(relayoutPages, 120);
 });

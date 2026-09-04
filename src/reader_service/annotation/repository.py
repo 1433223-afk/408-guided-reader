@@ -26,6 +26,7 @@ class AnnotationRepository:
         context_after: str,
         foundation_version: int,
         body: str | None,
+        highlight_style: str,
     ) -> dict:
         annotation_id = str(uuid4())
         created_at = now()
@@ -37,7 +38,7 @@ class AnnotationRepository:
                     quote, context_before, context_after, foundation_version_at_creation,
                     body, highlight_style, source_kind, verification_state, anchor_state,
                     knowledge_point_id, created_at
-                ) VALUES (?, ?, ?, 'TEXT', ?, ?, ?, ?, ?, ?, 'YELLOW', 'USER', NULL, 'OK',
+                ) VALUES (?, ?, ?, 'TEXT', ?, ?, ?, ?, ?, ?, ?, 'USER', NULL, 'OK',
                           NULL, ?)
                 """,
                 (
@@ -50,6 +51,7 @@ class AnnotationRepository:
                     context_after,
                     foundation_version,
                     body,
+                    highlight_style,
                     created_at,
                 ),
             )

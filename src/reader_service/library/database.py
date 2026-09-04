@@ -161,6 +161,54 @@ MIGRATIONS = (
             ON annotations(book_source_revision_id, pdf_page_index, created_at, id);
         """,
     ),
+    (
+        5,
+        """
+        -- Annotation highlight style is presentation data, independent from
+        -- both the durable text anchor and the optional note body. Rebuild the
+        -- table so existing user assets survive while the R3 UI gains a small,
+        -- explicitly bounded palette including no visible paint.
+        CREATE TABLE annotations_v5 (
+            id TEXT PRIMARY KEY,
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            pdf_page_index INTEGER NOT NULL CHECK (pdf_page_index >= 0),
+            kind TEXT NOT NULL DEFAULT 'TEXT' CHECK (kind = 'TEXT'),
+            quads_json TEXT NOT NULL,
+            quote TEXT NOT NULL CHECK (length(quote) > 0),
+            context_before TEXT NOT NULL,
+            context_after TEXT NOT NULL,
+            foundation_version_at_creation INTEGER NOT NULL
+                CHECK (foundation_version_at_creation >= 1),
+            body TEXT CHECK (body IS NULL OR (length(body) > 0 AND length(body) <= 1000)),
+            highlight_style TEXT NOT NULL DEFAULT 'YELLOW'
+                CHECK (highlight_style IN ('YELLOW', 'GREEN', 'BLUE', 'NONE')),
+            source_kind TEXT NOT NULL DEFAULT 'USER' CHECK (source_kind = 'USER'),
+            verification_state TEXT CHECK (verification_state IS NULL),
+            anchor_state TEXT NOT NULL DEFAULT 'OK' CHECK (anchor_state = 'OK'),
+            knowledge_point_id TEXT CHECK (knowledge_point_id IS NULL),
+            created_at TEXT NOT NULL
+        );
+
+        INSERT INTO annotations_v5(
+            id, book_source_revision_id, pdf_page_index, kind, quads_json,
+            quote, context_before, context_after, foundation_version_at_creation,
+            body, highlight_style, source_kind, verification_state, anchor_state,
+            knowledge_point_id, created_at
+        )
+        SELECT
+            id, book_source_revision_id, pdf_page_index, kind, quads_json,
+            quote, context_before, context_after, foundation_version_at_creation,
+            body, highlight_style, source_kind, verification_state, anchor_state,
+            knowledge_point_id, created_at
+        FROM annotations;
+
+        DROP TABLE annotations;
+        ALTER TABLE annotations_v5 RENAME TO annotations;
+        CREATE INDEX ix_annotations_revision_page
+            ON annotations(book_source_revision_id, pdf_page_index, created_at, id);
+        """,
+    ),
 )
 
 
@@ -188,8 +236,13 @@ class Database:
             for version, sql in MIGRATIONS:
                 if version in applied:
                     continue
-                connection.executescript(sql)
-                connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+                # executescript does not add a transaction of its own. Keep the
+                # schema change and its migration marker atomic, which is
+                # especially important once migrations preserve user assets.
+                connection.executescript(
+                    f"BEGIN IMMEDIATE;\n{sql}\n"
+                    f"INSERT INTO schema_migrations(version) VALUES ({int(version)});\nCOMMIT;"
+                )
             connection.commit()
         except Exception:
             connection.rollback()

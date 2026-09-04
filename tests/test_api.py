@@ -148,6 +148,7 @@ def test_annotation_api_resolves_runtime_selection_and_persists_durable_anchor(s
             "start": {"line_ordinal": 0, "boundary": 1},
             "end": {"line_ordinal": 0, "boundary": 3},
             "body": "API note",
+            "highlight_style": "GREEN",
         }).encode()
         status, created = request_json(
             f"{base}/api/revisions/{revision['id']}/annotations",
@@ -158,6 +159,7 @@ def test_annotation_api_resolves_runtime_selection_and_persists_durable_anchor(s
         )
         assert status == 201
         assert created["annotation"]["quote"] == "BC"
+        assert created["annotation"]["highlight_style"] == "GREEN"
         assert created["annotation"]["quads"] == [
             [[0.2, 0.2], [0.4, 0.2], [0.4, 0.3], [0.2, 0.3]]
         ]

@@ -47,7 +47,7 @@
           <button id="next-page" class="icon-button" aria-label="Next page">→</button>
           <span class="control-divider"></span>
           <output id="preparation-status" class="preparation-status">Preparing text…</output>
-          <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false">Marks <span id="marks-count">0</span></button>
+          <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="Marks on this page" title="Marks on this page"><span aria-hidden="true">✦</span><span id="marks-count" class="marks-count" hidden>0</span></button>
           <span class="control-divider"></span>
           <button id="zoom-out" class="icon-button" aria-label="Zoom out">−</button>
           <output id="zoom-value">100%</output>
@@ -63,12 +63,26 @@
         <p id="marks-empty" class="marks-empty">No marks on this page.</p>
       </aside>
     </section>
-    <form id="annotation-composer" class="annotation-composer" hidden>
-      <label for="annotation-note">Optional note</label>
-      <input id="annotation-note" type="text" maxlength="1000" placeholder="Add a short note…">
-      <button id="save-highlight" type="submit">Save highlight</button>
-      <button id="cancel-highlight" type="button" aria-label="Cancel highlight">×</button>
-    </form>
+    <div id="selection-actions" class="selection-actions" role="toolbar" aria-label="Selection actions" hidden>
+      <div class="selection-action-row">
+        <button id="copy-selection" type="button">Copy</button>
+        <button id="save-highlight" type="button">Highlight</button>
+        <button id="add-note" type="button" aria-expanded="false">Add note</button>
+        <button id="cancel-selection" class="cancel-selection" type="button" aria-label="Dismiss selection actions">×</button>
+      </div>
+      <fieldset class="highlight-styles">
+        <legend>Highlight style</legend>
+        <label title="Yellow"><input type="radio" name="highlight-style" value="YELLOW" checked><span class="style-swatch yellow" aria-hidden="true"></span><span class="sr-only">Yellow</span></label>
+        <label title="Green"><input type="radio" name="highlight-style" value="GREEN"><span class="style-swatch green" aria-hidden="true"></span><span class="sr-only">Green</span></label>
+        <label title="Blue"><input type="radio" name="highlight-style" value="BLUE"><span class="style-swatch blue" aria-hidden="true"></span><span class="sr-only">Blue</span></label>
+        <label title="No visible highlight"><input type="radio" name="highlight-style" value="NONE"><span class="style-swatch none" aria-hidden="true">×</span><span class="sr-only">No visible highlight</span></label>
+      </fieldset>
+      <form id="note-editor" class="note-editor" hidden>
+        <label class="sr-only" for="annotation-note">Short note</label>
+        <input id="annotation-note" type="text" maxlength="1000" required placeholder="Add a short note…">
+        <button id="save-note" type="submit">Save note</button>
+      </form>
+    </div>
     <div id="status" class="status" role="status" aria-live="polite"></div>
     <script type="module" src="/app.js"></script>
   </body>

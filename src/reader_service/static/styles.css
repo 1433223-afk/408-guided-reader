@@ -75,10 +75,16 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .preparation-status.ready { color: #34704f; }
 .preparation-status.failed { color: #9a3f37; }
 .marks-toggle {
-  margin-left: 5px; padding: 6px 9px; cursor: pointer; color: #6b552e; background: #f2e5bf;
-  border: 1px solid #dec98f; border-radius: 6px; font-size: 10px; font-weight: 800;
+  position: relative; display: grid; place-items: center; width: 32px; height: 32px; margin-left: 5px;
+  padding: 0; cursor: pointer; color: #75694f; background: transparent;
+  border: 1px solid transparent; border-radius: 7px; font-size: 15px;
 }
-.marks-toggle:hover { background: #ead8a6; }
+.marks-toggle:hover, .marks-toggle[aria-expanded="true"] { color: #5e4823; background: #eee6d5; border-color: #d9ccb0; }
+.marks-count {
+  position: absolute; top: -4px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px;
+  color: #fff; background: #8b6731; border: 2px solid #f8f6f0; border-radius: 10px;
+  font-size: 9px; font-weight: 800; line-height: 12px; text-align: center;
+}
 .viewer { position: relative; min-height: 0; overflow: auto; outline: none; background: #d7d4cd; scrollbar-color: #aaa69c transparent; }
 .viewer:focus-visible { box-shadow: inset 0 0 0 2px rgb(105 91 68 / 25%); }
 .pages { min-width: 100%; padding: 8px 32px 60px; }
@@ -99,16 +105,40 @@ button, label { -webkit-tap-highlight-color: transparent; }
   position: absolute; background: rgb(244 203 73 / 38%); border-bottom: 1px solid rgb(170 126 19 / 44%);
   border-radius: 2px; pointer-events: none;
 }
-.annotation-composer {
-  z-index: 12; position: fixed; left: 50%; bottom: 22px; display: flex; align-items: center; gap: 8px;
-  width: min(620px, calc(100% - 32px)); padding: 10px; color: #e9e4d8; background: #28312d;
-  border: 1px solid rgb(255 255 255 / 10%); border-radius: 10px; box-shadow: 0 10px 36px rgb(0 0 0 / 28%);
+.annotation-quad.annotation-style-green { background: rgb(91 190 119 / 30%); border-bottom-color: rgb(46 130 72 / 42%); }
+.annotation-quad.annotation-style-blue { background: rgb(82 156 230 / 28%); border-bottom-color: rgb(43 104 169 / 42%); }
+.annotation-quad.annotation-style-none { background: transparent; border-bottom-color: transparent; }
+.selection-actions {
+  z-index: 12; position: fixed; width: max-content; max-width: calc(100% - 16px); padding: 7px;
+  color: #eee9df; background: #28312d; border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 9px; box-shadow: 0 8px 28px rgb(0 0 0 / 28%);
 }
-.annotation-composer label { padding-left: 4px; font-size: 11px; font-weight: 800; white-space: nowrap; }
-.annotation-composer input { min-width: 0; flex: 1; padding: 8px 10px; border: 0; border-radius: 6px; }
-.annotation-composer button { padding: 8px 11px; cursor: pointer; border: 0; border-radius: 6px; }
-#save-highlight { color: #352b17; background: #e5be69; font-weight: 800; white-space: nowrap; }
-#cancel-highlight { color: #ddd7ca; background: transparent; font-size: 18px; }
+.selection-action-row { display: flex; align-items: center; gap: 3px; }
+.selection-action-row button, .note-editor button {
+  padding: 7px 9px; cursor: pointer; color: #eee9df; background: transparent;
+  border: 0; border-radius: 5px; font-size: 11px; font-weight: 750; white-space: nowrap;
+}
+.selection-action-row button:hover { background: rgb(255 255 255 / 11%); }
+.selection-action-row #save-highlight { color: #332b1d; background: #e4bd69; }
+.selection-action-row #save-highlight:hover { background: #edca7f; }
+.selection-action-row .cancel-selection { padding-inline: 7px; color: #c9c3b7; font-size: 17px; font-weight: 400; }
+.highlight-styles {
+  display: flex; align-items: center; gap: 5px; margin: 6px 2px 0; padding: 6px 0 0;
+  border: 0; border-top: 1px solid rgb(255 255 255 / 10%);
+}
+.highlight-styles legend { float: left; width: auto; margin: 2px 6px 0 2px; padding: 0; color: #aaa99f; font-size: 9px; }
+.highlight-styles label { display: grid; place-items: center; width: 22px; height: 22px; cursor: pointer; border-radius: 5px; }
+.highlight-styles input { position: absolute; opacity: 0; pointer-events: none; }
+.style-swatch { display: grid; place-items: center; width: 14px; height: 14px; border: 1px solid rgb(255 255 255 / 28%); border-radius: 50%; }
+.style-swatch.yellow { background: #e5be55; }
+.style-swatch.green { background: #67bd7b; }
+.style-swatch.blue { background: #5b9ddd; }
+.style-swatch.none { color: #bdb7ab; background: transparent; font-size: 11px; line-height: 1; }
+.highlight-styles input:checked + .style-swatch { outline: 2px solid #f4efe5; outline-offset: 2px; }
+.highlight-styles label:focus-within { background: rgb(255 255 255 / 10%); }
+.note-editor { display: flex; gap: 5px; margin-top: 7px; padding-top: 7px; border-top: 1px solid rgb(255 255 255 / 10%); }
+.note-editor input { width: 230px; min-width: 0; padding: 7px 8px; border: 0; border-radius: 5px; font-size: 11px; }
+.note-editor button { color: #332b1d; background: #e4bd69; }
 .marks-panel {
   z-index: 6; position: fixed; top: 78px; right: 14px; width: min(320px, calc(100% - 28px));
   max-height: calc(100% - 94px); overflow: auto; padding: 13px; background: rgb(250 248 242 / 98%);
@@ -118,6 +148,9 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .marks-panel-heading button { cursor: pointer; color: #756d60; background: none; border: 0; font-size: 20px; }
 .marks-list { display: grid; gap: 8px; margin-top: 10px; }
 .mark-card { padding: 10px; background: #fffaf0; border-left: 4px solid #e0b84d; border-radius: 5px; }
+.mark-card.annotation-style-green { border-left-color: #64ad75; }
+.mark-card.annotation-style-blue { border-left-color: #5793ce; }
+.mark-card.annotation-style-none { border-left-color: #bbb5aa; }
 .mark-quote { margin: 0; color: #4c473d; font: 12px/1.4 Georgia, serif; white-space: pre-wrap; }
 .mark-note { margin: 7px 0 0; color: #756448; font-size: 11px; white-space: pre-wrap; }
 .mark-remove { margin-top: 8px; padding: 3px 0; cursor: pointer; color: #95453c; background: none; border: 0; font-size: 10px; font-weight: 800; }
@@ -146,4 +179,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
   .back-button { padding-inline: 5px; }
   .control-divider { display: none; }
   .pages { padding-inline: 12px; }
+  .selection-actions { max-width: calc(100% - 12px); }
+  .selection-action-row button { padding-inline: 7px; }
+  .note-editor input { width: min(230px, 55vw); }
 }

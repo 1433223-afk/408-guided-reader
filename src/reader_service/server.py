@@ -173,6 +173,7 @@ def handler_factory(
                         start=payload["start"],
                         end=payload["end"],
                         body=payload.get("body"),
+                        highlight_style=payload.get("highlight_style", "YELLOW"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

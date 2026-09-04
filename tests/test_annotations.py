@@ -8,6 +8,7 @@ import pytest
 from reader_service.annotation import AnnotationRepository, AnnotationService
 from reader_service.foundation import DetectedLine, FoundationRepository, FoundationService
 from reader_service.library import LibraryService
+from reader_service.library.database import Database, MIGRATIONS
 from reader_service.storage import ManagedPaths
 
 from conftest import make_pdf
@@ -58,13 +59,14 @@ def prepared_services(service):
     return result["book"], revision, annotations
 
 
-def create_mark(annotations, revision_id, body=None):
+def create_mark(annotations, revision_id, body=None, highlight_style="YELLOW"):
     return annotations.create_text(
         revision_id,
         page_index=0,
         start={"line_ordinal": 0, "boundary": 1},
         end={"line_ordinal": 1, "boundary": 2},
         body=body,
+        highlight_style=highlight_style,
     )
 
 
@@ -77,6 +79,7 @@ def test_create_highlight_and_note_persist_only_durable_anchor(service):
         start={"line_ordinal": 1, "boundary": 1},
         end={"line_ordinal": 1, "boundary": 4},
         body="  important bus detail  ",
+        highlight_style="BLUE",
     )
 
     assert highlight["quote"] == "乙丙丁戊\n己庚"
@@ -91,7 +94,7 @@ def test_create_highlight_and_note_persist_only_durable_anchor(service):
     assert noted["quote"] == "庚辛壬"
     assert noted["foundation_version_at_creation"] == 1
     assert noted["kind"] == "TEXT"
-    assert noted["highlight_style"] == "YELLOW"
+    assert noted["highlight_style"] == "BLUE"
     assert noted["source_kind"] == "USER"
     assert noted["anchor_state"] == "OK"
     assert noted["verification_state"] is None
@@ -151,6 +154,101 @@ def test_r3_schema_rejects_deferred_annotation_paths(service):
 
     with pytest.raises(ValueError, match="at most"):
         create_mark(annotations, revision["id"], "x" * 1001)
+
+    with pytest.raises(ValueError, match="Highlight style"):
+        create_mark(annotations, revision["id"], highlight_style="PURPLE")
+
+
+@pytest.mark.parametrize("highlight_style", ["YELLOW", "GREEN", "BLUE", "NONE"])
+def test_highlight_styles_round_trip_independently_from_note(service, highlight_style):
+    _, revision, annotations = prepared_services(service)
+    mark = create_mark(
+        annotations,
+        revision["id"],
+        body="style-independent note",
+        highlight_style=highlight_style,
+    )
+
+    assert mark["body"] == "style-independent note"
+    assert mark["highlight_style"] == highlight_style
+    assert annotations.list_page(revision["id"], 0)[0]["highlight_style"] == highlight_style
+
+
+def test_v5_style_migration_preserves_existing_annotation_and_ownership(tmp_path):
+    path = tmp_path / "r3-v4.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(
+        "CREATE TABLE schema_migrations "
+        "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    )
+    for version, sql in MIGRATIONS[:4]:
+        connection.executescript(sql)
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (?)", (version,))
+    connection.execute(
+        "INSERT INTO books(id, title, status, created_at) "
+        "VALUES ('book', 'R3', 'ACTIVE', 'book-created')"
+    )
+    connection.execute(
+        """
+        INSERT INTO book_source_revisions(
+            id, book_id, blob_sha256, byte_size, page_count, page_geometry_json,
+            label, status, created_at, foundation_version
+        ) VALUES ('revision', 'book', ?, 1, 1, '[]', 'R3', 'ACTIVE', 'revision-created', 1)
+        """,
+        ("c" * 64,),
+    )
+    original = (
+        "mark", "revision", 0, "TEXT", "[[[0.1,0.2],[0.3,0.2],[0.3,0.25],[0.1,0.25]]]",
+        "quote", "before", "after", 1, "existing note", "YELLOW", "USER", None, "OK", None,
+        "annotation-created",
+    )
+    connection.execute(
+        """
+        INSERT INTO annotations(
+            id, book_source_revision_id, pdf_page_index, kind, quads_json,
+            quote, context_before, context_after, foundation_version_at_creation,
+            body, highlight_style, source_kind, verification_state, anchor_state,
+            knowledge_point_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        original,
+    )
+    connection.commit()
+    connection.close()
+
+    Database(path).initialize()
+
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    migrated = connection.execute(
+        """
+        SELECT id, book_source_revision_id, pdf_page_index, kind, quads_json,
+               quote, context_before, context_after, foundation_version_at_creation,
+               body, highlight_style, source_kind, verification_state, anchor_state,
+               knowledge_point_id, created_at
+        FROM annotations WHERE id = 'mark'
+        """
+    ).fetchone()
+    assert migrated == original
+    assert connection.execute(
+        "SELECT version FROM schema_migrations ORDER BY version"
+    ).fetchall() == [(1,), (2,), (3,), (4,), (5,)]
+    connection.execute(
+        """
+        INSERT INTO annotations(
+            id, book_source_revision_id, pdf_page_index, quads_json, quote,
+            context_before, context_after, foundation_version_at_creation,
+            body, highlight_style, created_at
+        ) VALUES ('none', 'revision', 0,
+                  '[[[0.1,0.2],[0.3,0.2],[0.3,0.25],[0.1,0.25]]]',
+                  'note only', '', '', 1,
+                  'no paint', 'NONE', 'new')
+        """
+    )
+    connection.execute("DELETE FROM books WHERE id = 'book'")
+    assert connection.execute("SELECT COUNT(*) FROM annotations").fetchone()[0] == 0
+    connection.close()
 
 
 def test_annotation_delete_is_scoped_to_owning_revision(service):
