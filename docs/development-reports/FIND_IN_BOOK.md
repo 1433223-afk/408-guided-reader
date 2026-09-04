@@ -29,8 +29,8 @@ does not authorize R4.
 - A compact Reader search entry and collapsible panel with query input, coverage statement, page +
   snippet results, partial-coverage empty state, and real-PDF navigation through the existing
   `goToPage` path.
-- A visually distinct rose-outlined transient match marker. The client resolves returned runtime
-  cell ranges against the current OCR overlay through the existing selection geometry functions,
+- A visually distinct soft-lavender translucent transient match marker. The client resolves returned
+  runtime cell ranges against the current OCR overlay through the existing selection geometry functions,
   paints all fragments of a cross-line match, and scrolls the first fragment into view. Choosing
   another result replaces it; clearing/closing search or leaving the Reader removes it.
 - User-visible UI now defaults to Simplified Chinese, including the existing Library, Reader,
@@ -151,7 +151,7 @@ npm run test:e2e:find
 
 Manual replay: open either real book, open the small search panel, confirm the coverage statement,
 search a Chinese term or phrase, click a result, and verify the page input and rendered PDF both land
-on the listed page with a rose-outlined hit visible. Click a second result and confirm the old marker
+on the listed page with a soft lavender hit visible. Click a second result and confirm the old marker
 is replaced. Close the search panel, then repeat and clear the input; no marker or new item in Marks
 should remain. Search an impossible phrase and confirm the empty state still names the searched
 coverage rather than claiming an unqualified whole-book absence.

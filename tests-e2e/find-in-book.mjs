@@ -68,12 +68,14 @@ try {
     assert.ok(await firstMarkers.count() >= 1, "clicked result did not paint a transient match");
     const markerStyle = await firstMarkers.first().evaluate((node) => ({
       position: getComputedStyle(node).position,
-      borderColor: getComputedStyle(node).borderColor,
+      backgroundColor: getComputedStyle(node).backgroundColor,
+      borderStyle: getComputedStyle(node).borderStyle,
       annotation: node.classList.contains("annotation-quad"),
     }));
     assert.equal(markerStyle.position, "absolute");
     assert.equal(markerStyle.annotation, false, "transient match reused durable Annotation presentation identity");
-    assert.notEqual(markerStyle.borderColor, "rgba(0, 0, 0, 0)");
+    assert.notEqual(markerStyle.backgroundColor, "rgba(0, 0, 0, 0)");
+    assert.equal(markerStyle.borderStyle, "none");
     const markerBox = await firstMarkers.first().boundingBox();
     const viewerBox = await page.locator("#viewer").boundingBox();
     assert.ok(markerBox.y < viewerBox.y + viewerBox.height && markerBox.y + markerBox.height > viewerBox.y,

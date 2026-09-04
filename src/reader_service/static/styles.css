@@ -102,12 +102,12 @@ button, label { -webkit-tap-highlight-color: transparent; }
   pointer-events: none;
 }
 .search-match-quad {
-  z-index: 4; position: absolute; background: rgb(207 71 113 / 25%);
-  border: 2px solid rgb(181 42 87 / 88%); border-radius: 3px;
-  box-shadow: 0 0 0 2px rgb(255 255 255 / 72%), 0 2px 8px rgb(104 24 51 / 28%);
-  pointer-events: none; animation: search-match-pulse .7s ease-out 2;
+  z-index: 4; position: absolute; background: rgb(181 137 226 / 28%);
+  border-radius: 2px; box-shadow: 0 0 5px rgb(126 78 174 / 16%);
+  transform: scaleX(1.012); transform-origin: center;
+  pointer-events: none; animation: search-match-pulse .65s ease-out 1;
 }
-@keyframes search-match-pulse { 50% { background: rgb(225 74 122 / 46%); } }
+@keyframes search-match-pulse { 45% { background: rgb(172 119 224 / 40%); } }
 .annotation-quad {
   position: absolute; background: rgb(244 203 73 / 38%); border-bottom: 1px solid rgb(170 126 19 / 44%);
   border-radius: 2px; pointer-events: none;
