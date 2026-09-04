@@ -9,7 +9,10 @@ bottom composer is gone. Marks render from persisted normalized quads on their o
 survive closing and reopening the book and a real Core Service process restart, and can be deleted.
 The Reader keeps Marks behind a small toolbar entry until the user explicitly opens it.
 
-`READY_FOR_USER_REAL_USE_REVIEW: YES`
+`USER_REAL_USE_ACCEPTANCE: PASS` — the user completed real-use validation of the final interaction
+and explicitly accepted it on 2026-09-04.
+
+`R3_STATUS: CLOSED`
 
 `READY_FOR_NARROW_ZCODE_REVIEW: YES` — the required narrow independent review and the post-R3
 persistence-refinement review are complete and PASS; neither found a P0/P1/P2 within the authorized
@@ -82,6 +85,11 @@ then passed.
 
 ## Acceptance evidence
 
+- User real-use acceptance: **PASS**. The accepted final interaction is intentionally quiet after
+  text selection. Only an explicit right-click inside the current selected quads opens the compact
+  Copy / Highlight / Add note menu. Right-click without a valid text selection, or outside the
+  current selection, remains available to the browser/PDF context menu. The user confirmed the
+  behavior and functionality in the live Reader.
 - `pytest`: **36 passed, 2 skipped**. This covers durable anchor content, creation with/without a note,
   all four style values including `NONE`, invalid-style rejection, exact v4→v5 user-asset row
   preservation, migration marker/application, same-version restart/reload geometry, annotation
@@ -142,12 +150,19 @@ then passed.
 
 ## Known limitations / deferred debt
 
-- Cross-version fingerprint re-resolution and explicit `NEEDS_REVIEW` behavior remain pending on the
-  future Phase that introduces OCR reprocessing/corrections. This remains the load-bearing capability
-  gap named by Frozen §16.3a/§23.
+- Cross-version OCR regeneration anchor round-trip remains **pending**. Reprocessing/version bump,
+  fingerprint re-resolution, and explicit `NEEDS_REVIEW` behavior do not yet exist, so same-version
+  success is not substituted for this future load-bearing acceptance requirement.
+- Cross-page continuous selection is **required but deferred**. It needs a multi-page selection owner
+  beyond the current page-scoped pointer-capture and range model; R3 does not redefine it as optional
+  or permanently unsupported.
+- `static/geometry.js` as the single live conversion authority remains **P2 deferred**. It is the
+  tested normalized PDF/viewport conversion module but is not yet Foundation's sole live authority
+  for server-side EMBEDDED conversion; conservative OCR fallback continues to contain the risk.
 - A clean R2 real-OCR rerun passed, but one immediately preceding temporary-library run hit SQLite
-  write contention while prioritizing preparation jobs. It did not affect the real prepared R3
-  Library or Annotation semantics, but the remaining transient preparation concurrency is known.
+  write contention while prioritizing preparation jobs. That first invocation is **not** counted as
+  PASS; the bounded rerun passed 29/29 pages. It did not affect the real prepared R3 Library or
+  Annotation semantics, but the remaining transient preparation concurrency is known.
 - Region notes, AI-saved notes/verification, existing-note editing, and a cross-book marks browser are
   intentionally outside this core slice.
 
