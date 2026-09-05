@@ -217,5 +217,10 @@ closed. Find in Book passed user real-use acceptance 2026-09-04. Map the Book pa
 acceptance and its required independent narrow review on 2026-09-04; the review explicitly allowed
 closure with three non-blocking P2 observations recorded in its development report. Cross-version
 annotation round-trip remains a pending capability gap because OCR reprocessing does not exist.
-No next Phase brief has been accepted; derive it later per §7 from current product/code state and
-actual usage feedback.
+**Ask About This** (`docs/phases/ASK_ABOUT_THIS.md`) is the current Phase brief — accepted
+2026-09-04, awaiting implementation: the product's first AI slice (select textbook text, ask, get a
+temporary scope-aware explanation via a DeepSeek adapter). User decisions **D-4** (first provider =
+DeepSeek) and **D-5** (§21.3 recommended egress boundary) were resolved/confirmed 2026-09-04 and are
+recorded in the brief; `IMPLEMENTATION_BLUEPRINT.md` §26 still carries them as open rows pending the
+user's Frozen Core sync. This slice does not authorize the rest of the frozen §24 R5 entry; derive
+later briefs per §7.
