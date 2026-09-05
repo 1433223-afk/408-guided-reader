@@ -2,19 +2,23 @@
 
 ## Result
 
-`READY_FOR_USER_RETEST` — implementation remains in the same open Provider Bake-off Phase after a
-user-acceptance correction. The normal Reader now exposes one compact model selector in the
-Assistant panel and makes exactly one provider call per turn. The selected provider/model is pinned
-to the memory-only conversation only after the staged first request succeeds, including every
-follow-up. The former comparison input/button and
-three-column panel no longer exist in the Reader UI; the gated comparison endpoint remains available
-only to the development benchmark harness.
+`COMPLETE` — user retest passed and ZCode narrow independent review passed. The accepted
+implementation preserves the reviewed security boundary and the normal Reader's compact
+single-model Assistant interaction: the user selects one model before the first request, exactly one
+provider is called per turn, and that provider/model remains pinned for follow-up within the
+memory-only conversation. The former comparison input/button and three-column panel do not exist in
+the Reader UI; the gated comparison endpoint remains available only to the development benchmark
+harness.
 
-`PHASE_STATUS: OPEN`
+`PHASE_STATUS: CLOSED`
+
+`USER_ACCEPTANCE: PASS`
+
+`NARROW_INDEPENDENT_REVIEW: PASS (P0=0 / P1=0 / P2=3)`
 
 `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING: OPENROUTER_MODEL_REGION_ACCESS`
 
-`READY_FOR_USER_RETEST`
+`DEFAULT_ASSISTANT_PROVIDER_DECISION: OPEN`
 
 The final 348-page run produced 10/10 answers from DeepSeek and 10/10 from Zhipu. OpenRouter returned
 HTTP 403 `model_region` for the frozen `google/gemini-3.8-flash` model on every direct attempt outside
@@ -250,14 +254,32 @@ before implementation: DeepSeek `deepseek-v4-pro` and OpenRouter `google/gemini-
   `npm run test:e2e:r3` **PASS** (including selection completion, context menu, copy, persistence and
   cleanup; rerun for this delta on the real 29/348-page library), `npm run test:e2e:find` **PASS**.
 
-Overall: `READY_FOR_USER_RETEST`; the Phase remains open. `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING`
-still applies solely to a callable OpenRouter `google/gemini-3.8-flash` path that obeys the no-system-
-proxy rule. Independent ZCode review has not been run, as explicitly requested.
+Overall implementation acceptance is **PASS**. User retest passed the normal Reader selection,
+local-draft, model-selection, selected-provider-only send, pinned follow-up, new-conversation,
+AI-off, and Reader interaction flows. ZCode narrow independent review also passed with P0 = 0,
+P1 = 0, and P2 = 3; the secondary review accepted that conclusion and its closure recommendation.
+The implementation, reviewed security boundary, and normal single-model Reader interaction are
+therefore accepted and this Phase is closed.
+
+This closure does not convert incomplete environment evidence into a pass.
+`FULL_REAL_MATERIAL_ACCEPTANCE_PENDING: OPENROUTER_MODEL_REGION_ACCESS` still applies solely to a
+callable OpenRouter `google/gemini-3.8-flash` path that obeys the no-system-proxy rule. The current
+result remains direct `model_region` HTTP 403, with no fallback and no model substitution. This is a
+separate product/environment matter, not a Provider Bake-off implementation blocker.
+
+No winner was selected and the default Assistant provider was not changed.
+`DEFAULT_ASSISTANT_PROVIDER_DECISION: OPEN`; the retained DeepSeek and Zhipu real-material results
+remain evidence for that later user decision.
 
 ## Known limitations / deferred debt
 
-- OpenRouter model-region access blocks full three-provider real acceptance and any complete default-
-  provider recommendation.
+- ZCode P2: clicking `新对话` or closing the Assistant while a request is in flight can leave a
+  bounded frontend stale-display window when that request completes.
+- ZCode P2: development environment variables can still override the Phase's frozen model IDs.
+- ZCode P2: the existing in-memory `_session_locks` collection is not reclaimed, leaving a pure
+  memory-growth debt over sufficiently many Reader sessions.
+- OpenRouter model-region access still blocks full three-provider real-material evidence, but does
+  not block this implementation closure.
 - The two callable reasoning models are noticeably slower and more verbose than the shared `concise`
   intent suggests. Per-provider prompt/Skill tuning remains forbidden; future changes require a new
   controlled experiment or explicit product decision.
@@ -306,5 +328,6 @@ controls to the Reader.
 Implementation checkpoint: `3c5327bb79bad0459ad6d2f1b91cc7982c42eebb`.
 Original evidence/report checkpoint: `bb57f24`.
 First user-acceptance correction checkpoint: `47084ac`.
-The selector-interaction correction checkpoint is the commit containing this updated report and is
-recorded in the second retest handoff.
+Selector-interaction correction checkpoint: `2fe487a`.
+Selection Ask-readiness correction checkpoint: `070dc20`.
+The docs-only Phase closure checkpoint is the commit containing this final report.

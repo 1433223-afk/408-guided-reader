@@ -80,4 +80,4 @@ criterion names — `IMPLEMENTATION_READY` vs `FULL_REAL_MATERIAL_ACCEPTANCE_PEN
 | Find in Book | [`FIND_IN_BOOK.md`](./FIND_IN_BOOK.md) | `IMPLEMENTATION_READY`, closed after user acceptance (see `docs/development-reports/FIND_IN_BOOK.md`) |
 | Map the Book | [`MAP_THE_BOOK.md`](./MAP_THE_BOOK.md) | `CLOSED` — accepted after user real-use + independent narrow review (2026-09-04) |
 | Ask About This | [`ASK_ABOUT_THIS.md`](./ASK_ABOUT_THIS.md) | `CLOSED` — accepted after user real-use + independent narrow review (2026-09-04) |
-| Provider Bake-off | [`PROVIDER_BAKEOFF.md`](./PROVIDER_BAKEOFF.md) | Accepted 2026-09-04 — ready for implementation (frozen models: `deepseek-chat` / `GLM-5.3-Flash` / OpenRouter Gemini Flash slug to be user-confirmed before use) |
+| Provider Bake-off | [`PROVIDER_BAKEOFF.md`](./PROVIDER_BAKEOFF.md) | `CLOSED / COMPLETE` — user acceptance PASS + narrow independent review PASS; OpenRouter `google/gemini-3.8-flash` region access remains separately pending and the default Assistant provider decision remains open |
