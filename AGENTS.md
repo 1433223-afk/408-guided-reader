@@ -223,5 +223,16 @@ independent narrow review on 2026-09-04. ZCode explicitly allowed closure with P
 three deferred non-blocking P2 observations recorded in its development report. User decisions
 **D-4** (first provider = DeepSeek) and **D-5** (§21.3 recommended egress boundary) were
 resolved/confirmed 2026-09-04 and remain recorded in the brief; `IMPLEMENTATION_BLUEPRINT.md` §26
-still carries them as open rows pending the user's Frozen Core sync. No next Phase brief is
-designated; derive it from current state and real usage per §7 rather than preselecting one here.
+still carries them as open rows pending the user's Frozen Core sync.
+**Provider Bake-off** (`docs/phases/PROVIDER_BAKEOFF.md`) is the current Phase brief — accepted
+2026-09-04, awaiting implementation: a controlled three-provider teaching-quality comparison
+(DeepSeek / Zhipu GLM / OpenRouter-Gemini) through the real Ask About This path, with a dev-gated
+side-by-side first-answer mode and no persistence. Frozen experiment variables recorded per the
+accepted brief: DeepSeek model = `deepseek-chat`; Zhipu model = `GLM-5.3-Flash` (if unsupported by
+the user's current Zhipu API/resource pack, stop and report — no substitution); the OpenRouter/
+Gemini model slug must be verified before implementation and confirmed by the user — guessing or
+autonomous substitution is forbidden. Comparison uses intent-level parity (same Skill/selected
+text/context/message/scope and intent-level settings; per-field API parameter equality is not
+required, minimal recorded mapping allowed). Non-loopback provider endpoints must be HTTPS
+(includes Ask About This P2 #1). The bake-off's default-provider recommendation is a user decision;
+derive later briefs per §7.
