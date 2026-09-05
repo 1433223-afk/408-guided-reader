@@ -224,16 +224,15 @@ three deferred non-blocking P2 observations recorded in its development report. 
 **D-4** (first provider = DeepSeek) and **D-5** (§21.3 recommended egress boundary) were
 resolved/confirmed 2026-09-04 and remain recorded in the brief; `IMPLEMENTATION_BLUEPRINT.md` §26
 still carries them as open rows pending the user's Frozen Core sync.
-**Provider Bake-off** (`docs/phases/PROVIDER_BAKEOFF.md`) is the current Phase brief — accepted
-2026-09-04 and implementation-ready at checkpoint `3c5327b`: a controlled three-provider teaching-quality comparison
-(DeepSeek / Zhipu GLM / OpenRouter-Gemini) through the real Ask About This path, with a dev-gated
-side-by-side first-answer mode and no persistence. The user's verified 2026-09-05 preflight fixed
-the experiment variables as DeepSeek = `deepseek-v4-pro`, Zhipu = `GLM-5.3-Flash`, and OpenRouter =
-`google/gemini-3.8-flash`; no substitution is permitted. Comparison uses intent-level parity (same Skill/selected
-text/context/message/scope and intent-level settings; per-field API parameter equality is not
-required, minimal recorded mapping allowed). Non-loopback provider endpoints must be HTTPS
-(includes Ask About This P2 #1). The bake-off's default-provider recommendation is a user decision;
-derive later briefs per §7. Final real-material acceptance remains pending because the fixed
-OpenRouter `google/gemini-3.8-flash` model returns a direct no-proxy `model_region` 403; DeepSeek and
-Zhipu each completed all 10 real-book comparisons. No winner/default change or ZCode review has been
-performed.
+**Provider Bake-off** (`docs/phases/PROVIDER_BAKEOFF.md`) is closed — user acceptance PASS and narrow
+independent review PASS (P0=0 / P1=0 / P2=3), 2026-09-05. The normal Reader keeps a compact
+single-model Assistant with a pre-send model selector; DeepSeek `deepseek-v4-pro` and Zhipu
+`GLM-5.3-Flash` completed all real-book comparisons, while the frozen OpenRouter
+`google/gemini-3.8-flash` model returns a direct no-proxy `model_region` 403 — that region-access
+question and the default-provider choice remain open user decisions with the retained evidence; no
+winner or default change was made.
+**Ask Deeper** (`docs/phases/ASK_DEEPER.md`) is the current Phase brief — accepted 2026-09-05,
+awaiting implementation: the frozen §24.4–§24.7 recursive Child explanation model (depth 5,
+multi-Root temporary workspace) as a memory-only slice with no new egress category and no independent
+review required by default (escalation conditions in the brief). Derive later briefs per §7 — the
+Phase's Not-now list is not a future order.
