@@ -7,7 +7,9 @@ import threading
 import webbrowser
 from pathlib import Path
 
+from reader_service.agent_runtime import AgentRuntime, DeepSeekAdapter
 from reader_service.annotation import AnnotationRepository, AnnotationService
+from reader_service.assistant import AssistantContextBuilder, AssistantService
 from reader_service.library import LibraryService
 from reader_service.foundation import (
     FoundationRepository,
@@ -61,11 +63,20 @@ def main() -> None:
         outline=outline,
     )
     annotations = AnnotationService(foundation, AnnotationRepository(service.database))
+    assistant = AssistantService(
+        AssistantContextBuilder(foundation, outline),
+        AgentRuntime(DeepSeekAdapter()),
+    )
     preparation.start()
     server = ReaderServer(
         (args.host, args.port),
         handler_factory(
-            service, token, preparation=preparation, annotations=annotations, outline=outline
+            service,
+            token,
+            preparation=preparation,
+            annotations=annotations,
+            outline=outline,
+            assistant=assistant,
         ),
     )
     host, port = server.server_address[:2]

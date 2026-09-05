@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
+from reader_service.agent_runtime import ProviderFailure
 from reader_service.annotation import AnnotationService
+from reader_service.assistant import AssistantService
 from reader_service.library import IntakeError, LibraryService
 from reader_service.jobs import PreparationCoordinator
 from reader_service.outline import OutlineService
@@ -39,6 +41,7 @@ _REVISION_ANNOTATIONS = re.compile(r"^/api/revisions/([0-9a-f-]+)/annotations$")
 _REVISION_ANNOTATION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)$"
 )
+_REVISION_ASSISTANT_ASK = re.compile(r"^/api/revisions/([0-9a-f-]+)/assistant/ask$")
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
 _SESSION_COOKIE = "reader_launch"
 
@@ -60,6 +63,7 @@ def handler_factory(
     preparation: PreparationCoordinator | None = None,
     annotations: AnnotationService | None = None,
     outline: OutlineService | None = None,
+    assistant: AssistantService | None = None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -79,6 +83,26 @@ def handler_factory(
                 if not self._authorized():
                     return
                 self._json(HTTPStatus.OK, {"books": service.list_books()})
+                return
+            if parsed.path == "/api/assistant/status":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.OK, {
+                        "role": "ASSISTANT", "provider": "deepseek", "model": None,
+                        "configured": False, "cooling": False,
+                        "credential_target": "408-guided-reader-deepseek",
+                    })
+                    return
+                self._json(HTTPStatus.OK, assistant.status())
+                return
+            if parsed.path == "/api/assistant/inspection":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "AI 功能不可用"})
+                    return
+                self._json(HTTPStatus.OK, assistant.inspect_payloads())
                 return
             match = _REVISION_OUTLINE.fullmatch(parsed.path)
             if match:
@@ -212,6 +236,75 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            ask_match = _REVISION_ASSISTANT_ASK.fullmatch(parsed.path)
+            if ask_match:
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
+                    })
+                    return
+                try:
+                    payload = self._read_json()
+                    conversation = assistant.ask_selection(
+                        payload["reader_session_id"],
+                        ask_match.group(1),
+                        int(payload["pdf_page_index"]),
+                        start=payload["start"],
+                        end=payload["end"],
+                        question=payload.get("question", "这是什么意思"),
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASK", "error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASK_CONTEXT_NOT_FOUND", "error": str(exc)})
+                    return
+                except ProviderFailure as exc:
+                    self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, {"conversation": conversation})
+                return
+            if parsed.path == "/api/assistant/follow-up":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
+                    })
+                    return
+                try:
+                    payload = self._read_json()
+                    conversation = assistant.follow_up(
+                        payload["reader_session_id"],
+                        payload["conversation_id"],
+                        payload["question"],
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_FOLLOW_UP", "error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "CONVERSATION_GONE", "error": str(exc)})
+                    return
+                except ProviderFailure as exc:
+                    self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, {"conversation": conversation})
+                return
+            if parsed.path == "/api/assistant/close":
+                if not self._authorized():
+                    return
+                try:
+                    payload = self._read_json()
+                    if assistant is not None:
+                        assistant.close_session(payload["reader_session_id"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_SESSION", "error": str(exc)})
+                    return
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.end_headers()
+                return
             annotation_match = _REVISION_ANNOTATIONS.fullmatch(parsed.path)
             if annotation_match:
                 if not self._authorized():
@@ -415,6 +508,12 @@ def handler_factory(
             if not isinstance(value, dict):
                 raise ValueError("Request body must be a JSON object")
             return value
+
+        def _provider_failure(self, failure: ProviderFailure) -> None:
+            self._json(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"code": f"AI_{failure.kind.value}", "error": failure.user_message},
+            )
 
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)

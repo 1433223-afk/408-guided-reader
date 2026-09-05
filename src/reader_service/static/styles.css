@@ -136,6 +136,9 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .selection-action-row button:hover { background: rgb(255 255 255 / 11%); }
 .selection-action-row #save-highlight { color: #332b1d; background: #e4bd69; }
 .selection-action-row #save-highlight:hover { background: #edca7f; }
+.selection-action-row #ask-selection { color: #f7e6bd; background: rgb(218 169 88 / 18%); }
+.selection-action-row #ask-selection:hover { background: rgb(218 169 88 / 30%); }
+.selection-action-row #ask-selection:disabled { cursor: not-allowed; color: #777b75; background: transparent; }
 .selection-action-row .cancel-selection { padding-inline: 7px; color: #c9c3b7; font-size: 17px; font-weight: 400; }
 .highlight-styles {
   display: flex; align-items: center; gap: 5px; margin: 6px 2px 0; padding: 6px 0 0;
@@ -214,6 +217,29 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .mark-note { margin: 7px 0 0; color: #756448; font-size: 11px; white-space: pre-wrap; }
 .mark-remove { margin-top: 8px; padding: 3px 0; cursor: pointer; color: #95453c; background: none; border: 0; font-size: 10px; font-weight: 800; }
 .marks-empty { margin: 16px 2px 3px; color: #898277; font: 12px Georgia, serif; }
+.assistant-panel {
+  z-index: 7; position: fixed; top: 68px; right: 0; bottom: 0; width: min(410px, 92vw);
+  display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto auto; padding: 18px;
+  background: rgb(250 248 242 / 99%); border-left: 1px solid #c9c1b1;
+  box-shadow: -10px 0 32px rgb(52 46 34 / 18%);
+}
+.assistant-heading { display: flex; align-items: flex-start; justify-content: space-between; }
+.assistant-heading strong { display: block; margin-top: 2px; color: #40392d; font: 600 20px Georgia, serif; }
+.assistant-heading button { padding: 0 5px; cursor: pointer; color: #756d60; background: none; border: 0; font-size: 24px; }
+.assistant-scope { margin: 10px 0 12px; padding-bottom: 10px; color: #75684f; border-bottom: 1px solid #e1d9ca; font-size: 11px; line-height: 1.45; }
+.assistant-turns { min-height: 0; overflow: auto; padding-right: 3px; }
+.assistant-turn { margin-bottom: 14px; }
+.assistant-question-bubble { margin: 0 0 7px 36px; padding: 8px 10px; color: #382f22; background: #ead9b8; border-radius: 9px 9px 2px 9px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.assistant-answer-bubble { margin: 0 24px 0 0; padding: 11px 12px; color: #3f3a32; background: #fff; border: 1px solid #ded6c7; border-radius: 2px 9px 9px; font: 13px/1.65 Georgia, "Microsoft YaHei", serif; white-space: pre-wrap; user-select: text; }
+.assistant-pending, .assistant-error { margin: 10px 0; padding: 10px; border-radius: 6px; font-size: 12px; line-height: 1.5; }
+.assistant-pending { color: #746b5d; background: #f1ece2; }
+.assistant-error { color: #813b34; background: #f7e7e4; border: 1px solid #e8c7c1; }
+.assistant-empty { align-self: start; margin: 12px 0; color: #888074; font: 13px/1.6 Georgia, serif; }
+.assistant-follow-up { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding-top: 12px; border-top: 1px solid #e1d9ca; }
+.assistant-follow-up textarea { resize: none; min-width: 0; padding: 9px 10px; color: #332f29; background: #fff; border: 1px solid #c9c2b5; border-radius: 7px; font: 12px/1.4 inherit; }
+.assistant-follow-up button { align-self: stretch; padding: 0 14px; cursor: pointer; color: #2d291f; background: #e2bc75; border: 0; border-radius: 7px; font-size: 11px; font-weight: 750; }
+.assistant-follow-up button:disabled { cursor: wait; opacity: .55; }
+.assistant-lifetime { margin: 9px 0 0; color: #979084; font-size: 9px; }
 .preparation-retry {
   z-index: 3; position: absolute; cursor: pointer;
   left: 10px; bottom: 8px; padding: 4px 7px; color: #733b36; background: rgb(255 247 243 / 88%);
@@ -243,4 +269,5 @@ button, label { -webkit-tap-highlight-color: transparent; }
   .selection-actions { max-width: calc(100% - 12px); }
   .selection-action-row button { padding-inline: 7px; }
   .note-editor input { width: min(230px, 55vw); }
+  .assistant-panel { top: 68px; width: min(390px, 100vw); }
 }

@@ -16,11 +16,12 @@ from conftest import make_pdf
 
 
 @contextmanager
-def running_server(service, annotations=None, preparation=None, outline=None):
+def running_server(service, annotations=None, preparation=None, outline=None, assistant=None):
     token = "test-launch-token"
     server = ReaderServer(
         ("127.0.0.1", 0), handler_factory(
-            service, token, annotations=annotations, preparation=preparation, outline=outline
+            service, token, annotations=annotations, preparation=preparation, outline=outline,
+            assistant=assistant,
         )
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)

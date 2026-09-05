@@ -7,7 +7,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "selection-actions", "copy-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-panel", "assistant-close", "assistant-scope", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -26,6 +26,8 @@ const state = {
   annotationData: new Map(), selection: null, selecting: false, selectionMenuPoint: null,
   searchRequest: 0, searchMatch: null,
   outlineRequest: 0, outlineNodes: [], pageLabels: new Map(), mapTimer: 0,
+  readerSessionId: null, assistantConfigured: false, assistantCooling: false,
+  assistantConversation: null, assistantPending: false, assistantStatusTimer: 0,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -38,7 +40,12 @@ async function api(path, options = {}) {
   });
   if (response.status === 204) return null;
   const payload = await response.json().catch(() => ({ error: `请求失败（${response.status}）` }));
-  if (!response.ok) throw new Error(payload.error || `请求失败（${response.status}）`);
+  if (!response.ok) {
+    const error = new Error(payload.error || `请求失败（${response.status}）`);
+    error.code = payload.code || `HTTP_${response.status}`;
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -159,6 +166,8 @@ async function openBook(book) {
   closePreparationStream();
   state.book = book;
   state.revision = book.active_revision;
+  state.readerSessionId = crypto.randomUUID();
+  state.assistantConversation = null;
   state.zoom = state.revision.position.zoom || 1;
   state.currentPage = state.revision.position.pdf_page_index || 0;
   state.pdf = null;
@@ -171,6 +180,8 @@ async function openBook(book) {
   renderLibrary();
   elements.pages.replaceChildren();
   buildPlaceholders();
+  resetAssistantPanel();
+  refreshAssistantStatus();
   try {
     const loading = pdfjsLib.getDocument({
       url: `/api/revisions/${state.revision.id}/pdf`,
@@ -200,10 +211,13 @@ function closeReader() {
   state.book = null;
   state.revision = null;
   state.pdf = null;
+  state.readerSessionId = null;
+  state.assistantConversation = null;
   elements.reader.hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-panel"].hidden = true;
   elements["outline-panel"].hidden = true;
+  elements["assistant-panel"].hidden = true;
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
@@ -213,11 +227,18 @@ function closeReader() {
   state.outlineNodes = [];
   state.pageLabels.clear();
   clearTimeout(state.mapTimer);
+  clearTimeout(state.assistantStatusTimer);
   renderLibrary();
 }
 
 async function returnToLibrary() {
   await savePosition();
+  try {
+    await clearAssistantSession();
+  } catch (_error) {
+    announce("临时 AI 对话未能清除，请重试关闭 Reader。", true);
+    return;
+  }
   closeReader();
 }
 
@@ -904,6 +925,182 @@ function schedulePreparationPriority(first, last) {
   }, 180);
 }
 
+async function refreshAssistantStatus() {
+  clearTimeout(state.assistantStatusTimer);
+  try {
+    const status = await api("/api/assistant/status");
+    state.assistantConfigured = Boolean(status.configured);
+    state.assistantCooling = Boolean(status.cooling);
+    elements["ask-selection"].disabled = !state.assistantConfigured || state.assistantCooling;
+    elements["ask-selection"].title = !state.assistantConfigured
+      ? "未配置 DeepSeek 密钥；Reader 其余功能不受影响"
+      : (state.assistantCooling ? "AI 服务正在短暂冷却" : "使用当前教材上下文提问");
+    if (state.assistantCooling) {
+      state.assistantStatusTimer = setTimeout(
+        refreshAssistantStatus,
+        Math.max(1000, (Number(status.retry_after_seconds || 1) + 0.25) * 1000),
+      );
+    }
+  } catch (_error) {
+    state.assistantConfigured = false;
+    state.assistantCooling = false;
+    elements["ask-selection"].disabled = true;
+    elements["ask-selection"].title = "AI 配置状态暂时不可用";
+  }
+}
+
+function resetAssistantPanel() {
+  elements["assistant-scope"].textContent = state.assistantConfigured
+    ? "等待教材选区" : "DeepSeek 未配置，Reader 其余功能仍可使用";
+  elements["assistant-turns"].replaceChildren();
+  elements["assistant-empty"].hidden = false;
+  elements["assistant-follow-up"].hidden = true;
+  elements["assistant-question"].value = "";
+  state.assistantPending = false;
+}
+
+function openAssistantPanel() {
+  elements["assistant-panel"].hidden = false;
+  elements["search-panel"].hidden = true;
+  elements["marks-panel"].hidden = true;
+  elements["search-toggle"].setAttribute("aria-expanded", "false");
+  elements["marks-toggle"].setAttribute("aria-expanded", "false");
+  state.searchRequest += 1;
+  clearSearchMatch();
+}
+
+function assistantScopeText(scope) {
+  if (scope.kind === "SECTION") {
+    return [scope.chapter_title, scope.section_title].filter(Boolean).join(" · ");
+  }
+  const chapter = scope.chapter_title ? ` · 已安全确定 ${scope.chapter_title}` : "";
+  return `PDF 第 ${scope.pdf_page_index + 1} 页范围${chapter}`;
+}
+
+function renderAssistantConversation(conversation) {
+  state.assistantConversation = conversation;
+  elements["assistant-scope"].textContent = assistantScopeText(conversation.scope);
+  const turns = conversation.turns.map((turn) => {
+    const article = document.createElement("article");
+    article.className = "assistant-turn";
+    const question = document.createElement("p");
+    question.className = "assistant-question-bubble";
+    question.textContent = turn.question;
+    const answer = document.createElement("p");
+    answer.className = "assistant-answer-bubble";
+    answer.textContent = turn.answer;
+    article.append(question, answer);
+    return article;
+  });
+  elements["assistant-turns"].replaceChildren(...turns);
+  elements["assistant-empty"].hidden = turns.length > 0;
+  elements["assistant-follow-up"].hidden = false;
+  requestAnimationFrame(() => {
+    elements["assistant-turns"].scrollTop = elements["assistant-turns"].scrollHeight;
+  });
+}
+
+function showAssistantPending(question) {
+  const pending = document.createElement("div");
+  pending.className = "assistant-pending";
+  pending.textContent = `正在结合教材上下文回答「${question}」…`;
+  elements["assistant-turns"].append(pending);
+  elements["assistant-empty"].hidden = true;
+}
+
+function showAssistantError(error) {
+  elements["assistant-turns"].querySelectorAll(".assistant-pending").forEach((node) => node.remove());
+  const message = document.createElement("div");
+  message.className = "assistant-error";
+  message.textContent = error.message || "AI 解释失败，请稍后再试。";
+  elements["assistant-turns"].append(message);
+}
+
+async function askSelectedText() {
+  const selection = state.selection;
+  const revisionId = state.revision?.id;
+  const readerSessionId = state.readerSessionId;
+  if (!selection?.resolved.length || !revisionId || !readerSessionId || state.assistantPending) return;
+  if (!state.assistantConfigured || state.assistantCooling) {
+    openAssistantPanel();
+    resetAssistantPanel();
+    elements["assistant-panel"].hidden = false;
+    return;
+  }
+  const request = {
+    reader_session_id: readerSessionId,
+    pdf_page_index: selection.pageIndex,
+    start: { line_ordinal: selection.anchor.lineOrdinal, boundary: selection.anchor.boundary },
+    end: { line_ordinal: selection.focus.lineOrdinal, boundary: selection.focus.boundary },
+    question: "这是什么意思",
+  };
+  openAssistantPanel();
+  state.assistantPending = true;
+  showAssistantPending(request.question);
+  clearSelection();
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/assistant/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    if (state.readerSessionId !== readerSessionId) return;
+    renderAssistantConversation(payload.conversation);
+  } catch (error) {
+    if (state.readerSessionId === readerSessionId) showAssistantError(error);
+    if (error.code?.startsWith("AI_")) {
+      await refreshAssistantStatus();
+    }
+  } finally {
+    state.assistantPending = false;
+  }
+}
+
+async function sendAssistantFollowUp() {
+  const question = elements["assistant-question"].value.trim();
+  const conversation = state.assistantConversation;
+  const readerSessionId = state.readerSessionId;
+  if (!question || !conversation || !readerSessionId || state.assistantPending) return;
+  state.assistantPending = true;
+  elements["assistant-send"].disabled = true;
+  showAssistantPending(question);
+  try {
+    const payload = await api("/api/assistant/follow-up", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reader_session_id: readerSessionId,
+        conversation_id: conversation.conversation_id,
+        question,
+      }),
+    });
+    if (state.readerSessionId !== readerSessionId) return;
+    elements["assistant-question"].value = "";
+    renderAssistantConversation(payload.conversation);
+  } catch (error) {
+    if (state.readerSessionId === readerSessionId) showAssistantError(error);
+    if (error.code?.startsWith("AI_")) {
+      await refreshAssistantStatus();
+    }
+  } finally {
+    state.assistantPending = false;
+    elements["assistant-send"].disabled = false;
+  }
+}
+
+async function clearAssistantSession({ keepalive = false } = {}) {
+  const readerSessionId = state.readerSessionId;
+  if (!readerSessionId) return;
+  await api("/api/assistant/close", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reader_session_id: readerSessionId }),
+    keepalive,
+  });
+  state.assistantConversation = null;
+  resetAssistantPanel();
+}
+
 async function ensureOverlay(index) {
   if (state.preparation.get(index)?.status !== "READY") return;
   const revisionId = state.revision?.id;
@@ -1304,6 +1501,7 @@ elements["search-toggle"].addEventListener("click", () => {
   elements["search-panel"].hidden = !opening;
   elements["search-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    elements["assistant-panel"].hidden = true;
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-panel"].hidden = true;
@@ -1339,6 +1537,7 @@ elements["marks-toggle"].addEventListener("click", () => {
   elements["marks-panel"].hidden = !opening;
   elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    elements["assistant-panel"].hidden = true;
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["search-panel"].hidden = true;
@@ -1353,6 +1552,23 @@ elements["marks-close"].addEventListener("click", () => {
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
 });
 elements["copy-selection"].addEventListener("click", copySelection);
+elements["ask-selection"].addEventListener("click", askSelectedText);
+elements["assistant-close"].addEventListener("click", async () => {
+  elements["assistant-close"].disabled = true;
+  try {
+    await clearAssistantSession();
+    elements["assistant-panel"].hidden = true;
+    elements.viewer.focus({ preventScroll: true });
+  } catch (_error) {
+    announce("临时 AI 对话未能清除，请重试。", true);
+  } finally {
+    elements["assistant-close"].disabled = false;
+  }
+});
+elements["assistant-follow-up"].addEventListener("submit", (event) => {
+  event.preventDefault();
+  sendAssistantFollowUp();
+});
 elements["save-highlight"].addEventListener("click", () => saveAnnotation());
 elements["add-note"].addEventListener("click", () => {
   const opening = elements["note-editor"].hidden;
@@ -1422,6 +1638,9 @@ window.addEventListener("resize", () => {
   state.resizeTimer = setTimeout(relayoutPages, 120);
 });
 document.addEventListener("visibilitychange", () => document.hidden && savePosition());
-window.addEventListener("pagehide", savePositionKeepalive);
+window.addEventListener("pagehide", () => {
+  savePositionKeepalive();
+  clearAssistantSession({ keepalive: true }).catch(() => {});
+});
 
 loadBooks().catch(() => announce("书库加载失败，请刷新后重试。", true));

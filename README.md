@@ -88,6 +88,14 @@ page path. The toolbar shows a validated printed-page label when known and lets 
 per-page manual label when inference must remain UNKNOWN. `--prepare-workers` (1–4, default 1) and
 `--render-dpi` (default 200) are development tuning controls.
 
+On a prepared page, selecting original-PDF text and right-clicking exposes **问 AI** when DeepSeek is
+configured. Store the API key as the password of a Windows **Generic Credential** whose target is
+exactly `408-guided-reader-deepseek`; the key is not stored in the app database or config files.
+The temporary side-panel conversation is cleared when the Reader closes. Development/test-only
+overrides are documented without secrets in `.env.example`. Exact provider request bodies are
+available only from the authenticated localhost process-memory surface at
+`/api/assistant/inspection`; this bounded buffer and all conversations disappear on service restart.
+
 The inherited nine-page real OCR suite uses external, hash-checked textbook files and runs only when
 both paths are supplied:
 
@@ -97,5 +105,6 @@ $env:READER_REAL_DMA='D:\path\to\2026计算机组成原理_第320-348页.pdf'
 pytest tests/test_real_ocr_acceptance.py
 ```
 
-Map the Book deliberately contains no body-heading detection, Pass 2 range refinement, layout
-regions, correction-tier UI, chapter preparation, structure-scoped search, or AI code.
+The current product still contains no body-heading detection, Pass 2 range refinement, layout
+regions, correction-tier UI, chapter preparation, structure-scoped search, recursive Assistant
+tree, saved AI notes, or multimodal explanation.
