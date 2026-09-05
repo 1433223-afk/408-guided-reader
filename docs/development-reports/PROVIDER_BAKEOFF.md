@@ -100,6 +100,32 @@ assets. Browser acceptance additionally fetched the live `/app.js` with `cache: 
 `no-store` header, and confirmed the served source contains the new draft-state function. The retest
 service is therefore running the new asset rather than a cached script or stale process.
 
+### Third user retest: selection Ask readiness bug
+
+The next retest reached the Reader-native selection menu, but its `问 AI` action was disabled. The
+root cause was a stale immediate-dispatch predicate in `syncAskEligibility()`: even though the action
+now creates only a local draft, it still required at least one provider with
+`configured && !cooling`. In the observed service launch context all three fixed profiles were valid
+and selectable, but credential lookup reported `CREDENTIAL_NOT_FOUND`, so that predicate disabled
+the entry action globally. The same mistake would also have allowed credential/cooling state to
+couple Reader entry to provider call readiness. It was not caused by an overlay, pointer handling,
+the selector handler, conversation locking, or stale assets.
+
+Readiness is now split at the actual egress boundary. `问 AI` requires a valid Reader selection,
+available Assistant status, and at least one valid named provider that is not explicitly
+`DEVELOPMENT_DISABLED`; it does not require credentials, a ready default provider, an existing
+conversation, or a provider that is outside cooling. Clicking it still performs zero provider
+calls. The draft card's explicit `发送` button separately requires the selected provider to be
+configured and outside cooling. Therefore an unavailable OpenRouter profile cannot block entry for
+DeepSeek/Zhipu, while all-provider development AI-off and invalid configurations still disable the
+AI action.
+
+The browser regression uses the prepared real 348-page library and intercepts only the status read
+to reproduce three valid profiles with unavailable credentials. It verifies selection/right-click,
+an enabled `问 AI`, zero egress on click, a visible local draft, and a disabled Send button for the
+currently unavailable selected provider. The existing all-`DEVELOPMENT_DISABLED` case continues to
+verify genuine AI-off, and Copy/Highlight/Add note remain on their unchanged selection path.
+
 ## Important implementation decisions
 
 ### Frozen profiles and effective mapping
@@ -208,8 +234,11 @@ before implementation: DeepSeek `deepseek-v4-pro` and OpenRouter `google/gemini-
   menu, preserved native text selection after right-click, zero calls on opening Ask, free switching
   among all three models in the draft state, Zhipu-only dispatch after explicit send, same-provider
   follow-up, visible post-success lock state, explicit new-root unlocking with zero egress, in-page
-  inheritance, PAGE fallback, all-provider AI-off, and live no-store asset identity. Draft and locked-
-  conversation screenshots were visually inspected; they are ignored test artifacts.
+  inheritance, PAGE fallback, all-provider AI-off, and live no-store asset identity. A separate page
+  against the same real 348-page library reproduced all three named profiles as configuration-valid
+  but credential-unavailable, then verified that right-click `问 AI` remained enabled, opening it
+  made zero provider calls, and only explicit Send remained gated. Draft and locked-conversation
+  screenshots were visually inspected; they are ignored test artifacts.
 - `npm run test:e2e:ask:real`: **PASS** with `deepseek-v4-pro` on the 348-page book and 29-page excerpt:
   real answer, same-level follow-up, honest PAGE scope, Reader-close invalidation, fallback, and AI-off.
 - `npm run test:e2e:bakeoff:real`: **PARTIAL / intentionally non-zero**. DeepSeek and Zhipu each
@@ -219,7 +248,7 @@ before implementation: DeepSeek `deepseek-v4-pro` and OpenRouter `google/gemini-
   and passes static syntax validation; this remains an outstanding criterion, not a PASS.
 - Existing real-browser regressions after the correction: `npm run test:e2e:map` **PASS**,
   `npm run test:e2e:r3` **PASS** (including selection completion, context menu, copy, persistence and
-  cleanup), `npm run test:e2e:find` **PASS**.
+  cleanup; rerun for this delta on the real 29/348-page library), `npm run test:e2e:find` **PASS**.
 
 Overall: `READY_FOR_USER_RETEST`; the Phase remains open. `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING`
 still applies solely to a callable OpenRouter `google/gemini-3.8-flash` path that obeys the no-system-

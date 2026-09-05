@@ -63,6 +63,53 @@ try {
   assert.ok(servedAsset.body.includes("function stageAssistantSelection()"),
     "running service served stale Assistant JavaScript");
 
+  const unavailablePage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  await unavailablePage.route("**/api/assistant/status", async (route) => {
+    const profiles = [
+      ["deepseek", "deepseek-v4-pro"],
+      ["zhipu", "GLM-5.3-Flash"],
+      ["openrouter", "google/gemini-3.8-flash"],
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        active_provider: "deepseek",
+        provider: "deepseek",
+        configured: false,
+        credential_available: false,
+        configuration_valid: true,
+        endpoint_valid: true,
+        model_valid: true,
+        cooling: false,
+        ai_off_reason: "CREDENTIAL_NOT_FOUND",
+        providers: profiles.map(([provider, model]) => ({
+          provider,
+          model,
+          configured: false,
+          credential_available: false,
+          configuration_valid: true,
+          endpoint_valid: true,
+          model_valid: true,
+          cooling: false,
+          ai_off_reason: "CREDENTIAL_NOT_FOUND",
+        })),
+      }),
+    });
+  });
+  await unavailablePage.goto(running.url);
+  await openBook(unavailablePage, 348);
+  await selectLine(unavailablePage, 302);
+  assert.equal(await unavailablePage.locator("#ask-selection").isEnabled(), true,
+    "provider call readiness incorrectly disabled the local Ask draft action");
+  await unavailablePage.locator("#ask-selection").click();
+  await unavailablePage.locator("#assistant-first-turn").waitFor({ state: "visible" });
+  assert.equal(providerCalls.length, 0,
+    "opening a draft with unavailable credentials caused provider egress");
+  assert.equal(await unavailablePage.locator("#assistant-start").isDisabled(), true,
+    "the selected unavailable provider must still gate explicit Send");
+  await unavailablePage.close();
+
   await openBook(page, 348);
   const readyStatus = await json(page, "/api/assistant/status");
   assert.equal(readyStatus.configured, true);
@@ -266,6 +313,7 @@ try {
     newRootUnlocksSelector: true,
     servedCurrentNoStoreAsset: true,
     selectionContextMenuUnobstructed: true,
+    unavailableProviderStillAllowsLocalDraft: true,
     bakeoffUiAbsent: true,
     aiOffPreservedReaderSelectionOutlineSearch: true,
     screenshots: [

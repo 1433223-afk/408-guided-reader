@@ -968,6 +968,15 @@ function selectedProviderStatus() {
   ) || null;
 }
 
+function providerSelectable(provider) {
+  return Boolean(
+    provider
+    && Object.hasOwn(ASSISTANT_PROVIDER_LABELS, provider.provider)
+    && provider.configuration_valid
+    && provider.ai_off_reason !== "DEVELOPMENT_DISABLED"
+  );
+}
+
 function syncModelSelector() {
   for (const option of elements["assistant-model"].options) {
     const status = state.assistantProviderStatuses.find(
@@ -1001,18 +1010,16 @@ function syncAskEligibility() {
   const hasSelection = Boolean(
     state.selection?.resolved.length && state.revision?.id && state.readerSessionId
   );
-  const anyProviderReady = state.assistantProviderStatuses.some(
-    (provider) => provider.configured && !provider.cooling
-  );
+  const anyProviderSelectable = state.assistantProviderStatuses.some(providerSelectable);
   const ask = elements["ask-selection"];
   ask.disabled = !hasSelection || !state.assistantStatusAvailable
-    || !anyProviderReady || state.assistantPending;
+    || !anyProviderSelectable || state.assistantPending;
   if (!hasSelection) {
     ask.title = "请先选择当前教材页中的文字";
   } else if (!state.assistantStatusAvailable) {
     ask.title = "AI 状态接口不可用；请重启 Core Service 后重试";
-  } else if (!anyProviderReady) {
-    ask.title = "三个命名 AI provider 当前均不可用；Reader 其余功能不受影响";
+  } else if (!anyProviderSelectable) {
+    ask.title = "Assistant 当前已关闭或没有有效模型配置；Reader 其余功能不受影响";
   } else {
     ask.title = "在 Assistant 中选择模型后发送";
   }
