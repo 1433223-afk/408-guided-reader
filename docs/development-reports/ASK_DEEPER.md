@@ -15,6 +15,13 @@ to a parent, switch retained topics, see the current `n/5` depth, and close exac
 of its descendants. Closing/reopening the Reader or restarting the service clears all Assistant
 trees.
 
+The first user retest exposed a pre-send readiness failure when the Core Service was running under a
+Windows identity that could not see the user's Credential Manager entries. The draft was valid, but
+Send was a silent disabled button. The Reader now evaluates readiness from the currently selected
+provider's live status, refreshes status when a draft is created or its model changes, sets the real
+ARIA disabled state, and shows the exact selected-provider configuration, credential, development,
+or cooling reason whenever Send must remain unavailable.
+
 This report does not claim user acceptance. No independent review was run because no review
 escalation condition fired.
 
@@ -45,6 +52,11 @@ escalation condition fired.
 - Added a compact Simplified-Chinese Reader UI: retained-topic switcher, breadcrumb, parent/child
   navigation, `n/5`, per-topic close, and a floating `再问一层` action on the latest current answer.
   Merely hiding the Assistant panel does not destroy state.
+- Corrected pre-send readiness to use the selected provider's own current status instead of the
+  older derived readiness booleans. Draft creation and model changes trigger a fresh status read;
+  the disabled Send button now has `aria-disabled="true"` and an adjacent visible reason naming the
+  affected provider and credential target or configuration state. Other providers do not influence
+  this decision.
 - The lifecycle implementation naturally replaced the old unreclaimed `_session_locks` map with
   reclaimable per-session slots; closing a Reader removes the complete slot.
 
@@ -64,6 +76,13 @@ flight, and the late answer is discarded with a typed cancellation.
 Focus is deliberately independent from tree ownership. A Root remembers its focused node; switching
 away and back restores that node. A response may mutate its owning tree but changes visible focus
 only when the focus version and original parent still match.
+
+Provider status is intentionally live rather than captured when the service starts. The backend
+reads Credential Manager on every status/send path. The browser re-reads `/api/assistant/status`
+when staging a Reader-selection draft and when changing its pre-send provider, then derives the
+button state from that selected provider only. A failed provider cannot disable or select another
+provider, and a successful Root still becomes the sole server-authoritative provider/model lock for
+its complete tree.
 
 ## Deviations from Spec
 
@@ -87,12 +106,61 @@ modified.
   29/348-page library with the loopback mock provider. It exercised a three-level tree, same-level
   depth stability, two retained Roots, Root switching, parent/back, selective Root close,
   one-provider tree pinning, source anti-bypass, minimal Child payload, in-flight close cancellation,
-  Reader-close cleanup, Reader reopen with zero stale Root options, and AI-off Reader regressions.
+  Reader-close cleanup, Reader reopen with zero stale Root options, AI-off Reader regressions, and
+  a Zhipu-selected credential-unavailable draft that makes zero provider calls, has a genuinely
+  disabled/`aria-disabled` Send control, and visibly names the Zhipu credential problem. Switching
+  that same draft to an available DeepSeek profile immediately re-enables Send without egress.
   The depth-3 UI screenshot was visually inspected at `test-results/ask-deeper-depth-3.png`.
 - Existing 348-page browser regressions after the final lifecycle correction:
   `npm run test:e2e:r3` **PASS**, `npm run test:e2e:find` **PASS**, and
   `npm run test:e2e:map` **PASS**. These cover Reader selection/copy/annotation behavior, R3, Find,
   Map, persistence cleanup of their own data, and original-PDF navigation.
+
+### User-acceptance readiness delta
+
+The failed screenshot flow was reproduced against the already running service and the real 348-page
+textbook: PDF page 263, selection `识别异常和中断`, model Zhipu `GLM-5.3-Flash`. Before the fix the
+actual DOM was `button.disabled=true`, no `aria-disabled`, empty CSS class, an enabled Zhipu selector,
+zero Roots, and no Root-lock indicator. The exact old disabled expression was
+`!assistantDraft || !assistantConfigured || assistantCooling || assistantPending`; the sole true term
+was `!assistantConfigured`.
+
+The listener was owned by `CYM\CodexSandboxOnline`, while the credentials had been saved for
+`CYM\26389`. Its real status contract reported all three providers with
+`configuration_valid=true`, correct provider/model identity, `configured=false`,
+`credential_available=false`, `credential_reason=CREDENTIAL_NOT_FOUND`, `cooling=false`, and no
+`DEVELOPMENT_DISABLED`. There was no frontend/backend shape disagreement, no startup-only credential
+cache, no OpenRouter-wide readiness gate, and no mistaken pre-Root provider lock. Restarting the
+same code under `CYM\26389` changed the live status for all three providers to `configured=true`,
+`credential_available=true`, `credential_source=WINDOWS_CREDENTIAL_MANAGER`, and `cooling=false`.
+The backend still rereads those credentials rather than preserving this result as startup state.
+
+After the minimal UI correction, the same page-263 draft made zero calls before Send, selecting
+Zhipu left Send at `disabled=false` and `aria-disabled=false`, and the first answer succeeded. The
+Root locked Zhipu and a same-level follow-up also succeeded through Zhipu. A separate page-74
+`大端方式` Root succeeded and locked DeepSeek `deepseek-v4-pro`. A new `小端方式` draft reopened
+model selection; its OpenRouter `google/gemini-3.8-flash` request returned the existing typed
+`model_region` failure and visibly stated that no provider/proxy switch occurred. No failed Root was
+created. Switching back restored the complete DeepSeek Root at depth `1/5`, and a DeepSeek follow-up
+succeeded. The separate Zhipu browser session still retained both Zhipu turns and its Zhipu lock.
+
+This retest issued five provider requests total: Zhipu twice, DeepSeek twice, and OpenRouter once.
+The local secret-free inspector captured the Zhipu calls as provider `zhipu`, model
+`GLM-5.3-Flash`, direct endpoint `https://open.bigmodel.cn/api/paas/v4/chat/completions`, attempt 1,
+with message counts 2 then 4. The remaining direct-provider identities were corroborated by their
+server-authoritative Root locks and the OpenRouter-specific typed failure; machine payload tests
+continue to inspect every request body and prove provider pinning, no fallback, and no cross-Root or
+cross-scope context. No credential, Authorization header, note, highlight, learning state, or
+unrelated Root content was exposed by the inspector.
+
+The final regression set after this correction was: `python -m compileall -q src` **PASS**;
+`pytest -o addopts= -q -ra --basetemp=test-results/pytest-ask-deeper-user-retest-fix`
+**95 passed, 2 skipped** (the unchanged optional external-path OCR cases); `npm test`
+**30 passed**; all directly relevant `node --check` invocations **PASS**; and, with the real prepared
+library data directory, `npm run test:e2e:ask`, `test:e2e:r3`, `test:e2e:find`, and
+`test:e2e:map` all **PASS**. One earlier Ask E2E launch without `READER_DATA_DIR` correctly failed
+because that default library did not contain the 348-page book; rerunning with the required real
+library path passed.
 
 ### Authorized five-call DeepSeek acceptance
 

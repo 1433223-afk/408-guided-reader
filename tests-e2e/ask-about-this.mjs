@@ -90,24 +90,28 @@ try {
       body: JSON.stringify({
         active_provider: "deepseek",
         provider: "deepseek",
-        configured: false,
-        credential_available: false,
+        configured: true,
+        credential_available: true,
         configuration_valid: true,
         endpoint_valid: true,
         model_valid: true,
         cooling: false,
-        ai_off_reason: "CREDENTIAL_NOT_FOUND",
-        providers: profiles.map(([provider, model]) => ({
-          provider,
-          model,
-          configured: false,
-          credential_available: false,
-          configuration_valid: true,
-          endpoint_valid: true,
-          model_valid: true,
-          cooling: false,
-          ai_off_reason: "CREDENTIAL_NOT_FOUND",
-        })),
+        ai_off_reason: null,
+        providers: profiles.map(([provider, model]) => {
+          const unavailable = provider === "zhipu";
+          return {
+            provider,
+            model,
+            configured: !unavailable,
+            credential_available: !unavailable,
+            configuration_valid: true,
+            endpoint_valid: true,
+            model_valid: true,
+            cooling: false,
+            ai_off_reason: unavailable ? "CREDENTIAL_NOT_FOUND" : null,
+            credential_target: `408-guided-reader-${provider}`,
+          };
+        }),
       }),
     });
   });
@@ -117,8 +121,18 @@ try {
   assert.equal(await unavailablePage.locator("#ask-selection").isEnabled(), true);
   await unavailablePage.locator("#ask-selection").click();
   await unavailablePage.locator("#assistant-first-turn").waitFor({ state: "visible" });
+  await unavailablePage.locator("#assistant-model").selectOption("zhipu");
   assert.equal(providerCalls.length, 0, "opening a draft caused provider egress");
   assert.equal(await unavailablePage.locator("#assistant-start").isDisabled(), true);
+  assert.equal(await unavailablePage.locator("#assistant-start").getAttribute("aria-disabled"), "true");
+  assert.match(await unavailablePage.locator("#assistant-readiness").textContent(),
+    /Zhipu.*408-guided-reader-zhipu.*Windows 用户/);
+  assert.equal(await unavailablePage.locator("#assistant-readiness").isVisible(), true);
+  await unavailablePage.locator("#assistant-model").selectOption("deepseek");
+  assert.equal(await unavailablePage.locator("#assistant-start").isEnabled(), true);
+  assert.equal(await unavailablePage.locator("#assistant-start").getAttribute("aria-disabled"), "false");
+  assert.equal(await unavailablePage.locator("#assistant-readiness").isHidden(), true);
+  assert.equal(providerCalls.length, 0, "changing draft provider caused provider egress");
   await unavailablePage.close();
 
   await openBook(page, 348);

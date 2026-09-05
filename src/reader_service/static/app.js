@@ -7,7 +7,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-next-depth", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-next-depth", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -1008,6 +1008,34 @@ function applySelectedProviderStatus() {
   syncAskEligibility();
 }
 
+function selectedProviderUnavailableMessage(selected) {
+  const label = ASSISTANT_PROVIDER_LABELS[selected?.provider] || "所选模型";
+  if (!selected) return "当前服务没有返回所选模型的状态；请刷新 Reader 后重试。";
+  if (!selected.configuration_valid) {
+    if (!selected.endpoint_valid) return `${label} 的 endpoint 配置无效；Reader 其余功能不受影响。`;
+    if (!selected.model_valid) return `${label} 的 model 配置无效；Reader 其余功能不受影响。`;
+    return `${label} 的 provider 配置无效；Reader 其余功能不受影响。`;
+  }
+  if (selected.ai_off_reason === "DEVELOPMENT_DISABLED") {
+    return `${label} 已在当前开发配置中关闭；请选择其他可用模型。`;
+  }
+  if (selected.cooling || selected.ai_off_reason === "COOLING") {
+    const seconds = Math.max(1, Number(selected.retry_after_seconds || 1));
+    return `${label} 连续失败，正在短暂冷却（约 ${seconds} 秒）；不会切换到其他模型。`;
+  }
+  if (!selected.credential_available) {
+    const target = selected.credential_target ? `“${selected.credential_target}”` : "对应 target";
+    if (selected.credential_reason === "CREDENTIAL_READ_FAILED") {
+      return `无法读取 ${label} 的 Windows 凭据 ${target}；请检查当前 Core Service 的 Windows 用户身份。`;
+    }
+    if (selected.credential_reason === "CREDENTIAL_EMPTY") {
+      return `${label} 的 Windows 凭据 ${target} 为空；请重新配置该凭据。`;
+    }
+    return `未找到 ${label} 的 Windows 凭据 ${target}；请在保存该凭据的 Windows 用户下启动 Core Service。`;
+  }
+  return `${label} 当前不可调用；Reader 其余功能不受影响。`;
+}
+
 function syncAskEligibility() {
   const hasSelection = Boolean(
     state.selection?.resolved.length && state.revision?.id && state.readerSessionId
@@ -1031,11 +1059,19 @@ function syncAskEligibility() {
 
 function syncFirstTurnEligibility() {
   if (!elements["assistant-start"]) return;
-  elements["assistant-start"].disabled = !state.assistantDraft
-    || !state.assistantConfigured || state.assistantCooling || state.assistantPending;
-  elements["assistant-start"].title = state.assistantConfigured && !state.assistantCooling
-    ? `使用 ${state.assistantActiveProvider} 发送首条请求`
-    : "所选模型当前不可用，请选择其他模型";
+  const selected = selectedProviderStatus();
+  const callable = Boolean(selected?.configured && !selected.cooling);
+  const start = elements["assistant-start"];
+  start.disabled = !state.assistantDraft || !callable || state.assistantPending;
+  start.setAttribute("aria-disabled", String(start.disabled));
+  start.title = state.assistantPending
+    ? "正在发送首条请求"
+    : callable
+      ? `使用 ${state.assistantActiveProvider} 发送首条请求`
+      : selectedProviderUnavailableMessage(selected);
+  const readiness = elements["assistant-readiness"];
+  readiness.hidden = !state.assistantDraft || callable;
+  readiness.textContent = readiness.hidden ? "" : selectedProviderUnavailableMessage(selected);
 }
 
 function emptyAssistantState() {
@@ -1231,6 +1267,7 @@ function stageAssistantSelection() {
   };
   openAssistantPanel();
   renderAssistantDraft();
+  refreshAssistantStatus();
   clearSelection();
 }
 
@@ -1899,6 +1936,7 @@ elements["assistant-model"].addEventListener("change", () => {
   elements["assistant-turns"].querySelectorAll(".assistant-error").forEach((node) => node.remove());
   if (state.assistantDraft) renderAssistantDraft();
   else resetAssistantPanel();
+  refreshAssistantStatus();
 });
 elements["assistant-first-turn"].addEventListener("submit", (event) => {
   event.preventDefault();
