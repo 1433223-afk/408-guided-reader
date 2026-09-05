@@ -31,6 +31,11 @@ complete and does not implement Pass 2 physical resolution or D-3 layout detecti
   promotion, TOC itself, references, and comparable named matter) into one default-collapsed
   `其他内容` group. This is a transient UI projection: all 211 durable nodes remain stored with the
   same IDs, parents, depths, and order.
+- Follow-up real-use correction: clicking a Chapter or Section title now toggles its immediate child
+  list, rather than requiring the user to discover the small disclosure triangle. If that parent has
+  a safe page target, the same click still follows the existing original-PDF `goToPage` path; an
+  unresolved parent can expand without fabricating a navigation target. The recursive renderer has
+  no depth ceiling.
 - Embedded bookmark hierarchy is no longer capped at depth 2 during minting. Arbitrarily deep body
   bookmark nodes keep their source depth and parent chain; `SUBSECTION` remains the frozen kind for
   depth 2 and deeper. The two accepted real trees contained no bookmark deeper than depth 2, so this
@@ -112,7 +117,8 @@ correction UI/tier workflow, KP/Teaching/Assistant, AI, or structure-scoped sear
     `6.2.1 总线事务` navigated to original PDF page 303 and displayed printed page 291.
     Its main presentation has exactly the seven formal Chapters plus one default-collapsed
     `其他内容` group containing the eight measured non-body root nodes. The raw API still returns all
-    211 nodes.
+    211 nodes. Clicking `第6章 总线` exposes exactly `6.1`–`6.4`; clicking
+    `6.2 总线事务和定时` exposes exactly `6.2.1`–`6.2.4` before the `6.2.1` navigation check.
   - Both trees' complete `(outline_node_id, parent_id, depth, order_index, title)` snapshots were
     byte-for-byte stable after service restart; all node revision counters remained 1.
   - A manual `封面` label on an UNKNOWN page remained `MANUAL` after book close/reopen and after a

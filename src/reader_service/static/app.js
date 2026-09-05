@@ -637,12 +637,13 @@ function renderOutline(payload) {
       disclosure.className = "outline-disclosure";
       disclosure.textContent = descendants.length ? "▸" : "";
       disclosure.disabled = !descendants.length;
-      disclosure.setAttribute("aria-label", descendants.length ? "折叠此目录项" : "没有下级目录");
+      disclosure.setAttribute("aria-label", descendants.length ? "展开此目录项" : "没有下级目录");
 
       const target = document.createElement("button");
       target.type = "button";
       target.className = "outline-target";
-      target.disabled = node.start_page === null;
+      target.disabled = node.start_page === null && !descendants.length;
+      if (descendants.length) target.setAttribute("aria-expanded", "false");
       const title = document.createElement("span");
       title.textContent = node.title;
       const meta = document.createElement("small");
@@ -650,10 +651,14 @@ function renderOutline(payload) {
         ? (node.printed_label_hint ? `印刷页 ${node.printed_label_hint} · 位置未知` : "位置未知")
         : (node.printed_label_hint ? `印刷页 ${node.printed_label_hint}` : `PDF 第 ${node.start_page + 1} 页`);
       target.append(title, meta);
-      if (node.start_page !== null) {
+      let toggleDescendants = null;
+      if (node.start_page !== null || descendants.length) {
         target.addEventListener("click", () => {
-          goToPage(node.start_page);
-          elements.viewer.focus({ preventScroll: true });
+          toggleDescendants?.();
+          if (node.start_page !== null) {
+            goToPage(node.start_page);
+            elements.viewer.focus({ preventScroll: true });
+          }
         });
       }
       row.append(disclosure, target);
@@ -661,12 +666,14 @@ function renderOutline(payload) {
       if (descendants.length) {
         const nested = branch(descendants, depth + 1);
         nested.hidden = true;
-        disclosure.addEventListener("click", () => {
+        toggleDescendants = () => {
           const opening = nested.hidden;
           nested.hidden = !opening;
           disclosure.textContent = opening ? "▾" : "▸";
           disclosure.setAttribute("aria-label", opening ? "折叠此目录项" : "展开此目录项");
-        });
+          target.setAttribute("aria-expanded", String(opening));
+        };
+        disclosure.addEventListener("click", toggleDescendants);
         item.append(nested);
       }
       list.append(item);

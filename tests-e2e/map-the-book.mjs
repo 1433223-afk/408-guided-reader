@@ -64,6 +64,24 @@ try {
       await other.getByText("其他内容", { exact: true }).waitFor();
       assert.equal(await other.locator(":scope > ul").isHidden(), true, "auxiliary content should default collapsed");
       assert.equal(await other.locator(":scope > ul > li").count(), 8);
+
+      const chapter6 = outline.nodes.find((node) => node.title === "第6章 总线");
+      assert.ok(chapter6, "chapter 6 is missing from the bookmark tree");
+      const chapter6Target = page.locator(`li[data-node-id="${chapter6.outline_node_id}"] > .outline-row .outline-target`);
+      await chapter6Target.click();
+      assert.equal(await chapter6Target.getAttribute("aria-expanded"), "true");
+      assert.deepEqual(await directChildTitles(page, chapter6), [
+        "6.1 总线概述", "6.2 总线事务和定时", "6.3 本章小结", "6.4 常见问题和易混淆知识点",
+      ]);
+
+      const section62 = outline.nodes.find((node) => node.title === "6.2 总线事务和定时");
+      assert.ok(section62, "section 6.2 is missing from the bookmark tree");
+      const section62Target = page.locator(`li[data-node-id="${section62.outline_node_id}"] > .outline-row .outline-target`);
+      await section62Target.click();
+      assert.equal(await section62Target.getAttribute("aria-expanded"), "true");
+      assert.deepEqual(await directChildTitles(page, section62), [
+        "6.2.1 总线事务", "6.2.2 总线定时", "6.2.3 本节习题精选", "6.2.4 答案与解析",
+      ]);
     } else {
       assert.equal(await visibleRoots.count(), 7, "TOC-derived main directory should show its seven chapters");
       assert.equal(await page.locator('[data-outline-group="other"]').count(), 0);
@@ -167,6 +185,12 @@ async function expandAncestors(page, nodes, node) {
       await page.locator(`li[data-node-id="${ancestor.outline_node_id}"] > .outline-row .outline-disclosure`).click();
     }
   }
+}
+
+async function directChildTitles(page, node) {
+  return page.locator(
+    `li[data-node-id="${node.outline_node_id}"] > ul > li > .outline-row .outline-target > span`,
+  ).allTextContents();
 }
 
 async function openBook(page, pageCount) {
