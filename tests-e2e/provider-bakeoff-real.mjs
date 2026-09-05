@@ -130,7 +130,7 @@ try {
       running = null;
       continue;
     }
-    const first = (await firstHttp.json()).conversation;
+    const first = (await firstHttp.json()).assistant.current;
     const questions = [
       "机器周期就等于总线周期？",
       "我的理解是：一个机器周期就是 CPU 完成一整条指令的时间，对吗？",
@@ -144,7 +144,7 @@ try {
       await page.locator("#assistant-send").click();
       const followedHttp = await followResponse;
       assert.equal(followedHttp.status(), 200, `${provider} follow-up failed`);
-      const followed = (await followedHttp.json()).conversation;
+      const followed = (await followedHttp.json()).assistant.current;
       answers.push(followed.turns.at(-1).answer);
     }
     const inspection = await json(page, "/api/assistant/inspection");

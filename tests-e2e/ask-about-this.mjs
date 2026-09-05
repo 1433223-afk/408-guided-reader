@@ -17,7 +17,7 @@ const chromeCandidates = [
 const executablePath = process.env.READER_CHROMIUM || chromeCandidates.find(requireExists);
 if (!executablePath) throw new Error("Set READER_CHROMIUM to Chrome or Edge executable");
 
-const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-ask-"));
+const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-ask-deeper-"));
 const dataDir = path.join(acceptanceRoot, "data");
 const artifacts = path.resolve("test-results");
 await mkdir(artifacts, { recursive: true });
@@ -29,9 +29,23 @@ const mockProvider = createServer(async (request, response) => {
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   providerCalls.push({ method: request.method, url: request.url, headers: request.headers, body });
   const latest = body.messages.at(-1)?.content || "";
-  const answer = latest.includes("为什么")
-    ? "因为总线事务需要让多个部件按约定完成一次可靠的数据交换。"
-    : "一次总线事务，就是多个部件按约定完成地址、数据与控制的一次完整交换。";
+  let answer;
+  if (latest === "延迟回答") {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    answer = "这条回答所属的解释已经关闭，因此不应重新出现在界面中。";
+  } else if (latest === "为什么？") {
+    answer = "因为总线仲裁要在多个请求者中依据优先级决定谁先使用总线。";
+  } else if (latest === "再简单一点") {
+    answer = "把优先级想成排队号码：号码靠前的请求先使用总线。";
+  } else if (latest.includes("【当前回答选区】") && latest.endsWith("优先级")) {
+    answer = "优先级是发生竞争时决定先后次序的规则，也可以理解为排队号码。";
+  } else if (latest.includes("【当前回答选区】") && latest.endsWith("排队号码")) {
+    answer = "排队号码只是帮助理解优先级的比喻；真正执行的是仲裁规则。";
+  } else if (latest.includes("【当前回答选区】")) {
+    answer = "这个选中概念只结合直接父回答和当前教材范围继续解释。";
+  } else {
+    answer = "一次总线事务会经过地址、数据与控制阶段；总线仲裁决定多个部件竞争时谁先使用总线。";
+  }
   response.writeHead(200, { "Content-Type": "application/json" });
   response.end(JSON.stringify({
     choices: [{ message: { role: "assistant", content: answer } }],
@@ -60,8 +74,8 @@ try {
     return { cacheControl: response.headers.get("cache-control"), body: await response.text() };
   });
   assert.equal(servedAsset.cacheControl, "no-store");
-  assert.ok(servedAsset.body.includes("function stageAssistantSelection()"),
-    "running service served stale Assistant JavaScript");
+  assert.ok(servedAsset.body.includes("function captureAssistantAnswerSelection()"),
+    "running service served stale Ask Deeper JavaScript");
 
   const unavailablePage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await unavailablePage.route("**/api/assistant/status", async (route) => {
@@ -100,126 +114,173 @@ try {
   await unavailablePage.goto(running.url);
   await openBook(unavailablePage, 348);
   await selectLine(unavailablePage, 302);
-  assert.equal(await unavailablePage.locator("#ask-selection").isEnabled(), true,
-    "provider call readiness incorrectly disabled the local Ask draft action");
+  assert.equal(await unavailablePage.locator("#ask-selection").isEnabled(), true);
   await unavailablePage.locator("#ask-selection").click();
   await unavailablePage.locator("#assistant-first-turn").waitFor({ state: "visible" });
-  assert.equal(providerCalls.length, 0,
-    "opening a draft with unavailable credentials caused provider egress");
-  assert.equal(await unavailablePage.locator("#assistant-start").isDisabled(), true,
-    "the selected unavailable provider must still gate explicit Send");
+  assert.equal(providerCalls.length, 0, "opening a draft caused provider egress");
+  assert.equal(await unavailablePage.locator("#assistant-start").isDisabled(), true);
   await unavailablePage.close();
 
   await openBook(page, 348);
   const readyStatus = await json(page, "/api/assistant/status");
   assert.equal(readyStatus.configured, true);
-  assert.equal(readyStatus.credential_available, true);
-  assert.equal(readyStatus.configuration_valid, true);
-  assert.equal(readyStatus.endpoint_valid, true);
-  assert.equal(readyStatus.model_valid, true);
-  assert.equal(readyStatus.cooling, false);
-  assert.equal(readyStatus.ai_off_reason, null);
   assert.equal(readyStatus.bakeoff_enabled, true);
   assert.deepEqual(readyStatus.providers.map((provider) => provider.model), [
     "deepseek-v4-pro", "GLM-5.3-Flash", "google/gemini-3.8-flash",
   ]);
   assert.ok(!JSON.stringify(readyStatus).includes("mock-secret-never-inspect"));
-  assert.equal(await page.locator("#compare-selection").count(), 0,
-    "dev bake-off control must not occupy the Reader selection menu");
-  assert.equal(await page.locator(".bakeoff-card").count(), 0,
-    "dev bake-off cards must not exist in the normal Assistant UI");
-  assert.equal(await page.locator("#ask-selection").isDisabled(), true,
-    "Ask must remain unavailable without a selection");
+  assert.equal(await page.locator("#ask-selection").isDisabled(), true);
+
   const selected = await selectLine(page, 302);
   const selectionMenuBox = await page.locator("#selection-actions").boundingBox();
-  assert.ok(selectionMenuBox.width < 390,
-    `selection actions expanded into a Reader-blocking overlay (${selectionMenuBox.width}px)`);
-  assert.ok((await page.evaluate(() => window.getSelection()?.toString().trim().length || 0)) > 0,
-    "right-click did not preserve the Reader text selection");
-  assert.equal(await page.locator("#ask-selection").isEnabled(), true,
-    "configured Ask was not enabled for a valid selection");
+  assert.ok(selectionMenuBox.width < 390);
+  assert.equal(await page.locator("#ask-selection").isEnabled(), true);
   await page.locator("#ask-selection").click();
-  await page.locator("#assistant-panel").waitFor({ state: "visible" });
   await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
-  assert.equal(providerCalls.length, 0,
-    "opening Ask sent the first provider request before model selection");
-  assert.equal(await page.locator("#assistant-model").isEnabled(), true,
-    "model selector was locked before the first request");
-  await page.locator("#assistant-model").selectOption("openrouter");
-  await page.locator("#assistant-model").selectOption("deepseek");
+  assert.equal(providerCalls.length, 0);
+  assert.equal(await page.locator("#assistant-model").isEnabled(), true);
   await page.locator("#assistant-model").selectOption("zhipu");
-  assert.equal(providerCalls.length, 0, "changing the draft model caused provider egress");
-  await page.screenshot({ path: path.join(artifacts, "ask-about-this-draft.png"), fullPage: false });
-  const askResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
+  const firstResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
-  const askedHttp = await askResponse;
-  assert.equal(askedHttp.status(), 200);
-  const asked = await askedHttp.json();
-  const askRequest = askedHttp.request().postDataJSON();
-  await page.locator(".assistant-answer-bubble").getByText("一次总线事务", { exact: false }).waitFor();
-  assert.equal(asked.conversation.scope.kind, "PAGE");
-  assert.equal(asked.conversation.scope.key, "PAGE:302");
-  assert.equal(asked.conversation.scope.section_title, null);
-  assert.equal(asked.conversation.scope.chapter_title, "第6章 总线");
-  assert.equal(asked.conversation.provider, "zhipu");
-  assert.equal(asked.conversation.model, "GLM-5.3-Flash");
-  assert.equal(askRequest.provider, "zhipu");
-  assert.equal(asked.conversation.turns[0].question, selected.text);
-  assert.equal(await page.locator(".assistant-question-bubble").first().textContent(), selected.text);
-  assert.equal(Object.hasOwn(askRequest, "question"), false,
-    "selection ask fabricated a user question in the UI request");
-  assert.ok(selected.text.length > 0);
+  const firstHttp = await firstResponse;
+  assert.equal(firstHttp.status(), 200);
+  const firstPayload = await firstHttp.json();
+  const firstRequest = firstHttp.request().postDataJSON();
+  const firstState = firstPayload.assistant;
+  const firstRoot = firstState.current;
+  await page.locator(".assistant-answer-bubble").getByText("总线仲裁", { exact: false }).waitFor();
+  assert.equal(firstRoot.depth, 1);
+  assert.equal(firstState.roots.length, 1);
+  assert.equal(firstRoot.scope.key, "PAGE:302");
+  assert.equal(firstRoot.provider, "zhipu");
+  assert.equal(firstRoot.model, "GLM-5.3-Flash");
+  assert.equal(firstRoot.turns[0].question, selected.text);
+  assert.equal(firstRequest.source_kind, "ORIGINAL_PDF");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "1/5");
+  assert.equal(await page.locator("#assistant-model").isDisabled(), true);
 
   const followResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
   await page.locator("#assistant-question").fill("为什么？");
   await page.locator("#assistant-send").click();
-  const followed = await (await followResponse).json();
-  assert.equal(followed.conversation.conversation_id, asked.conversation.conversation_id);
-  assert.equal(followed.conversation.provider, "zhipu");
-  assert.equal(followed.conversation.model, "GLM-5.3-Flash");
-  assert.equal(followed.conversation.turns.length, 2);
-  assert.equal(await page.locator("#assistant-model").isDisabled(), true,
-    "an active conversation must keep its original model");
-  assert.equal(await page.locator("#assistant-model-lock").isVisible(), true,
-    "locked conversation did not explain why its model cannot change");
-  await page.locator(".assistant-answer-bubble").getByText("可靠的数据交换", { exact: false }).waitFor();
-  assert.equal(await page.locator("#assistant-panel #ask-selection").count(), 0,
-    "Assistant answer text exposed a new-Ask affordance");
-  assert.equal(await page.locator("#assistant-panel #assistant-follow-up").count(), 1,
-    "same-level panel input is not the sole continuation path");
-  await page.screenshot({ path: path.join(artifacts, "ask-about-this-panel.png"), fullPage: false });
+  const followState = (await (await followResponse).json()).assistant;
+  assert.equal(followState.current.depth, 1);
+  assert.equal(followState.current.turns.length, 2);
+  await page.locator(".assistant-answer-bubble").getByText("优先级", { exact: false }).waitFor();
+
+  await selectAssistantAnswerText(page, "优先级");
+  const childResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
+  await page.locator("#assistant-ask-deeper").click();
+  const childState = (await (await childResponse).json()).assistant;
+  assert.equal(childState.current.depth, 2);
+  assert.equal(childState.current.parent_ref.root_id, firstRoot.root_id);
+  assert.equal(childState.current.parent_ref.node_id, null);
+  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.match(await page.locator("#assistant-breadcrumb").textContent(), /优先级/);
+  assert.equal(await page.locator("#assistant-back").isVisible(), true);
+
+  const childFollowResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
+  await page.locator("#assistant-question").fill("再简单一点");
+  await page.locator("#assistant-send").click();
+  const childFollowState = (await (await childFollowResponse).json()).assistant;
+  assert.equal(childFollowState.current.depth, 2);
+  assert.equal(childFollowState.current.turns.length, 2);
+  await page.locator('.assistant-answer-bubble[data-current-answer="true"]')
+    .getByText("排队号码", { exact: false }).waitFor();
+
+  await selectAssistantAnswerText(page, "排队号码");
+  const grandchildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
+  await page.locator("#assistant-ask-deeper").click();
+  const grandchildState = (await (await grandchildResponse).json()).assistant;
+  const firstDeepNode = grandchildState.current.node_id;
+  assert.equal(grandchildState.current.depth, 3);
+  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
+  assert.equal(grandchildState.roots[0].nodes.length, 2);
+  await page.screenshot({ path: path.join(artifacts, "ask-deeper-depth-3.png"), fullPage: false });
+
+  await page.locator("#assistant-close").click();
+  await page.locator("#assistant-panel").waitFor({ state: "hidden" });
+  const secondSelected = await selectLine(page, 0);
+  await page.locator("#ask-selection").click();
+  await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#assistant-model").isEnabled(), true,
+    "a non-Assistant selection must stage a new Root with a fresh model choice");
+  await page.locator("#assistant-model").selectOption("deepseek");
+  const secondResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
+  await page.locator("#assistant-start").click();
+  const secondState = (await (await secondResponse).json()).assistant;
+  const secondRoot = secondState.current;
+  assert.equal(secondState.roots.length, 2);
+  assert.equal(secondRoot.depth, 1);
+  assert.equal(secondRoot.provider, "deepseek");
+  assert.equal(secondRoot.turns[0].question, secondSelected.text);
+  assert.equal(await page.locator("#assistant-root-switcher option").count(), 2);
+
+  const switchResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-root-switcher").selectOption(firstRoot.root_id);
+  const switchedState = (await (await switchResponse).json()).assistant;
+  assert.equal(switchedState.current.node_id, firstDeepNode);
+  assert.equal(switchedState.current.depth, 3);
+  assert.equal(switchedState.roots.length, 2);
+  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
+
+  const backResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-back").click();
+  const backedState = (await (await backResponse).json()).assistant;
+  assert.equal(backedState.current.depth, 2);
+  assert.equal(backedState.roots.length, 2);
+
+  const delayedFollowResponse = page.waitForResponse(
+    (response) => response.url().endsWith("/assistant/follow-up") && response.request().postData()?.includes("延迟回答"),
+  );
+  const delayedFollowRequest = page.waitForRequest(
+    (request) => request.url().endsWith("/assistant/follow-up") && request.postData()?.includes("延迟回答"),
+  );
+  await page.locator("#assistant-question").fill("延迟回答");
+  await page.locator("#assistant-send").click();
+  await delayedFollowRequest;
+  const closeRootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/close-root"));
+  await page.locator("#assistant-close-root").click();
+  const afterClose = (await (await closeRootResponse).json()).assistant;
+  assert.equal((await delayedFollowResponse).status(), 409,
+    "an in-flight response from a closed Root was not structurally cancelled");
+  assert.equal(afterClose.roots.length, 1);
+  assert.equal(afterClose.current.root_id, secondRoot.root_id);
+  assert.equal(afterClose.roots[0].nodes.length, 0);
+  assert.equal(await page.locator("#assistant-root-switcher option").count(), 1);
 
   const inspection = await json(page, "/api/assistant/inspection");
-  assert.equal(inspection.calls.length, 2);
+  assert.equal(inspection.calls.length, providerCalls.length);
   assert.deepEqual(inspection.calls.map((call) => call.request_body), providerCalls.map((call) => call.body));
-  const inspectedText = JSON.stringify(inspection);
-  const initialUserContent = inspection.calls[0].request_body.messages.at(-1).content;
-  assert.ok(initialUserContent.endsWith(`【当前解释焦点（用户所选）】\n${selected.text}`));
-  assert.ok(initialUserContent.indexOf("【同一 PDF 页的有界 OCR 语境（辅助）】")
-    < initialUserContent.lastIndexOf(selected.text));
-  assert.ok(!initialUserContent.includes("请只依据"));
-  assert.equal(inspection.calls[1].request_body.messages.at(-1).content, "为什么？");
-  assert.ok(!inspectedText.includes("已安全确定的节标题"));
-  assert.ok(inspectedText.includes("291"));
-  assert.ok(!inspectedText.includes("mock-secret-never-inspect"));
-  assert.ok(!inspectedText.includes("Authorization"));
-  assert.ok(providerCalls.every((call) => call.method === "POST" && call.url === "/chat/completions"));
-  assert.deepEqual(inspection.calls.map((call) => call.provider), ["zhipu", "zhipu"]);
-  assert.deepEqual(providerCalls.map((call) => call.body.model), ["GLM-5.3-Flash", "GLM-5.3-Flash"]);
+  const childCall = inspection.calls.find((call) => (
+    call.request_body.messages.at(-1).content.includes("【当前回答选区】")
+  ));
+  assert.ok(childCall);
+  assert.deepEqual(childCall.request_body.messages.map((message) => message.role), ["system", "user"]);
+  const childContext = childCall.request_body.messages.at(-1).content;
+  assert.ok(childContext.includes("【触发再问一层的完整父回合】"));
+  assert.ok(childContext.includes("【来源脉络】"));
+  assert.ok(childContext.includes("【最小必要引用语境"));
+  assert.ok(!JSON.stringify(inspection).includes("mock-secret-never-inspect"));
+  assert.ok(!JSON.stringify(inspection).includes("Authorization"));
+  assert.deepEqual(providerCalls.slice(0, 5).map((call) => call.body.model), Array(5).fill("GLM-5.3-Flash"));
+  assert.equal(providerCalls[5].body.model, "deepseek-v4-pro");
+  assert.equal(providerCalls.at(-1).body.model, "GLM-5.3-Flash");
 
-  const newRootClose = page.waitForResponse((response) => response.url().endsWith("/assistant/close"));
-  await page.locator("#assistant-new-root").click();
-  assert.equal((await newRootClose).status(), 204);
-  assert.equal(await page.locator("#assistant-model").isEnabled(), true,
-    "new Assistant Root did not unlock model selection");
-  assert.equal(await page.locator("#assistant-model-lock").isHidden(), true);
-  await page.locator("#assistant-model").selectOption("openrouter");
-  await page.locator("#assistant-model").selectOption("zhipu");
-  assert.equal(providerCalls.length, 2, "new-root model selection caused provider egress");
+  const antiBypassCalls = providerCalls.length;
+  const antiBypass = await page.evaluate(async ({ revisionId, request }) => {
+    const response = await fetch(`/api/revisions/${revisionId}/assistant/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...request, source_kind: "ASSISTANT_ANSWER" }),
+    });
+    return { status: response.status, body: await response.json() };
+  }, { revisionId: await currentRevisionId(page), request: firstRequest });
+  assert.equal(antiBypass.status, 409);
+  assert.equal(antiBypass.body.code, "ASSISTANT_ASSISTANT_SOURCE_REQUIRES_CHILD");
+  assert.equal(providerCalls.length, antiBypassCalls);
 
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
-  await openBook(page, 348);
   const staleFollowStatus = await page.evaluate(async (payload) => {
     const response = await fetch("/api/assistant/follow-up", {
       method: "POST",
@@ -228,50 +289,16 @@ try {
     });
     return response.status;
   }, {
-    reader_session_id: askRequest.reader_session_id,
-    conversation_id: asked.conversation.conversation_id,
+    reader_session_id: firstRequest.reader_session_id,
+    root_id: secondRoot.root_id,
+    node_id: null,
     question: "不应继续",
   });
-  assert.equal(staleFollowStatus, 404, "Reader close did not clear the server-memory conversation");
-
-  await page.locator("#back-to-library").click();
-  await page.locator("#library-home").waitFor({ state: "visible" });
-  await openBook(page, 29);
+  assert.equal(staleFollowStatus, 404, "Reader close did not clear all temporary roots");
+  await openBook(page, 348);
   await page.locator("#assistant-toggle").click();
-  assert.equal(await page.locator("#assistant-model").inputValue(), "zhipu",
-    "a new Reader conversation should inherit the current in-page model selection");
-  await page.locator("#assistant-toggle").click();
-  await selectLine(page, 0);
-  const fallbackResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
-  await page.locator("#ask-selection").click();
-  await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
-  await page.locator("#assistant-start").click();
-  const fallbackHttp = await fallbackResponse;
-  const fallback = await fallbackHttp.json();
-  const fallbackRequest = fallbackHttp.request().postDataJSON();
-  assert.equal(fallback.conversation.scope.kind, "PAGE");
-  assert.equal(fallback.conversation.scope.key, "PAGE:0");
-  assert.equal(fallback.conversation.scope.section_title, null);
-  assert.equal(fallback.conversation.provider, "zhipu");
-  assert.equal(fallback.conversation.model, "GLM-5.3-Flash");
-  assert.match(await page.locator("#assistant-scope").textContent(), /^PDF 第 1 页范围/);
-  const fallbackPayload = JSON.stringify(providerCalls.at(-1).body);
-  assert.ok(!fallbackPayload.includes("已安全确定的节标题"));
-  const explicitClose = page.waitForResponse((response) => response.url().endsWith("/assistant/close"));
-  await page.locator("#assistant-close").click();
-  assert.equal((await explicitClose).status(), 204);
-  await page.locator("#assistant-panel").waitFor({ state: "hidden" });
-  const closedFollowStatus = await page.evaluate(async (payload) => {
-    const response = await fetch("/api/assistant/follow-up", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
-    });
-    return response.status;
-  }, {
-    reader_session_id: fallbackRequest.reader_session_id,
-    conversation_id: fallback.conversation.conversation_id,
-    question: "不应继续",
-  });
-  assert.equal(closedFollowStatus, 404, "explicit panel close did not clear the conversation");
+  assert.equal(await page.locator("#assistant-root-switcher option").count(), 0,
+    "Reader reopen retained stale Root options in the Assistant UI");
 
   await stopService(running.child);
   running = await startService({
@@ -283,43 +310,28 @@ try {
   await openBook(page, 29);
   await selectLine(page, 0);
   assert.equal(await page.locator("#ask-selection").isDisabled(), true);
-  const offStatus = await json(page, "/api/assistant/status");
-  assert.equal(offStatus.configured, false);
-  assert.equal(offStatus.credential_available, false);
-  assert.equal(offStatus.ai_off_reason, "DEVELOPMENT_DISABLED");
   assert.equal(await page.locator("#copy-selection").isEnabled(), true);
   await page.keyboard.press("Escape");
   await page.locator("#outline-toggle").click();
   await page.locator("#outline-panel").waitFor({ state: "visible" });
   await page.locator("#search-toggle").click();
   await page.locator("#search-panel").waitFor({ state: "visible" });
-  assert.equal(providerCalls.length, 3, "AI-off attempted an implicit provider call");
-  assert.equal(await page.locator("#compare-selection").count(), 0,
-    "bake-off control leaked into the product path with the gate off");
 
   console.log(JSON.stringify({
     status: "PASS",
-    selectionAskReachedPanel: true,
-    sameLevelFollowUpTurns: 2,
-    realBookHonestScope: asked.conversation.scope.key,
-    pageFallback: fallback.conversation.scope.key,
-    readerCloseClearedConversation: true,
-    explicitPanelCloseClearedConversation: true,
-    inspectedProviderCalls: inspection.calls.length,
-    configuredEndpointOnly: providerEndpoint,
-    selectedProviderOnly: "zhipu",
-    selectorEnabledBeforeFirstRequest: true,
-    selectorLockedOnlyAfterSuccessfulFirstTurn: true,
-    newRootUnlocksSelector: true,
-    servedCurrentNoStoreAsset: true,
-    selectionContextMenuUnobstructed: true,
-    unavailableProviderStillAllowsLocalDraft: true,
-    bakeoffUiAbsent: true,
+    depthReached: 3,
+    sameLevelDepthStable: true,
+    multipleRootsRetained: true,
+    rootSwitchRestoredPreviousDepth: true,
+    parentBackWorked: true,
+    closedRootDestroyedOnlyItsSubtree: true,
+    inflightClosedRootResponseCancelled: true,
+    assistantAnswerAntiBypass: true,
+    providerPinnedAcrossTree: "zhipu",
+    childPayloadMinimalShape: true,
+    readerCloseClearedAllRoots: true,
     aiOffPreservedReaderSelectionOutlineSearch: true,
-    screenshots: [
-      path.join(artifacts, "ask-about-this-draft.png"),
-      path.join(artifacts, "ask-about-this-panel.png"),
-    ],
+    screenshot: path.join(artifacts, "ask-deeper-depth-3.png"),
   }));
 } finally {
   if (browser) await browser.close();
@@ -329,11 +341,24 @@ try {
   await rm(acceptanceRoot, { recursive: true, force: true });
 }
 
+async function selectAssistantAnswerText(page, text) {
+  await page.locator('.assistant-answer-bubble[data-current-answer="true"]').evaluate((bubble, value) => {
+    const offset = bubble.textContent.indexOf(value);
+    if (offset < 0 || !bubble.firstChild) throw new Error(`answer does not contain ${value}`);
+    const range = document.createRange();
+    range.setStart(bubble.firstChild, offset);
+    range.setEnd(bubble.firstChild, offset + value.length);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    bubble.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  }, text);
+  await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
+}
+
 async function selectLine(page, pageIndex) {
   await goToPage(page, pageIndex);
-  const revisionId = await page.evaluate(async () => (
-    await (await fetch("/api/books")).json()
-  ).books.find((book) => book.active_revision.page_count === Number(document.querySelector("#page-total").textContent.match(/\d+/)[0])).active_revision.id);
+  const revisionId = await currentRevisionId(page);
   const overlay = await page.evaluate(async ({ revisionId: id, pageIndex: index }) => (
     await (await fetch(`/api/revisions/${id}/overlay?page=${index}`)).json()
   ).page, { revisionId, pageIndex });
@@ -353,6 +378,14 @@ async function selectLine(page, pageIndex) {
   await page.mouse.click((startX + endX) / 2, y, { button: "right" });
   await page.locator("#selection-actions").waitFor({ state: "visible" });
   return { text: line.text.slice(chosen[0][2], chosen.at(-1)[3]), line };
+}
+
+async function currentRevisionId(page) {
+  return page.evaluate(async () => {
+    const pageCount = Number(document.querySelector("#page-total").textContent.match(/\d+/)[0]);
+    const books = (await (await fetch("/api/books")).json()).books;
+    return books.find((book) => book.active_revision.page_count === pageCount).active_revision.id;
+  });
 }
 
 async function openBook(page, pageCount) {

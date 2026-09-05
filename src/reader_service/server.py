@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from reader_service.agent_runtime import ProviderFailure
 from reader_service.annotation import AnnotationService
-from reader_service.assistant import AssistantService
+from reader_service.assistant import AssistantService, AssistantStateError
 from reader_service.library import IntakeError, LibraryService
 from reader_service.jobs import PreparationCoordinator
 from reader_service.outline import OutlineService
@@ -282,16 +282,20 @@ def handler_factory(
                     return
                 try:
                     payload = self._read_json()
-                    conversation = assistant.ask_selection(
+                    state = assistant.ask_selection(
                         payload["reader_session_id"],
                         ask_match.group(1),
                         int(payload["pdf_page_index"]),
                         start=payload["start"],
                         end=payload["end"],
                         provider=payload.get("provider"),
+                        source_kind=payload.get("source_kind", "ORIGINAL_PDF"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASK", "error": str(exc)})
+                    return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
                     return
                 except LookupError as exc:
                     self._json(HTTPStatus.NOT_FOUND, {"code": "ASK_CONTEXT_NOT_FOUND", "error": str(exc)})
@@ -299,7 +303,39 @@ def handler_factory(
                 except ProviderFailure as exc:
                     self._provider_failure(exc)
                     return
-                self._json(HTTPStatus.OK, {"conversation": conversation})
+                self._json(HTTPStatus.OK, {"assistant": state})
+                return
+            if parsed.path == "/api/assistant/child":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
+                    })
+                    return
+                try:
+                    payload = self._read_json()
+                    state = assistant.create_child(
+                        payload["reader_session_id"],
+                        payload["root_id"],
+                        parent_node_id=payload.get("parent_node_id"),
+                        turn_id=payload["turn_id"],
+                        start_offset=int(payload["start_offset"]),
+                        end_offset=int(payload["end_offset"]),
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_CHILD", "error": str(exc)})
+                    return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_LEVEL_GONE", "error": str(exc)})
+                    return
+                except ProviderFailure as exc:
+                    self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, {"assistant": state})
                 return
             if parsed.path == "/api/assistant/follow-up":
                 if not self._authorized():
@@ -311,21 +347,71 @@ def handler_factory(
                     return
                 try:
                     payload = self._read_json()
-                    conversation = assistant.follow_up(
+                    state = assistant.follow_up(
                         payload["reader_session_id"],
-                        payload["conversation_id"],
+                        payload["root_id"],
                         payload["question"],
+                        node_id=payload.get("node_id"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_FOLLOW_UP", "error": str(exc)})
                     return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
+                    return
                 except LookupError as exc:
-                    self._json(HTTPStatus.NOT_FOUND, {"code": "CONVERSATION_GONE", "error": str(exc)})
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_LEVEL_GONE", "error": str(exc)})
                     return
                 except ProviderFailure as exc:
                     self._provider_failure(exc)
                     return
-                self._json(HTTPStatus.OK, {"conversation": conversation})
+                self._json(HTTPStatus.OK, {"assistant": state})
+                return
+            if parsed.path == "/api/assistant/focus":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"code": "AI_UNCONFIGURED", "error": "AI 功能不可用"})
+                    return
+                try:
+                    payload = self._read_json()
+                    state = assistant.focus(
+                        payload["reader_session_id"],
+                        payload["root_id"],
+                        node_id=payload.get("node_id"),
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASSISTANT_FOCUS", "error": str(exc)})
+                    return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_LEVEL_GONE", "error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"assistant": state})
+                return
+            if parsed.path == "/api/assistant/close-root":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"code": "AI_UNCONFIGURED", "error": "AI 功能不可用"})
+                    return
+                try:
+                    payload = self._read_json()
+                    state = assistant.close_root(
+                        payload["reader_session_id"], payload["root_id"]
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASSISTANT_ROOT", "error": str(exc)})
+                    return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_ROOT_GONE", "error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"assistant": state})
                 return
             if parsed.path == "/api/assistant/close":
                 if not self._authorized():
@@ -548,6 +634,12 @@ def handler_factory(
             self._json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {"code": f"AI_{failure.kind.value}", "error": failure.user_message},
+            )
+
+        def _assistant_state_failure(self, failure: AssistantStateError) -> None:
+            self._json(
+                HTTPStatus.CONFLICT,
+                {"code": f"ASSISTANT_{failure.code}", "error": failure.user_message},
             )
 
         def _static(self, path: str, directory: Path) -> None:

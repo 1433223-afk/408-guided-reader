@@ -94,10 +94,18 @@
               </label>
               <small id="assistant-model-lock" class="assistant-model-lock" hidden>当前会话已锁定</small>
             </div>
-            <button id="assistant-new-root" class="assistant-new-root" type="button" hidden>新对话</button>
-            <button id="assistant-close" type="button" aria-label="关闭并清空 AI 对话">×</button>
+            <button id="assistant-close" type="button" aria-label="收起临时解释面板">×</button>
           </div>
         </div>
+        <div id="assistant-context-bar" class="assistant-context-bar" hidden>
+          <label for="assistant-root-switcher">解释主题</label>
+          <select id="assistant-root-switcher" aria-label="切换保留的解释主题"></select>
+          <button id="assistant-back" type="button">← 上一层</button>
+          <output id="assistant-depth" aria-label="当前解释深度">1/5</output>
+          <button id="assistant-close-root" type="button">关闭此解释</button>
+        </div>
+        <nav id="assistant-breadcrumb" class="assistant-breadcrumb" aria-label="解释层级路径" hidden></nav>
+        <button id="assistant-next-depth" class="assistant-next-depth" type="button" hidden>进入已有的下一层 →</button>
         <p id="assistant-scope" class="assistant-scope">等待教材选区</p>
         <form id="assistant-first-turn" class="assistant-first-turn" hidden>
           <p><span>准备解释</span><q id="assistant-draft-text"></q></p>
@@ -112,6 +120,9 @@
         </form>
         <p class="assistant-lifetime">对话仅保存在当前 Reader 内存中；关闭即清空。</p>
       </aside>
+      <div id="assistant-answer-actions" class="assistant-answer-actions" hidden>
+        <button id="assistant-ask-deeper" type="button">再问一层</button>
+      </div>
     </section>
     <div id="selection-actions" class="selection-actions" role="toolbar" aria-label="选区操作" hidden>
       <div class="selection-action-row">

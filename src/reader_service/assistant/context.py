@@ -199,3 +199,53 @@ def provider_user_message(context: dict, question: str | None = None) -> str:
     if question:
         lines.extend(["", "【用户问题】", question])
     return "\n".join(lines)
+
+
+def provider_child_message(
+    *,
+    selected_text: str,
+    selected_range: dict,
+    triggering_question: str,
+    triggering_answer: str,
+    source_lineage: dict,
+    scope: ScopeResolution,
+    reference_context: dict,
+    parent_label: str,
+    depth: int,
+    max_depth: int,
+) -> str:
+    """Assemble only the frozen minimal Child context; never walk conversation state."""
+    lines = [
+        "【父子关系】",
+        f"当前解释深度：{depth}/{max_depth}",
+        f"直接父层主题：{parent_label}",
+        "",
+        "【来源脉络】",
+        f"最初来源类型：{source_lineage['kind']}",
+        f"最初教材选区：{source_lineage['selected_text']}",
+        f"原始 PDF 页：{source_lineage['pdf_page_index'] + 1}",
+        "",
+        "【当前相关 Reader 范围】",
+        f"范围类型：{scope.kind}",
+    ]
+    if scope.chapter_title:
+        lines.append(f"已安全确定的章标题：{scope.chapter_title}")
+    if scope.section_title:
+        lines.append(f"已安全确定的节标题：{scope.section_title}")
+    printed_label = reference_context.get("printed_page_label")
+    if printed_label:
+        lines.append(f"已知印刷页码：{printed_label}")
+    lines.extend([
+        "",
+        "【最小必要引用语境：同一 PDF 页的有界 OCR】",
+        reference_context.get("same_page_ocr_context", ""),
+        "",
+        "【触发再问一层的完整父回合】",
+        f"用户：{triggering_question}",
+        f"助手：{triggering_answer}",
+        "",
+        "【当前回答选区】",
+        f"字符范围：{selected_range['start']}..{selected_range['end']}",
+        selected_text,
+    ])
+    return "\n".join(lines)

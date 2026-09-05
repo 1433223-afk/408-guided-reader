@@ -76,6 +76,7 @@ $env:READER_DATA_DIR='D:\path\to\reader-data'
 npm run test:e2e:r3
 npm run test:e2e:find
 npm run test:e2e:map
+npm run test:e2e:ask
 ```
 
 Opening a book schedules progressive page preparation. The visible page and nearby pages take
@@ -88,13 +89,15 @@ page path. The toolbar shows a validated printed-page label when known and lets 
 per-page manual label when inference must remain UNKNOWN. `--prepare-workers` (1–4, default 1) and
 `--render-dpi` (default 200) are development tuning controls.
 
-On a prepared page, selecting original-PDF text and right-clicking exposes **问 AI** when DeepSeek is
-configured. Store the API key as the password of a Windows **Generic Credential** whose target is
-exactly `408-guided-reader-deepseek`; the key is not stored in the app database or config files.
-The temporary side-panel conversation is cleared when the Reader closes. Development/test-only
-overrides are documented without secrets in `.env.example`. Exact provider request bodies are
-available only from the authenticated localhost process-memory surface at
-`/api/assistant/inspection`; this bounded buffer and all conversations disappear on service restart.
+On a prepared page, selecting original-PDF text and right-clicking exposes **问 AI** when at least one
+named model is available. Every textbook selection starts a retained temporary explanation topic;
+select text in the current Assistant answer to **再问一层**, up to depth 5. The compact side panel can
+switch topics, return to a parent explanation, continue at the same level, or close one topic and its
+deeper explanations. Provider/model is fixed within each topic; all topics clear when the Reader
+closes. Store keys as Windows **Generic Credentials** using the fixed targets documented in
+`.env.example`; keys are never stored in the app database or config files. Exact provider request
+bodies are available only from the authenticated localhost process-memory surface at
+`/api/assistant/inspection`; this bounded buffer and all explanation state disappear on service restart.
 
 The inherited nine-page real OCR suite uses external, hash-checked textbook files and runs only when
 both paths are supplied:
@@ -106,5 +109,5 @@ pytest tests/test_real_ocr_acceptance.py
 ```
 
 The current product still contains no body-heading detection, Pass 2 range refinement, layout
-regions, correction-tier UI, chapter preparation, structure-scoped search, recursive Assistant
-tree, saved AI notes, or multimodal explanation.
+regions, correction-tier UI, chapter preparation, structure-scoped search, persistent Assistant
+history, saved AI notes, or multimodal explanation.
