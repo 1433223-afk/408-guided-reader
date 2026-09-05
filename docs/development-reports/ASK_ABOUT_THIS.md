@@ -1,0 +1,165 @@
+# Ask About This Development Report
+
+## Result
+
+`IMPLEMENTATION_READY` — selecting prepared original-PDF textbook text now exposes `问 AI` in the
+existing right-click actions. A temporary right-side Reader panel shows a Simplified-Chinese
+DeepSeek explanation and accepts same-level follow-ups. Explicit panel close and Reader close clear
+the reader-session conversations from Core Service memory; service restart also clears them. Reader,
+selection, marks, search, and directory remain available with AI disabled.
+
+`READY_FOR_USER_REAL_USE_REVIEW`
+
+`READY_FOR_NARROW_ZCODE_REVIEW`
+
+The required independent review has **not** been run. This report does not close the Phase.
+
+## Implemented
+
+- An `ASSISTANT`-only agent runtime owns the sole provider egress path. The one adapter is DeepSeek's
+  OpenAI-compatible chat-completions API. It uses Python stdlib HTTP only, refuses redirects, ignores
+  environment proxy routing, and can contact exactly one configured endpoint.
+- Provider routing is configuration-driven for endpoint, model, temperature, output-token budget,
+  and timeout. Missing/invalid configuration or key disables only Ask. Transient failures retry at
+  most three total attempts with backoff; auth/quota/billing failures do not retry; exhausted or
+  user-actionable failures start a 30-second cooling period.
+- The normal credential path reads a Windows Generic Credential with fixed target
+  `408-guided-reader-deepseek`. `GUIDED_READER_DEEPSEEK_API_KEY` and the explicit testing disable flag
+  are development/testing conveniences only. No key or provider header enters database state,
+  payload inspection, logs, or user-visible errors.
+- A pure-read resolver walks the existing Outline topology. It returns the deepest uniquely
+  supported Section/Subsection only when start-page evidence is unambiguous. Incomparable same-page
+  Section starts force `PAGE:<pdf_page_index>`; a uniquely containing Chapter title may still be
+  supplied without changing the isolation key. No node or resolution state is written.
+- The context builder re-resolves the client selection against READY OCR, limits selected text to
+  2,000 characters, includes at most three surrounding same-page lines on each side and 1,600 OCR
+  context characters, and includes only safe Section/Chapter title plus a known printed label.
+  Notes, highlights, learning history, and all other application state are absent from its API.
+- One conversation exists per scope per reader session. Histories never cross scope keys; follow-up
+  context uses at most six prior turns and 8,000 characters. PAGE conversations are not merged into
+  SECTION conversations. There is no Child/depth/tree creation and no Ask affordance on answer text;
+  the panel input is the only continuation path.
+- Conversation state is plain Core Service memory. No schema, migration, conversation table, cache
+  file, or file-capture product path was added. A bounded 20-call process-memory inspector exposes
+  the exact provider request bodies through the authenticated localhost API only.
+- The Reader adds the Chinese side panel, pending/error states, honest disabled Ask action, explicit
+  destructive close, unload cleanup, and automatic cooling recovery without making PDF opening wait
+  on AI availability.
+
+## Important implementation decisions
+
+- **D-4 resolved:** DeepSeek is the first and only adapter in this Phase.
+- **D-5 confirmed:** the frozen §21.3 recommended egress boundary is implemented: bounded
+  user-initiated context only, no telemetry/analytics, locally inspectable provider request bodies,
+  and no note/highlight/learning-history egress.
+- `IMPLEMENTATION_BLUEPRINT.md` §26 still carries D-4 and D-5 as open rows. That Frozen Blueprint was
+  deliberately not edited; its synchronization remains the user's action.
+- Provider request bodies use a short grounding system instruction plus explicit labelled source
+  fields. Conversational answers remain prose rather than introducing a structured-output platform.
+- The inspector deliberately outlives an individual closed conversation until bounded eviction or
+  service restart, because it is temporary observability evidence, not conversation state. It remains
+  in process memory only.
+
+## Deviations from Spec
+
+None. The implementation is the accepted narrow slice only: no second provider, generic agent
+platform, tool loop, review routing, Master/Guide/Teaching/KP work, saved notes, recursive Child UI,
+multimodal content, VisualRegion, Pass 2, cross-page selection, or OCR regeneration.
+
+The 348-page real book exposes an important honest outcome rather than a deviation: stored bookmark
+evidence gives both `6.2.1 总线事务` and `6.2.2 总线定时` the same PDF start page (index 302). The
+accepted brief explicitly forbids choosing the latest-starting sibling, so the real `6.2.1` ask is
+correctly isolated as `PAGE:302`, with safe `第6章 总线` context and printed page `291`, not falsely
+claimed as SECTION.
+
+## Acceptance evidence
+
+- `python -m compileall -q src`: **PASS**.
+- `pytest -o addopts= -q -ra`: **67 passed, 2 skipped**. The two skips are the unchanged optional
+  external-path OCR calibration tests; their same real books were used in browser acceptance.
+  Coverage includes selection/context bounds, unique SECTION, ambiguous same-page PAGE, front matter
+  PAGE, safe Chapter context, unsafe title exclusion, per-scope history isolation, fallback
+  non-merge, zero-network AI-off, exact payload inspection, endpoint lock, redirect refusal,
+  transient retries, auth/quota no-retry, cooling, invalid configuration degradation, memory-only
+  restart/close, absence of conversation tables/files, note exclusion, secret-safe errors/logs, and
+  the localhost HTTP contract.
+- `npm test`: **30 passed** — geometry and selection remain green.
+- `npm run test:e2e:ask`: **PASS** against the prepared real 29/348-page library with a local mock
+  provider. It exercised actual PDF.js selection/right-click → mock answer → panel, two same-level
+  turns, no answer-text Ask affordance, exact inspected request bodies, configured-endpoint-only
+  traffic, Reader close and explicit panel close cleanup, `PAGE:302`, 29-page `PAGE:0`, and AI-off
+  selection/directory/search availability. The panel screenshot was visually inspected; it is an
+  ignored test artifact, not persisted product content.
+- `npm run test:e2e:ask:real`: **PASS** with the user's real Credential Manager key and the default
+  `https://api.deepseek.com/chat/completions` endpoint. On the 348-page book, PDF index 302 / printed
+  page 291, a real sentence under `6.2.1 总线事务` was asked `这是什么意思`; the final run returned a
+  relevant 253-character Chinese explanation using bus-transaction context. `再简单一点` returned a
+  127-character answer in the same two-turn conversation. Reader close invalidated the old
+  conversation. The 29-page real excerpt exercised `PAGE:0`. Restarting with the testing disable
+  flag left selection, directory, and search usable.
+- Existing real-browser regressions: `npm run test:e2e:map` **PASS** on both books with stable trees,
+  page labels and original-PDF navigation; `npm run test:e2e:r3` **PASS** on both books including
+  selection/copy, marks persistence/deletion, restart and cleanup; `npm run test:e2e:find` **PASS**
+  with 6/10 matches on 29/348 pages.
+- Three preliminary mock-browser harness invocations are explicitly not counted as PASS: one pointed
+  at an empty LocalAppData library, one incorrectly expected SECTION on the deliberately ambiguous
+  real page, and one contained a JavaScript response-status typo. The data path and harness
+  assertions were corrected; the final bounded reruns above passed.
+
+Overall status: `IMPLEMENTATION_READY`. Full named real material and the real provider were exercised;
+formal user review and the required independent narrow ZCode review remain the two acceptance gates.
+
+## Known limitations / deferred debt
+
+- Pass 1 cannot distinguish `6.2.1` from `6.2.2` on their shared start page. That page remains
+  honestly PAGE-scoped until a separately authorized Pass 2 supplies physical evidence.
+- The first request is single-response rather than streamed. The panel shows a bounded pending state.
+- A credential can be detected as present without proving validity; invalid auth/quota is classified
+  on the first user-initiated call, shown honestly without retry, and cooled.
+- Payload inspection is an authenticated localhost API rather than a dedicated UI. Its bounded
+  contents disappear on service restart and are never written to disk.
+- All exclusions in the accepted brief remain excluded, including cross-page selection and
+  Assistant answer recursion.
+
+## Reproducible entry points
+
+```powershell
+python -m compileall -q src
+pytest -o addopts= -q -ra
+npm test
+
+$env:READER_DATA_DIR='D:\path\to\prepared-real-library'
+npm run test:e2e:ask       # local mock provider; no real key required
+npm run test:e2e:ask:real  # real DeepSeek via Windows Credential Manager
+npm run test:e2e:map
+npm run test:e2e:r3
+npm run test:e2e:find
+```
+
+Manual replay: open the 348-page book at PDF page 303 / printed page 291, select a sentence below
+`6.2.1 总线事务`, right-click `问 AI`, ask the built-in `这是什么意思`, then type `为什么？` or
+`再简单一点`. Confirm the scope display honestly says PDF-page scope with safe Chapter context,
+close and reopen Reader, and confirm the conversation is gone. On the 29-page book repeat once on
+the first page for PAGE fallback. Disable the credential (or use the explicit testing flag) and
+confirm Ask is disabled while reading, selection, marks, search, and directory remain functional.
+
+## Important files / architecture entry points
+
+- `src/reader_service/agent_runtime/credentials.py` — fixed Credential Manager target and dev/test
+  override boundary.
+- `src/reader_service/agent_runtime/deepseek.py` — sole HTTP adapter, typed remote failures, and
+  redirect/proxy refusal.
+- `src/reader_service/agent_runtime/runtime.py` — provider profile, payload inspector, bounded retry,
+  cooling, and secret-free structured logging.
+- `src/reader_service/assistant/context.py` — pure-read scope resolution and bounded egress context.
+- `src/reader_service/assistant/service.py` — memory-only per-session/per-scope conversations.
+- `src/reader_service/server.py` — authenticated localhost status/ask/follow-up/close/inspection API.
+- `src/reader_service/static/index.html`, `app.js`, `styles.css` — right-click action, temporary panel,
+  same-level follow-up, AI-off UI, and close lifecycle.
+- `tests/test_ask_about_this.py`, `tests-e2e/ask-about-this.mjs`,
+  `tests-e2e/ask-about-this-real.mjs` — machine, real-browser mock, and real-provider acceptance.
+
+## Git checkpoint
+
+Implementation checkpoint: `6093d92f37af52796d68b42e0e65dc5faa6037d5`.
+The report-completion commit hash is recorded in the completion handoff.
