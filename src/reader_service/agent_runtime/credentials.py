@@ -7,8 +7,18 @@ from ctypes import wintypes
 from dataclasses import dataclass, field
 
 
-DEEPSEEK_CREDENTIAL_TARGET = "408-guided-reader-deepseek"
-DEVELOPMENT_KEY_ENV = "GUIDED_READER_DEEPSEEK_API_KEY"
+PROVIDER_CREDENTIAL_TARGETS = {
+    "deepseek": "408-guided-reader-deepseek",
+    "zhipu": "408-guided-reader-zhipu",
+    "openrouter": "408-guided-reader-openrouter",
+}
+PROVIDER_KEY_ENVS = {
+    "deepseek": "GUIDED_READER_DEEPSEEK_API_KEY",
+    "zhipu": "GUIDED_READER_ZHIPU_API_KEY",
+    "openrouter": "GUIDED_READER_OPENROUTER_API_KEY",
+}
+DEEPSEEK_CREDENTIAL_TARGET = PROVIDER_CREDENTIAL_TARGETS["deepseek"]
+DEVELOPMENT_KEY_ENV = PROVIDER_KEY_ENVS["deepseek"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,11 +52,18 @@ class _CREDENTIALW(ctypes.Structure):
     ]
 
 
-def read_deepseek_credential() -> CredentialRead:
-    """Read DeepSeek credentials and return only bounded, secret-safe diagnostics."""
-    if os.environ.get("GUIDED_READER_DEEPSEEK_DISABLED", "").strip() == "1":
+def read_provider_credential(provider: str) -> CredentialRead:
+    """Read a named provider credential with bounded, secret-safe diagnostics."""
+
+    try:
+        target = PROVIDER_CREDENTIAL_TARGETS[provider]
+        key_env = PROVIDER_KEY_ENVS[provider]
+    except KeyError as error:
+        raise ValueError("unknown provider") from error
+    prefix = provider.upper()
+    if os.environ.get(f"GUIDED_READER_{prefix}_DISABLED", "").strip() == "1":
         return CredentialRead(False, "NONE", "DEVELOPMENT_DISABLED")
-    override = os.environ.get(DEVELOPMENT_KEY_ENV, "").strip()
+    override = os.environ.get(key_env, "").strip()
     if override:
         return CredentialRead(True, "DEVELOPMENT_OVERRIDE", None, override)
     if sys.platform != "win32":
@@ -59,7 +76,7 @@ def read_deepseek_credential() -> CredentialRead:
         cred_read.restype = wintypes.BOOL
         cred_free = advapi32.CredFree
         cred_free.argtypes = [ctypes.c_void_p]
-        if not cred_read(DEEPSEEK_CREDENTIAL_TARGET, 1, 0, ctypes.byref(credential)):
+        if not cred_read(target, 1, 0, ctypes.byref(credential)):
             reason = "CREDENTIAL_NOT_FOUND" if ctypes.get_last_error() == 1168 else "CREDENTIAL_READ_FAILED"
             return CredentialRead(False, "WINDOWS_CREDENTIAL_MANAGER", reason)
         try:
@@ -83,7 +100,17 @@ def read_deepseek_credential() -> CredentialRead:
         return CredentialRead(False, "WINDOWS_CREDENTIAL_MANAGER", "CREDENTIAL_READ_FAILED")
 
 
+def read_deepseek_credential() -> CredentialRead:
+    """Compatibility wrapper for the original provider-specific API."""
+
+    return read_provider_credential("deepseek")
+
+
 def read_deepseek_api_key() -> str | None:
     """Compatibility API returning the key without exposing diagnostic internals."""
 
     return read_deepseek_credential().key
+
+
+def read_provider_api_key(provider: str) -> str | None:
+    return read_provider_credential(provider).key

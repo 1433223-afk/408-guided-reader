@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import logging
 import math
 import os
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Protocol
@@ -14,14 +16,38 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from .credentials import (
-    DEEPSEEK_CREDENTIAL_TARGET,
+    PROVIDER_CREDENTIAL_TARGETS,
     CredentialRead,
-    read_deepseek_api_key,
-    read_deepseek_credential,
+    read_provider_api_key,
+    read_provider_credential,
 )
 
 
 logger = logging.getLogger("reader_service.agent_runtime")
+
+PROVIDER_NAMES = ("deepseek", "zhipu", "openrouter")
+PROVIDER_DEFAULTS = {
+    "deepseek": {
+        "endpoint": "https://api.deepseek.com/chat/completions",
+        "model": "deepseek-v4-pro",
+        "max_tokens": 4096,
+        "timeout_seconds": 120.0,
+    },
+    "zhipu": {
+        "endpoint": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+        "model": "GLM-5.3-Flash",
+        "max_tokens": 4096,
+        "timeout_seconds": 120.0,
+    },
+    "openrouter": {
+        "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+        "model": "google/gemini-3.8-flash",
+        "max_tokens": 900,
+        "timeout_seconds": 45.0,
+    },
+}
+ANSWER_LENGTH_INTENT = "concise"
+REASONING_STRENGTH_INTENT = "balanced"
 
 
 class ProviderFailureKind(str, Enum):
@@ -39,16 +65,34 @@ class ProviderFailure(RuntimeError):
         self.user_message = user_message
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderResponse:
+    answer: str
+    usage: dict | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderCompletion:
+    answer: str
+    latency_ms: int
+    usage: dict | None
+    effective_config: dict
+
+
 class ProviderAdapter(Protocol):
     provider_name: str
 
-    def complete(self, endpoint: str, api_key: str, body: dict, timeout: float) -> str: ...
+    def complete(
+        self, endpoint: str, api_key: str, body: dict, timeout: float
+    ) -> ProviderResponse | str: ...
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderConfig:
-    endpoint: str = "https://api.deepseek.com/chat/completions"
-    model: str = "deepseek-chat"
+    provider: str = "deepseek"
+    endpoint: str = PROVIDER_DEFAULTS["deepseek"]["endpoint"]
+    model: str = PROVIDER_DEFAULTS["deepseek"]["model"]
+    credential_target: str = PROVIDER_CREDENTIAL_TARGETS["deepseek"]
     temperature: float = 0.2
     max_tokens: int = 900
     timeout_seconds: float = 45.0
@@ -56,49 +100,83 @@ class ProviderConfig:
     cooling_seconds: float = 30.0
 
     @classmethod
-    def from_environment(cls) -> "ProviderConfig":
+    def from_environment(cls, provider: str = "deepseek") -> "ProviderConfig":
+        if provider not in PROVIDER_NAMES:
+            raise ValueError("unknown provider")
+        prefix = f"GUIDED_READER_{provider.upper()}"
+        defaults = PROVIDER_DEFAULTS[provider]
         return cls(
-            endpoint=os.environ.get(
-                "GUIDED_READER_DEEPSEEK_ENDPOINT",
-                "https://api.deepseek.com/chat/completions",
-            ).strip(),
-            model=os.environ.get("GUIDED_READER_DEEPSEEK_MODEL", "deepseek-chat").strip(),
-            temperature=_environment_float("GUIDED_READER_DEEPSEEK_TEMPERATURE", 0.2),
-            max_tokens=_environment_int("GUIDED_READER_DEEPSEEK_MAX_TOKENS", 900),
-            timeout_seconds=_environment_float("GUIDED_READER_DEEPSEEK_TIMEOUT_SECONDS", 45.0),
+            provider=provider,
+            endpoint=os.environ.get(f"{prefix}_ENDPOINT", defaults["endpoint"]).strip(),
+            model=os.environ.get(f"{prefix}_MODEL", defaults["model"]).strip(),
+            credential_target=PROVIDER_CREDENTIAL_TARGETS[provider],
+            temperature=_environment_float(f"{prefix}_TEMPERATURE", 0.2),
+            max_tokens=_environment_int(f"{prefix}_MAX_TOKENS", defaults["max_tokens"]),
+            timeout_seconds=_environment_float(
+                f"{prefix}_TIMEOUT_SECONDS", defaults["timeout_seconds"]
+            ),
         )
 
     def validate(self) -> None:
-        parsed = urlparse(self.endpoint)
-        if (
-            parsed.scheme not in ("http", "https")
-            or not parsed.netloc
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("DeepSeek endpoint must be one complete HTTP(S) URL")
+        if self.provider not in PROVIDER_NAMES:
+            raise ValueError("provider is not in the named set")
+        if self.credential_target != PROVIDER_CREDENTIAL_TARGETS[self.provider]:
+            raise ValueError("credential target does not match provider")
+        _validate_endpoint(self.endpoint)
         if not self.model or len(self.model) > 120:
-            raise ValueError("DeepSeek model is invalid")
+            raise ValueError("provider model is invalid")
         if not 1 <= self.max_tokens <= 4096 or not 1 <= self.max_attempts <= 5:
-            raise ValueError("DeepSeek request bounds are invalid")
+            raise ValueError("provider request bounds are invalid")
         if not 0 <= self.temperature <= 2 or not 1 <= self.timeout_seconds <= 180:
-            raise ValueError("DeepSeek request parameters are invalid")
+            raise ValueError("provider request parameters are invalid")
         if not 1 <= self.cooling_seconds <= 600:
-            raise ValueError("DeepSeek cooling period is invalid")
+            raise ValueError("provider cooling period is invalid")
+
+    def effective_config(self) -> dict:
+        answer_mapping = (
+            "shared Skill controls concise answer; max_tokens=4096 includes provider reasoning"
+            if self.provider in ("deepseek", "zhipu")
+            else f"max_tokens={self.max_tokens}"
+        )
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "endpoint": self.endpoint,
+            "intent": {
+                "answer_length": ANSWER_LENGTH_INTENT,
+                "reasoning_strength": REASONING_STRENGTH_INTENT,
+            },
+            "request_parameters": {
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+                "stream": False,
+                "timeout_seconds": self.timeout_seconds,
+            },
+            "parameter_mapping": {
+                "answer_length": answer_mapping,
+                "reasoning_strength": "omitted (no portable OpenAI-compatible field)",
+            },
+        }
 
 
 class PayloadInspector:
-    """Bounded process-memory capture of exact provider request bodies."""
+    """Bounded process-memory capture of secret-free provider request bodies."""
 
     def __init__(self, limit: int = 20):
         self._items: deque[dict] = deque(maxlen=max(1, min(limit, 100)))
         self._lock = threading.Lock()
 
-    def record(self, *, endpoint: str, request_body: dict, interaction_id: str, attempt: int) -> None:
+    def record(
+        self,
+        *,
+        provider: str,
+        endpoint: str,
+        request_body: dict,
+        interaction_id: str,
+        attempt: int,
+    ) -> None:
         item = {
-            "provider": "deepseek",
+            "provider": provider,
             "endpoint": endpoint,
             "interaction_id": interaction_id,
             "attempt": attempt,
@@ -113,7 +191,7 @@ class PayloadInspector:
 
 
 class AgentRuntime:
-    """ASSISTANT-only runtime and the sole caller of the provider adapter."""
+    """One named provider runtime behind the sole provider-egress boundary."""
 
     def __init__(
         self,
@@ -126,17 +204,19 @@ class AgentRuntime:
         clock: Callable[[], float] = time.monotonic,
     ):
         self.adapter = adapter
-        self.config = config or ProviderConfig.from_environment()
+        self.config = config or ProviderConfig.from_environment(adapter.provider_name)
         try:
             self.config.validate()
+            if adapter.provider_name != self.config.provider:
+                raise ValueError("adapter provider does not match configuration")
         except ValueError:
             self._configuration_valid = False
         else:
             self._configuration_valid = True
-        self.credential_loader = credential_loader or read_deepseek_api_key
-        self._uses_product_credential_path = (
-            credential_loader is None or credential_loader is read_deepseek_api_key
+        self.credential_loader = credential_loader or (
+            lambda: read_provider_api_key(self.config.provider)
         )
+        self._uses_product_credential_path = credential_loader is None
         self.inspector = inspector or PayloadInspector()
         self.sleeper = sleeper
         self.clock = clock
@@ -159,7 +239,7 @@ class AgentRuntime:
             ai_off_reason = None
         return {
             "role": "ASSISTANT",
-            "provider": "deepseek",
+            "provider": self.config.provider,
             "model": self.config.model,
             "endpoint": self.config.endpoint,
             "configured": configured,
@@ -175,22 +255,28 @@ class AgentRuntime:
             "retry_after_seconds": max(
                 0, math.ceil(self._cooling_until - self.clock())
             ) if cooling else 0,
-            "credential_target": DEEPSEEK_CREDENTIAL_TARGET,
+            "credential_target": self.config.credential_target,
+            "effective_config": self.config.effective_config(),
         }
 
     def complete(self, messages: list[dict], *, interaction_id: str | None = None) -> str:
+        return self.complete_with_metadata(messages, interaction_id=interaction_id).answer
+
+    def complete_with_metadata(
+        self, messages: list[dict], *, interaction_id: str | None = None
+    ) -> ProviderCompletion:
         if not self._configuration_valid:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,
                 "invalid_configuration",
-                "DeepSeek 配置无效；Reader 其余能力仍可正常使用。",
+                f"{self.config.provider} 配置无效；Reader 其余能力仍可正常使用。",
             )
         api_key = self._read_key()
         if not api_key:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,
                 "unconfigured",
-                "尚未配置 DeepSeek API 密钥；阅读、选择、标记、搜索和目录仍可正常使用。",
+                f"尚未配置 {self.config.provider} API 密钥；Reader 其余能力仍可正常使用。",
             )
         with self._lock:
             now = self.clock()
@@ -198,7 +284,7 @@ class AgentRuntime:
                 raise ProviderFailure(
                     ProviderFailureKind.COOLING,
                     "cooling",
-                    "AI 服务连续失败，正在短暂冷却；教材阅读功能不受影响。",
+                    f"{self.config.provider} 连续失败，正在短暂冷却；教材阅读功能不受影响。",
                 )
         body = {
             "model": self.config.model,
@@ -208,28 +294,32 @@ class AgentRuntime:
             "stream": False,
         }
         call_id = interaction_id or str(uuid4())
+        started = time.perf_counter()
         last_failure: ProviderFailure | None = None
         for attempt in range(1, self.config.max_attempts + 1):
             self.inspector.record(
+                provider=self.config.provider,
                 endpoint=self.config.endpoint,
                 request_body=body,
                 interaction_id=call_id,
                 attempt=attempt,
             )
             logger.info(
-                "assistant_provider_call provider=deepseek model=%s attempt=%d interaction_id=%s",
+                "assistant_provider_call provider=%s model=%s attempt=%d interaction_id=%s",
+                self.config.provider,
                 self.config.model,
                 attempt,
                 call_id,
             )
             try:
-                answer = self.adapter.complete(
+                response = self.adapter.complete(
                     self.config.endpoint, api_key, body, self.config.timeout_seconds
                 )
             except ProviderFailure as failure:
                 last_failure = failure
                 logger.warning(
-                    "assistant_provider_failure provider=deepseek code=%s attempt=%d interaction_id=%s",
+                    "assistant_provider_failure provider=%s code=%s attempt=%d interaction_id=%s",
+                    self.config.provider,
                     failure.code,
                     attempt,
                     call_id,
@@ -247,7 +337,13 @@ class AgentRuntime:
             else:
                 with self._lock:
                     self._cooling_until = 0.0
-                return answer
+                normalized = response if isinstance(response, ProviderResponse) else ProviderResponse(str(response))
+                return ProviderCompletion(
+                    answer=normalized.answer,
+                    latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
+                    usage=copy.deepcopy(normalized.usage),
+                    effective_config=self.config.effective_config(),
+                )
         assert last_failure is not None
         raise last_failure
 
@@ -256,7 +352,7 @@ class AgentRuntime:
 
     def _credential_read(self) -> CredentialRead:
         if self._uses_product_credential_path:
-            return read_deepseek_credential()
+            return read_provider_credential(self.config.provider)
         try:
             value = self.credential_loader()
         except Exception:
@@ -267,21 +363,218 @@ class AgentRuntime:
         )
 
     def _endpoint_valid(self) -> bool:
-        parsed = urlparse(self.config.endpoint)
-        return bool(
-            parsed.scheme in ("http", "https")
-            and parsed.netloc
-            and not parsed.username
-            and not parsed.password
-            and not parsed.query
-            and not parsed.fragment
-        )
+        try:
+            _validate_endpoint(self.config.endpoint)
+        except ValueError:
+            return False
+        return True
 
     def _start_cooling(self) -> None:
         with self._lock:
             self._cooling_until = max(
                 self._cooling_until, self.clock() + self.config.cooling_seconds
             )
+
+
+class ProviderRuntimeSet:
+    """Named routing for one active provider and a dev-only three-way comparison."""
+
+    def __init__(
+        self,
+        runtimes: dict[str, AgentRuntime],
+        *,
+        active_provider: str = "deepseek",
+        bakeoff_enabled: bool = False,
+        inspector: PayloadInspector | None = None,
+    ):
+        if set(runtimes) != set(PROVIDER_NAMES):
+            raise ValueError("the runtime set must contain exactly the named providers")
+        self.runtimes = dict(runtimes)
+        self.active_provider = active_provider
+        self.bakeoff_enabled = bakeoff_enabled
+        self.inspector = inspector or next(iter(runtimes.values())).inspector
+
+    @classmethod
+    def from_environment(cls) -> "ProviderRuntimeSet":
+        from .deepseek import OpenAICompatibleAdapter
+
+        inspector = PayloadInspector()
+        runtimes = {
+            provider: AgentRuntime(
+                OpenAICompatibleAdapter(provider),
+                config=ProviderConfig.from_environment(provider),
+                inspector=inspector,
+            )
+            for provider in PROVIDER_NAMES
+        }
+        return cls(
+            runtimes,
+            active_provider=os.environ.get(
+                "GUIDED_READER_ASSISTANT_PROVIDER", "deepseek"
+            ).strip().lower(),
+            bakeoff_enabled=os.environ.get(
+                "GUIDED_READER_PROVIDER_BAKEOFF", ""
+            ).strip() == "1",
+            inspector=inspector,
+        )
+
+    def status(self) -> dict:
+        provider_statuses = [self.runtimes[name].status() for name in PROVIDER_NAMES]
+        active = next(
+            (item for item in provider_statuses if item["provider"] == self.active_provider),
+            None,
+        )
+        if active is None:
+            active = {
+                "role": "ASSISTANT",
+                "provider": self.active_provider,
+                "model": None,
+                "endpoint": None,
+                "configured": False,
+                "configuration_valid": False,
+                "endpoint_valid": False,
+                "model_valid": False,
+                "credential_available": False,
+                "credential_source": "NONE",
+                "credential_reason": "INVALID_ACTIVE_PROVIDER",
+                "cooling": False,
+                "failure_state": "AI_OFF",
+                "ai_off_reason": "INVALID_ACTIVE_PROVIDER",
+                "retry_after_seconds": 0,
+                "credential_target": None,
+                "effective_config": None,
+            }
+        return {
+            **active,
+            "active_provider": self.active_provider,
+            "bakeoff_enabled": self.bakeoff_enabled,
+            "providers": provider_statuses,
+        }
+
+    def complete(self, messages: list[dict], *, interaction_id: str | None = None) -> str:
+        runtime = self.runtimes.get(self.active_provider)
+        if runtime is None:
+            raise ProviderFailure(
+                ProviderFailureKind.UNCONFIGURED,
+                "invalid_active_provider",
+                "active provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
+            )
+        return runtime.complete(messages, interaction_id=interaction_id)
+
+    def compare(self, messages: list[dict], *, interaction_id: str) -> list[dict]:
+        if not self.bakeoff_enabled:
+            raise ProviderFailure(
+                ProviderFailureKind.UNCONFIGURED,
+                "bakeoff_disabled",
+                "Provider Bake-off 仅在开发配置显式启用时可用。",
+            )
+        results: dict[str, dict] = {}
+        eligible = []
+        for name in PROVIDER_NAMES:
+            runtime = self.runtimes[name]
+            status = runtime.status()
+            if status["configured"]:
+                eligible.append((name, runtime))
+            else:
+                results[name] = self._unavailable_result(status)
+        with ThreadPoolExecutor(max_workers=len(PROVIDER_NAMES), thread_name_prefix="provider-bakeoff") as executor:
+            futures = {
+                executor.submit(
+                    runtime.complete_with_metadata,
+                    copy.deepcopy(messages),
+                    interaction_id=f"{interaction_id}:{name}",
+                ): (name, runtime)
+                for name, runtime in eligible
+            }
+            for future in as_completed(futures):
+                name, runtime = futures[future]
+                try:
+                    completion = future.result()
+                except ProviderFailure as failure:
+                    results[name] = self._failure_result(runtime, failure)
+                except Exception:
+                    results[name] = self._failure_result(
+                        runtime,
+                        ProviderFailure(
+                            ProviderFailureKind.TRANSIENT,
+                            "runtime_failure",
+                            f"{name} 调用出现内部失败；其他 provider 不受影响。",
+                        ),
+                    )
+                else:
+                    results[name] = {
+                        "provider": name,
+                        "model": runtime.config.model,
+                        "endpoint": runtime.config.endpoint,
+                        "available": True,
+                        "answer": completion.answer,
+                        "latency_ms": completion.latency_ms,
+                        "usage": completion.usage,
+                        "effective_config": completion.effective_config,
+                        "error": None,
+                    }
+        return [results[name] for name in PROVIDER_NAMES]
+
+    @staticmethod
+    def _unavailable_result(status: dict) -> dict:
+        return {
+            "provider": status["provider"],
+            "model": status["model"],
+            "endpoint": status["endpoint"],
+            "available": False,
+            "answer": None,
+            "latency_ms": None,
+            "usage": None,
+            "effective_config": status["effective_config"],
+            "error": {
+                "kind": ProviderFailureKind.UNCONFIGURED.value,
+                "code": str(status["ai_off_reason"] or "unconfigured").lower(),
+                "message": f"{status['provider']} 当前不可用：{status['ai_off_reason'] or '未配置'}。",
+            },
+        }
+
+    @staticmethod
+    def _failure_result(runtime: AgentRuntime, failure: ProviderFailure) -> dict:
+        return {
+            "provider": runtime.config.provider,
+            "model": runtime.config.model,
+            "endpoint": runtime.config.endpoint,
+            "available": True,
+            "answer": None,
+            "latency_ms": None,
+            "usage": None,
+            "effective_config": runtime.config.effective_config(),
+            "error": {
+                "kind": failure.kind.value,
+                "code": failure.code,
+                "message": failure.user_message,
+            },
+        }
+
+
+def _validate_endpoint(endpoint: str) -> None:
+    parsed = urlparse(endpoint)
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.netloc
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("provider endpoint must be one complete HTTP(S) URL")
+    if parsed.scheme == "http" and not _is_loopback_host(parsed.hostname):
+        raise ValueError("plain HTTP is permitted only for loopback endpoints")
+
+
+def _is_loopback_host(host: str) -> bool:
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _environment_int(name: str, default: int) -> int:

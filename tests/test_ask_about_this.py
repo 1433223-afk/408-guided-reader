@@ -13,13 +13,17 @@ import pytest
 from conftest import make_pdf
 from reader_service.agent_runtime import (
     AgentRuntime,
+    OpenAICompatibleAdapter,
     PayloadInspector,
     ProviderConfig,
     ProviderFailure,
     ProviderFailureKind,
+    ProviderResponse,
+    ProviderRuntimeSet,
 )
 from reader_service.agent_runtime.credentials import (
     DEEPSEEK_CREDENTIAL_TARGET,
+    PROVIDER_CREDENTIAL_TARGETS,
     CredentialRead,
     read_deepseek_api_key,
 )
@@ -61,6 +65,17 @@ class MockAdapter:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class NamedMockAdapter(MockAdapter):
+    def __init__(self, provider_name, outcomes=(), usage=None):
+        super().__init__(outcomes)
+        self.provider_name = provider_name
+        self.usage = usage
+
+    def complete(self, endpoint, api_key, body, timeout):
+        answer = super().complete(endpoint, api_key, body, timeout)
+        return ProviderResponse(answer, self.usage)
 
 
 def line(text: str, y: float) -> DetectedLine:
@@ -164,7 +179,7 @@ def selection_range(start_boundary: int, end_boundary: int) -> dict:
 def runtime(adapter, *, key="dev-secret-key", **overrides):
     config = ProviderConfig(
         endpoint="https://api.deepseek.test/chat/completions",
-        model="deepseek-chat",
+        model="deepseek-v4-pro",
         max_attempts=overrides.pop("max_attempts", 3),
         cooling_seconds=overrides.pop("cooling_seconds", 30),
         **overrides,
@@ -176,6 +191,42 @@ def runtime(adapter, *, key="dev-secret-key", **overrides):
         inspector=PayloadInspector(limit=8),
         sleeper=lambda _seconds: None,
     )
+
+
+def runtime_set(*, bakeoff_enabled, active_provider="deepseek", keys=None, outcomes=None):
+    keys = keys or {name: f"{name}-secret" for name in PROVIDER_CREDENTIAL_TARGETS}
+    outcomes = outcomes or {}
+    inspector = PayloadInspector(limit=20)
+    adapters = {}
+    runtimes = {}
+    for provider, target in PROVIDER_CREDENTIAL_TARGETS.items():
+        adapter = NamedMockAdapter(
+            provider,
+            outcomes.get(provider, (f"{provider} answer",)),
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+        adapters[provider] = adapter
+        defaults = ProviderConfig.from_environment(provider)
+        runtimes[provider] = AgentRuntime(
+            adapter,
+            config=ProviderConfig(
+                provider=provider,
+                endpoint=f"https://{provider}.test/chat/completions",
+                model=defaults.model,
+                credential_target=target,
+                max_tokens=defaults.max_tokens,
+                max_attempts=1,
+            ),
+            credential_loader=lambda name=provider: keys.get(name),
+            inspector=inspector,
+            sleeper=lambda _seconds: None,
+        )
+    return ProviderRuntimeSet(
+        runtimes,
+        active_provider=active_provider,
+        bakeoff_enabled=bakeoff_enabled,
+        inspector=inspector,
+    ), adapters
 
 
 def test_scope_resolution_is_honest_and_context_is_bounded(assistant_fixture):
@@ -354,6 +405,176 @@ def test_credential_target_and_development_disable(monkeypatch):
     assert read_deepseek_api_key() == "test-override"
     monkeypatch.setenv("GUIDED_READER_DEEPSEEK_DISABLED", "1")
     assert read_deepseek_api_key() is None
+
+
+def test_named_provider_defaults_targets_and_environment_overrides(monkeypatch):
+    expected = {
+        "deepseek": (
+            "deepseek-v4-pro",
+            "https://api.deepseek.com/chat/completions",
+            "408-guided-reader-deepseek",
+        ),
+        "zhipu": (
+            "GLM-5.3-Flash",
+            "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+            "408-guided-reader-zhipu",
+        ),
+        "openrouter": (
+            "google/gemini-3.8-flash",
+            "https://openrouter.ai/api/v1/chat/completions",
+            "408-guided-reader-openrouter",
+        ),
+    }
+    for provider, values in expected.items():
+        config = ProviderConfig.from_environment(provider)
+        assert (config.model, config.endpoint, config.credential_target) == values
+        config.validate()
+
+    monkeypatch.setenv("GUIDED_READER_ZHIPU_ENDPOINT", "https://zhipu.override/v4/chat/completions")
+    monkeypatch.setenv("GUIDED_READER_ZHIPU_MAX_TOKENS", "777")
+    overridden = ProviderConfig.from_environment("zhipu")
+    assert overridden.endpoint == "https://zhipu.override/v4/chat/completions"
+    assert overridden.max_tokens == 777
+    assert overridden.effective_config()["request_parameters"]["max_tokens"] == 777
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://provider.example/chat/completions",
+        "http://192.168.1.8/chat/completions",
+        "http://10.0.0.2/chat/completions",
+    ],
+)
+def test_plain_http_non_loopback_endpoint_is_rejected(endpoint):
+    with pytest.raises(ValueError, match="loopback"):
+        ProviderConfig(endpoint=endpoint).validate()
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://127.0.0.1:8080/chat/completions",
+        "http://localhost:8080/chat/completions",
+        "http://[::1]:8080/chat/completions",
+    ],
+)
+def test_plain_http_loopback_endpoint_remains_available_for_tests(endpoint):
+    ProviderConfig(endpoint=endpoint).validate()
+
+
+def test_dev_gate_off_routes_only_the_active_provider_and_refuses_comparison():
+    providers, adapters = runtime_set(bakeoff_enabled=False, active_provider="zhipu")
+    messages = [{"role": "user", "content": "same bounded context"}]
+    assert providers.complete(messages) == "zhipu answer"
+    assert len(adapters["zhipu"].calls) == 1
+    assert adapters["deepseek"].calls == []
+    assert adapters["openrouter"].calls == []
+    with pytest.raises(ProviderFailure) as caught:
+        providers.compare(messages, interaction_id="disabled")
+    assert caught.value.code == "bakeoff_disabled"
+    assert sum(len(adapter.calls) for adapter in adapters.values()) == 1
+
+
+def test_bakeoff_fans_out_identical_controlled_input_and_records_effective_config():
+    providers, adapters = runtime_set(bakeoff_enabled=True)
+    messages = [
+        {"role": "system", "content": SYSTEM_MESSAGE},
+        {"role": "user", "content": "PAGE\nOCR\n当前解释焦点：机器周期"},
+    ]
+    results = providers.compare(messages, interaction_id="comparison-1")
+    assert [result["provider"] for result in results] == ["deepseek", "zhipu", "openrouter"]
+    assert all(result["answer"] for result in results)
+    assert all(result["usage"]["total_tokens"] == 15 for result in results)
+    assert all(result["latency_ms"] >= 0 for result in results)
+    bodies = [adapters[name].calls[0]["body"] for name in ("deepseek", "zhipu", "openrouter")]
+    assert all(body["messages"] == messages for body in bodies)
+    assert {body["temperature"] for body in bodies} == {0.2}
+    assert [body["max_tokens"] for body in bodies] == [4096, 4096, 900]
+    assert [body["model"] for body in bodies] == [
+        "deepseek-v4-pro", "GLM-5.3-Flash", "google/gemini-3.8-flash"
+    ]
+    for result in results:
+        effective = result["effective_config"]
+        assert effective["intent"] == {
+            "answer_length": "concise", "reasoning_strength": "balanced"
+        }
+        assert effective["parameter_mapping"]["reasoning_strength"].startswith("omitted")
+    inspected = providers.inspector.snapshot()
+    assert {item["provider"] for item in inspected} == {
+        "deepseek", "zhipu", "openrouter"
+    }
+    inspected_text = json.dumps(inspected)
+    assert "-secret" not in inspected_text
+    assert "Authorization" not in inspected_text
+
+
+def test_bakeoff_missing_credential_and_provider_failure_are_isolated():
+    transient = ProviderFailure(
+        ProviderFailureKind.TRANSIENT, "network", "zhipu 暂时不可用。"
+    )
+    providers, adapters = runtime_set(
+        bakeoff_enabled=True,
+        keys={"deepseek": "deepseek-secret", "openrouter": "openrouter-secret"},
+        outcomes={"zhipu": (transient,)},
+    )
+    results = providers.compare(
+        [{"role": "user", "content": "bounded"}], interaction_id="missing-zhipu"
+    )
+    by_name = {result["provider"]: result for result in results}
+    assert by_name["zhipu"]["available"] is False
+    assert by_name["zhipu"]["error"]["kind"] == "UNCONFIGURED"
+    assert adapters["zhipu"].calls == []
+    assert by_name["deepseek"]["answer"] == "deepseek answer"
+    assert by_name["openrouter"]["answer"] == "openrouter answer"
+
+    failing, failing_adapters = runtime_set(
+        bakeoff_enabled=True,
+        outcomes={"zhipu": (transient,)},
+    )
+    isolated = {result["provider"]: result for result in failing.compare(
+        [{"role": "user", "content": "bounded"}], interaction_id="failing-zhipu"
+    )}
+    assert isolated["zhipu"]["error"]["kind"] == "TRANSIENT"
+    assert len(failing_adapters["zhipu"].calls) == 1
+    assert isolated["deepseek"]["answer"]
+    assert isolated["openrouter"]["answer"]
+
+
+def test_bakeoff_selection_is_memory_only_and_close_clears_it(assistant_fixture):
+    providers, adapters = runtime_set(bakeoff_enabled=True)
+    assistant = AssistantService(assistant_fixture["contexts"], providers)
+    comparison = assistant.bake_off_selection(
+        "reader-session-bakeoff",
+        assistant_fixture["revision_id"],
+        3,
+        **selection(3),
+    )
+    assert comparison["question"] == "总线事务"
+    assert comparison["scope"]["key"] == "SECTION:unique"
+    assert assistant.conversation_count() == 0
+    assert assistant.comparison_count() == 1
+    messages = [adapters[name].calls[0]["body"]["messages"] for name in PROVIDER_CREDENTIAL_TARGETS]
+    assert messages[0] == messages[1] == messages[2]
+    assert messages[0][0]["content"] == SYSTEM_MESSAGE
+    assert messages[0][-1]["content"].endswith("【当前解释焦点（用户所选）】\n总线事务")
+    typed = assistant.bake_off_selection(
+        "reader-session-bakeoff",
+        assistant_fixture["revision_id"],
+        3,
+        question="机器周期就等于总线周期？",
+        **selection(3),
+    )
+    assert typed["question"] == "机器周期就等于总线周期？"
+    assert typed["selected_text"] == "总线事务"
+    typed_messages = [adapters[name].calls[1]["body"]["messages"] for name in PROVIDER_CREDENTIAL_TARGETS]
+    assert typed_messages[0] == typed_messages[1] == typed_messages[2]
+    assert typed_messages[0][-1]["content"].endswith("【用户问题】\n机器周期就等于总线周期？")
+    assistant.close_session("reader-session-bakeoff")
+    assert assistant.comparison_count() == 0
+    with assistant_fixture["database"].connect() as connection:
+        names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert not any("benchmark" in name or "bake" in name or "comparison" in name for name in names)
 
 
 def test_invalid_provider_configuration_disables_only_ai():
@@ -537,6 +758,24 @@ def test_deepseek_http_failures_are_typed_and_remote_body_is_never_reflected(
     assert "top-secret-value" not in str(caught.value)
 
 
+def test_openrouter_model_region_failure_is_specific_and_secret_safe():
+    body = json.dumps({
+        "error": {"message": "This model is not available in your region top-secret-value"}
+    }).encode()
+    error = HTTPError(
+        "https://openrouter.ai/api/v1/chat/completions",
+        403,
+        "remote status",
+        {},
+        BytesIO(body),
+    )
+    with pytest.raises(ProviderFailure) as caught:
+        OpenAICompatibleAdapter("openrouter")._raise_http_failure(error)
+    assert caught.value.code == "model_region"
+    assert caught.value.kind is ProviderFailureKind.USER_ACTIONABLE
+    assert "top-secret-value" not in caught.value.user_message
+
+
 def test_deepseek_adapter_refuses_redirect_to_second_endpoint():
     hits = []
 
@@ -564,7 +803,7 @@ def test_deepseek_adapter_refuses_redirect_to_second_endpoint():
             DeepSeekAdapter().complete(
                 f"http://127.0.0.1:{server.server_port}/chat/completions",
                 "secret",
-                {"model": "deepseek-chat", "messages": []},
+                {"model": "deepseek-v4-pro", "messages": []},
                 2,
             )
     finally:

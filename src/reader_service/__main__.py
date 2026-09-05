@@ -7,7 +7,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
-from reader_service.agent_runtime import AgentRuntime, DeepSeekAdapter
+from reader_service.agent_runtime import ProviderRuntimeSet
 from reader_service.annotation import AnnotationRepository, AnnotationService
 from reader_service.assistant import AssistantContextBuilder, AssistantService
 from reader_service.library import LibraryService
@@ -65,7 +65,7 @@ def main() -> None:
     annotations = AnnotationService(foundation, AnnotationRepository(service.database))
     assistant = AssistantService(
         AssistantContextBuilder(foundation, outline),
-        AgentRuntime(DeepSeekAdapter()),
+        ProviderRuntimeSet.from_environment(),
     )
     preparation.start()
     server = ReaderServer(

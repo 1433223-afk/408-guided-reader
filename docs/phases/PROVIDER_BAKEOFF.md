@@ -53,10 +53,9 @@ observations.
   is permitted only for loopback endpoints; any endpoint that leaves the machine must be https.
   No dynamic provider registration, no marketplace, no user-added endpoints on the product path;
   environment endpoint override remains a development convenience exactly as today.
-- **The model set is frozen — it is the experiment's independent variable.** `deepseek` →
-  `deepseek-chat`; `zhipu` → `GLM-5.3-Flash`; `openrouter` → the Gemini Flash model available in the
-  user's current OpenRouter account, with its exact model slug verified and reported to the user for
-  confirmation **before** implementation. The implementer does not choose models. If `GLM-5.3-Flash`
+- **The model set is frozen — it is the experiment's independent variable.** The user-confirmed
+  preflight on 2026-09-05 fixed `deepseek` → `deepseek-v4-pro`; `zhipu` → `GLM-5.3-Flash`;
+  `openrouter` → `google/gemini-3.8-flash`. The implementer does not choose models. If `GLM-5.3-Flash`
   is not supported by the user's current Zhipu API/resource pack, stop and report — never substitute
   a lookalike model. Any model change after freezing goes through the user; otherwise the bake-off
   is not reproducible.
@@ -165,8 +164,7 @@ choice.
   adapter (not just configuration) is required.
 - The comparison gate cannot be kept cleanly out of the product path.
 - Any need to send anything beyond the identical bounded payload, or to persist comparison output.
-- The verified OpenRouter Gemini Flash model slug, before any comparison call — reported for the
-  user's confirmation.
+- Any requested change to the user-confirmed OpenRouter slug `google/gemini-3.8-flash`.
 - `GLM-5.3-Flash` being unavailable under the user's current Zhipu API/resource pack — stop; model
   substitution is not an implementation decision.
 - The bake-off recommendation itself — reported for the user's decision, never self-applied.

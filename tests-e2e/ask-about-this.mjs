@@ -33,7 +33,10 @@ const mockProvider = createServer(async (request, response) => {
     ? "因为总线事务需要让多个部件按约定完成一次可靠的数据交换。"
     : "一次总线事务，就是多个部件按约定完成地址、数据与控制的一次完整交换。";
   response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: answer } }] }));
+  response.end(JSON.stringify({
+    choices: [{ message: { role: "assistant", content: answer } }],
+    usage: { prompt_tokens: 42, completion_tokens: 18, total_tokens: 60 },
+  }));
 });
 await new Promise((resolve) => mockProvider.listen(0, "127.0.0.1", resolve));
 const providerEndpoint = `http://127.0.0.1:${mockProvider.address().port}/chat/completions`;
@@ -41,6 +44,11 @@ const providerEndpoint = `http://127.0.0.1:${mockProvider.address().port}/chat/c
 let running = await startService({
   GUIDED_READER_DEEPSEEK_API_KEY: "mock-secret-never-inspect",
   GUIDED_READER_DEEPSEEK_ENDPOINT: providerEndpoint,
+  GUIDED_READER_ZHIPU_API_KEY: "mock-zhipu-secret-never-inspect",
+  GUIDED_READER_ZHIPU_ENDPOINT: providerEndpoint,
+  GUIDED_READER_OPENROUTER_API_KEY: "mock-openrouter-secret-never-inspect",
+  GUIDED_READER_OPENROUTER_ENDPOINT: providerEndpoint,
+  GUIDED_READER_PROVIDER_BAKEOFF: "1",
 });
 let browser;
 try {
@@ -57,6 +65,10 @@ try {
   assert.equal(readyStatus.model_valid, true);
   assert.equal(readyStatus.cooling, false);
   assert.equal(readyStatus.ai_off_reason, null);
+  assert.equal(readyStatus.bakeoff_enabled, true);
+  assert.deepEqual(readyStatus.providers.map((provider) => provider.model), [
+    "deepseek-v4-pro", "GLM-5.3-Flash", "google/gemini-3.8-flash",
+  ]);
   assert.ok(!JSON.stringify(readyStatus).includes("mock-secret-never-inspect"));
   assert.equal(await page.locator("#ask-selection").isDisabled(), true,
     "Ask must remain unavailable without a selection");
@@ -109,6 +121,38 @@ try {
   assert.ok(!inspectedText.includes("mock-secret-never-inspect"));
   assert.ok(!inspectedText.includes("Authorization"));
   assert.ok(providerCalls.every((call) => call.method === "POST" && call.url === "/chat/completions"));
+
+  const comparedSelection = await selectLine(page, 302);
+  assert.equal(await page.locator("#compare-selection").isVisible(), true);
+  assert.equal(await page.locator("#compare-selection").isEnabled(), true);
+  await page.locator("#compare-question").fill("机器周期就等于总线周期？");
+  const compareResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/bake-off"));
+  await page.locator("#compare-selection").click();
+  const comparedHttp = await compareResponse;
+  assert.equal(comparedHttp.status(), 200);
+  const compared = (await comparedHttp.json()).comparison;
+  assert.equal(compared.question, "机器周期就等于总线周期？");
+  assert.equal(compared.selected_text, comparedSelection.text);
+  assert.deepEqual(compared.results.map((result) => result.provider), ["deepseek", "zhipu", "openrouter"]);
+  assert.deepEqual(compared.results.map((result) => result.model), [
+    "deepseek-v4-pro", "GLM-5.3-Flash", "google/gemini-3.8-flash",
+  ]);
+  assert.ok(compared.results.every((result) => result.answer && result.latency_ms >= 0));
+  assert.ok(compared.results.every((result) => result.usage.total_tokens === 60));
+  assert.equal(await page.locator(".bakeoff-card").count(), 3);
+  assert.equal(await page.locator("#assistant-follow-up").isHidden(), true);
+  await page.screenshot({ path: path.join(artifacts, "provider-bakeoff-panel.png"), fullPage: false });
+  const comparisonBodies = providerCalls.slice(2, 5).map((call) => call.body);
+  assert.ok(comparisonBodies.every((body) => JSON.stringify(body.messages) === JSON.stringify(comparisonBodies[0].messages)));
+  assert.ok(comparisonBodies[0].messages.at(-1).content.endsWith("【用户问题】\n机器周期就等于总线周期？"));
+  assert.deepEqual(comparisonBodies.map((body) => body.model).sort(), [
+    "GLM-5.3-Flash", "deepseek-v4-pro", "google/gemini-3.8-flash",
+  ]);
+  const comparedInspection = await json(page, "/api/assistant/inspection");
+  assert.deepEqual(comparedInspection.calls.slice(-3).map((call) => call.provider).sort(), [
+    "deepseek", "openrouter", "zhipu",
+  ]);
+  assert.ok(!JSON.stringify(comparedInspection).includes("secret-never-inspect"));
 
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
@@ -174,7 +218,9 @@ try {
   await page.locator("#outline-panel").waitFor({ state: "visible" });
   await page.locator("#search-toggle").click();
   await page.locator("#search-panel").waitFor({ state: "visible" });
-  assert.equal(providerCalls.length, 3, "AI-off attempted an implicit provider call");
+  assert.equal(providerCalls.length, 6, "AI-off attempted an implicit provider call");
+  assert.equal(await page.locator("#compare-selection").isHidden(), true,
+    "bake-off control leaked into the product path with the gate off");
 
   console.log(JSON.stringify({
     status: "PASS",
@@ -186,8 +232,13 @@ try {
     explicitPanelCloseClearedConversation: true,
     inspectedProviderCalls: inspection.calls.length,
     configuredEndpointOnly: providerEndpoint,
+    bakeoffModels: compared.results.map((result) => result.model),
+    bakeoffPayloadParity: true,
     aiOffPreservedReaderSelectionOutlineSearch: true,
-    screenshot: path.join(artifacts, "ask-about-this-panel.png"),
+    screenshots: [
+      path.join(artifacts, "ask-about-this-panel.png"),
+      path.join(artifacts, "provider-bakeoff-panel.png"),
+    ],
   }));
 } finally {
   if (browser) await browser.close();

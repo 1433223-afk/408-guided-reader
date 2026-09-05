@@ -175,7 +175,7 @@ class AssistantContextBuilder:
         }
 
 
-def provider_user_message(context: dict) -> str:
+def provider_user_message(context: dict, question: str | None = None) -> str:
     scope: ScopeResolution = context["scope"]
     lines = [
         "【教材定位（仅用于定位和消歧）】",
@@ -196,4 +196,6 @@ def provider_user_message(context: dict) -> str:
             context["selected_text"],
         ]
     )
+    if question:
+        lines.extend(["", "【用户问题】", question])
     return "\n".join(lines)

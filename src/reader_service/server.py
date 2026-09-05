@@ -42,6 +42,9 @@ _REVISION_ANNOTATION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)$"
 )
 _REVISION_ASSISTANT_ASK = re.compile(r"^/api/revisions/([0-9a-f-]+)/assistant/ask$")
+_REVISION_ASSISTANT_BAKEOFF = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/assistant/bake-off$"
+)
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
 _SESSION_COOKIE = "reader_launch"
 
@@ -92,6 +95,8 @@ def handler_factory(
                         "role": "ASSISTANT", "provider": "deepseek", "model": None,
                         "configured": False, "cooling": False,
                         "credential_target": "408-guided-reader-deepseek",
+                        "active_provider": "deepseek", "bakeoff_enabled": False,
+                        "providers": [],
                     })
                     return
                 self._json(HTTPStatus.OK, assistant.status())
@@ -236,6 +241,36 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            bakeoff_match = _REVISION_ASSISTANT_BAKEOFF.fullmatch(parsed.path)
+            if bakeoff_match:
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
+                    })
+                    return
+                try:
+                    payload = self._read_json()
+                    comparison = assistant.bake_off_selection(
+                        payload["reader_session_id"],
+                        bakeoff_match.group(1),
+                        int(payload["pdf_page_index"]),
+                        start=payload["start"],
+                        end=payload["end"],
+                        question=payload.get("question"),
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_BAKEOFF", "error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASK_CONTEXT_NOT_FOUND", "error": str(exc)})
+                    return
+                except ProviderFailure as exc:
+                    self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, {"comparison": comparison})
+                return
             ask_match = _REVISION_ASSISTANT_ASK.fullmatch(parsed.path)
             if ask_match:
                 if not self._authorized():

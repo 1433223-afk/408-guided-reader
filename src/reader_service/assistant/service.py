@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from reader_service.agent_runtime import AgentRuntime
+from reader_service.agent_runtime import AgentRuntime, ProviderFailure, ProviderFailureKind
 
 from .context import AssistantContextBuilder, ScopeResolution, provider_user_message
 from .skill import load_explanation_skill
@@ -52,11 +52,16 @@ class AssistantService:
         self.contexts = contexts
         self.runtime = runtime
         self._sessions: dict[str, dict[str, Conversation]] = {}
+        self._comparisons: dict[str, dict] = {}
         self._session_locks: dict[str, threading.Lock] = {}
         self._state_lock = threading.Lock()
 
     def status(self) -> dict:
-        return self.runtime.status()
+        status = self.runtime.status()
+        status.setdefault("bakeoff_enabled", False)
+        status.setdefault("active_provider", status.get("provider"))
+        status.setdefault("providers", [dict(status)])
+        return status
 
     def inspect_payloads(self) -> dict:
         return {"calls": self.runtime.inspector.snapshot()}
@@ -89,6 +94,48 @@ class AssistantService:
                 self._sessions.setdefault(session_id, {})[scope.key] = conversation
             return conversation.public()
 
+    def bake_off_selection(
+        self,
+        reader_session_id: str,
+        revision_id: str,
+        page_index: int,
+        *,
+        start: dict,
+        end: dict,
+        question: str | None = None,
+    ) -> dict:
+        session_id = self._validate_session_id(reader_session_id)
+        compare = getattr(self.runtime, "compare", None)
+        if compare is None:
+            raise ProviderFailure(
+                ProviderFailureKind.UNCONFIGURED,
+                "bakeoff_disabled",
+                "Provider Bake-off 未启用。",
+            )
+        context = self.contexts.build(revision_id, page_index, start=start, end=end)
+        scope: ScopeResolution = context["scope"]
+        visible_message = (
+            self._validate_question(question) if question is not None else context["selected_text"]
+        )
+        user_content = provider_user_message(
+            context, visible_message if question is not None else None
+        )
+        messages = self._messages(Conversation(str(uuid4()), scope), user_content)
+        comparison_id = str(uuid4())
+        results = compare(messages, interaction_id=comparison_id)
+        comparison = {
+            "comparison_id": comparison_id,
+            "scope": scope.public(),
+            "question": visible_message,
+            "selected_text": context["selected_text"],
+            "results": results,
+        }
+        lock = self._lock_for(session_id)
+        with lock:
+            with self._state_lock:
+                self._comparisons[session_id] = comparison
+        return comparison
+
     def follow_up(
         self, reader_session_id: str, conversation_id: str, question: str
     ) -> dict:
@@ -110,10 +157,15 @@ class AssistantService:
         with lock:
             with self._state_lock:
                 self._sessions.pop(session_id, None)
+                self._comparisons.pop(session_id, None)
 
     def conversation_count(self) -> int:
         with self._state_lock:
             return sum(len(values) for values in self._sessions.values())
+
+    def comparison_count(self) -> int:
+        with self._state_lock:
+            return len(self._comparisons)
 
     def _messages(self, conversation: Conversation, new_user_content: str) -> list[dict]:
         messages = [{"role": "system", "content": SYSTEM_MESSAGE}]

@@ -5,15 +5,18 @@ import socket
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-from .runtime import ProviderFailure, ProviderFailureKind
+from .runtime import ProviderFailure, ProviderFailureKind, ProviderResponse
 
 
-class DeepSeekAdapter:
-    """Thin OpenAI-compatible DeepSeek chat-completions adapter."""
+class OpenAICompatibleAdapter:
+    """Thin adapter for the named providers' OpenAI-compatible chat endpoint."""
 
-    provider_name = "deepseek"
+    def __init__(self, provider_name: str):
+        self.provider_name = provider_name
 
-    def complete(self, endpoint: str, api_key: str, body: dict, timeout: float) -> str:
+    def complete(
+        self, endpoint: str, api_key: str, body: dict, timeout: float
+    ) -> ProviderResponse:
         request = Request(
             endpoint,
             data=json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
@@ -34,6 +37,12 @@ class DeepSeekAdapter:
                 payload = json.load(response)
         except HTTPError as error:
             self._raise_http_failure(error)
+        except (ValueError, TypeError, UnicodeDecodeError) as error:
+            raise ProviderFailure(
+                ProviderFailureKind.TRANSIENT,
+                "invalid_response",
+                "AI 服务返回了无法读取的结果，请稍后再试。",
+            ) from error
         except (TimeoutError, socket.timeout, URLError, OSError) as error:
             raise ProviderFailure(
                 ProviderFailureKind.TRANSIENT,
@@ -55,10 +64,9 @@ class DeepSeekAdapter:
                 "empty_response",
                 "AI 服务没有返回解释，请稍后再试。",
             )
-        return answer.strip()
+        return ProviderResponse(answer=answer.strip(), usage=self._safe_usage(payload.get("usage")))
 
-    @staticmethod
-    def _raise_http_failure(error: HTTPError) -> None:
+    def _raise_http_failure(self, error: HTTPError) -> None:
         # The remote body is used only for coarse classification and is never logged,
         # inspected, or reflected into the UI.
         try:
@@ -68,17 +76,28 @@ class DeepSeekAdapter:
         except (AttributeError, TypeError, ValueError, OSError):
             message = ""
         status = int(error.code)
+        label = {
+            "deepseek": "DeepSeek",
+            "zhipu": "智谱 GLM",
+            "openrouter": "OpenRouter",
+        }.get(self.provider_name, "AI provider")
+        if status == 403 and "model" in message and "region" in message:
+            raise ProviderFailure(
+                ProviderFailureKind.USER_ACTIONABLE,
+                "model_region",
+                f"{label} 当前地区无法访问所选模型；未更换模型或启用代理。",
+            ) from error
         if status in (401, 403):
             raise ProviderFailure(
                 ProviderFailureKind.USER_ACTIONABLE,
                 "auth",
-                "DeepSeek API 密钥无效或无权访问，请检查 Windows 凭据后重试。",
+                f"{label} API 密钥无效或无权访问，请检查 Windows 凭据后重试。",
             ) from error
         if status == 402 or any(word in message for word in ("quota", "balance", "billing", "insufficient")):
             raise ProviderFailure(
                 ProviderFailureKind.USER_ACTIONABLE,
                 "quota",
-                "DeepSeek 额度或余额不足，请处理账户额度后重试。",
+                f"{label} 额度或余额不足，请处理账户额度后重试。",
             ) from error
         if status == 429 or status == 408 or 500 <= status < 600:
             raise ProviderFailure(
@@ -89,8 +108,30 @@ class DeepSeekAdapter:
         raise ProviderFailure(
             ProviderFailureKind.USER_ACTIONABLE,
             "provider_request",
-            "DeepSeek 拒绝了本次请求，请检查模型与账户配置。",
+            f"{label} 拒绝了本次请求，请检查模型与账户配置。",
         ) from error
+
+    @staticmethod
+    def _safe_usage(value: object) -> dict | None:
+        if not isinstance(value, dict):
+            return None
+        usage = {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            item = value.get(key)
+            if isinstance(item, int) and item >= 0:
+                usage[key] = item
+        return usage or None
+
+
+class DeepSeekAdapter(OpenAICompatibleAdapter):
+    """Compatibility name retained for the original Ask About This tests/API."""
+
+    def __init__(self):
+        super().__init__("deepseek")
+
+    @staticmethod
+    def _raise_http_failure(error: HTTPError) -> None:
+        OpenAICompatibleAdapter("deepseek")._raise_http_failure(error)
 
 
 class _NoRedirect(HTTPRedirectHandler):
