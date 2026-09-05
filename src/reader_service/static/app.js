@@ -7,7 +7,7 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-panel", "assistant-title", "assistant-close", "assistant-scope", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "selection-actions", "copy-selection", "ask-selection", "compare-question", "compare-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-title", "assistant-model", "assistant-close", "assistant-scope", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -27,14 +27,16 @@ const state = {
   searchRequest: 0, searchMatch: null,
   outlineRequest: 0, outlineNodes: [], pageLabels: new Map(), mapTimer: 0,
   readerSessionId: null, assistantConfigured: false, assistantCooling: false,
-  assistantActiveProvider: "deepseek",
+  assistantActiveProvider: "deepseek", assistantModelSelectionInitialized: false,
   assistantStatusAvailable: false, assistantOffReason: null,
-  assistantConversation: null, assistantComparison: null,
-  assistantBakeoffEnabled: false, assistantProviderStatuses: [],
+  assistantConversation: null, assistantProviderStatuses: [],
   assistantPending: false, assistantStatusTimer: 0,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+const ASSISTANT_PROVIDER_LABELS = {
+  deepseek: "DeepSeek", zhipu: "Zhipu", openrouter: "OpenRouter",
+};
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -172,7 +174,6 @@ async function openBook(book) {
   state.revision = book.active_revision;
   state.readerSessionId = crypto.randomUUID();
   state.assistantConversation = null;
-  state.assistantComparison = null;
   state.zoom = state.revision.position.zoom || 1;
   state.currentPage = state.revision.position.pdf_page_index || 0;
   state.pdf = null;
@@ -218,12 +219,12 @@ function closeReader() {
   state.pdf = null;
   state.readerSessionId = null;
   state.assistantConversation = null;
-  state.assistantComparison = null;
   elements.reader.hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-panel"].hidden = true;
   elements["outline-panel"].hidden = true;
   elements["assistant-panel"].hidden = true;
+  elements["assistant-toggle"].setAttribute("aria-expanded", "false");
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
@@ -936,13 +937,12 @@ async function refreshAssistantStatus() {
   try {
     const status = await api("/api/assistant/status");
     state.assistantStatusAvailable = true;
-    state.assistantConfigured = Boolean(status.configured);
-    state.assistantCooling = Boolean(status.cooling);
-    state.assistantOffReason = status.ai_off_reason || null;
-    state.assistantActiveProvider = status.active_provider || status.provider || "provider";
-    state.assistantBakeoffEnabled = Boolean(status.bakeoff_enabled);
     state.assistantProviderStatuses = Array.isArray(status.providers) ? status.providers : [];
-    syncAskEligibility();
+    if (!state.assistantModelSelectionInitialized) {
+      state.assistantActiveProvider = status.active_provider || status.provider || "deepseek";
+      state.assistantModelSelectionInitialized = true;
+    }
+    applySelectedProviderStatus();
     if (state.assistantCooling) {
       state.assistantStatusTimer = setTimeout(
         refreshAssistantStatus,
@@ -954,10 +954,43 @@ async function refreshAssistantStatus() {
     state.assistantConfigured = false;
     state.assistantCooling = false;
     state.assistantOffReason = "STATUS_UNAVAILABLE";
-    state.assistantBakeoffEnabled = false;
     state.assistantProviderStatuses = [];
+    syncModelSelector();
     syncAskEligibility();
   }
+}
+
+function selectedProviderStatus() {
+  return state.assistantProviderStatuses.find(
+    (provider) => provider.provider === state.assistantActiveProvider
+  ) || null;
+}
+
+function syncModelSelector() {
+  for (const option of elements["assistant-model"].options) {
+    const status = state.assistantProviderStatuses.find(
+      (provider) => provider.provider === option.value
+    );
+    if (status?.model) {
+      option.textContent = `${ASSISTANT_PROVIDER_LABELS[option.value]} · ${status.model}`;
+    }
+  }
+  elements["assistant-model"].value = state.assistantActiveProvider;
+  elements["assistant-model"].disabled = Boolean(
+    state.assistantConversation || state.assistantPending
+  );
+  elements["assistant-model"].title = state.assistantConversation
+    ? "当前临时对话已固定使用此模型；关闭对话后可重新选择"
+    : "选择下一段临时 AI 对话使用的模型";
+}
+
+function applySelectedProviderStatus() {
+  const selected = selectedProviderStatus();
+  state.assistantConfigured = Boolean(selected?.configured);
+  state.assistantCooling = Boolean(selected?.cooling);
+  state.assistantOffReason = selected?.ai_off_reason || null;
+  syncModelSelector();
+  syncAskEligibility();
 }
 
 function syncAskEligibility() {
@@ -986,23 +1019,9 @@ function syncAskEligibility() {
     ask.title = "使用当前教材上下文提问";
   }
   ask.setAttribute("aria-disabled", String(ask.disabled));
-  const compare = elements["compare-selection"];
-  const comparisonReady = state.assistantProviderStatuses.some(
-    (provider) => provider.configured && !provider.cooling
-  );
-  compare.hidden = !state.assistantBakeoffEnabled;
-  elements["compare-question"].hidden = !state.assistantBakeoffEnabled;
-  compare.disabled = !hasSelection || !comparisonReady || state.assistantPending;
-  compare.title = !hasSelection
-    ? "请先选择当前教材页中的文字"
-    : comparisonReady
-      ? "用相同实验输入比较三个冻结模型的首答"
-      : "三个命名 provider 当前均不可用";
-  compare.setAttribute("aria-disabled", String(compare.disabled));
 }
 
 function resetAssistantPanel() {
-  elements["assistant-panel"].classList.remove("bakeoff");
   elements["assistant-title"].textContent = "问 AI";
   elements["assistant-scope"].textContent = state.assistantConfigured
     ? "等待教材选区" : "当前 AI provider 未配置，Reader 其余功能仍可使用";
@@ -1010,13 +1029,14 @@ function resetAssistantPanel() {
   elements["assistant-empty"].hidden = false;
   elements["assistant-follow-up"].hidden = true;
   elements["assistant-question"].value = "";
-  elements["compare-question"].value = "";
   state.assistantPending = false;
-  state.assistantComparison = null;
+  state.assistantConversation = null;
+  syncModelSelector();
 }
 
 function openAssistantPanel() {
   elements["assistant-panel"].hidden = false;
+  elements["assistant-toggle"].setAttribute("aria-expanded", "true");
   elements["search-panel"].hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-toggle"].setAttribute("aria-expanded", "false");
@@ -1034,10 +1054,10 @@ function assistantScopeText(scope) {
 }
 
 function renderAssistantConversation(conversation) {
-  elements["assistant-panel"].classList.remove("bakeoff");
   elements["assistant-title"].textContent = "问 AI";
   state.assistantConversation = conversation;
-  state.assistantComparison = null;
+  state.assistantActiveProvider = conversation.provider;
+  syncModelSelector();
   elements["assistant-scope"].textContent = assistantScopeText(conversation.scope);
   const turns = conversation.turns.map((turn) => {
     const article = document.createElement("article");
@@ -1057,52 +1077,6 @@ function renderAssistantConversation(conversation) {
   requestAnimationFrame(() => {
     elements["assistant-turns"].scrollTop = elements["assistant-turns"].scrollHeight;
   });
-}
-
-function formatUsage(usage) {
-  if (!usage) return "用量：unavailable";
-  const values = [
-    ["输入", usage.prompt_tokens], ["输出", usage.completion_tokens], ["合计", usage.total_tokens],
-  ].filter(([, value]) => Number.isInteger(value));
-  return values.length ? `用量：${values.map(([label, value]) => `${label} ${value}`).join(" · ")}` : "用量：unavailable";
-}
-
-function renderBakeoff(comparison) {
-  state.assistantConversation = null;
-  state.assistantComparison = comparison;
-  elements["assistant-panel"].classList.add("bakeoff");
-  elements["assistant-title"].textContent = "三模型首答对比";
-  const experimentLabel = comparison.question === comparison.selected_text
-    ? `同一选区「${comparison.selected_text}」`
-    : `选区「${comparison.selected_text}」 · 同一问题「${comparison.question}」`;
-  elements["assistant-scope"].textContent = `${assistantScopeText(comparison.scope)} · ${experimentLabel}`;
-  const cards = comparison.results.map((result) => {
-    const card = document.createElement("article");
-    card.className = "bakeoff-card";
-    const heading = document.createElement("h3");
-    heading.textContent = result.provider;
-    const model = document.createElement("p");
-    model.className = "bakeoff-model";
-    model.textContent = result.model;
-    const metrics = document.createElement("p");
-    metrics.className = "bakeoff-metrics";
-    metrics.textContent = `${result.latency_ms === null ? "延迟：unavailable" : `延迟：${result.latency_ms} ms`} · ${formatUsage(result.usage)}`;
-    const answer = document.createElement("p");
-    answer.className = result.error ? "assistant-error" : "assistant-answer-bubble";
-    answer.textContent = result.error?.message || result.answer || "未返回答案";
-    const config = document.createElement("details");
-    config.className = "bakeoff-config";
-    const summary = document.createElement("summary");
-    summary.textContent = "effective config";
-    const pre = document.createElement("pre");
-    pre.textContent = JSON.stringify(result.effective_config, null, 2);
-    config.append(summary, pre);
-    card.append(heading, model, metrics, answer, config);
-    return card;
-  });
-  elements["assistant-turns"].replaceChildren(...cards);
-  elements["assistant-empty"].hidden = true;
-  elements["assistant-follow-up"].hidden = true;
 }
 
 function showAssistantPending(question) {
@@ -1135,14 +1109,15 @@ async function askSelectedText() {
   }
   const request = {
     reader_session_id: readerSessionId,
+    provider: state.assistantActiveProvider,
     pdf_page_index: selection.pageIndex,
     start: { line_ordinal: selection.anchor.lineOrdinal, boundary: selection.anchor.boundary },
     end: { line_ordinal: selection.focus.lineOrdinal, boundary: selection.focus.boundary },
   };
   openAssistantPanel();
-  elements["assistant-panel"].classList.remove("bakeoff");
   elements["assistant-title"].textContent = "问 AI";
   state.assistantPending = true;
+  syncModelSelector();
   showAssistantPending(selectedText);
   clearSelection();
   try {
@@ -1160,44 +1135,7 @@ async function askSelectedText() {
     }
   } finally {
     state.assistantPending = false;
-  }
-}
-
-async function compareSelectedText() {
-  const selection = state.selection;
-  const revisionId = state.revision?.id;
-  const readerSessionId = state.readerSessionId;
-  const selectedText = resolvedText(selection?.resolved || []).trim();
-  if (!selection?.resolved.length || !selectedText || !revisionId || !readerSessionId || state.assistantPending) return;
-  const request = {
-    reader_session_id: readerSessionId,
-    pdf_page_index: selection.pageIndex,
-    start: { line_ordinal: selection.anchor.lineOrdinal, boundary: selection.anchor.boundary },
-    end: { line_ordinal: selection.focus.lineOrdinal, boundary: selection.focus.boundary },
-  };
-  const comparisonQuestion = elements["compare-question"].value.trim();
-  if (comparisonQuestion) request.question = comparisonQuestion;
-  openAssistantPanel();
-  elements["assistant-panel"].classList.add("bakeoff");
-  elements["assistant-title"].textContent = "三模型首答对比";
-  state.assistantPending = true;
-  syncAskEligibility();
-  showAssistantPending(selectedText);
-  clearSelection();
-  try {
-    const payload = await api(`/api/revisions/${revisionId}/assistant/bake-off`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-    });
-    if (state.readerSessionId !== readerSessionId) return;
-    renderBakeoff(payload.comparison);
-    elements["compare-question"].value = "";
-  } catch (error) {
-    if (state.readerSessionId === readerSessionId) showAssistantError(error);
-  } finally {
-    state.assistantPending = false;
-    syncAskEligibility();
+    syncModelSelector();
   }
 }
 
@@ -1243,7 +1181,6 @@ async function clearAssistantSession({ keepalive = false } = {}) {
     keepalive,
   });
   state.assistantConversation = null;
-  state.assistantComparison = null;
   resetAssistantPanel();
 }
 
@@ -1650,6 +1587,7 @@ elements["search-toggle"].addEventListener("click", () => {
   elements["search-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
     elements["assistant-panel"].hidden = true;
+    elements["assistant-toggle"].setAttribute("aria-expanded", "false");
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-panel"].hidden = true;
@@ -1686,6 +1624,7 @@ elements["marks-toggle"].addEventListener("click", () => {
   elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
     elements["assistant-panel"].hidden = true;
+    elements["assistant-toggle"].setAttribute("aria-expanded", "false");
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["search-panel"].hidden = true;
@@ -1701,12 +1640,31 @@ elements["marks-close"].addEventListener("click", () => {
 });
 elements["copy-selection"].addEventListener("click", copySelection);
 elements["ask-selection"].addEventListener("click", askSelectedText);
-elements["compare-selection"].addEventListener("click", compareSelectedText);
+elements["assistant-toggle"].addEventListener("click", () => {
+  const opening = elements["assistant-panel"].hidden;
+  if (opening) {
+    openAssistantPanel();
+  } else {
+    elements["assistant-panel"].hidden = true;
+    elements["assistant-toggle"].setAttribute("aria-expanded", "false");
+    elements.viewer.focus({ preventScroll: true });
+  }
+});
+elements["assistant-model"].addEventListener("change", () => {
+  if (state.assistantConversation || state.assistantPending) {
+    syncModelSelector();
+    return;
+  }
+  state.assistantActiveProvider = elements["assistant-model"].value;
+  applySelectedProviderStatus();
+  resetAssistantPanel();
+});
 elements["assistant-close"].addEventListener("click", async () => {
   elements["assistant-close"].disabled = true;
   try {
     await clearAssistantSession();
     elements["assistant-panel"].hidden = true;
+    elements["assistant-toggle"].setAttribute("aria-expanded", "false");
     elements.viewer.focus({ preventScroll: true });
   } catch (_error) {
     announce("临时 AI 对话未能清除，请重试。", true);

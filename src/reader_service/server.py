@@ -288,6 +288,7 @@ def handler_factory(
                         int(payload["pdf_page_index"]),
                         start=payload["start"],
                         end=payload["end"],
+                        provider=payload.get("provider"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASK", "error": str(exc)})

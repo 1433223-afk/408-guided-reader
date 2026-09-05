@@ -70,9 +70,24 @@ try {
     "deepseek-v4-pro", "GLM-5.3-Flash", "google/gemini-3.8-flash",
   ]);
   assert.ok(!JSON.stringify(readyStatus).includes("mock-secret-never-inspect"));
+  assert.equal(await page.locator("#compare-selection").count(), 0,
+    "dev bake-off control must not occupy the Reader selection menu");
+  assert.equal(await page.locator(".bakeoff-card").count(), 0,
+    "dev bake-off cards must not exist in the normal Assistant UI");
+  await page.locator("#assistant-toggle").click();
+  await page.locator("#assistant-panel").waitFor({ state: "visible" });
+  await page.locator("#assistant-model").selectOption("zhipu");
+  assert.equal(await page.locator("#assistant-model").inputValue(), "zhipu");
+  await page.locator("#assistant-toggle").click();
+  await page.locator("#assistant-panel").waitFor({ state: "hidden" });
   assert.equal(await page.locator("#ask-selection").isDisabled(), true,
     "Ask must remain unavailable without a selection");
   const selected = await selectLine(page, 302);
+  const selectionMenuBox = await page.locator("#selection-actions").boundingBox();
+  assert.ok(selectionMenuBox.width < 390,
+    `selection actions expanded into a Reader-blocking overlay (${selectionMenuBox.width}px)`);
+  assert.ok((await page.evaluate(() => window.getSelection()?.toString().trim().length || 0)) > 0,
+    "right-click did not preserve the Reader text selection");
   assert.equal(await page.locator("#ask-selection").isEnabled(), true,
     "configured Ask was not enabled for a valid selection");
   const askResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
@@ -87,6 +102,9 @@ try {
   assert.equal(asked.conversation.scope.key, "PAGE:302");
   assert.equal(asked.conversation.scope.section_title, null);
   assert.equal(asked.conversation.scope.chapter_title, "第6章 总线");
+  assert.equal(asked.conversation.provider, "zhipu");
+  assert.equal(asked.conversation.model, "GLM-5.3-Flash");
+  assert.equal(askRequest.provider, "zhipu");
   assert.equal(asked.conversation.turns[0].question, selected.text);
   assert.equal(await page.locator(".assistant-question-bubble").first().textContent(), selected.text);
   assert.equal(Object.hasOwn(askRequest, "question"), false,
@@ -98,7 +116,11 @@ try {
   await page.locator("#assistant-send").click();
   const followed = await (await followResponse).json();
   assert.equal(followed.conversation.conversation_id, asked.conversation.conversation_id);
+  assert.equal(followed.conversation.provider, "zhipu");
+  assert.equal(followed.conversation.model, "GLM-5.3-Flash");
   assert.equal(followed.conversation.turns.length, 2);
+  assert.equal(await page.locator("#assistant-model").isDisabled(), true,
+    "an active conversation must keep its original model");
   await page.locator(".assistant-answer-bubble").getByText("可靠的数据交换", { exact: false }).waitFor();
   assert.equal(await page.locator("#assistant-panel #ask-selection").count(), 0,
     "Assistant answer text exposed a new-Ask affordance");
@@ -121,38 +143,8 @@ try {
   assert.ok(!inspectedText.includes("mock-secret-never-inspect"));
   assert.ok(!inspectedText.includes("Authorization"));
   assert.ok(providerCalls.every((call) => call.method === "POST" && call.url === "/chat/completions"));
-
-  const comparedSelection = await selectLine(page, 302);
-  assert.equal(await page.locator("#compare-selection").isVisible(), true);
-  assert.equal(await page.locator("#compare-selection").isEnabled(), true);
-  await page.locator("#compare-question").fill("机器周期就等于总线周期？");
-  const compareResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/bake-off"));
-  await page.locator("#compare-selection").click();
-  const comparedHttp = await compareResponse;
-  assert.equal(comparedHttp.status(), 200);
-  const compared = (await comparedHttp.json()).comparison;
-  assert.equal(compared.question, "机器周期就等于总线周期？");
-  assert.equal(compared.selected_text, comparedSelection.text);
-  assert.deepEqual(compared.results.map((result) => result.provider), ["deepseek", "zhipu", "openrouter"]);
-  assert.deepEqual(compared.results.map((result) => result.model), [
-    "deepseek-v4-pro", "GLM-5.3-Flash", "google/gemini-3.8-flash",
-  ]);
-  assert.ok(compared.results.every((result) => result.answer && result.latency_ms >= 0));
-  assert.ok(compared.results.every((result) => result.usage.total_tokens === 60));
-  assert.equal(await page.locator(".bakeoff-card").count(), 3);
-  assert.equal(await page.locator("#assistant-follow-up").isHidden(), true);
-  await page.screenshot({ path: path.join(artifacts, "provider-bakeoff-panel.png"), fullPage: false });
-  const comparisonBodies = providerCalls.slice(2, 5).map((call) => call.body);
-  assert.ok(comparisonBodies.every((body) => JSON.stringify(body.messages) === JSON.stringify(comparisonBodies[0].messages)));
-  assert.ok(comparisonBodies[0].messages.at(-1).content.endsWith("【用户问题】\n机器周期就等于总线周期？"));
-  assert.deepEqual(comparisonBodies.map((body) => body.model).sort(), [
-    "GLM-5.3-Flash", "deepseek-v4-pro", "google/gemini-3.8-flash",
-  ]);
-  const comparedInspection = await json(page, "/api/assistant/inspection");
-  assert.deepEqual(comparedInspection.calls.slice(-3).map((call) => call.provider).sort(), [
-    "deepseek", "openrouter", "zhipu",
-  ]);
-  assert.ok(!JSON.stringify(comparedInspection).includes("secret-never-inspect"));
+  assert.deepEqual(inspection.calls.map((call) => call.provider), ["zhipu", "zhipu"]);
+  assert.deepEqual(providerCalls.map((call) => call.body.model), ["GLM-5.3-Flash", "GLM-5.3-Flash"]);
 
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
@@ -174,6 +166,10 @@ try {
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   await openBook(page, 29);
+  await page.locator("#assistant-toggle").click();
+  assert.equal(await page.locator("#assistant-model").inputValue(), "zhipu",
+    "a new Reader conversation should inherit the current in-page model selection");
+  await page.locator("#assistant-toggle").click();
   await selectLine(page, 0);
   const fallbackResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#ask-selection").click();
@@ -183,6 +179,8 @@ try {
   assert.equal(fallback.conversation.scope.kind, "PAGE");
   assert.equal(fallback.conversation.scope.key, "PAGE:0");
   assert.equal(fallback.conversation.scope.section_title, null);
+  assert.equal(fallback.conversation.provider, "zhipu");
+  assert.equal(fallback.conversation.model, "GLM-5.3-Flash");
   assert.match(await page.locator("#assistant-scope").textContent(), /^PDF 第 1 页范围/);
   const fallbackPayload = JSON.stringify(providerCalls.at(-1).body);
   assert.ok(!fallbackPayload.includes("已安全确定的节标题"));
@@ -218,8 +216,8 @@ try {
   await page.locator("#outline-panel").waitFor({ state: "visible" });
   await page.locator("#search-toggle").click();
   await page.locator("#search-panel").waitFor({ state: "visible" });
-  assert.equal(providerCalls.length, 6, "AI-off attempted an implicit provider call");
-  assert.equal(await page.locator("#compare-selection").isHidden(), true,
+  assert.equal(providerCalls.length, 3, "AI-off attempted an implicit provider call");
+  assert.equal(await page.locator("#compare-selection").count(), 0,
     "bake-off control leaked into the product path with the gate off");
 
   console.log(JSON.stringify({
@@ -232,12 +230,12 @@ try {
     explicitPanelCloseClearedConversation: true,
     inspectedProviderCalls: inspection.calls.length,
     configuredEndpointOnly: providerEndpoint,
-    bakeoffModels: compared.results.map((result) => result.model),
-    bakeoffPayloadParity: true,
+    selectedProviderOnly: "zhipu",
+    selectionContextMenuUnobstructed: true,
+    bakeoffUiAbsent: true,
     aiOffPreservedReaderSelectionOutlineSearch: true,
     screenshots: [
       path.join(artifacts, "ask-about-this-panel.png"),
-      path.join(artifacts, "provider-bakeoff-panel.png"),
     ],
   }));
 } finally {

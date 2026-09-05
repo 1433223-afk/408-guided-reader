@@ -476,6 +476,59 @@ def test_dev_gate_off_routes_only_the_active_provider_and_refuses_comparison():
     assert sum(len(adapter.calls) for adapter in adapters.values()) == 1
 
 
+def test_selected_provider_is_the_only_call_and_follow_up_stays_pinned(assistant_fixture):
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    assistant = AssistantService(assistant_fixture["contexts"], providers)
+    revision_id = assistant_fixture["revision_id"]
+
+    first = assistant.ask_selection(
+        "reader-session-model-select",
+        revision_id,
+        3,
+        provider="zhipu",
+        **selection(3),
+    )
+    assert first["provider"] == "zhipu"
+    assert first["model"] == "GLM-5.3-Flash"
+    followed = assistant.follow_up(
+        "reader-session-model-select", first["conversation_id"], "为什么？"
+    )
+    assert followed["provider"] == "zhipu"
+    assert followed["conversation_id"] == first["conversation_id"]
+    assert len(adapters["zhipu"].calls) == 2
+    assert adapters["deepseek"].calls == []
+    assert adapters["openrouter"].calls == []
+
+    replacement = assistant.ask_selection(
+        "reader-session-model-select",
+        revision_id,
+        3,
+        provider="deepseek",
+        **selection(3),
+    )
+    assert replacement["provider"] == "deepseek"
+    assert replacement["model"] == "deepseek-v4-pro"
+    assert replacement["conversation_id"] != first["conversation_id"]
+    assert len(replacement["turns"]) == 1
+    assert len(adapters["deepseek"].calls) == 1
+    assert adapters["openrouter"].calls == []
+
+
+def test_unknown_selected_provider_is_rejected_without_network(assistant_fixture):
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    assistant = AssistantService(assistant_fixture["contexts"], providers)
+    with pytest.raises(ProviderFailure) as caught:
+        assistant.ask_selection(
+            "reader-session-invalid-model",
+            assistant_fixture["revision_id"],
+            3,
+            provider="not-a-provider",
+            **selection(3),
+        )
+    assert caught.value.code == "invalid_active_provider"
+    assert all(adapter.calls == [] for adapter in adapters.values())
+
+
 def test_bakeoff_fans_out_identical_controlled_input_and_records_effective_config():
     providers, adapters = runtime_set(bakeoff_enabled=True)
     messages = [

@@ -2,17 +2,18 @@
 
 ## Result
 
-`IMPLEMENTATION_READY` — the Reader now has exactly three named provider profiles and a development-
-gated, default-off comparison action. A real selection can produce three isolated first-answer
-columns with provider/model, latency, returned token usage, endpoint, and effective configuration.
-Normal Ask About This still contacts only the configured active provider and retains its existing
-scope, same-level follow-up, AI-off, and memory-only lifecycle.
+`READY_FOR_USER_RETEST` — implementation remains in the same open Provider Bake-off Phase after a
+user-acceptance correction. The normal Reader now exposes one compact model selector in the
+Assistant panel and makes exactly one provider call per turn. The selected provider/model is pinned
+to the memory-only conversation, including every follow-up. The former comparison input/button and
+three-column panel no longer exist in the Reader UI; the gated comparison endpoint remains available
+only to the development benchmark harness.
+
+`PHASE_STATUS: OPEN`
 
 `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING: OPENROUTER_MODEL_REGION_ACCESS`
 
-`READY_FOR_USER_MODEL_EVALUATION`
-
-`READY_FOR_NARROW_ZCODE_REVIEW`
+`READY_FOR_USER_RETEST`
 
 The final 348-page run produced 10/10 answers from DeepSeek and 10/10 from Zhipu. OpenRouter returned
 HTTP 403 `model_region` for the frozen `google/gemini-3.8-flash` model on every direct attempt outside
@@ -23,20 +24,32 @@ and no winner/default-provider decision is recorded.
 ## Implemented
 
 - The named set is closed to `deepseek`, `zhipu`, and `openrouter`, with fixed credential targets and
-  the user-confirmed model IDs. `GUIDED_READER_ASSISTANT_PROVIDER` selects one normal-path provider;
-  its default remains `deepseek`.
+  the user-confirmed model IDs. `GUIDED_READER_ASSISTANT_PROVIDER` still supplies the initial model;
+  its default remains `deepseek` and was not changed.
 - One OpenAI-compatible/Bearer adapter serves the three fixed profiles. Redirects remain refused,
   environment/system proxies remain ignored, remote response bodies remain off logs/UI/inspection,
   and only bounded usage fields are returned.
-- `GUIDED_READER_PROVIDER_BAKEOFF=1` enables the comparison endpoint and UI. With the gate off, the
-  comparison control and optional same-question field are hidden and the comparison endpoint refuses
-  calls before egress.
+- The Assistant header contains one compact selector for the three exact models. A small `AI` toolbar
+  button opens the panel before a selection so the user can choose first; ordinary selection → right-
+  click → `问 AI` remains the primary Reader-native flow.
+- The browser sends one selected provider name on the first ask. Core Service validates it against
+  the closed named set, stores provider/model on the memory-only conversation, and routes follow-ups
+  from that server-side binding. The selector is locked while that conversation exists. Selecting a
+  different model after closing starts fresh; a defensive same-scope request with a changed model
+  replaces that scope's temporary root instead of mixing provider histories.
+- The selected model is retained for new roots and new Reader conversations within the current page
+  lifetime. It is intentionally not persisted: a full reload/service restart returns to the
+  configured initial provider. This is the simplest inheritance rule consistent with temporary
+  Assistant memory.
+- `GUIDED_READER_PROVIDER_BAKEOFF=1` now enables only the comparison endpoint/debug harness. No
+  comparison input, button, cards, or wide comparison panel is emitted into the normal Reader UI.
+  With the gate off, the endpoint still refuses calls before egress.
 - A comparison builds context once, creates one shared system/user message list, and gives a deep copy
   of those messages to each eligible provider concurrently. Provider/model and the deterministic
   parameter mapping may differ; Skill, selected text, bounded OCR context, user-visible question, and
   PAGE/SECTION scope do not.
 - Missing credentials, invalid config, cooling, transient failures, and user-actionable failures are
-  rendered in only that provider's column. No fallback, retry across providers, voting, ranking,
+  reported only in that provider's debug result. No fallback, retry across providers, voting, ranking,
   ensemble, or automatic winner exists.
 - Comparison results keep only the latest result per Reader session in Core Service memory; explicit
   Assistant close/Reader close clears them. No schema, table, cache file, results file, or benchmark
@@ -44,6 +57,22 @@ and no winner/default-provider decision is recorded.
 - Plain HTTP endpoint overrides validate only for `localhost` or an IP address classified as
   loopback. Any non-loopback HTTP endpoint disables only that provider. HTTPS overrides retain the
   existing development convenience.
+
+## User acceptance delta (2026-09-05)
+
+The first implementation checkpoint `3c5327bb79bad0459ad6d2f1b91cc7982c42eebb` remains in history.
+During manual acceptance, enabling bake-off put an optional question field and comparison action in
+the selection toolbar, then expanded the fixed Assistant panel to `min(1120px, 96vw)`. At z-index 7
+that real panel covered almost the full Reader and intercepted pointer/context-menu interaction over
+the original PDF. The result was unsuitable as a normal product interaction even though comparison
+calls themselves were controlled.
+
+The correction removes that collision at its source. There is no benchmark affordance in the
+selection toolbar and no wide/three-column Assistant state. The selection action remains compact,
+the native selected range survives right-click, and the normal 410px Assistant panel contains only a
+small model selector plus the existing single-conversation surface. Bake-off evidence collection was
+moved to direct use of the dev-gated endpoint by `provider-bakeoff-real.mjs`; it no longer requires or
+creates user-visible comparison UI.
 
 ## Important implementation decisions
 
@@ -141,29 +170,33 @@ before implementation: DeepSeek `deepseek-v4-pro` and OpenRouter `google/gemini-
 ## Acceptance evidence
 
 - `python -m compileall -q src`: **PASS**.
-- `pytest -o addopts= -q -ra`: **84 passed, 2 skipped**. The skips are the unchanged optional external-
+- `pytest -o addopts= -q -ra`: **86 passed, 2 skipped** after the acceptance correction. The skips are the unchanged optional external-
   path OCR calibration tests. Coverage includes the exact profiles/targets/models, environment
-  overrides, active-provider-only routing, disabled gate zero comparison egress, identical messages,
-  deterministic mapping, missing credential/failure isolation, usage, inspection labels, secret
-  hygiene, loopback HTTP allowance, non-loopback HTTP rejection, memory-only comparison cleanup,
-  normal Ask scope/history/lifecycle, AI-off, and no persistence/schema additions.
+  overrides, selected-provider-only routing, server-pinned follow-up routing, unknown-provider zero
+  egress, disabled gate zero comparison egress, identical benchmark messages, deterministic mapping,
+  missing credential/failure isolation, secret hygiene, HTTPS hardening, memory-only cleanup, normal
+  Ask scope/history/lifecycle, AI-off, and no persistence/schema additions.
 - `npm test`: **30 passed**.
 - `npm run test:e2e:ask`: **PASS** on the real prepared 29/348-page library with one loopback mock
-  endpoint. It exercised normal Ask/follow-up, exactly three comparison calls and columns, frozen
-  models, optional same-question parity, usage rendering, effective config, inspector labels,
-  explicit close, PAGE fallback, gate-off hidden UI, and zero AI-off egress. The comparison screenshot
-  was visually inspected; it is an ignored test artifact.
+  endpoint. With the dev gate deliberately on, it verified absent comparison UI, a sub-390px selection
+  menu, preserved native text selection after right-click, compact model selection, Zhipu-only first
+  answer and follow-up calls, the locked conversation model, in-page inheritance for a new Reader
+  conversation, explicit close, PAGE fallback, and zero AI-off egress. The corrected Assistant
+  screenshot was visually inspected; it is an ignored test artifact.
 - `npm run test:e2e:ask:real`: **PASS** with `deepseek-v4-pro` on the 348-page book and 29-page excerpt:
   real answer, same-level follow-up, honest PAGE scope, Reader-close invalidation, fallback, and AI-off.
 - `npm run test:e2e:bakeoff:real`: **PARTIAL / intentionally non-zero**. DeepSeek and Zhipu each
   returned all 10 first answers and passed normal-path follow-ups; OpenRouter returned no answer due
-  to the region boundary. This is the outstanding full-real-material criterion, not a PASS.
-- Existing real-browser regressions after the change: `npm run test:e2e:map` **PASS**,
-  `npm run test:e2e:r3` **PASS**, `npm run test:e2e:find` **PASS**.
+  to the region boundary. This is the original real-provider evidence and was not needlessly repeated
+  for the UI-only acceptance correction. Its harness now uses the same dev-gated endpoint directly
+  and passes static syntax validation; this remains an outstanding criterion, not a PASS.
+- Existing real-browser regressions after the correction: `npm run test:e2e:map` **PASS**,
+  `npm run test:e2e:r3` **PASS** (including selection completion, context menu, copy, persistence and
+  cleanup), `npm run test:e2e:find` **PASS**.
 
-Overall: `IMPLEMENTATION_READY`; `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` solely for a callable
-OpenRouter `google/gemini-3.8-flash` path that still obeys the no-system-proxy rule. Independent
-ZCode review has not been run, as explicitly requested.
+Overall: `READY_FOR_USER_RETEST`; the Phase remains open. `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING`
+still applies solely to a callable OpenRouter `google/gemini-3.8-flash` path that obeys the no-system-
+proxy rule. Independent ZCode review has not been run, as explicitly requested.
 
 ## Known limitations / deferred debt
 
@@ -172,8 +205,8 @@ ZCode review has not been run, as explicitly requested.
 - The two callable reasoning models are noticeably slower and more verbose than the shared `concise`
   intent suggests. Per-provider prompt/Skill tuning remains forbidden; future changes require a new
   controlled experiment or explicit product decision.
-- Comparison supports first answers only. Follow-up quality remains intentionally evaluated by
-  switching the active provider and using the normal single-provider conversation.
+- The retained debug comparison endpoint supports first answers only. Normal follow-up evaluation
+  uses the selected, server-pinned single-provider conversation.
 - The three Ask About This P2 items not included here remain deferred except P2 #1, which this Phase
   closes with the non-loopback HTTPS rule.
 
@@ -191,10 +224,11 @@ $env:GUIDED_READER_PROVIDER_BAKEOFF='1'
 npm run test:e2e:bakeoff:real
 ```
 
-Manual comparison: start the Reader with `GUIDED_READER_PROVIDER_BAKEOFF=1`, select prepared original-
-PDF text, optionally type one shared question in the dev-only comparison field, and click
-`三模型对比`. Leave the gate unset/`0` for normal product use. To evaluate follow-ups, set
-`GUIDED_READER_ASSISTANT_PROVIDER` to one of the three names, restart, and use ordinary `问 AI`.
+Manual user retest: start the Reader normally, click the compact `AI` toolbar button, choose one of
+the three exact models, then select prepared original-PDF text and use the right-click `问 AI`
+action. Verify the answer and follow-ups remain on that model. The dev benchmark harness calls the
+gated comparison endpoint directly; setting `GUIDED_READER_PROVIDER_BAKEOFF=1` does not add comparison
+controls to the Reader.
 
 ## Important files / architecture entry points
 
@@ -203,14 +237,16 @@ PDF text, optionally type one shared question in the dev-only comparison field, 
 - `src/reader_service/agent_runtime/credentials.py` — fixed provider-to-credential-target binding.
 - `src/reader_service/agent_runtime/deepseek.py` — shared OpenAI-compatible/Bearer transport, usage
   parsing, redirect/proxy refusal, and secret-safe error classification.
-- `src/reader_service/assistant/service.py` and `context.py` — one-build comparison input and
-  memory-only result lifetime.
-- `src/reader_service/server.py`, `static/index.html`, `static/app.js`, `static/styles.css` — dev-only
-  HTTP/UI surface and side-by-side display.
+- `src/reader_service/assistant/service.py` and `context.py` — conversation-pinned provider/model,
+  one-build comparison input, and memory-only result lifetime.
+- `src/reader_service/server.py`, `static/index.html`, `static/app.js`, `static/styles.css` — selected-
+  provider HTTP contract and compact normal Assistant UI; no Reader comparison surface.
 - `tests/test_ask_about_this.py`, `tests-e2e/ask-about-this.mjs`, and
   `tests-e2e/provider-bakeoff-real.mjs` — machine, browser-mock, and real-material acceptance.
 
 ## Git checkpoint
 
 Implementation checkpoint: `3c5327bb79bad0459ad6d2f1b91cc7982c42eebb`.
-This report is committed by the docs checkpoint recorded in the completion handoff.
+Original evidence/report checkpoint: `bb57f24`.
+The user-acceptance correction checkpoint is the commit containing this updated report and is
+recorded in the retest handoff.

@@ -58,34 +58,38 @@ try {
     effective_config: item.effective_config,
   }));
   await openBook(page, 348);
+  assert.equal(await page.locator("#compare-selection").count(), 0,
+    "real benchmark must not expose a comparison control in the Reader UI");
   for (const item of items) {
-    const selectedText = await selectExactText(page, item);
-    if (item.question) await page.locator("#compare-question").fill(item.question);
-    const responsePromise = page.waitForResponse(
-      (response) => response.url().endsWith("/assistant/bake-off"),
-      { timeout: 180_000 },
-    );
-    await page.locator("#compare-selection").click();
-    const response = await responsePromise;
-    assert.equal(response.status(), 200, `${item.id} comparison failed`);
-    const comparison = (await response.json()).comparison;
-    assert.equal(comparison.selected_text, selectedText);
-    assert.equal(comparison.question, item.question || selectedText);
+    const selected = await selectExactText(page, item);
+    const debugResult = await page.evaluate(async ({ revisionId, request, question }) => {
+      const response = await fetch(`/api/revisions/${revisionId}/assistant/bake-off`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reader_session_id: "debug-bakeoff-real-run",
+          ...request,
+          ...(question ? { question } : {}),
+        }),
+      });
+      return { status: response.status, payload: await response.json() };
+    }, { revisionId: selected.revisionId, request: selected.request, question: item.question });
+    assert.equal(debugResult.status, 200, `${item.id} comparison failed`);
+    const comparison = debugResult.payload.comparison;
+    assert.equal(comparison.selected_text, selected.text);
+    assert.equal(comparison.question, item.question || selected.text);
     assert.deepEqual(Object.fromEntries(comparison.results.map((result) => [result.provider, result.model])), expectedModels);
     for (const result of comparison.results) {
       if (!result.answer) evidence.failures.push({ stage: item.id, provider: result.provider, error: result.error });
     }
     evidence.comparisons.push({
       id: item.id,
-      selected_text: selectedText,
+      selected_text: selected.text,
       question: comparison.question,
       scope: comparison.scope,
       call_date: new Date().toISOString(),
       results: comparison.results,
     });
-    const closePromise = page.waitForResponse((candidate) => candidate.url().endsWith("/assistant/close"));
-    await page.locator("#assistant-close").click();
-    assert.equal((await closePromise).status(), 204);
   }
   await stopService(running.child);
   running = null;
@@ -102,10 +106,10 @@ try {
     assert.equal(providerStatus.configured, true);
     assert.equal(providerStatus.bakeoff_enabled, false);
     await openBook(page, 348);
-    const selectedText = await selectExactText(
+    const selected = await selectExactText(
       page, items.find((item) => item.id === "machine_cycle"), false,
     );
-    assert.equal(await page.locator("#compare-selection").isHidden(), true);
+    assert.equal(await page.locator("#compare-selection").count(), 0);
     const firstResponse = page.waitForResponse(
       (response) => response.url().endsWith("/assistant/ask"), { timeout: 180_000 },
     );
@@ -116,7 +120,7 @@ try {
       evidence.followUps.push({
         provider,
         model: expectedModels[provider],
-        selected_text: selectedText,
+        selected_text: selected.text,
         error: evidence.failures.at(-1).error,
         call_date: new Date().toISOString(),
       });
@@ -146,7 +150,7 @@ try {
     evidence.followUps.push({
       provider,
       model: expectedModels[provider],
-      selected_text: selectedText,
+      selected_text: selected.text,
       first_answer: first.turns[0].answer,
       questions: questions.map((question, index) => ({ question, answer: answers[index] })),
       inspected_calls: inspection.calls.length,
@@ -210,9 +214,16 @@ async function selectExactText(page, item, requireCompare = true) {
   await page.mouse.up();
   await page.mouse.click((startX + endX) / 2, y, { button: "right" });
   await page.locator("#selection-actions").waitFor({ state: "visible" });
-  if (requireCompare) assert.equal(await page.locator("#compare-selection").isEnabled(), true);
-  else assert.equal(await page.locator("#ask-selection").isEnabled(), true);
-  return line.text.slice(chosen[0][2], chosen.at(-1)[3]);
+  if (!requireCompare) assert.equal(await page.locator("#ask-selection").isEnabled(), true);
+  return {
+    text: line.text.slice(chosen[0][2], chosen.at(-1)[3]),
+    revisionId,
+    request: {
+      pdf_page_index: item.page,
+      start: { line_ordinal: line.line_ordinal, boundary: chosen[0][2] },
+      end: { line_ordinal: line.line_ordinal, boundary: chosen.at(-1)[3] },
+    },
+  };
 }
 
 async function openBook(page, pageCount) {

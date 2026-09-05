@@ -33,11 +33,15 @@ class Turn:
 class Conversation:
     conversation_id: str
     scope: ScopeResolution
+    provider: str
+    model: str
     turns: list[Turn] = field(default_factory=list)
 
     def public(self) -> dict:
         return {
             "conversation_id": self.conversation_id,
+            "provider": self.provider,
+            "model": self.model,
             "scope": self.scope.public(),
             "turns": [
                 {"question": turn.question, "answer": turn.answer} for turn in self.turns
@@ -74,6 +78,7 @@ class AssistantService:
         *,
         start: dict,
         end: dict,
+        provider: str | None = None,
     ) -> dict:
         session_id = self._validate_session_id(reader_session_id)
         context = self.contexts.build(
@@ -81,13 +86,22 @@ class AssistantService:
         )
         visible_message = context["selected_text"]
         scope: ScopeResolution = context["scope"]
+        selected_provider, selected_model = self._provider_identity(provider)
         lock = self._lock_for(session_id)
         with lock:
             existing = self._sessions.get(session_id, {}).get(scope.key)
-            conversation = existing or Conversation(str(uuid4()), scope)
+            conversation = (
+                existing
+                if existing is not None and existing.provider == selected_provider
+                else Conversation(
+                    str(uuid4()), scope, selected_provider, selected_model
+                )
+            )
             user_content = provider_user_message(context)
-            answer = self.runtime.complete(
-                self._messages(conversation, user_content), interaction_id=str(uuid4())
+            answer = self._complete(
+                selected_provider,
+                self._messages(conversation, user_content),
+                interaction_id=str(uuid4()),
             )
             conversation.turns.append(Turn(visible_message, answer, user_content))
             with self._state_lock:
@@ -120,7 +134,10 @@ class AssistantService:
         user_content = provider_user_message(
             context, visible_message if question is not None else None
         )
-        messages = self._messages(Conversation(str(uuid4()), scope), user_content)
+        provider, model = self._provider_identity(None)
+        messages = self._messages(
+            Conversation(str(uuid4()), scope, provider, model), user_content
+        )
         comparison_id = str(uuid4())
         results = compare(messages, interaction_id=comparison_id)
         comparison = {
@@ -145,8 +162,10 @@ class AssistantService:
         with lock:
             conversation = self._conversation(session_id, conversation_id)
             user_content = clean_question
-            answer = self.runtime.complete(
-                self._messages(conversation, user_content), interaction_id=str(uuid4())
+            answer = self._complete(
+                conversation.provider,
+                self._messages(conversation, user_content),
+                interaction_id=str(uuid4()),
             )
             conversation.turns.append(Turn(clean_question, answer, user_content))
             return conversation.public()
@@ -195,6 +214,28 @@ class AssistantService:
             messages.append({"role": "assistant", "content": answer})
         messages.append({"role": "user", "content": new_user_content})
         return messages
+
+    def _provider_identity(self, provider: str | None) -> tuple[str, str]:
+        resolver = getattr(self.runtime, "provider_identity", None)
+        if resolver is not None:
+            return resolver(provider)
+        status = self.runtime.status()
+        configured_provider = status.get("provider")
+        if provider is not None and provider != configured_provider:
+            raise ProviderFailure(
+                ProviderFailureKind.UNCONFIGURED,
+                "invalid_active_provider",
+                "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
+            )
+        return configured_provider, status.get("model")
+
+    def _complete(
+        self, provider: str, messages: list[dict], *, interaction_id: str
+    ) -> str:
+        complete_for = getattr(self.runtime, "complete_for", None)
+        if complete_for is not None:
+            return complete_for(provider, messages, interaction_id=interaction_id)
+        return self.runtime.complete(messages, interaction_id=interaction_id)
 
     def _conversation(self, session_id: str, conversation_id: str) -> Conversation:
         with self._state_lock:

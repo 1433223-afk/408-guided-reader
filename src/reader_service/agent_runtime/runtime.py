@@ -452,14 +452,36 @@ class ProviderRuntimeSet:
         }
 
     def complete(self, messages: list[dict], *, interaction_id: str | None = None) -> str:
-        runtime = self.runtimes.get(self.active_provider)
+        return self.complete_for(
+            self.active_provider, messages, interaction_id=interaction_id
+        )
+
+    def complete_for(
+        self,
+        provider: str,
+        messages: list[dict],
+        *,
+        interaction_id: str | None = None,
+    ) -> str:
+        runtime = self.runtimes.get(provider)
         if runtime is None:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,
                 "invalid_active_provider",
-                "active provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
+                "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
             )
         return runtime.complete(messages, interaction_id=interaction_id)
+
+    def provider_identity(self, provider: str | None = None) -> tuple[str, str]:
+        selected = provider or self.active_provider
+        runtime = self.runtimes.get(selected)
+        if runtime is None:
+            raise ProviderFailure(
+                ProviderFailureKind.UNCONFIGURED,
+                "invalid_active_provider",
+                "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
+            )
+        return selected, runtime.config.model
 
     def compare(self, messages: list[dict], *, interaction_id: str) -> list[dict]:
         if not self.bakeoff_enabled:

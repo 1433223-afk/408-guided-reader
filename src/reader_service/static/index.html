@@ -51,6 +51,7 @@
           <button id="outline-toggle" class="outline-toggle" type="button" aria-expanded="false" aria-label="目录" title="目录">目录</button>
           <button id="search-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="书内搜索" title="书内搜索">⌕</button>
           <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="本页标记" title="本页标记"><span aria-hidden="true">✦</span><span id="marks-count" class="marks-count" hidden>0</span></button>
+          <button id="assistant-toggle" class="assistant-toggle" type="button" aria-expanded="false" aria-label="问 AI" title="问 AI">AI</button>
           <span class="control-divider"></span>
           <button id="zoom-out" class="icon-button" aria-label="缩小">−</button>
           <output id="zoom-value">100%</output>
@@ -81,7 +82,17 @@
       <aside id="assistant-panel" class="assistant-panel" aria-label="问 AI" hidden>
         <div class="assistant-heading">
           <div><span class="eyebrow">临时解释</span><strong id="assistant-title">问 AI</strong></div>
-          <button id="assistant-close" type="button" aria-label="关闭并清空 AI 对话">×</button>
+          <div class="assistant-heading-actions">
+            <label class="assistant-model" for="assistant-model">
+              <span>模型</span>
+              <select id="assistant-model" aria-label="当前 AI 模型">
+                <option value="deepseek">DeepSeek · deepseek-v4-pro</option>
+                <option value="zhipu">Zhipu · GLM-5.3-Flash</option>
+                <option value="openrouter">OpenRouter · google/gemini-3.8-flash</option>
+              </select>
+            </label>
+            <button id="assistant-close" type="button" aria-label="关闭并清空 AI 对话">×</button>
+          </div>
         </div>
         <p id="assistant-scope" class="assistant-scope">等待教材选区</p>
         <div id="assistant-turns" class="assistant-turns" aria-live="polite"></div>
@@ -98,8 +109,6 @@
       <div class="selection-action-row">
         <button id="copy-selection" type="button">复制</button>
         <button id="ask-selection" type="button" disabled title="正在检查 DeepSeek 配置">问 AI</button>
-        <input id="compare-question" type="text" maxlength="500" hidden placeholder="可选：三模型回答同一问题" aria-label="三模型对比问题">
-        <button id="compare-selection" type="button" hidden disabled title="Provider Bake-off 未启用">三模型对比</button>
         <button id="save-highlight" type="button">高亮</button>
         <button id="add-note" type="button" aria-expanded="false">添加笔记</button>
         <button id="cancel-selection" class="cancel-selection" type="button" aria-label="关闭选区操作">×</button>
