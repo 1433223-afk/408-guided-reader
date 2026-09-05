@@ -225,7 +225,7 @@ three deferred non-blocking P2 observations recorded in its development report. 
 resolved/confirmed 2026-09-04 and remain recorded in the brief; `IMPLEMENTATION_BLUEPRINT.md` §26
 still carries them as open rows pending the user's Frozen Core sync.
 **Provider Bake-off** (`docs/phases/PROVIDER_BAKEOFF.md`) is the current Phase brief — accepted
-2026-09-04, in implementation: a controlled three-provider teaching-quality comparison
+2026-09-04 and implementation-ready at checkpoint `3c5327b`: a controlled three-provider teaching-quality comparison
 (DeepSeek / Zhipu GLM / OpenRouter-Gemini) through the real Ask About This path, with a dev-gated
 side-by-side first-answer mode and no persistence. The user's verified 2026-09-05 preflight fixed
 the experiment variables as DeepSeek = `deepseek-v4-pro`, Zhipu = `GLM-5.3-Flash`, and OpenRouter =
@@ -233,4 +233,7 @@ the experiment variables as DeepSeek = `deepseek-v4-pro`, Zhipu = `GLM-5.3-Flash
 text/context/message/scope and intent-level settings; per-field API parameter equality is not
 required, minimal recorded mapping allowed). Non-loopback provider endpoints must be HTTPS
 (includes Ask About This P2 #1). The bake-off's default-provider recommendation is a user decision;
-derive later briefs per §7.
+derive later briefs per §7. Final real-material acceptance remains pending because the fixed
+OpenRouter `google/gemini-3.8-flash` model returns a direct no-proxy `model_region` 403; DeepSeek and
+Zhipu each completed all 10 real-book comparisons. No winner/default change or ZCode review has been
+performed.
