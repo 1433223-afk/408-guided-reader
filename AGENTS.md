@@ -212,15 +212,16 @@ detailed future briefs ahead of need.
 
 ## 8. Current state
 
-Both blueprints are frozen at Gate D (2026-09-03). R1, R2, R3, Find in Book and Map the Book are
-closed. Find in Book passed user real-use acceptance 2026-09-04. Map the Book passed user real-use
-acceptance and its required independent narrow review on 2026-09-04; the review explicitly allowed
-closure with three non-blocking P2 observations recorded in its development report. Cross-version
-annotation round-trip remains a pending capability gap because OCR reprocessing does not exist.
-**Ask About This** (`docs/phases/ASK_ABOUT_THIS.md`) is the current Phase brief — accepted
-2026-09-04, awaiting implementation: the product's first AI slice (select textbook text, ask, get a
-temporary scope-aware explanation via a DeepSeek adapter). User decisions **D-4** (first provider =
-DeepSeek) and **D-5** (§21.3 recommended egress boundary) were resolved/confirmed 2026-09-04 and are
-recorded in the brief; `IMPLEMENTATION_BLUEPRINT.md` §26 still carries them as open rows pending the
-user's Frozen Core sync. This slice does not authorize the rest of the frozen §24 R5 entry; derive
-later briefs per §7.
+Both blueprints are frozen at Gate D (2026-09-03). R1, R2, R3, Find in Book, Map the Book and Ask
+About This are closed. Find in Book passed user real-use acceptance 2026-09-04. Map the Book passed
+user real-use acceptance and its required independent narrow review on 2026-09-04; the review
+explicitly allowed closure with three non-blocking P2 observations recorded in its development
+report. Cross-version annotation round-trip remains a pending capability gap because OCR
+reprocessing does not exist.
+**Ask About This** (`docs/phases/ASK_ABOUT_THIS.md`) passed user real-use acceptance and its required
+independent narrow review on 2026-09-04. ZCode explicitly allowed closure with P0 = 0, P1 = 0 and
+three deferred non-blocking P2 observations recorded in its development report. User decisions
+**D-4** (first provider = DeepSeek) and **D-5** (§21.3 recommended egress boundary) were
+resolved/confirmed 2026-09-04 and remain recorded in the brief; `IMPLEMENTATION_BLUEPRINT.md` §26
+still carries them as open rows pending the user's Frozen Core sync. No next Phase brief is
+designated; derive it from current state and real usage per §7 rather than preselecting one here.

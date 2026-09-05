@@ -79,4 +79,4 @@ criterion names — `IMPLEMENTATION_READY` vs `FULL_REAL_MATERIAL_ACCEPTANCE_PEN
 | R3 — My Marks (core) | [`R3_MY_MARKS.md`](./R3_MY_MARKS.md) | `IMPLEMENTATION_READY`, closed after user acceptance (see `docs/development-reports/R3_MY_MARKS.md`) |
 | Find in Book | [`FIND_IN_BOOK.md`](./FIND_IN_BOOK.md) | `IMPLEMENTATION_READY`, closed after user acceptance (see `docs/development-reports/FIND_IN_BOOK.md`) |
 | Map the Book | [`MAP_THE_BOOK.md`](./MAP_THE_BOOK.md) | `CLOSED` — accepted after user real-use + independent narrow review (2026-09-04) |
-| Ask About This | [`ASK_ABOUT_THIS.md`](./ASK_ABOUT_THIS.md) | Accepted 2026-09-04 — ready for implementation (records user decisions D-4 = DeepSeek, D-5 = §21.3 recommended boundary confirmed) |
+| Ask About This | [`ASK_ABOUT_THIS.md`](./ASK_ABOUT_THIS.md) | `CLOSED` — accepted after user real-use + independent narrow review (2026-09-04) |

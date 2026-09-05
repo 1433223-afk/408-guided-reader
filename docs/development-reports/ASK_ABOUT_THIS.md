@@ -2,17 +2,17 @@
 
 ## Result
 
-`IMPLEMENTATION_READY` — selecting prepared original-PDF textbook text now exposes `问 AI` in the
+`CLOSED` — selecting prepared original-PDF textbook text now exposes `问 AI` in the
 existing right-click actions. A temporary right-side Reader panel shows a Simplified-Chinese
 DeepSeek explanation and accepts same-level follow-ups. Explicit panel close and Reader close clear
 the reader-session conversations from Core Service memory; service restart also clears them. Reader,
 selection, marks, search, and directory remain available with AI disabled.
 
-`READY_FOR_USER_REAL_USE_REVIEW`
+`ASK_ABOUT_THIS_STATUS: CLOSED`
 
-`READY_FOR_NARROW_ZCODE_REVIEW`
-
-The required independent review has **not** been run. This report does not close the Phase.
+User real-use acceptance and the required independent ZCode narrow review both passed on 2026-09-04.
+ZCode explicitly allowed the Phase to close with P0 = 0, P1 = 0, and three deferred non-blocking P2
+observations recorded below.
 
 ### Real-use blocker correction (2026-09-04)
 
@@ -56,8 +56,31 @@ It remains compact because five high-leverage rules cover only explanation choic
 selection/context formats, egress, scope, credentials, persistence, routing, and domain answers are
 deliberately absent. Future improvement follows replacement/deletion before adding rules.
 
-The post-correction real-provider endian scenarios are intentionally left for the user's requested
-real-use review. The Phase remains open and no ZCode review has run.
+The post-correction real-provider endian scenarios subsequently passed user real-use acceptance, as
+recorded in the closure evidence below.
+
+### Final user real-use acceptance and independent review (2026-09-04)
+
+The user accepted the complete real interaction after the explanation-behaviour correction:
+
+- selection-triggered user messages remained exactly the selected text rather than an invented
+  question;
+- terms including `大端序` and `小端序` received direct, concept-focused explanations;
+- textbook context operated as a grounding and disambiguation anchor, not as the Assistant's
+  knowledge ceiling, while supplemental knowledge was not misrepresented as textbook content;
+- same-level follow-ups retained their conversation context and reflected the user's actual input;
+- the compact Explanation Skill produced the intended teaching behaviour.
+
+The required independent ZCode narrow review returned **PASS**, with **P0 = 0, P1 = 0, P2 = 3**, and
+explicitly found `ASK_ABOUT_THIS` eligible for closure. The three P2 observations are accepted as
+deferred and non-blocking; none is fixed in this docs-only closure:
+
+1. A future hardening pass should require HTTPS for a configured HTTP provider endpoint whenever the
+   target is not loopback, while preserving loopback development/testing use.
+2. Closing a reader session concurrently with an in-flight selection ask has an edge race in which
+   the completing ask may recreate that session's in-memory conversation after close.
+3. `_session_locks` entries are not removed, allowing slow process-memory growth across many unique
+   reader session IDs.
 
 ## Implemented
 
@@ -162,17 +185,17 @@ claimed as SECTION.
   real page, and one contained a JavaScript response-status typo. The data path and harness
   assertions were corrected; the final bounded reruns above passed.
 
-Overall status: `IMPLEMENTATION_READY`. Full named real material and the real provider were exercised;
-the refreshed user real-use review and the required independent narrow ZCode review remain the two
-acceptance gates. Per user direction, ZCode review has not started and the Phase remains open.
+Overall status: `CLOSED`. Machine acceptance, user real-use acceptance, and the required independent
+ZCode narrow review all passed. The three P2 observations above are deferred/non-blocking and do not
+prevent closure.
 
 ## Known limitations / deferred debt
 
 - Pass 1 cannot distinguish `6.2.1` from `6.2.2` on their shared start page. That page remains
   honestly PAGE-scoped until a separately authorized Pass 2 supplies physical evidence.
 - The first request is single-response rather than streamed. The panel shows a bounded pending state.
-- Provider teaching quality is not deterministically schema-validated; the focused endian scenarios
-  require the pending user real-use review against DeepSeek.
+- Provider teaching quality is not deterministically schema-validated; focused endian behaviour was
+  accepted through real use rather than claimed from schema tests alone.
 - A credential can be detected as present without proving validity; invalid auth/quota is classified
   on the first user-initiated call, shown honestly without retry, and cooled.
 - Payload inspection is an authenticated localhost API rather than a dedicated UI. Its bounded
@@ -225,4 +248,5 @@ remain functional.
 ## Git checkpoint
 
 Implementation checkpoint: `6093d92f37af52796d68b42e0e65dc5faa6037d5`.
-The report-completion commit hash is recorded in the completion handoff.
+Explanation-behaviour checkpoint: `69d361e1b6857fd146f66d0027556b764be386ee`.
+The docs-only closure commit hash is recorded in the completion handoff.
