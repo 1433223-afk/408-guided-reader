@@ -26,6 +26,8 @@ from reader_service.agent_runtime.credentials import (
 from reader_service.agent_runtime.deepseek import DeepSeekAdapter
 from reader_service.annotation import AnnotationRepository, AnnotationService
 from reader_service.assistant import AssistantContextBuilder, AssistantService, ScopeResolver
+from reader_service.assistant.service import SYSTEM_MESSAGE
+from reader_service.assistant.skill import EXPLANATION_SKILL_PATH, load_explanation_skill
 from reader_service.foundation import (
     DetectedLine,
     FoundationRepository,
@@ -152,6 +154,13 @@ def selection(_page_index: int) -> dict:
     }
 
 
+def selection_range(start_boundary: int, end_boundary: int) -> dict:
+    return {
+        "start": {"line_ordinal": 1, "boundary": start_boundary},
+        "end": {"line_ordinal": 1, "boundary": end_boundary},
+    }
+
+
 def runtime(adapter, *, key="dev-secret-key", **overrides):
     config = ProviderConfig(
         endpoint="https://api.deepseek.test/chat/completions",
@@ -197,23 +206,30 @@ def test_selection_ask_follow_up_payload_and_scope_isolation(assistant_fixture):
     revision_id = assistant_fixture["revision_id"]
 
     first = assistant.ask_selection(
-        "reader-session-1", revision_id, 3, question="这是什么意思", **selection(3)
+        "reader-session-1", revision_id, 3, **selection(3)
     )
     assert first["scope"]["key"] == "SECTION:unique"
-    assert first["turns"] == [{"question": "这是什么意思", "answer": "第一答"}]
+    assert first["turns"] == [{"question": "总线事务", "answer": "第一答"}]
     followed = assistant.follow_up(
         "reader-session-1", first["conversation_id"], "为什么？"
     )
     assert followed["conversation_id"] == first["conversation_id"]
-    assert [turn["question"] for turn in followed["turns"]] == ["这是什么意思", "为什么？"]
+    assert [turn["question"] for turn in followed["turns"]] == ["总线事务", "为什么？"]
     follow_messages = adapter.calls[1]["body"]["messages"]
     assert [message["role"] for message in follow_messages] == [
         "system", "user", "assistant", "user"
     ]
+    assert follow_messages[-1]["content"] == "为什么？"
     assert "第一答" in follow_messages[2]["content"]
+    initial_content = adapter.calls[0]["body"]["messages"][-1]["content"]
+    assert initial_content.endswith("【当前解释焦点（用户所选）】\n总线事务")
+    assert initial_content.index("【同一 PDF 页的有界 OCR 语境（辅助）】") < initial_content.rindex("总线事务")
+    assert "用户问题" not in initial_content
+    assert "这是什么意思" not in initial_content
+    assert "请只依据" not in initial_content
 
     page = assistant.ask_selection(
-        "reader-session-1", revision_id, 5, question="页面问题", **selection(5)
+        "reader-session-1", revision_id, 5, **selection(5)
     )
     assert page["scope"]["key"] == "PAGE:5"
     page_payload = json.dumps(adapter.calls[2]["body"], ensure_ascii=False)
@@ -224,7 +240,7 @@ def test_selection_ask_follow_up_payload_and_scope_isolation(assistant_fixture):
     assert "为什么？" not in page_payload
 
     section_again = assistant.ask_selection(
-        "reader-session-1", revision_id, 3, question="回到本节", **selection(3)
+        "reader-session-1", revision_id, 3, **selection(3)
     )
     assert section_again["conversation_id"] == first["conversation_id"]
     assert page["conversation_id"] != first["conversation_id"]
@@ -242,6 +258,27 @@ def test_selection_ask_follow_up_payload_and_scope_isolation(assistant_fixture):
     assert "Authorization" not in inspection_text
 
 
+def test_same_page_selections_keep_distinct_visible_and_provider_focus(assistant_fixture):
+    adapter = MockAdapter(["聚焦总线", "聚焦事务"])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    revision_id = assistant_fixture["revision_id"]
+
+    first = assistant.ask_selection(
+        "reader-session-distinct", revision_id, 3, **selection_range(0, 2)
+    )
+    second = assistant.ask_selection(
+        "reader-session-distinct", revision_id, 3, **selection_range(2, 4)
+    )
+
+    assert [turn["question"] for turn in second["turns"]] == ["总线", "事务"]
+    first_focus = adapter.calls[0]["body"]["messages"][-1]["content"]
+    second_focus = adapter.calls[1]["body"]["messages"][-1]["content"]
+    assert first_focus.endswith("【当前解释焦点（用户所选）】\n总线")
+    assert second_focus.endswith("【当前解释焦点（用户所选）】\n事务")
+    assert first_focus != second_focus
+    assert first["conversation_id"] == second["conversation_id"]
+
+
 def test_no_provider_means_zero_network_and_reader_data_stays_available(assistant_fixture):
     adapter = MockAdapter()
     agent = runtime(adapter, key="")
@@ -252,7 +289,6 @@ def test_no_provider_means_zero_network_and_reader_data_stays_available(assistan
             "reader-session-off",
             assistant_fixture["revision_id"],
             3,
-            question="这是什么意思",
             **selection(3),
         )
     assert caught.value.kind is ProviderFailureKind.UNCONFIGURED
@@ -274,6 +310,16 @@ def test_status_reports_secret_safe_readiness_details():
     assert status["failure_state"] == "READY"
     assert status["ai_off_reason"] is None
     assert "status-secret-never-return" not in json.dumps(status)
+
+
+def test_explanation_skill_is_loaded_and_compact():
+    skill = load_explanation_skill()
+    assert EXPLANATION_SKILL_PATH.is_file()
+    assert skill in SYSTEM_MESSAGE
+    assert len(skill) <= 1_200
+    assert len(skill.splitlines()) <= 20
+    assert "教材原文" in SYSTEM_MESSAGE
+    assert "可靠的专业或通识知识" in SYSTEM_MESSAGE
 
 
 def test_status_distinguishes_credential_read_failure_from_invalid_configuration():
@@ -375,15 +421,17 @@ def test_user_actionable_provider_failures_do_not_retry_or_leak_secret(code, cap
 
 
 def test_conversations_are_memory_only_clear_on_close_and_restart(assistant_fixture):
-    adapter = MockAdapter(["memory-only-answer"])
+    adapter = MockAdapter(["memory-only-answer", "memory-only-follow-up-answer"])
     agent = runtime(adapter)
     first_process = AssistantService(assistant_fixture["contexts"], agent)
     conversation = first_process.ask_selection(
         "reader-session-memory",
         assistant_fixture["revision_id"],
         3,
-        question="unique-question-never-persist",
         **selection(3),
+    )
+    first_process.follow_up(
+        "reader-session-memory", conversation["conversation_id"], "unique-follow-up-never-persist"
     )
     assert first_process.conversation_count() == 1
 
@@ -406,8 +454,9 @@ def test_conversations_are_memory_only_clear_on_close_and_restart(assistant_fixt
     for path in assistant_fixture["data_root"].rglob("*"):
         if path.is_file():
             content = path.read_bytes()
-            assert b"unique-question-never-persist" not in content
+            assert b"unique-follow-up-never-persist" not in content
             assert b"memory-only-answer" not in content
+            assert b"memory-only-follow-up-answer" not in content
 
 
 def test_notes_and_highlights_are_not_context_inputs(assistant_fixture):
@@ -428,7 +477,6 @@ def test_notes_and_highlights_are_not_context_inputs(assistant_fixture):
         "reader-session-private",
         assistant_fixture["revision_id"],
         3,
-        question="解释",
         **selection(3),
     )
     payload = json.dumps(adapter.calls[0]["body"], ensure_ascii=False)
@@ -442,7 +490,6 @@ def test_follow_up_history_has_a_hard_character_bound(assistant_fixture):
         "reader-session-bounds",
         assistant_fixture["revision_id"],
         3,
-        question="解释",
         **selection(3),
     )
     assistant.follow_up("reader-session-bounds", first["conversation_id"], "继续")
@@ -544,7 +591,7 @@ def test_assistant_http_contract_round_trips_and_close_clears(assistant_fixture)
             "reader_session_id": "reader-session-http",
             "pdf_page_index": 3,
             **selection(3),
-            "question": "这是什么意思",
+            "question": "不应成为用户可见消息",
         }, ensure_ascii=False).encode()
         _, asked = request_json(
             f"{base}/api/revisions/{revision_id}/assistant/ask",
@@ -554,6 +601,7 @@ def test_assistant_http_contract_round_trips_and_close_clears(assistant_fixture)
             headers={"Content-Type": "application/json"},
         )
         conversation = asked["conversation"]
+        assert conversation["turns"][0]["question"] == "总线事务"
         assert conversation["turns"][0]["answer"] == "HTTP 第一答"
         follow = json.dumps({
             "reader_session_id": "reader-session-http",

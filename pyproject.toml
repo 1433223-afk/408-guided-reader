@@ -26,7 +26,7 @@ guided-reader = "reader_service.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-reader_service = ["static/*"]
+reader_service = ["static/*", "assistant/skills/*/SKILL.md"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

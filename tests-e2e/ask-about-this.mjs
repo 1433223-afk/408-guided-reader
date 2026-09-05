@@ -31,7 +31,7 @@ const mockProvider = createServer(async (request, response) => {
   const latest = body.messages.at(-1)?.content || "";
   const answer = latest.includes("为什么")
     ? "因为总线事务需要让多个部件按约定完成一次可靠的数据交换。"
-    : "根据当前教材页提供的上下文，这段话在说明一次总线事务如何协调地址、数据与控制过程。";
+    : "一次总线事务，就是多个部件按约定完成地址、数据与控制的一次完整交换。";
   response.writeHead(200, { "Content-Type": "application/json" });
   response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: answer } }] }));
 });
@@ -70,12 +70,15 @@ try {
   const asked = await askedHttp.json();
   const askRequest = askedHttp.request().postDataJSON();
   await page.locator("#assistant-panel").waitFor({ state: "visible" });
-  await page.locator(".assistant-answer-bubble").getByText("根据当前教材页提供的上下文", { exact: false }).waitFor();
+  await page.locator(".assistant-answer-bubble").getByText("一次总线事务", { exact: false }).waitFor();
   assert.equal(asked.conversation.scope.kind, "PAGE");
   assert.equal(asked.conversation.scope.key, "PAGE:302");
   assert.equal(asked.conversation.scope.section_title, null);
   assert.equal(asked.conversation.scope.chapter_title, "第6章 总线");
-  assert.equal(asked.conversation.turns[0].question, "这是什么意思");
+  assert.equal(asked.conversation.turns[0].question, selected.text);
+  assert.equal(await page.locator(".assistant-question-bubble").first().textContent(), selected.text);
+  assert.equal(Object.hasOwn(askRequest, "question"), false,
+    "selection ask fabricated a user question in the UI request");
   assert.ok(selected.text.length > 0);
 
   const followResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
@@ -95,6 +98,12 @@ try {
   assert.equal(inspection.calls.length, 2);
   assert.deepEqual(inspection.calls.map((call) => call.request_body), providerCalls.map((call) => call.body));
   const inspectedText = JSON.stringify(inspection);
+  const initialUserContent = inspection.calls[0].request_body.messages.at(-1).content;
+  assert.ok(initialUserContent.endsWith(`【当前解释焦点（用户所选）】\n${selected.text}`));
+  assert.ok(initialUserContent.indexOf("【同一 PDF 页的有界 OCR 语境（辅助）】")
+    < initialUserContent.lastIndexOf(selected.text));
+  assert.ok(!initialUserContent.includes("请只依据"));
+  assert.equal(inspection.calls[1].request_body.messages.at(-1).content, "为什么？");
   assert.ok(!inspectedText.includes("已安全确定的节标题"));
   assert.ok(inspectedText.includes("291"));
   assert.ok(!inspectedText.includes("mock-secret-never-inspect"));

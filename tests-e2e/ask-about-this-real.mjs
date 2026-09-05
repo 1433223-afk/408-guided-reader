@@ -30,7 +30,7 @@ try {
   assert.equal(status.provider, "deepseek");
 
   await openBook(page, 348);
-  await selectLine(page, 302, 4);
+  const selectedText = await selectLine(page, 302, 4);
   const askResponse = page.waitForResponse(
     (response) => response.url().endsWith("/assistant/ask"), { timeout: 90_000 },
   );
@@ -40,6 +40,8 @@ try {
   const asked = await askedHttp.json();
   const askRequest = askedHttp.request().postDataJSON();
   const answer = asked.conversation.turns[0].answer;
+  assert.equal(asked.conversation.turns[0].question, selectedText);
+  assert.equal(Object.hasOwn(askRequest, "question"), false);
   assert.ok(/[\u4e00-\u9fff]/.test(answer), "DeepSeek answer was not Simplified-Chinese explanatory prose");
   assert.ok(/总线/.test(answer), "answer did not reflect the selected bus-transaction context");
   assert.ok(/操作|请求|仲裁|地址|数据|释放|周期|事务/.test(answer), "answer did not use the supplied textbook context");
@@ -149,6 +151,7 @@ async function selectLine(page, pageIndex, requiredOrdinal = null) {
   await page.mouse.up();
   await page.mouse.click((startX + endX) / 2, y, { button: "right" });
   await page.locator("#selection-actions").waitFor({ state: "visible" });
+  return line.text.slice(chosen[0][2], chosen.at(-1)[3]);
 }
 
 async function openBook(page, pageCount) {

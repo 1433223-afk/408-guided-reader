@@ -175,10 +175,10 @@ class AssistantContextBuilder:
         }
 
 
-def provider_user_message(context: dict, question: str) -> str:
+def provider_user_message(context: dict) -> str:
     scope: ScopeResolution = context["scope"]
     lines = [
-        "请只依据下面提供的教材上下文回答。若上下文不足，请明确说无法从当前上下文确定；不要伪造教材原文或页码。",
+        "【教材定位（仅用于定位和消歧）】",
         f"范围类型：{scope.kind}",
     ]
     if scope.chapter_title:
@@ -189,12 +189,11 @@ def provider_user_message(context: dict, question: str) -> str:
         lines.append(f"已知印刷页码：{context['printed_page_label']}")
     lines.extend(
         [
-            "所选教材文字：",
-            context["selected_text"],
-            "同一 PDF 页的有界 OCR 上下文：",
+            "【同一 PDF 页的有界 OCR 语境（辅助）】",
             context["same_page_ocr_context"],
-            "用户问题：",
-            question,
+            "",
+            "【当前解释焦点（用户所选）】",
+            context["selected_text"],
         ]
     )
     return "\n".join(lines)

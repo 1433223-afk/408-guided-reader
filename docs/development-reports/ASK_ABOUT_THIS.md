@@ -32,6 +32,33 @@ and data directory. Its live status now reports `configured=true`,
 `credential_source=WINDOWS_CREDENTIAL_MANAGER`, valid endpoint/model, no cooling, and no AI-off
 reason. No provider request was needed for that readiness check.
 
+### Real-use explanation-behaviour correction (2026-09-04)
+
+Manual use then showed that two selections from the same endian paragraph produced near-identical
+paragraph summaries. The selection was not lost: live payload inspection showed the correct selected
+text, but the client fabricated `这是什么意思` as the visible/user question and the grounding bundle
+began with `请只依据下面提供的教材上下文回答`. The combination made the same surrounding OCR the
+effective task and incorrectly treated it as the Assistant's knowledge ceiling.
+
+Selection-triggered asks now have no client-supplied question. The Core Service re-resolves the
+selection and uses that exact `selected_text` as the visible first user turn; same-level follow-ups
+continue to use exactly the typed text. Provider context labels scope/page/OCR as auxiliary textbook
+grounding and places the selected focus last for salience. The system boundary distinguishes claims
+about the textbook (must be supplied-context-grounded) from explanations of the concept (may use
+reliable professional/general knowledge without attributing it to the book).
+
+Teaching strategy is now loaded from the compact skill at
+`src/reader_service/assistant/skills/assistant-explanation/SKILL.md` by
+`src/reader_service/assistant/skill.py`; `service.py` appends its body to the fixed role/grounding
+boundary when the Assistant module loads. Setuptools package data includes the same path for an
+installed runtime. The skill body is 9 lines, 863 characters / 875 UTF-8 bytes (about 219 tokens).
+It remains compact because five high-leverage rules cover only explanation choices; message display,
+selection/context formats, egress, scope, credentials, persistence, routing, and domain answers are
+deliberately absent. Future improvement follows replacement/deletion before adding rules.
+
+The post-correction real-provider endian scenarios are intentionally left for the user's requested
+real-use review. The Phase remains open and no ZCode review has run.
+
 ## Implemented
 
 - An `ASSISTANT`-only agent runtime owns the sole provider egress path. The one adapter is DeepSeek's
@@ -53,6 +80,9 @@ reason. No provider request was needed for that readiness check.
   2,000 characters, includes at most three surrounding same-page lines on each side and 1,600 OCR
   context characters, and includes only safe Section/Chapter title plus a known printed label.
   Notes, highlights, learning history, and all other application state are absent from its API.
+- Selection-triggered visible turns are the exact server-resolved selection, never an invented
+  question. A compact loaded Explanation Skill governs teaching strategy while the fixed system
+  boundary preserves the distinction between textbook claims and reliable concept knowledge.
 - One conversation exists per scope per reader session. Histories never cross scope keys; follow-up
   context uses at most six prior turns and 8,000 characters. PAGE conversations are not merged into
   SECTION conversations. There is no Child/depth/tree creation and no Ask affordance on answer text;
@@ -72,8 +102,9 @@ reason. No provider request was needed for that readiness check.
   and no note/highlight/learning-history egress.
 - `IMPLEMENTATION_BLUEPRINT.md` §26 still carries D-4 and D-5 as open rows. That Frozen Blueprint was
   deliberately not edited; its synchronization remains the user's action.
-- Provider request bodies use a short grounding system instruction plus explicit labelled source
-  fields. Conversational answers remain prose rather than introducing a structured-output platform.
+- Provider request bodies use a short fixed grounding boundary, the compact Explanation Skill, and
+  explicit labelled auxiliary-source fields with the selected focus in the highest-salience final
+  position. Conversational answers remain prose rather than introducing a structured-output platform.
 - The inspector deliberately outlives an individual closed conversation until bounded eviction or
   service restart, because it is temporary observability evidence, not conversation state. It remains
   in process memory only.
@@ -93,7 +124,7 @@ claimed as SECTION.
 ## Acceptance evidence
 
 - `python -m compileall -q src`: **PASS**.
-- `pytest -o addopts= -q -ra`: **70 passed, 2 skipped**. The two skips are the unchanged optional
+- `pytest -o addopts= -q -ra`: **72 passed, 2 skipped**. The two skips are the unchanged optional
   external-path OCR calibration tests; their same real books were used in browser acceptance.
   Coverage includes selection/context bounds, unique SECTION, ambiguous same-page PAGE, front matter
   PAGE, safe Chapter context, unsafe title exclusion, per-scope history isolation, fallback
@@ -105,7 +136,9 @@ claimed as SECTION.
 - `npm run test:e2e:ask`: **PASS** against the prepared real 29/348-page library with a local mock
   provider. It exercised actual PDF.js selection/right-click → mock answer → panel, two same-level
   turns, explicit no-selection disabled and valid-selection enabled states, secret-free readiness
-  metadata, no answer-text Ask affordance, exact inspected request bodies, configured-endpoint-only
+  metadata, exact selection text in the user bubble, absence of a fabricated client question,
+  selected-focus payload ordering, verbatim follow-up payload, no answer-text Ask affordance,
+  exact inspected request bodies, configured-endpoint-only
   traffic, Reader close and explicit panel close cleanup, `PAGE:302`, 29-page `PAGE:0`, and AI-off
   selection/directory/search availability. The panel screenshot was visually inspected; it is an
   ignored test artifact, not persisted product content.
@@ -116,6 +149,8 @@ claimed as SECTION.
   127-character answer in the same two-turn conversation. Reader close invalidated the old
   conversation. The 29-page real excerpt exercised `PAGE:0`. Restarting with the testing disable
   flag left selection, directory, and search usable.
+  This run predates the explanation-behaviour correction and remains evidence for provider/egress/
+  lifetime wiring, not acceptance of the new endian explanation behaviour.
 - Existing real-browser regressions: `npm run test:e2e:map` **PASS** on both books with stable trees,
   page labels and original-PDF navigation; `npm run test:e2e:r3` **PASS** on both books including
   selection/copy, marks persistence/deletion, restart and cleanup; `npm run test:e2e:find` **PASS**
@@ -128,13 +163,16 @@ claimed as SECTION.
   assertions were corrected; the final bounded reruns above passed.
 
 Overall status: `IMPLEMENTATION_READY`. Full named real material and the real provider were exercised;
-formal user review and the required independent narrow ZCode review remain the two acceptance gates.
+the refreshed user real-use review and the required independent narrow ZCode review remain the two
+acceptance gates. Per user direction, ZCode review has not started and the Phase remains open.
 
 ## Known limitations / deferred debt
 
 - Pass 1 cannot distinguish `6.2.1` from `6.2.2` on their shared start page. That page remains
   honestly PAGE-scoped until a separately authorized Pass 2 supplies physical evidence.
 - The first request is single-response rather than streamed. The panel shows a bounded pending state.
+- Provider teaching quality is not deterministically schema-validated; the focused endian scenarios
+  require the pending user real-use review against DeepSeek.
 - A credential can be detected as present without proving validity; invalid auth/quota is classified
   on the first user-initiated call, shown honestly without retry, and cooled.
 - Payload inspection is an authenticated localhost API rather than a dedicated UI. Its bounded
@@ -157,12 +195,14 @@ npm run test:e2e:r3
 npm run test:e2e:find
 ```
 
-Manual replay: open the 348-page book at PDF page 303 / printed page 291, select a sentence below
-`6.2.1 总线事务`, right-click `问 AI`, ask the built-in `这是什么意思`, then type `为什么？` or
-`再简单一点`. Confirm the scope display honestly says PDF-page scope with safe Chapter context,
-close and reopen Reader, and confirm the conversation is gone. On the 29-page book repeat once on
-the first page for PAGE fallback. Disable the credential (or use the explicit testing flag) and
-confirm Ask is disabled while reading, selection, marks, search, and directory remain functional.
+Manual replay for the current correction: select `大端序`, right-click `问 AI`, and confirm the user
+bubble is exactly `大端序` and the answer directly explains that concept. Repeat with `小端序` from
+the same paragraph and confirm a distinctly focused explanation. Continue the first conversation
+with `为什么要这么存？` and then `还是不懂，再简单点。`; the second answer should change teaching
+strategy rather than paraphrase. Confirm added professional knowledge is not attributed to the book,
+and challenge one incorrect interpretation. Then close/reopen Reader, exercise PAGE/SECTION scope and
+29-page PAGE fallback, and disable the credential to confirm reading, marks, search, and directory
+remain functional.
 
 ## Important files / architecture entry points
 
@@ -173,6 +213,8 @@ confirm Ask is disabled while reading, selection, marks, search, and directory r
 - `src/reader_service/agent_runtime/runtime.py` — provider profile, payload inspector, bounded retry,
   cooling, and secret-free structured logging.
 - `src/reader_service/assistant/context.py` — pure-read scope resolution and bounded egress context.
+- `src/reader_service/assistant/skills/assistant-explanation/SKILL.md` and `skill.py` — compact
+  teaching strategy and its runtime loader.
 - `src/reader_service/assistant/service.py` — memory-only per-session/per-scope conversations.
 - `src/reader_service/server.py` — authenticated localhost status/ask/follow-up/close/inspection API.
 - `src/reader_service/static/index.html`, `app.js`, `styles.css` — right-click action, temporary panel,

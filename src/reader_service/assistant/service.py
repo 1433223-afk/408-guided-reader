@@ -7,15 +7,19 @@ from uuid import uuid4
 from reader_service.agent_runtime import AgentRuntime
 
 from .context import AssistantContextBuilder, ScopeResolution, provider_user_message
+from .skill import load_explanation_skill
 
 
 MAX_QUESTION_CHARS = 500
 MAX_HISTORY_TURNS = 6
 MAX_HISTORY_CHARS = 8_000
-SYSTEM_MESSAGE = (
+SYSTEM_BOUNDARY = (
     "你是附着在原始教材页面上的临时中文讲解助手。用简体中文清楚、直接地回答。"
-    "教材事实只能来自本次提供的上下文；不得声称看到了未提供的内容，不得编造引文或印刷页码。"
+    "选区触发的首轮消息中，‘当前解释焦点’就是用户希望解释的对象。"
+    "关于教材本身的陈述只能来自本次提供的教材语境；概念解释可以使用可靠的专业或通识知识，"
+    "但不得把补充知识伪装成教材原文、教材观点或本页已有内容，也不得编造引文或印刷页码。"
 )
+SYSTEM_MESSAGE = SYSTEM_BOUNDARY + "\n\n" + load_explanation_skill()
 
 
 @dataclass(slots=True)
@@ -65,23 +69,22 @@ class AssistantService:
         *,
         start: dict,
         end: dict,
-        question: str,
     ) -> dict:
         session_id = self._validate_session_id(reader_session_id)
-        clean_question = self._validate_question(question)
         context = self.contexts.build(
             revision_id, page_index, start=start, end=end
         )
+        visible_message = context["selected_text"]
         scope: ScopeResolution = context["scope"]
         lock = self._lock_for(session_id)
         with lock:
             existing = self._sessions.get(session_id, {}).get(scope.key)
             conversation = existing or Conversation(str(uuid4()), scope)
-            user_content = provider_user_message(context, clean_question)
+            user_content = provider_user_message(context)
             answer = self.runtime.complete(
                 self._messages(conversation, user_content), interaction_id=str(uuid4())
             )
-            conversation.turns.append(Turn(clean_question, answer, user_content))
+            conversation.turns.append(Turn(visible_message, answer, user_content))
             with self._state_lock:
                 self._sessions.setdefault(session_id, {})[scope.key] = conversation
             return conversation.public()
@@ -94,7 +97,7 @@ class AssistantService:
         lock = self._lock_for(session_id)
         with lock:
             conversation = self._conversation(session_id, conversation_id)
-            user_content = "同一范围内的用户追问：\n" + clean_question
+            user_content = clean_question
             answer = self.runtime.complete(
                 self._messages(conversation, user_content), interaction_id=str(uuid4())
             )

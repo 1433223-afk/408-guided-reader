@@ -253,7 +253,6 @@ def handler_factory(
                         int(payload["pdf_page_index"]),
                         start=payload["start"],
                         end=payload["end"],
-                        question=payload.get("question", "这是什么意思"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASK", "error": str(exc)})

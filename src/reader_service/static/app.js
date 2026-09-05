@@ -1032,7 +1032,7 @@ function renderAssistantConversation(conversation) {
 function showAssistantPending(question) {
   const pending = document.createElement("div");
   pending.className = "assistant-pending";
-  pending.textContent = `正在结合教材上下文回答「${question}」…`;
+  pending.textContent = `正在解释「${question}」…`;
   elements["assistant-turns"].append(pending);
   elements["assistant-empty"].hidden = true;
 }
@@ -1049,7 +1049,8 @@ async function askSelectedText() {
   const selection = state.selection;
   const revisionId = state.revision?.id;
   const readerSessionId = state.readerSessionId;
-  if (!selection?.resolved.length || !revisionId || !readerSessionId || state.assistantPending) return;
+  const selectedText = resolvedText(selection?.resolved || []).trim();
+  if (!selection?.resolved.length || !selectedText || !revisionId || !readerSessionId || state.assistantPending) return;
   if (!state.assistantConfigured || state.assistantCooling) {
     openAssistantPanel();
     resetAssistantPanel();
@@ -1061,11 +1062,10 @@ async function askSelectedText() {
     pdf_page_index: selection.pageIndex,
     start: { line_ordinal: selection.anchor.lineOrdinal, boundary: selection.anchor.boundary },
     end: { line_ordinal: selection.focus.lineOrdinal, boundary: selection.focus.boundary },
-    question: "这是什么意思",
   };
   openAssistantPanel();
   state.assistantPending = true;
-  showAssistantPending(request.question);
+  showAssistantPending(selectedText);
   clearSelection();
   try {
     const payload = await api(`/api/revisions/${revisionId}/assistant/ask`, {
