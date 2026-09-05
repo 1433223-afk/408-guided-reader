@@ -5,7 +5,8 @@
 `READY_FOR_USER_RETEST` — implementation remains in the same open Provider Bake-off Phase after a
 user-acceptance correction. The normal Reader now exposes one compact model selector in the
 Assistant panel and makes exactly one provider call per turn. The selected provider/model is pinned
-to the memory-only conversation, including every follow-up. The former comparison input/button and
+to the memory-only conversation only after the staged first request succeeds, including every
+follow-up. The former comparison input/button and
 three-column panel no longer exist in the Reader UI; the gated comparison endpoint remains available
 only to the development benchmark harness.
 
@@ -30,11 +31,12 @@ and no winner/default-provider decision is recorded.
   environment/system proxies remain ignored, remote response bodies remain off logs/UI/inspection,
   and only bounded usage fields are returned.
 - The Assistant header contains one compact selector for the three exact models. A small `AI` toolbar
-  button opens the panel before a selection so the user can choose first; ordinary selection → right-
-  click → `问 AI` remains the primary Reader-native flow.
+  button opens the panel directly; ordinary selection → right-click → `问 AI` stages the selected
+  text without egress, then the user chooses a model and explicitly sends it.
 - The browser sends one selected provider name on the first ask. Core Service validates it against
   the closed named set, stores provider/model on the memory-only conversation, and routes follow-ups
-  from that server-side binding. The selector is locked while that conversation exists. Selecting a
+  from that server-side binding. The selector is locked only after a successful first turn and shows
+  `当前会话已锁定`; an explicit `新对话` action clears the temporary roots and unlocks it. Selecting a
   different model after closing starts fresh; a defensive same-scope request with a changed model
   replaces that scope's temporary root instead of mixing provider histories.
 - The selected model is retained for new roots and new Reader conversations within the current page
@@ -73,6 +75,30 @@ the native selected range survives right-click, and the normal 410px Assistant p
 small model selector plus the existing single-conversation surface. Bake-off evidence collection was
 moved to direct use of the dev-gated endpoint by `provider-bakeoff-real.mjs`; it no longer requires or
 creates user-visible comparison UI.
+
+### Second user retest: selector interaction bug
+
+The next user retest found that the compact selector looked correct but could not be changed through
+the natural selection flow. This was not a stacking, `pointer-events`, missing-handler, or stale-
+asset bug. The right-click `问 AI` action still called `askSelectedText()` immediately. That function
+set `assistantPending=true` before displaying the panel, which disabled the selector during the
+network request; a successful response then populated `assistantConversation`, keeping it disabled.
+Consequently the user never saw an interactive pre-request state unless they had discovered and used
+the separate toolbar `AI` button before selecting text.
+
+The corrected state machine has three explicit states. `DRAFT` holds only the selected text and
+bounded selection coordinates in browser memory, keeps the selector enabled, and performs zero
+provider calls. `PENDING` begins only when the user clicks the draft card's `发送` button and
+temporarily disables controls while exactly one selected provider is called. `CONVERSATION` begins
+only after that first call succeeds; only then is provider/model pinned and the visible lock message
+shown. A failed first call, including OpenRouter `model_region`, leaves the draft and re-enables model
+selection without fallback. `新对话` explicitly clears the old memory-only session before allowing a
+new choice; it never switches provider inside an existing conversation.
+
+The service already sent `Cache-Control: no-store` for `index.html`, `/app.js`, and the other static
+assets. Browser acceptance additionally fetched the live `/app.js` with `cache: reload`, asserted the
+`no-store` header, and confirmed the served source contains the new draft-state function. The retest
+service is therefore running the new asset rather than a cached script or stale process.
 
 ## Important implementation decisions
 
@@ -179,10 +205,11 @@ before implementation: DeepSeek `deepseek-v4-pro` and OpenRouter `google/gemini-
 - `npm test`: **30 passed**.
 - `npm run test:e2e:ask`: **PASS** on the real prepared 29/348-page library with one loopback mock
   endpoint. With the dev gate deliberately on, it verified absent comparison UI, a sub-390px selection
-  menu, preserved native text selection after right-click, compact model selection, Zhipu-only first
-  answer and follow-up calls, the locked conversation model, in-page inheritance for a new Reader
-  conversation, explicit close, PAGE fallback, and zero AI-off egress. The corrected Assistant
-  screenshot was visually inspected; it is an ignored test artifact.
+  menu, preserved native text selection after right-click, zero calls on opening Ask, free switching
+  among all three models in the draft state, Zhipu-only dispatch after explicit send, same-provider
+  follow-up, visible post-success lock state, explicit new-root unlocking with zero egress, in-page
+  inheritance, PAGE fallback, all-provider AI-off, and live no-store asset identity. Draft and locked-
+  conversation screenshots were visually inspected; they are ignored test artifacts.
 - `npm run test:e2e:ask:real`: **PASS** with `deepseek-v4-pro` on the 348-page book and 29-page excerpt:
   real answer, same-level follow-up, honest PAGE scope, Reader-close invalidation, fallback, and AI-off.
 - `npm run test:e2e:bakeoff:real`: **PARTIAL / intentionally non-zero**. DeepSeek and Zhipu each
@@ -224,9 +251,10 @@ $env:GUIDED_READER_PROVIDER_BAKEOFF='1'
 npm run test:e2e:bakeoff:real
 ```
 
-Manual user retest: start the Reader normally, click the compact `AI` toolbar button, choose one of
-the three exact models, then select prepared original-PDF text and use the right-click `问 AI`
-action. Verify the answer and follow-ups remain on that model. The dev benchmark harness calls the
+Manual user retest: start the Reader normally, select prepared original-PDF text, use the right-click
+`问 AI` action, switch freely among the three exact models in the staged card, then click `发送`.
+Verify the selector locks only after the answer succeeds and follow-ups remain on that model; use
+`新对话` to unlock it for another Root. The dev benchmark harness calls the
 gated comparison endpoint directly; setting `GUIDED_READER_PROVIDER_BAKEOFF=1` does not add comparison
 controls to the Reader.
 
@@ -248,5 +276,6 @@ controls to the Reader.
 
 Implementation checkpoint: `3c5327bb79bad0459ad6d2f1b91cc7982c42eebb`.
 Original evidence/report checkpoint: `bb57f24`.
-The user-acceptance correction checkpoint is the commit containing this updated report and is
-recorded in the retest handoff.
+First user-acceptance correction checkpoint: `47084ac`.
+The selector-interaction correction checkpoint is the commit containing this updated report and is
+recorded in the second retest handoff.

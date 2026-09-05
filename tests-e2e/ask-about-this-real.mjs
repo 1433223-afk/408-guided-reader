@@ -35,6 +35,8 @@ try {
     (response) => response.url().endsWith("/assistant/ask"), { timeout: 90_000 },
   );
   await page.locator("#ask-selection").click();
+  await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
+  await page.locator("#assistant-start").click();
   const askedHttp = await askResponse;
   assert.equal(askedHttp.status(), 200);
   const asked = await askedHttp.json();
@@ -90,12 +92,18 @@ try {
     (response) => response.url().endsWith("/assistant/ask"), { timeout: 90_000 },
   );
   await page.locator("#ask-selection").click();
+  await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
+  await page.locator("#assistant-start").click();
   const fallback = await (await fallbackResponse).json();
   assert.equal(fallback.conversation.scope.key, "PAGE:0");
   assert.equal(fallback.conversation.scope.section_title, null);
 
   await stopService(running.child);
-  running = await startService({ GUIDED_READER_DEEPSEEK_DISABLED: "1" });
+  running = await startService({
+    GUIDED_READER_DEEPSEEK_DISABLED: "1",
+    GUIDED_READER_ZHIPU_DISABLED: "1",
+    GUIDED_READER_OPENROUTER_DISABLED: "1",
+  });
   await page.goto(running.url);
   await openBook(page, 29);
   await selectLine(page, 0);

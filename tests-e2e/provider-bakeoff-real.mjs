@@ -114,6 +114,8 @@ try {
       (response) => response.url().endsWith("/assistant/ask"), { timeout: 180_000 },
     );
     await page.locator("#ask-selection").click();
+    await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
+    await page.locator("#assistant-start").click();
     const firstHttp = await firstResponse;
     if (firstHttp.status() !== 200) {
       evidence.failures.push({ stage: "follow_up", provider, error: await firstHttp.json() });

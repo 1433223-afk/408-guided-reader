@@ -83,18 +83,26 @@
         <div class="assistant-heading">
           <div><span class="eyebrow">临时解释</span><strong id="assistant-title">问 AI</strong></div>
           <div class="assistant-heading-actions">
-            <label class="assistant-model" for="assistant-model">
-              <span>模型</span>
-              <select id="assistant-model" aria-label="当前 AI 模型">
-                <option value="deepseek">DeepSeek · deepseek-v4-pro</option>
-                <option value="zhipu">Zhipu · GLM-5.3-Flash</option>
-                <option value="openrouter">OpenRouter · google/gemini-3.8-flash</option>
-              </select>
-            </label>
+            <div class="assistant-model-control">
+              <label class="assistant-model" for="assistant-model">
+                <span>模型</span>
+                <select id="assistant-model" aria-label="当前 AI 模型">
+                  <option value="deepseek">DeepSeek · deepseek-v4-pro</option>
+                  <option value="zhipu">Zhipu · GLM-5.3-Flash</option>
+                  <option value="openrouter">OpenRouter · google/gemini-3.8-flash</option>
+                </select>
+              </label>
+              <small id="assistant-model-lock" class="assistant-model-lock" hidden>当前会话已锁定</small>
+            </div>
+            <button id="assistant-new-root" class="assistant-new-root" type="button" hidden>新对话</button>
             <button id="assistant-close" type="button" aria-label="关闭并清空 AI 对话">×</button>
           </div>
         </div>
         <p id="assistant-scope" class="assistant-scope">等待教材选区</p>
+        <form id="assistant-first-turn" class="assistant-first-turn" hidden>
+          <p><span>准备解释</span><q id="assistant-draft-text"></q></p>
+          <button id="assistant-start" type="submit">发送</button>
+        </form>
         <div id="assistant-turns" class="assistant-turns" aria-live="polite"></div>
         <p id="assistant-empty" class="assistant-empty">在原始 PDF 中选择文字，右键选择「问 AI」。</p>
         <form id="assistant-follow-up" class="assistant-follow-up" hidden>

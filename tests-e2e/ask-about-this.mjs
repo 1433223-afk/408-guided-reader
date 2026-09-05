@@ -55,6 +55,13 @@ try {
   browser = await chromium.launch({ executablePath, headless: process.env.READER_HEADLESS !== "0" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await page.goto(running.url);
+  const servedAsset = await page.evaluate(async () => {
+    const response = await fetch("/app.js", { cache: "reload" });
+    return { cacheControl: response.headers.get("cache-control"), body: await response.text() };
+  });
+  assert.equal(servedAsset.cacheControl, "no-store");
+  assert.ok(servedAsset.body.includes("function stageAssistantSelection()"),
+    "running service served stale Assistant JavaScript");
 
   await openBook(page, 348);
   const readyStatus = await json(page, "/api/assistant/status");
@@ -74,12 +81,6 @@ try {
     "dev bake-off control must not occupy the Reader selection menu");
   assert.equal(await page.locator(".bakeoff-card").count(), 0,
     "dev bake-off cards must not exist in the normal Assistant UI");
-  await page.locator("#assistant-toggle").click();
-  await page.locator("#assistant-panel").waitFor({ state: "visible" });
-  await page.locator("#assistant-model").selectOption("zhipu");
-  assert.equal(await page.locator("#assistant-model").inputValue(), "zhipu");
-  await page.locator("#assistant-toggle").click();
-  await page.locator("#assistant-panel").waitFor({ state: "hidden" });
   assert.equal(await page.locator("#ask-selection").isDisabled(), true,
     "Ask must remain unavailable without a selection");
   const selected = await selectLine(page, 302);
@@ -90,13 +91,24 @@ try {
     "right-click did not preserve the Reader text selection");
   assert.equal(await page.locator("#ask-selection").isEnabled(), true,
     "configured Ask was not enabled for a valid selection");
-  const askResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#ask-selection").click();
+  await page.locator("#assistant-panel").waitFor({ state: "visible" });
+  await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
+  assert.equal(providerCalls.length, 0,
+    "opening Ask sent the first provider request before model selection");
+  assert.equal(await page.locator("#assistant-model").isEnabled(), true,
+    "model selector was locked before the first request");
+  await page.locator("#assistant-model").selectOption("openrouter");
+  await page.locator("#assistant-model").selectOption("deepseek");
+  await page.locator("#assistant-model").selectOption("zhipu");
+  assert.equal(providerCalls.length, 0, "changing the draft model caused provider egress");
+  await page.screenshot({ path: path.join(artifacts, "ask-about-this-draft.png"), fullPage: false });
+  const askResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
+  await page.locator("#assistant-start").click();
   const askedHttp = await askResponse;
   assert.equal(askedHttp.status(), 200);
   const asked = await askedHttp.json();
   const askRequest = askedHttp.request().postDataJSON();
-  await page.locator("#assistant-panel").waitFor({ state: "visible" });
   await page.locator(".assistant-answer-bubble").getByText("一次总线事务", { exact: false }).waitFor();
   assert.equal(asked.conversation.scope.kind, "PAGE");
   assert.equal(asked.conversation.scope.key, "PAGE:302");
@@ -121,6 +133,8 @@ try {
   assert.equal(followed.conversation.turns.length, 2);
   assert.equal(await page.locator("#assistant-model").isDisabled(), true,
     "an active conversation must keep its original model");
+  assert.equal(await page.locator("#assistant-model-lock").isVisible(), true,
+    "locked conversation did not explain why its model cannot change");
   await page.locator(".assistant-answer-bubble").getByText("可靠的数据交换", { exact: false }).waitFor();
   assert.equal(await page.locator("#assistant-panel #ask-selection").count(), 0,
     "Assistant answer text exposed a new-Ask affordance");
@@ -145,6 +159,16 @@ try {
   assert.ok(providerCalls.every((call) => call.method === "POST" && call.url === "/chat/completions"));
   assert.deepEqual(inspection.calls.map((call) => call.provider), ["zhipu", "zhipu"]);
   assert.deepEqual(providerCalls.map((call) => call.body.model), ["GLM-5.3-Flash", "GLM-5.3-Flash"]);
+
+  const newRootClose = page.waitForResponse((response) => response.url().endsWith("/assistant/close"));
+  await page.locator("#assistant-new-root").click();
+  assert.equal((await newRootClose).status(), 204);
+  assert.equal(await page.locator("#assistant-model").isEnabled(), true,
+    "new Assistant Root did not unlock model selection");
+  assert.equal(await page.locator("#assistant-model-lock").isHidden(), true);
+  await page.locator("#assistant-model").selectOption("openrouter");
+  await page.locator("#assistant-model").selectOption("zhipu");
+  assert.equal(providerCalls.length, 2, "new-root model selection caused provider egress");
 
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
@@ -173,6 +197,8 @@ try {
   await selectLine(page, 0);
   const fallbackResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#ask-selection").click();
+  await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
+  await page.locator("#assistant-start").click();
   const fallbackHttp = await fallbackResponse;
   const fallback = await fallbackHttp.json();
   const fallbackRequest = fallbackHttp.request().postDataJSON();
@@ -201,7 +227,11 @@ try {
   assert.equal(closedFollowStatus, 404, "explicit panel close did not clear the conversation");
 
   await stopService(running.child);
-  running = await startService({ GUIDED_READER_DEEPSEEK_DISABLED: "1" });
+  running = await startService({
+    GUIDED_READER_DEEPSEEK_DISABLED: "1",
+    GUIDED_READER_ZHIPU_DISABLED: "1",
+    GUIDED_READER_OPENROUTER_DISABLED: "1",
+  });
   await page.goto(running.url);
   await openBook(page, 29);
   await selectLine(page, 0);
@@ -231,10 +261,15 @@ try {
     inspectedProviderCalls: inspection.calls.length,
     configuredEndpointOnly: providerEndpoint,
     selectedProviderOnly: "zhipu",
+    selectorEnabledBeforeFirstRequest: true,
+    selectorLockedOnlyAfterSuccessfulFirstTurn: true,
+    newRootUnlocksSelector: true,
+    servedCurrentNoStoreAsset: true,
     selectionContextMenuUnobstructed: true,
     bakeoffUiAbsent: true,
     aiOffPreservedReaderSelectionOutlineSearch: true,
     screenshots: [
+      path.join(artifacts, "ask-about-this-draft.png"),
       path.join(artifacts, "ask-about-this-panel.png"),
     ],
   }));
