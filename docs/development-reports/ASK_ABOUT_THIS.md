@@ -14,6 +14,24 @@ selection, marks, search, and directory remain available with AI disabled.
 
 The required independent review has **not** been run. This report does not close the Phase.
 
+### Real-use blocker correction (2026-09-04)
+
+The first manual review found `问 AI` disabled despite a valid selection and an existing Windows
+credential. Read-only diagnosis confirmed that the browser was receiving the newly written static
+`app.js` from disk while the resident Core Service (PID 6912, started at 20:08:03) still ran the
+pre-Assistant Python handler. Consequently `/api/assistant/status` returned 404; the client reduced
+that failure to `configured=false`. Credential Manager itself was not the failure: the fixed target
+was readable in the service user's context without exposing its value.
+
+The minimal correction separates selection eligibility, provider readiness, cooling, and status-API
+availability in the action state. The readiness response now reports secret-free configuration,
+endpoint/model, credential source/reason, cooling/failure state, and `ai_off_reason` fields. Windows
+credential failures distinguish not-found, empty, and read-failed conditions without returning OS
+error text or credential bytes. The old service was replaced with the current code on the same port
+and data directory. Its live status now reports `configured=true`,
+`credential_source=WINDOWS_CREDENTIAL_MANAGER`, valid endpoint/model, no cooling, and no AI-off
+reason. No provider request was needed for that readiness check.
+
 ## Implemented
 
 - An `ASSISTANT`-only agent runtime owns the sole provider egress path. The one adapter is DeepSeek's
@@ -75,7 +93,7 @@ claimed as SECTION.
 ## Acceptance evidence
 
 - `python -m compileall -q src`: **PASS**.
-- `pytest -o addopts= -q -ra`: **67 passed, 2 skipped**. The two skips are the unchanged optional
+- `pytest -o addopts= -q -ra`: **70 passed, 2 skipped**. The two skips are the unchanged optional
   external-path OCR calibration tests; their same real books were used in browser acceptance.
   Coverage includes selection/context bounds, unique SECTION, ambiguous same-page PAGE, front matter
   PAGE, safe Chapter context, unsafe title exclusion, per-scope history isolation, fallback
@@ -86,7 +104,8 @@ claimed as SECTION.
 - `npm test`: **30 passed** — geometry and selection remain green.
 - `npm run test:e2e:ask`: **PASS** against the prepared real 29/348-page library with a local mock
   provider. It exercised actual PDF.js selection/right-click → mock answer → panel, two same-level
-  turns, no answer-text Ask affordance, exact inspected request bodies, configured-endpoint-only
+  turns, explicit no-selection disabled and valid-selection enabled states, secret-free readiness
+  metadata, no answer-text Ask affordance, exact inspected request bodies, configured-endpoint-only
   traffic, Reader close and explicit panel close cleanup, `PAGE:302`, 29-page `PAGE:0`, and AI-off
   selection/directory/search availability. The panel screenshot was visually inspected; it is an
   ignored test artifact, not persisted product content.
@@ -101,6 +120,8 @@ claimed as SECTION.
   page labels and original-PDF navigation; `npm run test:e2e:r3` **PASS** on both books including
   selection/copy, marks persistence/deletion, restart and cleanup; `npm run test:e2e:find` **PASS**
   with 6/10 matches on 29/348 pages.
+- Blocker-fix rerun: `npm run test:e2e:r3` **PASS** on both real books after the action-state change,
+  covering selection/copy and highlight/note create, persist, delete, restart, and cleanup paths.
 - Three preliminary mock-browser harness invocations are explicitly not counted as PASS: one pointed
   at an empty LocalAppData library, one incorrectly expected SECTION on the deliberately ambiguous
   real page, and one contained a JavaScript response-status typo. The data path and harness

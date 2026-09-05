@@ -20,6 +20,7 @@ from reader_service.agent_runtime import (
 )
 from reader_service.agent_runtime.credentials import (
     DEEPSEEK_CREDENTIAL_TARGET,
+    CredentialRead,
     read_deepseek_api_key,
 )
 from reader_service.agent_runtime.deepseek import DeepSeekAdapter
@@ -260,6 +261,45 @@ def test_no_provider_means_zero_network_and_reader_data_stays_available(assistan
         assistant_fixture["revision_id"], 3
     )["status"] == "READY"
     assert assistant_fixture["outline"].repository.list(assistant_fixture["revision_id"])
+
+
+def test_status_reports_secret_safe_readiness_details():
+    agent = runtime(MockAdapter(), key="status-secret-never-return")
+    status = agent.status()
+    assert status["configured"] is True
+    assert status["credential_available"] is True
+    assert status["configuration_valid"] is True
+    assert status["endpoint_valid"] is True
+    assert status["model_valid"] is True
+    assert status["failure_state"] == "READY"
+    assert status["ai_off_reason"] is None
+    assert "status-secret-never-return" not in json.dumps(status)
+
+
+def test_status_distinguishes_credential_read_failure_from_invalid_configuration():
+    failed = AgentRuntime(
+        MockAdapter(),
+        credential_loader=lambda: (_ for _ in ()).throw(OSError("secret-like-detail")),
+    ).status()
+    assert failed["configured"] is False
+    assert failed["credential_available"] is False
+    assert failed["credential_reason"] == "CREDENTIAL_READ_FAILED"
+    assert failed["ai_off_reason"] == "CREDENTIAL_READ_FAILED"
+    assert "secret-like-detail" not in json.dumps(failed)
+
+    invalid = AgentRuntime(
+        MockAdapter(),
+        config=ProviderConfig(endpoint="file:///not-network"),
+        credential_loader=lambda: "secret",
+    ).status()
+    assert invalid["endpoint_valid"] is False
+    assert invalid["model_valid"] is True
+    assert invalid["ai_off_reason"] == "INVALID_CONFIGURATION"
+
+
+def test_credential_result_repr_never_contains_secret():
+    result = CredentialRead(True, "WINDOWS_CREDENTIAL_MANAGER", None, "repr-secret")
+    assert "repr-secret" not in repr(result)
 
 
 def test_credential_target_and_development_disable(monkeypatch):

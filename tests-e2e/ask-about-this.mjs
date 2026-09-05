@@ -49,7 +49,20 @@ try {
   await page.goto(running.url);
 
   await openBook(page, 348);
+  const readyStatus = await json(page, "/api/assistant/status");
+  assert.equal(readyStatus.configured, true);
+  assert.equal(readyStatus.credential_available, true);
+  assert.equal(readyStatus.configuration_valid, true);
+  assert.equal(readyStatus.endpoint_valid, true);
+  assert.equal(readyStatus.model_valid, true);
+  assert.equal(readyStatus.cooling, false);
+  assert.equal(readyStatus.ai_off_reason, null);
+  assert.ok(!JSON.stringify(readyStatus).includes("mock-secret-never-inspect"));
+  assert.equal(await page.locator("#ask-selection").isDisabled(), true,
+    "Ask must remain unavailable without a selection");
   const selected = await selectLine(page, 302);
+  assert.equal(await page.locator("#ask-selection").isEnabled(), true,
+    "configured Ask was not enabled for a valid selection");
   const askResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#ask-selection").click();
   const askedHttp = await askResponse;
@@ -142,6 +155,10 @@ try {
   await openBook(page, 29);
   await selectLine(page, 0);
   assert.equal(await page.locator("#ask-selection").isDisabled(), true);
+  const offStatus = await json(page, "/api/assistant/status");
+  assert.equal(offStatus.configured, false);
+  assert.equal(offStatus.credential_available, false);
+  assert.equal(offStatus.ai_off_reason, "DEVELOPMENT_DISABLED");
   assert.equal(await page.locator("#copy-selection").isEnabled(), true);
   await page.keyboard.press("Escape");
   await page.locator("#outline-toggle").click();

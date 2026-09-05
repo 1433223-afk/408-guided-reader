@@ -13,7 +13,12 @@ from typing import Callable, Protocol
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from .credentials import read_deepseek_api_key
+from .credentials import (
+    DEEPSEEK_CREDENTIAL_TARGET,
+    CredentialRead,
+    read_deepseek_api_key,
+    read_deepseek_credential,
+)
 
 
 logger = logging.getLogger("reader_service.agent_runtime")
@@ -65,7 +70,14 @@ class ProviderConfig:
 
     def validate(self) -> None:
         parsed = urlparse(self.endpoint)
-        if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.query or parsed.fragment:
+        if (
+            parsed.scheme not in ("http", "https")
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
             raise ValueError("DeepSeek endpoint must be one complete HTTP(S) URL")
         if not self.model or len(self.model) > 120:
             raise ValueError("DeepSeek model is invalid")
@@ -108,7 +120,7 @@ class AgentRuntime:
         adapter: ProviderAdapter,
         *,
         config: ProviderConfig | None = None,
-        credential_loader: Callable[[], str | None] = read_deepseek_api_key,
+        credential_loader: Callable[[], str | None] | None = None,
         inspector: PayloadInspector | None = None,
         sleeper: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
@@ -121,7 +133,10 @@ class AgentRuntime:
             self._configuration_valid = False
         else:
             self._configuration_valid = True
-        self.credential_loader = credential_loader
+        self.credential_loader = credential_loader or read_deepseek_api_key
+        self._uses_product_credential_path = (
+            credential_loader is None or credential_loader is read_deepseek_api_key
+        )
         self.inspector = inspector or PayloadInspector()
         self.sleeper = sleeper
         self.clock = clock
@@ -129,18 +144,38 @@ class AgentRuntime:
         self._lock = threading.Lock()
 
     def status(self) -> dict:
-        configured = self._configuration_valid and bool(self._read_key())
+        credential = self._credential_read()
+        endpoint_valid = self._endpoint_valid()
+        model_valid = bool(self.config.model and len(self.config.model) <= 120)
+        configured = self._configuration_valid and credential.available
         cooling = configured and self.clock() < self._cooling_until
+        if not self._configuration_valid:
+            ai_off_reason = "INVALID_CONFIGURATION"
+        elif not credential.available:
+            ai_off_reason = credential.reason or "CREDENTIAL_UNAVAILABLE"
+        elif cooling:
+            ai_off_reason = "COOLING"
+        else:
+            ai_off_reason = None
         return {
             "role": "ASSISTANT",
             "provider": "deepseek",
             "model": self.config.model,
+            "endpoint": self.config.endpoint,
             "configured": configured,
+            "configuration_valid": self._configuration_valid,
+            "endpoint_valid": endpoint_valid,
+            "model_valid": model_valid,
+            "credential_available": credential.available,
+            "credential_source": credential.source,
+            "credential_reason": credential.reason,
             "cooling": cooling,
+            "failure_state": "COOLING" if cooling else "READY" if configured else "AI_OFF",
+            "ai_off_reason": ai_off_reason,
             "retry_after_seconds": max(
                 0, math.ceil(self._cooling_until - self.clock())
             ) if cooling else 0,
-            "credential_target": "408-guided-reader-deepseek",
+            "credential_target": DEEPSEEK_CREDENTIAL_TARGET,
         }
 
     def complete(self, messages: list[dict], *, interaction_id: str | None = None) -> str:
@@ -217,11 +252,30 @@ class AgentRuntime:
         raise last_failure
 
     def _read_key(self) -> str | None:
+        return self._credential_read().key
+
+    def _credential_read(self) -> CredentialRead:
+        if self._uses_product_credential_path:
+            return read_deepseek_credential()
         try:
             value = self.credential_loader()
         except Exception:
-            return None
-        return value.strip() if isinstance(value, str) and value.strip() else None
+            return CredentialRead(False, "CUSTOM_LOADER", "CREDENTIAL_READ_FAILED")
+        key = value.strip() if isinstance(value, str) and value.strip() else None
+        return CredentialRead(
+            bool(key), "CUSTOM_LOADER", None if key else "CREDENTIAL_NOT_FOUND", key
+        )
+
+    def _endpoint_valid(self) -> bool:
+        parsed = urlparse(self.config.endpoint)
+        return bool(
+            parsed.scheme in ("http", "https")
+            and parsed.netloc
+            and not parsed.username
+            and not parsed.password
+            and not parsed.query
+            and not parsed.fragment
+        )
 
     def _start_cooling(self) -> None:
         with self._lock:

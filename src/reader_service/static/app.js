@@ -27,6 +27,7 @@ const state = {
   searchRequest: 0, searchMatch: null,
   outlineRequest: 0, outlineNodes: [], pageLabels: new Map(), mapTimer: 0,
   readerSessionId: null, assistantConfigured: false, assistantCooling: false,
+  assistantStatusAvailable: false, assistantOffReason: null,
   assistantConversation: null, assistantPending: false, assistantStatusTimer: 0,
 };
 
@@ -929,12 +930,11 @@ async function refreshAssistantStatus() {
   clearTimeout(state.assistantStatusTimer);
   try {
     const status = await api("/api/assistant/status");
+    state.assistantStatusAvailable = true;
     state.assistantConfigured = Boolean(status.configured);
     state.assistantCooling = Boolean(status.cooling);
-    elements["ask-selection"].disabled = !state.assistantConfigured || state.assistantCooling;
-    elements["ask-selection"].title = !state.assistantConfigured
-      ? "未配置 DeepSeek 密钥；Reader 其余功能不受影响"
-      : (state.assistantCooling ? "AI 服务正在短暂冷却" : "使用当前教材上下文提问");
+    state.assistantOffReason = status.ai_off_reason || null;
+    syncAskEligibility();
     if (state.assistantCooling) {
       state.assistantStatusTimer = setTimeout(
         refreshAssistantStatus,
@@ -942,11 +942,40 @@ async function refreshAssistantStatus() {
       );
     }
   } catch (_error) {
+    state.assistantStatusAvailable = false;
     state.assistantConfigured = false;
     state.assistantCooling = false;
-    elements["ask-selection"].disabled = true;
-    elements["ask-selection"].title = "AI 配置状态暂时不可用";
+    state.assistantOffReason = "STATUS_UNAVAILABLE";
+    syncAskEligibility();
   }
+}
+
+function syncAskEligibility() {
+  const hasSelection = Boolean(
+    state.selection?.resolved.length && state.revision?.id && state.readerSessionId
+  );
+  const ask = elements["ask-selection"];
+  ask.disabled = !hasSelection || !state.assistantConfigured || state.assistantCooling;
+  if (!hasSelection) {
+    ask.title = "请先选择当前教材页中的文字";
+  } else if (!state.assistantStatusAvailable) {
+    ask.title = "AI 状态接口不可用；请重启 Core Service 后重试";
+  } else if (state.assistantCooling) {
+    ask.title = "AI 服务正在短暂冷却";
+  } else if (state.assistantOffReason === "INVALID_CONFIGURATION") {
+    ask.title = "DeepSeek endpoint 或 model 配置无效；Reader 其余功能不受影响";
+  } else if (state.assistantOffReason === "CREDENTIAL_READ_FAILED") {
+    ask.title = "无法读取 Windows Credential Manager；Reader 其余功能不受影响";
+  } else if (state.assistantOffReason === "CREDENTIAL_EMPTY") {
+    ask.title = "Windows Credential Manager 中的 DeepSeek 凭据为空";
+  } else if (state.assistantOffReason === "DEVELOPMENT_DISABLED") {
+    ask.title = "DeepSeek 已在开发/测试配置中禁用";
+  } else if (!state.assistantConfigured) {
+    ask.title = "未找到 DeepSeek 凭据；Reader 其余功能不受影响";
+  } else {
+    ask.title = "使用当前教材上下文提问";
+  }
+  ask.setAttribute("aria-disabled", String(ask.disabled));
 }
 
 function resetAssistantPanel() {
@@ -1267,6 +1296,7 @@ function renderSelection() {
   document.querySelectorAll(".selection-quad").forEach((node) => node.remove());
   const data = state.overlayData.get(state.selection.pageIndex);
   state.selection.resolved = resolveSelection(data.lines, state.selection.anchor, state.selection.focus);
+  syncAskEligibility();
   const overlay = elements.pages.children[state.selection.pageIndex]?.querySelector(".text-overlay");
   if (!overlay) return;
   for (const quad of selectionPresentationQuads(state.selection.resolved)) {
@@ -1358,6 +1388,7 @@ function clearSelection() {
   window.getSelection()?.removeAllRanges();
   state.selection = null;
   state.selecting = false;
+  syncAskEligibility();
   hideSelectionActions();
 }
 
