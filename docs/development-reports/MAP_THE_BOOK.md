@@ -2,18 +2,16 @@
 
 ## Result
 
-`IMPLEMENTATION_READY` — the Reader now exposes a collapsible Simplified-Chinese `目录` built only
+`CLOSED` — the Reader now exposes a collapsible Simplified-Chinese `目录` built only
 from the source PDF's embedded bookmarks or persisted READY OCR lines on complete TOC-page blocks.
 A navigable entry follows the existing `goToPage` path to the original PDF canvas. The current page
 shows its printed-page label when a validated per-page mapping exists and otherwise says
 `印刷页未知`; a per-page manual label persists and takes precedence over inference.
 
-`READY_FOR_USER_REAL_USE_REVIEW: YES`
+`MAP_THE_BOOK_STATUS: CLOSED`
 
-`READY_FOR_NARROW_ZCODE_REVIEW: YES` — review scope is identity minting, logical-commit validation,
-label-inference honesty, and delete cascade correctness. UI polish and broader architecture are out
-of scope for that review. The user explicitly deferred invoking this review until after the current
-real-use correction is re-exercised; no independent review has run yet.
+Final user real-use acceptance and the required independent narrow review both passed. The Phase may
+close; no further Map the Book implementation or review gate remains open.
 
 This is Outline Pass 1 plus printed-page mapping and Reader navigation only. It does not claim R4
 complete and does not implement Pass 2 physical resolution or D-3 layout detection.
@@ -97,6 +95,17 @@ correction UI/tier workflow, KP/Teaching/Assistant, AI, or structure-scoped sear
 
 ## Acceptance evidence
 
+### Final gate outcomes
+
+- **User real-use acceptance: PASS.** The main directory foregrounds formal Chapters;
+  front/end matter is grouped under default-collapsed `其他内容`; body hierarchy expands recursively
+  with no artificial display-depth ceiling; and `6.2.1 总线事务` navigates through the original-PDF
+  path to PDF page 303 while showing printed page 291.
+- **ZCode independent narrow review: PASS — P0 0 / P1 0 / P2 3.** The review covered the Phase's
+  narrow load-bearing scope and explicitly allowed Map the Book to close. Its three P2 observations
+  are recorded below as non-blocking deferred observations, not current defects and not closure
+  blockers.
+
 - `python -m compileall -q src`: **PASS**.
 - Correction rerun: `pytest -o addopts= -q -ra`: **46 passed, 2 skipped**. The two skips are the pre-existing optional
   external-path OCR calibration tests; the same hash-verified real books were exercised in browser
@@ -144,10 +153,18 @@ correction UI/tier workflow, KP/Teaching/Assistant, AI, or structure-scoped sear
   the asynchronous return-to-library flow was still completing. The harness now waits for the
   Library surface; subsequent full runs passed.
 
-Overall status: `IMPLEMENTATION_READY`. Automated and real-browser acceptance passed on both named
-real books. User real-use review and the required narrow independent ZCode review remain next gates.
+Overall status: `CLOSED`. Automated and real-browser acceptance passed on both named real books;
+user real-use acceptance passed; and the required independent narrow ZCode review passed and allowed
+closure.
 
 ## Known limitations / deferred debt
+
+The final narrow review recorded three **P2, non-blocking deferred observations**. They are not
+upgraded to current defects and are intentionally not fixed in this Phase:
+
+- inferred PageLabel conflict visibility / first-inference locking;
+- TOC fallback classifier false-positive risk;
+- TOC fallback trailing FAILED page indefinite wait.
 
 - The 29-page source is a front-of-book excerpt. Its TOC describes the whole textbook, so nodes whose
   printed pages are outside the excerpt remain visible and honestly `UNRESOLVED`; for example its

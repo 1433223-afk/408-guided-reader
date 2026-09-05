@@ -212,10 +212,10 @@ detailed future briefs ahead of need.
 
 ## 8. Current state
 
-Both blueprints are frozen at Gate D (2026-09-03). R1, R2, R3 and Find in Book are closed; Find in
-Book passed user real-use acceptance 2026-09-04. **Map the Book** (`docs/phases/MAP_THE_BOOK.md`) is
-the current Phase brief — accepted 2026-09-04, awaiting implementation: Outline Pass 1 logical
-directory, printed-page mapping, and Reader navigation. Cross-version annotation round-trip remains a
-pending capability gap because OCR reprocessing does not exist. Map the Book does not authorize the
-rest of the frozen §24 R4 entry (Pass 2 physical resolution, layout detection **D-3**) or anything
-beyond its own scope; derive later briefs per §7.
+Both blueprints are frozen at Gate D (2026-09-03). R1, R2, R3, Find in Book and Map the Book are
+closed. Find in Book passed user real-use acceptance 2026-09-04. Map the Book passed user real-use
+acceptance and its required independent narrow review on 2026-09-04; the review explicitly allowed
+closure with three non-blocking P2 observations recorded in its development report. Cross-version
+annotation round-trip remains a pending capability gap because OCR reprocessing does not exist.
+No next Phase brief has been accepted; derive it later per §7 from current product/code state and
+actual usage feedback.
