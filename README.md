@@ -94,7 +94,10 @@ named model is available. Every textbook selection starts a retained temporary e
 select text in the current Assistant answer to **再问一层**, up to depth 5. The compact side panel can
 switch topics, return to a parent explanation, continue at the same level, or close one topic and its
 deeper explanations. Provider/model is fixed within each topic; all topics clear when the Reader
-closes. Store keys as Windows **Generic Credentials** using the fixed targets documented in
+closes. A completed Assistant answer can be explicitly saved to Notes; the resulting AI-labelled
+Annotation is committed immediately, while a separately configured reviewer updates only its
+verification metadata. Review failure never removes the saved explanation. Store keys as Windows
+**Generic Credentials** using the fixed targets documented in
 `.env.example`; keys are never stored in the app database or config files. Exact provider request
 bodies are available only from the authenticated localhost process-memory surface at
 `/api/assistant/inspection`; this bounded buffer and all explanation state disappear on service restart.
@@ -110,4 +113,4 @@ pytest tests/test_real_ocr_acceptance.py
 
 The current product still contains no body-heading detection, Pass 2 range refinement, layout
 regions, correction-tier UI, chapter preparation, structure-scoped search, persistent Assistant
-history, saved AI notes, or multimodal explanation.
+history, or multimodal explanation.

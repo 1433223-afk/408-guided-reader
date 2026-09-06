@@ -269,6 +269,95 @@ MIGRATIONS = (
         );
         """,
     ),
+    (
+        7,
+        """
+        -- Save-to-Notes promotes exactly one completed Assistant answer into
+        -- Annotation.  The rebuild widens only the already-reserved AI_SAVED
+        -- path while copying every existing USER field one-for-one.
+        CREATE TABLE annotations_v7 (
+            id TEXT PRIMARY KEY,
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            pdf_page_index INTEGER NOT NULL CHECK (pdf_page_index >= 0),
+            kind TEXT NOT NULL DEFAULT 'TEXT' CHECK (kind = 'TEXT'),
+            quads_json TEXT NOT NULL,
+            quote TEXT NOT NULL CHECK (length(quote) > 0),
+            context_before TEXT NOT NULL,
+            context_after TEXT NOT NULL,
+            foundation_version_at_creation INTEGER NOT NULL
+                CHECK (foundation_version_at_creation >= 1),
+            body TEXT,
+            highlight_style TEXT NOT NULL DEFAULT 'YELLOW'
+                CHECK (highlight_style IN ('YELLOW', 'GREEN', 'BLUE', 'NONE')),
+            source_kind TEXT NOT NULL DEFAULT 'USER'
+                CHECK (source_kind IN ('USER', 'AI_SAVED')),
+            verification_state TEXT,
+            anchor_state TEXT NOT NULL DEFAULT 'OK' CHECK (anchor_state = 'OK'),
+            knowledge_point_id TEXT CHECK (knowledge_point_id IS NULL),
+            save_intent_id TEXT UNIQUE,
+            provenance_json TEXT,
+            source_grounding_json TEXT,
+            review_provider TEXT,
+            review_model TEXT,
+            review_failure_kind TEXT,
+            review_code TEXT,
+            review_summary TEXT CHECK (
+                review_summary IS NULL OR length(review_summary) <= 1000
+            ),
+            reviewed_at TEXT,
+            created_at TEXT NOT NULL,
+            CHECK (
+                (source_kind = 'USER'
+                    AND (body IS NULL OR (length(body) > 0 AND length(body) <= 1000))
+                    AND verification_state IS NULL
+                    AND save_intent_id IS NULL
+                    AND provenance_json IS NULL
+                    AND source_grounding_json IS NULL
+                    AND review_provider IS NULL
+                    AND review_model IS NULL
+                    AND review_failure_kind IS NULL
+                    AND review_code IS NULL
+                    AND review_summary IS NULL
+                    AND reviewed_at IS NULL)
+                OR
+                (source_kind = 'AI_SAVED'
+                    AND body IS NOT NULL
+                    AND length(body) > 0
+                    AND length(body) <= 100000
+                    AND highlight_style = 'NONE'
+                    AND verification_state IN (
+                        'PENDING', 'PASS', 'FAIL', 'TECHNICAL_FAILURE'
+                    )
+                    AND save_intent_id IS NOT NULL
+                    AND length(save_intent_id) BETWEEN 8 AND 128
+                    AND provenance_json IS NOT NULL
+                    AND source_grounding_json IS NOT NULL)
+            )
+        );
+
+        INSERT INTO annotations_v7(
+            id, book_source_revision_id, pdf_page_index, kind, quads_json,
+            quote, context_before, context_after, foundation_version_at_creation,
+            body, highlight_style, source_kind, verification_state, anchor_state,
+            knowledge_point_id, save_intent_id, provenance_json,
+            source_grounding_json, review_provider, review_model,
+            review_failure_kind, review_code, review_summary, reviewed_at, created_at
+        )
+        SELECT
+            id, book_source_revision_id, pdf_page_index, kind, quads_json,
+            quote, context_before, context_after, foundation_version_at_creation,
+            body, highlight_style, source_kind, verification_state, anchor_state,
+            knowledge_point_id, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            NULL, created_at
+        FROM annotations;
+
+        DROP TABLE annotations;
+        ALTER TABLE annotations_v7 RENAME TO annotations;
+        CREATE INDEX ix_annotations_revision_page
+            ON annotations(book_source_revision_id, pdf_page_index, created_at, id);
+        """,
+    ),
 )
 
 
@@ -296,6 +385,8 @@ class Database:
             for version, sql in MIGRATIONS:
                 if version in applied:
                     continue
+                if version == 7:
+                    self._backup_durable_annotations(connection, version)
                 # executescript does not add a transaction of its own. Keep the
                 # schema change and its migration marker atomic, which is
                 # especially important once migrations preserve user assets.
@@ -309,6 +400,47 @@ class Database:
             raise
         finally:
             connection.close()
+
+    def _backup_durable_annotations(
+        self, connection: sqlite3.Connection, migration_version: int
+    ) -> None:
+        table = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'annotations'"
+        ).fetchone()
+        if table is None:
+            return
+        source_count = int(
+            connection.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]
+        )
+        if source_count == 0:
+            return
+        backup_path = self.path.with_name(
+            f"{self.path.name}.pre-migration-{migration_version}.bak"
+        )
+        if not backup_path.exists():
+            destination = sqlite3.connect(backup_path)
+            try:
+                connection.backup(destination)
+                destination.commit()
+            finally:
+                destination.close()
+        verification = sqlite3.connect(backup_path)
+        try:
+            integrity = verification.execute("PRAGMA integrity_check").fetchone()[0]
+            backup_count = int(
+                verification.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]
+            )
+        finally:
+            verification.close()
+        if integrity != "ok" or backup_count != source_count:
+            raise RuntimeError(
+                f"Durable Annotation backup verification failed before migration {migration_version}"
+            )
+        print(
+            "DATA MIGRATION: existing highlights and notes were backed up and will be "
+            f"preserved while enabling saved AI explanations ({backup_path}).",
+            flush=True,
+        )
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

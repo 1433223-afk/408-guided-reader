@@ -104,7 +104,9 @@ def test_create_highlight_and_note_persist_only_durable_anchor(service):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(annotations)")}
     assert "line_ordinal" not in columns
     assert "cell_index" not in columns
-    assert not any("engine" in column or "provider" in column for column in columns)
+    assert not any("engine" in column for column in columns)
+    assert "review_provider" in columns
+    assert noted["review_provider"] is None
 
 
 def test_same_version_restart_reload_delete_and_book_cascade(service):
@@ -218,6 +220,13 @@ def test_v5_style_migration_preserves_existing_annotation_and_ownership(tmp_path
     connection.close()
 
     Database(path).initialize()
+
+    backup_path = path.with_name(f"{path.name}.pre-migration-7.bak")
+    assert backup_path.is_file()
+    backup = sqlite3.connect(backup_path)
+    assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert backup.execute("SELECT COUNT(*) FROM annotations").fetchone()[0] == 1
+    backup.close()
 
     connection = sqlite3.connect(path)
     connection.execute("PRAGMA foreign_keys = ON")

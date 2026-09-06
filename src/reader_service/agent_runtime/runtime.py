@@ -463,6 +463,17 @@ class ProviderRuntimeSet:
         *,
         interaction_id: str | None = None,
     ) -> str:
+        return self.complete_for_with_metadata(
+            provider, messages, interaction_id=interaction_id
+        ).answer
+
+    def complete_for_with_metadata(
+        self,
+        provider: str,
+        messages: list[dict],
+        *,
+        interaction_id: str | None = None,
+    ) -> ProviderCompletion:
         runtime = self.runtimes.get(provider)
         if runtime is None:
             raise ProviderFailure(
@@ -470,7 +481,7 @@ class ProviderRuntimeSet:
                 "invalid_active_provider",
                 "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
             )
-        return runtime.complete(messages, interaction_id=interaction_id)
+        return runtime.complete_with_metadata(messages, interaction_id=interaction_id)
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:
         selected = provider or self.active_provider

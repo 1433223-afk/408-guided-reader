@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import threading
 from dataclasses import dataclass, field
 from enum import Enum
@@ -118,6 +119,7 @@ class AssistantRoot:
     created_from: SelectionSource
     provider: str
     model: str
+    source_anchor: dict
     reference_context: dict
     turns: list[Turn] = field(default_factory=list)
     nodes: dict[str, AssistantNode] = field(default_factory=dict)
@@ -313,6 +315,7 @@ class AssistantService:
             source,
             selected_provider,
             selected_model,
+            copy.deepcopy(context["source_anchor"]),
             self._reference_context(context),
             turns=[Turn(turn_id, context["selected_text"], answer, user_content)],
         )
@@ -615,6 +618,68 @@ class AssistantService:
                 raise self._request_cancelled()
             with slot.lock:
                 return slot.state.public()
+
+    def completed_turn_projection(
+        self,
+        reader_session_id: str,
+        root_id: str,
+        turn_id: str,
+        *,
+        node_id: str | None = None,
+    ) -> dict:
+        """Project one completed answer without exposing or persisting tree state."""
+        session_id = self._validate_session_id(reader_session_id)
+        clean_root_id = self._validate_id(root_id, "Root id")
+        clean_node_id = self._optional_id(node_id, "Node id")
+        clean_turn_id = self._validate_id(turn_id, "Turn id")
+        slot = self._existing_slot(session_id)
+        with self._state_lock:
+            if self._sessions.get(session_id) is not slot:
+                raise self._request_cancelled()
+            with slot.lock:
+                root = self._root(slot.state, clean_root_id)
+                level = self._level(root, clean_node_id)
+                turn = next(
+                    (candidate for candidate in level.turns if candidate.turn_id == clean_turn_id),
+                    None,
+                )
+                if turn is None or not turn.answer.strip():
+                    raise AssistantStateError(
+                        "ANSWER_NOT_COMPLETED",
+                        "只能保存一条已经完成的 Assistant 回答。",
+                    )
+                concept_path = [root.created_from.selected_text]
+                child_focus = None
+                if clean_node_id is not None:
+                    lineage = []
+                    current_node_id = clean_node_id
+                    while current_node_id is not None:
+                        node = root.nodes[current_node_id]
+                        lineage.append(node.selected_text)
+                        current_node_id = node.parent_node_id
+                    concept_path.extend(reversed(lineage))
+                    child_focus = level.selected_text
+                return {
+                    "revision_id": root.created_from.revision_id,
+                    "pdf_page_index": root.created_from.pdf_page_index,
+                    "source": copy.deepcopy(root.source_anchor),
+                    "provenance": {
+                        "root_focus": root.created_from.selected_text,
+                        "child_focus": child_focus,
+                        "concept_path": concept_path,
+                        "answer_question": turn.question,
+                    },
+                    "source_grounding": {
+                        "pdf_page_number": root.created_from.pdf_page_index + 1,
+                        "printed_page_label": root.reference_context.get("printed_page_label"),
+                        "chapter_title": root.scope.chapter_title,
+                        "section_title": root.scope.section_title,
+                        "bounded_same_page_ocr": root.reference_context.get(
+                            "same_page_ocr_context", ""
+                        ),
+                    },
+                    "ai_content": turn.answer,
+                }
 
     def bake_off_selection(
         self,

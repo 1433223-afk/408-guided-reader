@@ -173,7 +173,7 @@ class AssistantContextBuilder:
         end: dict,
     ) -> dict:
         selection = self.foundation.resolve_text_selection(
-            revision_id, page_index, start=start, end=end, context_length=0
+            revision_id, page_index, start=start, end=end
         )
         selected_text = selection["quote"].strip()
         if not selected_text:
@@ -203,6 +203,13 @@ class AssistantContextBuilder:
         return {
             "scope": scope,
             "selected_text": selected_text,
+            "source_anchor": {
+                "quads": selection["quads"],
+                "quote": selection["quote"],
+                "context_before": selection["context_before"],
+                "context_after": selection["context_after"],
+                "foundation_version": selection["foundation_version"],
+            },
             "same_page_ocr_context": surrounding,
             "printed_page_label": printed_label,
             "foundation_version": selection["foundation_version"],

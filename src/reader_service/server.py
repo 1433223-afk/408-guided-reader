@@ -19,6 +19,10 @@ from reader_service.assistant import AssistantService, AssistantStateError
 from reader_service.library import IntakeError, LibraryService
 from reader_service.jobs import PreparationCoordinator
 from reader_service.outline import OutlineService
+from reader_service.saved_explanations import (
+    SavedExplanationError,
+    SavedExplanationService,
+)
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -45,6 +49,12 @@ _REVISION_ASSISTANT_ASK = re.compile(r"^/api/revisions/([0-9a-f-]+)/assistant/as
 _REVISION_ASSISTANT_BAKEOFF = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/assistant/bake-off$"
 )
+_REVISION_ASSISTANT_SAVE = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/assistant/save$"
+)
+_REVISION_ANNOTATION_REVIEW = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)/review$"
+)
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
 _SESSION_COOKIE = "reader_launch"
 
@@ -67,6 +77,7 @@ def handler_factory(
     annotations: AnnotationService | None = None,
     outline: OutlineService | None = None,
     assistant: AssistantService | None = None,
+    saved_explanations: SavedExplanationService | None = None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -255,6 +266,67 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            save_match = _REVISION_ASSISTANT_SAVE.fullmatch(parsed.path)
+            if save_match:
+                if not self._authorized():
+                    return
+                if saved_explanations is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "SAVE_EXPLANATION_UNAVAILABLE",
+                        "error": "保存 Assistant 解释功能不可用。",
+                    })
+                    return
+                try:
+                    payload = self._read_json()
+                    result = saved_explanations.save(
+                        save_match.group(1),
+                        reader_session_id=payload["reader_session_id"],
+                        root_id=payload["root_id"],
+                        node_id=payload.get("node_id"),
+                        turn_id=payload["turn_id"],
+                        save_intent_id=payload["save_intent_id"],
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {
+                        "code": "INVALID_SAVE_EXPLANATION", "error": str(exc)
+                    })
+                    return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {
+                        "code": "ASSISTANT_SAVE_TARGET_GONE", "error": str(exc)
+                    })
+                    return
+                self._json(
+                    HTTPStatus.CREATED if result["created"] else HTTPStatus.OK,
+                    result,
+                )
+                return
+            review_match = _REVISION_ANNOTATION_REVIEW.fullmatch(parsed.path)
+            if review_match:
+                if not self._authorized():
+                    return
+                if saved_explanations is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "REVIEW_UNAVAILABLE", "error": "AI 审查功能不可用。"
+                    })
+                    return
+                try:
+                    result = saved_explanations.retry_review(
+                        review_match.group(1), review_match.group(2)
+                    )
+                except SavedExplanationError as exc:
+                    self._json(HTTPStatus.CONFLICT, {
+                        "code": exc.code, "error": exc.user_message
+                    })
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.ACCEPTED, result)
+                return
             bakeoff_match = _REVISION_ASSISTANT_BAKEOFF.fullmatch(parsed.path)
             if bakeoff_match:
                 if not self._authorized():

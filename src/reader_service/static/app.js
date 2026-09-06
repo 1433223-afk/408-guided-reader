@@ -32,6 +32,8 @@ const state = {
   assistantStatusAvailable: false, assistantOffReason: null,
   assistantState: { version: 0, roots: [], focused_ref: null, current: null },
   assistantDraft: null, assistantAnswerSelection: null, assistantProviderStatuses: [],
+  assistantSaveIntents: new Map(), assistantSavedTurns: new Map(),
+  assistantReviewPolls: new Map(),
   assistantPending: false, assistantStatusTimer: 0,
   assistantScrollPositions: new Map(), assistantChildRequests: new Map(),
   assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
@@ -184,6 +186,10 @@ async function openBook(book) {
   state.assistantState = emptyAssistantState();
   state.assistantDraft = null;
   state.assistantAnswerSelection = null;
+  state.assistantSaveIntents.clear();
+  state.assistantSavedTurns.clear();
+  clearAssistantReviewPolls();
+  state.annotationData.clear();
   state.assistantScrollPositions.clear();
   state.assistantChildRequests.clear();
   state.zoom = state.revision.position.zoom || 1;
@@ -233,6 +239,10 @@ function closeReader() {
   state.assistantState = emptyAssistantState();
   state.assistantDraft = null;
   state.assistantAnswerSelection = null;
+  state.assistantSaveIntents.clear();
+  state.assistantSavedTurns.clear();
+  clearAssistantReviewPolls();
+  state.annotationData.clear();
   state.assistantScrollPositions.clear();
   state.assistantChildRequests.clear();
   elements.reader.hidden = true;
@@ -1092,6 +1102,15 @@ function assistantLocationKey(rootId, nodeId = null) {
   return `${rootId}:${nodeId || "root"}`;
 }
 
+function assistantTurnKey(rootId, nodeId, turnId) {
+  return `${assistantLocationKey(rootId, nodeId)}:${turnId}`;
+}
+
+function clearAssistantReviewPolls() {
+  for (const timer of state.assistantReviewPolls.values()) clearTimeout(timer);
+  state.assistantReviewPolls.clear();
+}
+
 function rememberAssistantScroll() {
   const current = state.assistantState.current;
   if (!current) return;
@@ -1340,7 +1359,20 @@ function renderAssistantWorkspace() {
       answer.dataset.currentAnswer = "true";
       if (current.depth >= 5) answer.title = "已到第 5 层；可在下方继续追问";
     }
-    article.append(question, answer);
+    const turnActions = document.createElement("div");
+    turnActions.className = "assistant-turn-actions";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "assistant-save-note";
+    save.dataset.rootId = current.root_id;
+    save.dataset.nodeId = current.node_id || "";
+    save.dataset.turnId = turn.turn_id;
+    const saveKey = assistantTurnKey(current.root_id, current.node_id, turn.turn_id);
+    const saved = state.assistantSavedTurns.has(saveKey);
+    save.textContent = saved ? "已保存" : "保存到笔记";
+    save.disabled = saved;
+    turnActions.append(save);
+    article.append(question, answer, turnActions);
     return article;
   });
   if (current.pending) {
@@ -1719,6 +1751,117 @@ async function sendAssistantChild() {
   }
 }
 
+async function saveAssistantTurn(button) {
+  if (button.disabled || button.dataset.saving === "true") return;
+  const readerSessionId = state.readerSessionId;
+  const revisionId = state.revision?.id;
+  const rootId = button.dataset.rootId;
+  const nodeId = button.dataset.nodeId || null;
+  const turnId = button.dataset.turnId;
+  if (!readerSessionId || !revisionId || !rootId || !turnId) return;
+  const turnKey = assistantTurnKey(rootId, nodeId, turnId);
+  const saveIntentId = state.assistantSaveIntents.get(turnKey) || crypto.randomUUID();
+  state.assistantSaveIntents.set(turnKey, saveIntentId);
+  button.dataset.saving = "true";
+  button.disabled = true;
+  button.textContent = "正在保存…";
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/assistant/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reader_session_id: readerSessionId,
+        root_id: rootId,
+        node_id: nodeId,
+        turn_id: turnId,
+        save_intent_id: saveIntentId,
+      }),
+    });
+    if (state.revision?.id !== revisionId) return;
+    state.assistantSavedTurns.set(turnKey, payload.annotation.id);
+    upsertAnnotation(payload.annotation);
+    renderAnnotations(payload.annotation.pdf_page_index);
+    updateMarksPanel();
+    renderAssistantWorkspace();
+    announce("已保存到笔记；AI 审查会随后更新状态。");
+    pollSavedExplanationReview(payload.annotation.id, payload.annotation.pdf_page_index, 0);
+  } catch (error) {
+    if (state.revision?.id !== revisionId) return;
+    button.disabled = false;
+    button.textContent = "重试保存到笔记";
+    announce(`保存失败：${error.message || "请稍后重试。"}`, true);
+  } finally {
+    delete button.dataset.saving;
+  }
+}
+
+function upsertAnnotation(annotation) {
+  const pageIndex = annotation.pdf_page_index;
+  const values = state.annotationData.get(pageIndex) || [];
+  const existing = values.findIndex((value) => value.id === annotation.id);
+  const next = [...values];
+  if (existing >= 0) next[existing] = annotation;
+  else next.push(annotation);
+  state.annotationData.set(pageIndex, next);
+}
+
+async function refreshAnnotationPage(pageIndex) {
+  const revisionId = state.revision?.id;
+  if (!revisionId) return [];
+  const payload = await api(`/api/revisions/${revisionId}/annotations?page=${pageIndex}`);
+  if (state.revision?.id !== revisionId) return [];
+  state.annotationData.set(pageIndex, payload.annotations);
+  renderAnnotations(pageIndex);
+  if (pageIndex === state.currentPage) updateMarksPanel();
+  return payload.annotations;
+}
+
+function pollSavedExplanationReview(annotationId, pageIndex, attempt) {
+  const delays = [450, 900, 1800, 3600, 7200, 15000, 30000, 60000];
+  const previous = state.assistantReviewPolls.get(annotationId);
+  if (previous) clearTimeout(previous);
+  if (attempt >= delays.length) {
+    state.assistantReviewPolls.delete(annotationId);
+    return;
+  }
+  const revisionId = state.revision?.id;
+  const timer = setTimeout(async () => {
+    state.assistantReviewPolls.delete(annotationId);
+    if (!revisionId || state.revision?.id !== revisionId) return;
+    try {
+      const values = await refreshAnnotationPage(pageIndex);
+      const annotation = values.find((value) => value.id === annotationId);
+      if (annotation?.verification_state === "PENDING") {
+        pollSavedExplanationReview(annotationId, pageIndex, attempt + 1);
+      }
+    } catch (_error) {
+      pollSavedExplanationReview(annotationId, pageIndex, attempt + 1);
+    }
+  }, delays[attempt]);
+  state.assistantReviewPolls.set(annotationId, timer);
+}
+
+async function retrySavedExplanationReview(annotation, button) {
+  const revisionId = state.revision?.id;
+  if (!revisionId || button.disabled) return;
+  button.disabled = true;
+  button.textContent = "正在重试…";
+  try {
+    await api(`/api/revisions/${revisionId}/annotations/${annotation.id}/review`, {
+      method: "POST",
+    });
+    if (state.revision?.id !== revisionId) return;
+    announce("已重新提交 AI 审查；已保存内容不受影响。");
+    pollSavedExplanationReview(annotation.id, annotation.pdf_page_index, 0);
+  } catch (error) {
+    if (state.revision?.id === revisionId) {
+      button.disabled = false;
+      button.textContent = "重试 AI 审查";
+      announce(error.message || "AI 审查未能重试。", true);
+    }
+  }
+}
+
 async function ensureOverlay(index) {
   if (state.preparation.get(index)?.status !== "READY") return;
   const revisionId = state.revision?.id;
@@ -1739,10 +1882,8 @@ async function ensureOverlay(index) {
   let annotations = state.annotationData.get(index);
   if (!annotations) {
     try {
-      const payload = await api(`/api/revisions/${revisionId}/annotations?page=${index}`);
+      annotations = await refreshAnnotationPage(index);
       if (state.revision?.id !== revisionId) return;
-      annotations = payload.annotations;
-      state.annotationData.set(index, annotations);
     } catch (_error) {
       // A marks-list failure must not take away R2's selectable text overlay.
       annotations = [];
@@ -1801,6 +1942,95 @@ function updateMarksPanel() {
   const cards = values.map((annotation) => {
     const card = document.createElement("article");
     card.className = `mark-card annotation-style-${annotation.highlight_style.toLowerCase()}`;
+    if (annotation.source_kind === "AI_SAVED") {
+      card.classList.add("mark-card-ai-saved");
+      const heading = document.createElement("div");
+      heading.className = "mark-ai-heading";
+      const badge = document.createElement("strong");
+      badge.textContent = "AI 保存的解释";
+      const verification = document.createElement("span");
+      verification.className = `mark-verification mark-verification-${annotation.verification_state.toLowerCase()}`;
+      verification.textContent = ({
+        PENDING: "待 AI 审查",
+        PASS: "已通过 AI 审查",
+        FAIL: "AI 审查未通过",
+        TECHNICAL_FAILURE: "暂时无法审查 · 可重试",
+      })[annotation.verification_state] || "审查状态未知";
+      heading.append(badge, verification);
+      card.append(heading);
+
+      const source = document.createElement("section");
+      source.className = "mark-ai-section";
+      const sourceLabel = document.createElement("strong");
+      sourceLabel.textContent = "教材来源（SOURCE）";
+      const sourceLocation = document.createElement("button");
+      sourceLocation.type = "button";
+      sourceLocation.className = "mark-source-location";
+      sourceLocation.textContent = `PDF 第 ${annotation.pdf_page_index + 1} 页`;
+      sourceLocation.addEventListener("click", () => goToPage(annotation.pdf_page_index));
+      const quote = document.createElement("q");
+      quote.className = "mark-quote";
+      quote.textContent = annotation.quote;
+      source.append(sourceLabel, sourceLocation, quote);
+      card.append(source);
+
+      const provenance = document.createElement("section");
+      provenance.className = "mark-ai-section";
+      const provenanceLabel = document.createElement("strong");
+      provenanceLabel.textContent = "解释路径（PROVENANCE）";
+      const path = document.createElement("p");
+      path.className = "mark-provenance";
+      path.textContent = (annotation.provenance?.concept_path || []).join(" › ");
+      provenance.append(provenanceLabel, path);
+      if (annotation.provenance?.answer_question
+          && annotation.provenance.answer_question !== annotation.provenance.child_focus
+          && annotation.provenance.answer_question !== annotation.provenance.root_focus) {
+        const question = document.createElement("p");
+        question.className = "mark-provenance-question";
+        question.textContent = `当时的问题：${annotation.provenance.answer_question}`;
+        provenance.append(question);
+      }
+      card.append(provenance);
+
+      const content = document.createElement("section");
+      content.className = "mark-ai-section";
+      const contentLabel = document.createElement("strong");
+      contentLabel.textContent = "AI 正文（AI CONTENT）";
+      const answer = document.createElement("div");
+      answer.className = "mark-ai-content assistant-answer-bubble";
+      renderAssistantAnswer(answer, annotation.body);
+      content.append(contentLabel, answer);
+      card.append(content);
+
+      if (annotation.review_summary) {
+        const summary = document.createElement("p");
+        summary.className = "mark-review-summary";
+        summary.textContent = annotation.review_summary;
+        card.append(summary);
+      }
+      if (annotation.review_provider && annotation.review_model) {
+        const reviewer = document.createElement("small");
+        reviewer.className = "mark-reviewer";
+        reviewer.textContent = `审查模型：${annotation.review_provider} · ${annotation.review_model}`;
+        card.append(reviewer);
+      }
+      if (["PENDING", "TECHNICAL_FAILURE"].includes(annotation.verification_state)) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "mark-review-retry";
+        retry.textContent = annotation.verification_state === "PENDING"
+          ? "重新提交 AI 审查" : "重试 AI 审查";
+        retry.addEventListener("click", () => retrySavedExplanationReview(annotation, retry));
+        card.append(retry);
+      }
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "mark-remove";
+      remove.textContent = "删除这条 AI 笔记";
+      remove.addEventListener("click", () => deleteAnnotation(annotation));
+      card.append(remove);
+      return card;
+    }
     const quote = document.createElement("p");
     quote.className = "mark-quote";
     quote.textContent = annotation.quote;
@@ -1824,7 +2054,9 @@ function updateMarksPanel() {
 }
 
 async function deleteAnnotation(annotation) {
-  if (!window.confirm("删除这条标记及其笔记？")) return;
+  const question = annotation.source_kind === "AI_SAVED"
+    ? "删除这条已保存的 AI 笔记？" : "删除这条标记及其笔记？";
+  if (!window.confirm(question)) return;
   const revisionId = state.revision?.id;
   if (!revisionId) return;
   try {
@@ -2152,7 +2384,7 @@ elements["search-query"].addEventListener("input", () => {
     elements["search-empty"].hidden = false;
   }
 });
-elements["marks-toggle"].addEventListener("click", () => {
+elements["marks-toggle"].addEventListener("click", async () => {
   const opening = elements["marks-panel"].hidden;
   elements["marks-panel"].hidden = !opening;
   elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
@@ -2164,6 +2396,11 @@ elements["marks-toggle"].addEventListener("click", () => {
     elements["search-toggle"].setAttribute("aria-expanded", "false");
     state.searchRequest += 1;
     clearSearchMatch();
+    try {
+      await refreshAnnotationPage(state.currentPage);
+    } catch (_error) {
+      announce("标记暂时无法刷新，请稍后重试。", true);
+    }
   }
   updateMarksPanel();
 });
@@ -2249,6 +2486,10 @@ elements["assistant-turns"].addEventListener("pointerup", () => {
 elements["assistant-turns"].addEventListener("contextmenu", (event) => {
   captureAssistantAnswerSelection();
   if (!elements["assistant-answer-actions"].hidden) event.preventDefault();
+});
+elements["assistant-turns"].addEventListener("click", (event) => {
+  const save = event.target.closest(".assistant-save-note");
+  if (save) saveAssistantTurn(save);
 });
 elements["assistant-ask-deeper"].addEventListener("click", sendAssistantChild);
 elements["save-highlight"].addEventListener("click", () => saveAnnotation());

@@ -21,6 +21,7 @@ from reader_service.foundation.rapidocr_adapter import RapidOcrEngine
 from reader_service.jobs import JobRepository, PreparationCoordinator
 from reader_service.outline import OutlineRepository, OutlineService
 from reader_service.server import ReaderServer, handler_factory
+from reader_service.saved_explanations import SavedExplanationService
 from reader_service.storage import ManagedPaths
 
 
@@ -63,9 +64,15 @@ def main() -> None:
         outline=outline,
     )
     annotations = AnnotationService(foundation, AnnotationRepository(service.database))
+    agent_runtime = ProviderRuntimeSet.from_environment()
     assistant = AssistantService(
         AssistantContextBuilder(foundation, outline),
-        ProviderRuntimeSet.from_environment(),
+        agent_runtime,
+    )
+    saved_explanations = SavedExplanationService(
+        assistant,
+        annotations,
+        agent_runtime,
     )
     preparation.start()
     server = ReaderServer(
@@ -77,6 +84,7 @@ def main() -> None:
             annotations=annotations,
             outline=outline,
             assistant=assistant,
+            saved_explanations=saved_explanations,
         ),
     )
     host, port = server.server_address[:2]

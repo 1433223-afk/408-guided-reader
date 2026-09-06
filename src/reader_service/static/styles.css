@@ -215,6 +215,22 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .mark-card.annotation-style-green { border-left-color: #64ad75; }
 .mark-card.annotation-style-blue { border-left-color: #5793ce; }
 .mark-card.annotation-style-none { border-left-color: #bbb5aa; }
+.mark-card-ai-saved { border-left-color: #7659a6; background: #fbf8ff; }
+.mark-ai-heading { display: flex; align-items: start; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+.mark-ai-heading > strong { color: #65488d; font-size: 11px; }
+.mark-verification { max-width: 55%; color: #70687b; font-size: 9px; font-weight: 750; text-align: right; }
+.mark-verification-pass { color: #35724b; }
+.mark-verification-fail, .mark-verification-technical_failure { color: #95453c; }
+.mark-ai-section { display: grid; gap: 4px; padding: 8px 0; border-top: 1px solid #e6deec; }
+.mark-ai-section > strong { color: #746683; font-size: 9px; letter-spacing: .035em; }
+.mark-source-location { justify-self: start; padding: 0; cursor: pointer; color: #6a4f91; background: none; border: 0; font-size: 10px; font-weight: 750; }
+.mark-provenance, .mark-provenance-question { margin: 0; color: #554c60; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+.mark-provenance-question { color: #83778e; font-size: 10px; }
+.mark-ai-content.assistant-answer-bubble { width: 100%; max-width: none; padding: 2px 0 0; font-size: 12px; }
+.mark-review-summary { margin: 8px 0 0; padding: 7px 8px; color: #62576e; background: #f1ebf7; border-radius: 5px; font-size: 10px; line-height: 1.45; }
+.mark-reviewer { display: block; margin-top: 6px; color: #8b8293; font-size: 9px; }
+.mark-review-retry { margin: 8px 8px 0 0; padding: 5px 7px; cursor: pointer; color: #513b70; background: #eee5f7; border: 1px solid #d8cae7; border-radius: 5px; font-size: 9px; font-weight: 750; }
+.mark-review-retry:disabled { cursor: wait; opacity: .55; }
 .mark-quote { margin: 0; color: #4c473d; font: 12px/1.4 Georgia, serif; white-space: pre-wrap; }
 .mark-note { margin: 7px 0 0; color: #756448; font-size: 11px; white-space: pre-wrap; }
 .mark-remove { margin-top: 8px; padding: 3px 0; cursor: pointer; color: #95453c; background: none; border: 0; font-size: 10px; font-weight: 800; }
@@ -321,6 +337,9 @@ button, label { -webkit-tap-highlight-color: transparent; }
 }
 .assistant-turns { min-height: 0; overflow: auto; padding-right: 3px; flex: 1; }
 .assistant-turn { margin-bottom: 14px; }
+.assistant-turn-actions { display: flex; margin: -7px 0 3px; }
+.assistant-save-note { padding: 3px 0; cursor: pointer; color: #765727; background: none; border: 0; font-size: 9px; font-weight: 750; }
+.assistant-save-note:disabled { cursor: default; color: #8b857b; }
 .assistant-question-bubble {
   width: fit-content; max-width: min(82%, 32rem); margin: 0 0 9px auto; padding: 8px 10px;
   overflow-wrap: anywhere; color: #382f22; background: #ead9b8; border-radius: 9px 9px 2px 9px;
