@@ -185,6 +185,27 @@ provider:
 
 Visual evidence: `test-results/ask-deeper-stage-d-golden.png`.
 
+## Post-Stage-D expanded-layout UAT delta
+
+The user's near-final retest found that expanded mode correctly enlarged the workspace but also let
+ordinary message cards and the composer grow across an approximately 1920 px viewport. The fix
+applies only while expanded: the workspace header, model controls, context bar, and breadcrumb still
+use the application width, while turns, draft/empty state, composer, and lifetime note share a
+responsive centered reading column capped at `56rem`. Assistant and user bubbles use intrinsic width
+within that column, so short messages remain compact and long prose stays at a comfortable Chinese
+line length. Code, tables, and block math retain local horizontal overflow rather than widening
+ordinary prose. Normal Dock selectors and widths are unchanged.
+
+`tests-e2e/assistant-workspace.mjs` was rerun at a real 1920×1080 Chromium viewport against the real
+348-page textbook and deterministic loopback provider: **PASS**. Normal Dock content remained 573 px;
+expanded workspace/header measured 1920/1884 px, while the centered conversation and composer both
+measured 896 px, the long answer 893 px, and the short user bubble 92 px. Markdown/math, rendered
+selection to Child, two-level depth, Back, breadcrumb, siblings, historical reopen, Child-subtree
+close, Root switching, scroll, provider payload isolation, and exit width/state restoration all
+remained green. External provider calls: zero. Visual evidence:
+`test-results/ask-deeper-expanded-readable.png` (expanded) and
+`test-results/ask-deeper-normal-dock.png` (normal comparison).
+
 ## Intentionally skipped extended tests
 
 The complete historical R3, Find, and Map browser acceptance suites were not repeated. Stage D used

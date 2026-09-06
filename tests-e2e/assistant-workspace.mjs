@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { chromium } from "playwright-core";
 
+const VIEWPORT_WIDTH = 1920;
 const sourceDataDir = process.env.READER_DATA_DIR
   || path.join(process.env.LOCALAPPDATA || "", "408 Guided Reader");
 const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-workspace-"));
@@ -59,7 +60,7 @@ try {
     GUIDED_READER_DEEPSEEK_ENDPOINT: `http://127.0.0.1:${provider.address().port}/chat/completions`,
   });
   browser = await chromium.launch({ executablePath: chromePath(), headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page = await browser.newPage({ viewport: { width: VIEWPORT_WIDTH, height: 1080 } });
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto(running.url);
@@ -194,18 +195,42 @@ try {
   assert.equal((await (await focusResponse).json()).assistant.current.root_id, secondRootId);
   assert.equal(providerCalls.length, callsBeforeSwitch);
 
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-root-switcher").selectOption(firstRootId);
+  assert.equal((await (await focusResponse).json()).assistant.current.node_id, siblingId);
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-breadcrumb button").first().click();
+  assert.equal((await (await focusResponse).json()).assistant.current.depth, 1);
+
   await dragDockToWidth(page, 610);
   const widthBeforeExpanded = (await panelMetrics(page)).panelWidth;
   const scroller = page.locator("#assistant-turns");
-  await scroller.evaluate((element) => { element.scrollTop = 1; });
+  await scroller.evaluate((element) => {
+    element.style.maxHeight = "";
+    element.scrollTop = Math.min(60, element.scrollHeight - element.clientHeight);
+  });
   const scrollBeforeExpanded = await scroller.evaluate((element) => element.scrollTop);
   const callsBeforeExpanded = providerCalls.length;
+  const normalLayout = await conversationMetrics(page);
+  assert.ok(normalLayout.turnsWidth > 500);
+  const normalScreenshot = path.join(process.cwd(), "test-results", "ask-deeper-normal-dock.png");
+  await mkdir(path.dirname(normalScreenshot), { recursive: true });
+  await page.screenshot({ path: normalScreenshot });
   await page.locator("#assistant-expand").click();
   const expanded = await panelMetrics(page);
   assert.equal(await page.locator("#assistant-expand").getAttribute("aria-pressed"), "true");
-  assert.ok(expanded.panelWidth >= 1438);
+  assert.ok(expanded.panelWidth >= VIEWPORT_WIDTH - 2);
   assert.equal(providerCalls.length, callsBeforeExpanded);
-  const screenshot = path.join(process.cwd(), "test-results", "ask-deeper-stage-d-golden.png");
+  const expandedLayout = await conversationMetrics(page);
+  assert.ok(expandedLayout.headerWidth > 1600);
+  assert.ok(expandedLayout.turnsWidth <= 900);
+  assert.ok(expandedLayout.answerWidth <= expandedLayout.turnsWidth);
+  assert.ok(expandedLayout.questionWidth < expandedLayout.turnsWidth * 0.8);
+  assert.ok(Math.abs(expandedLayout.turnsCenter - VIEWPORT_WIDTH / 2) <= 2);
+  assert.ok(Math.abs(expandedLayout.composerCenter - expandedLayout.turnsCenter) <= 2);
+  assert.ok(Math.abs(expandedLayout.composerWidth - expandedLayout.turnsWidth) <= 2);
+  assert.equal(await page.locator(".assistant-math-block .katex").count(), 1);
+  const screenshot = path.join(process.cwd(), "test-results", "ask-deeper-expanded-readable.png");
   await mkdir(path.dirname(screenshot), { recursive: true });
   await page.screenshot({ path: screenshot });
   await page.locator("#assistant-expand").click();
@@ -270,6 +295,9 @@ try {
     viewportStateInProviderPayload: false,
     providerCalls: providerCalls.length,
     externalProviderCalls: 0,
+    normalLayout,
+    expandedLayout,
+    normalScreenshot,
     screenshot,
     childId,
     grandchildId,
@@ -290,13 +318,33 @@ async function panelMetrics(page) {
   });
 }
 
+async function conversationMetrics(page) {
+  return page.evaluate(() => {
+    const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
+    const header = rect(".assistant-heading");
+    const turns = rect("#assistant-turns");
+    const answer = rect('.assistant-answer-bubble[data-current-answer="true"]');
+    const question = rect(".assistant-question-bubble");
+    const composer = rect("#assistant-follow-up");
+    return {
+      headerWidth: header.width,
+      turnsWidth: turns.width,
+      turnsCenter: turns.left + turns.width / 2,
+      answerWidth: answer.width,
+      questionWidth: question.width,
+      composerWidth: composer.width,
+      composerCenter: composer.left + composer.width / 2,
+    };
+  });
+}
+
 async function dragDockToWidth(page, width) {
   const handle = page.locator("#assistant-resize-handle");
   const box = await handle.boundingBox();
   assert.ok(box);
   await page.mouse.move(box.x + box.width / 2, box.y + 120);
   await page.mouse.down();
-  await page.mouse.move(1440 - width, box.y + 120, { steps: 12 });
+  await page.mouse.move(VIEWPORT_WIDTH - width, box.y + 120, { steps: 12 });
   await page.mouse.up();
   await page.waitForTimeout(180);
 }
