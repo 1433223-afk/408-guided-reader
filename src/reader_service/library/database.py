@@ -358,6 +358,161 @@ MIGRATIONS = (
             ON annotations(book_source_revision_id, pdf_page_index, created_at, id);
         """,
     ),
+    (
+        8,
+        """
+        -- Widen the existing durable job substrate for one Chapter-scoped
+        -- Knowledge preparation job.  Existing page jobs are copied exactly;
+        -- the two partial unique indexes keep the job identities scoped to
+        -- their real unit of work.
+        CREATE TABLE jobs_v8 (
+            id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL
+                CHECK (job_type IN ('PAGE_PREPARE', 'CHAPTER_PREPARE')),
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            page_start INTEGER CHECK (page_start IS NULL OR page_start >= 0),
+            page_end INTEGER CHECK (
+                page_end IS NULL OR (page_start IS NOT NULL AND page_end >= page_start)
+            ),
+            foundation_version INTEGER NOT NULL CHECK (foundation_version >= 1),
+            chapter_outline_node_id TEXT,
+            chapter_identity_revision INTEGER
+                CHECK (chapter_identity_revision IS NULL OR chapter_identity_revision >= 1),
+            chapter_physical_revision INTEGER
+                CHECK (chapter_physical_revision IS NULL OR chapter_physical_revision >= 1),
+            status TEXT NOT NULL
+                CHECK (status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'CANCELLED')),
+            priority INTEGER NOT NULL DEFAULT 0,
+            cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+            attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (
+                (job_type = 'PAGE_PREPARE'
+                    AND page_start IS NOT NULL AND page_end IS NOT NULL
+                    AND chapter_outline_node_id IS NULL
+                    AND chapter_identity_revision IS NULL
+                    AND chapter_physical_revision IS NULL)
+                OR
+                (job_type = 'CHAPTER_PREPARE'
+                    AND page_start IS NULL AND page_end IS NULL
+                    AND chapter_outline_node_id IS NOT NULL
+                    AND chapter_identity_revision IS NOT NULL
+                    AND chapter_physical_revision IS NOT NULL)
+            ),
+            FOREIGN KEY (book_source_revision_id, chapter_outline_node_id)
+                REFERENCES outline_nodes(book_source_revision_id, outline_node_id)
+                ON DELETE CASCADE
+        );
+
+        INSERT INTO jobs_v8(
+            id, job_type, book_source_revision_id, page_start, page_end,
+            foundation_version, chapter_outline_node_id,
+            chapter_identity_revision, chapter_physical_revision,
+            status, priority, cancel_requested, attempts, created_at, updated_at
+        )
+        SELECT
+            id, job_type, book_source_revision_id, page_start, page_end,
+            foundation_version, NULL, NULL, NULL,
+            status, priority, cancel_requested, attempts, created_at, updated_at
+        FROM jobs;
+
+        DROP TABLE jobs;
+        ALTER TABLE jobs_v8 RENAME TO jobs;
+        CREATE INDEX ix_jobs_claim
+            ON jobs(status, cancel_requested, priority DESC, created_at);
+        CREATE UNIQUE INDEX ux_jobs_page_prepare
+            ON jobs(job_type, book_source_revision_id, page_start, page_end, foundation_version)
+            WHERE job_type = 'PAGE_PREPARE';
+        CREATE UNIQUE INDEX ux_jobs_chapter_prepare
+            ON jobs(
+                job_type, book_source_revision_id, chapter_outline_node_id,
+                foundation_version, chapter_identity_revision, chapter_physical_revision
+            ) WHERE job_type = 'CHAPTER_PREPARE';
+
+        CREATE TABLE chapter_preparations (
+            book_source_revision_id TEXT NOT NULL
+                REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+            chapter_outline_node_id TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK (status IN ('PREPARING', 'READY', 'FAILED')),
+            foundation_version INTEGER NOT NULL CHECK (foundation_version >= 1),
+            chapter_identity_revision INTEGER NOT NULL CHECK (chapter_identity_revision >= 1),
+            chapter_physical_revision INTEGER NOT NULL CHECK (chapter_physical_revision >= 1),
+            structure_version INTEGER NOT NULL DEFAULT 0 CHECK (structure_version >= 0),
+            attempt_id TEXT NOT NULL,
+            generator_provider TEXT,
+            generator_model TEXT,
+            reviewer_provider TEXT,
+            reviewer_model TEXT,
+            review_summary TEXT CHECK (
+                review_summary IS NULL OR length(review_summary) <= 1000
+            ),
+            failure_stage TEXT,
+            failure_kind TEXT,
+            failure_code TEXT,
+            source_payload_sha256 TEXT,
+            review_payload_sha256 TEXT,
+            requested_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            published_at TEXT,
+            PRIMARY KEY (book_source_revision_id, chapter_outline_node_id),
+            FOREIGN KEY (book_source_revision_id, chapter_outline_node_id)
+                REFERENCES outline_nodes(book_source_revision_id, outline_node_id)
+                ON DELETE CASCADE,
+            CHECK (
+                status != 'READY'
+                OR (
+                    structure_version >= 1
+                    AND generator_provider IS NOT NULL
+                    AND generator_model IS NOT NULL
+                    AND reviewer_provider IS NOT NULL
+                    AND reviewer_model IS NOT NULL
+                    AND published_at IS NOT NULL
+                    AND failure_stage IS NULL
+                    AND failure_kind IS NULL
+                    AND failure_code IS NULL
+                )
+            )
+        );
+
+        CREATE TABLE knowledge_points (
+            knowledge_point_id TEXT PRIMARY KEY,
+            book_source_revision_id TEXT NOT NULL,
+            chapter_outline_node_id TEXT NOT NULL,
+            chapter_structure_version INTEGER NOT NULL
+                CHECK (chapter_structure_version >= 1),
+            primary_section_id TEXT NOT NULL,
+            title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 200),
+            one_sentence_definition TEXT NOT NULL
+                CHECK (length(one_sentence_definition) BETWEEN 1 AND 1000),
+            order_index INTEGER NOT NULL CHECK (order_index >= 0),
+            start_page INTEGER NOT NULL CHECK (start_page >= 0),
+            start_y REAL NOT NULL CHECK (start_y >= 0 AND start_y <= 1),
+            end_page INTEGER NOT NULL CHECK (end_page >= start_page),
+            end_y REAL NOT NULL CHECK (end_y >= 0 AND end_y <= 1),
+            source_foundation_version INTEGER NOT NULL
+                CHECK (source_foundation_version >= 1),
+            created_at TEXT NOT NULL,
+            UNIQUE (
+                book_source_revision_id, chapter_outline_node_id,
+                chapter_structure_version, order_index
+            ),
+            FOREIGN KEY (book_source_revision_id, chapter_outline_node_id)
+                REFERENCES chapter_preparations(
+                    book_source_revision_id, chapter_outline_node_id
+                ) ON DELETE CASCADE,
+            FOREIGN KEY (book_source_revision_id, primary_section_id)
+                REFERENCES outline_nodes(book_source_revision_id, outline_node_id)
+        );
+        CREATE INDEX ix_knowledge_points_chapter_section
+            ON knowledge_points(
+                book_source_revision_id, chapter_outline_node_id,
+                chapter_structure_version, primary_section_id, order_index
+            );
+        """,
+    ),
 )
 
 

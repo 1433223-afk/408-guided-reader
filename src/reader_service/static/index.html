@@ -50,6 +50,7 @@
           <output id="preparation-status" class="preparation-status">正在准备文字…</output>
           <button id="printed-page-edit" class="printed-page" type="button" title="设置本页印刷页码"><span id="printed-page-label">印刷页未知</span></button>
           <button id="outline-toggle" class="outline-toggle" type="button" aria-expanded="false" aria-label="目录" title="目录">目录</button>
+          <button id="knowledge-toggle" class="outline-toggle" type="button" aria-expanded="false" aria-label="章节学习地图" title="章节学习地图">学习地图</button>
           <button id="search-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="书内搜索" title="书内搜索">⌕</button>
           <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="本页标记" title="本页标记"><span aria-hidden="true">✦</span><span id="marks-count" class="marks-count" hidden>0</span></button>
           <button id="assistant-toggle" class="assistant-toggle" type="button" aria-expanded="false" aria-label="问 AI" title="问 AI">AI</button>
@@ -74,6 +75,13 @@
         <p id="search-coverage" class="search-coverage">正在读取搜索范围…</p>
         <div id="search-results" class="search-results"></div>
         <p id="search-empty" class="marks-empty">输入关键词以搜索已准备页面。</p>
+      </aside>
+      <aside id="knowledge-panel" class="knowledge-panel" aria-label="章节学习地图" hidden>
+        <div class="marks-panel-heading"><strong id="knowledge-title">章节学习地图</strong><button id="knowledge-close" type="button" aria-label="关闭章节学习地图">×</button></div>
+        <p id="knowledge-status" class="outline-status">请先从目录选择一个章节。</p>
+        <button id="knowledge-prepare" class="knowledge-prepare" type="button" hidden>准备本章学习地图</button>
+        <div id="knowledge-map" class="knowledge-map"></div>
+        <p id="knowledge-empty" class="marks-empty">尚未准备这个章节的学习地图。</p>
       </aside>
       <aside id="marks-panel" class="marks-panel" aria-label="当前页标记" hidden>
         <div class="marks-panel-heading"><strong>第 <span id="marks-page">1</span> 页的标记</strong><button id="marks-close" type="button" aria-label="关闭标记面板">×</button></div>

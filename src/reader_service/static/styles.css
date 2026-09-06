@@ -159,7 +159,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .note-editor { display: flex; gap: 5px; margin-top: 7px; padding-top: 7px; border-top: 1px solid rgb(255 255 255 / 10%); }
 .note-editor input { width: 230px; min-width: 0; padding: 7px 8px; border: 0; border-radius: 5px; font-size: 11px; }
 .note-editor button { color: #332b1d; background: #e4bd69; }
-.marks-panel, .search-panel {
+.marks-panel, .search-panel, .knowledge-panel {
   z-index: 6; position: fixed; top: 78px; right: 14px; width: min(320px, calc(100% - 28px));
   max-height: calc(100% - 94px); overflow: auto; padding: 13px; background: rgb(250 248 242 / 98%);
   border: 1px solid #cdc5b4; border-radius: 10px; box-shadow: 0 10px 32px rgb(52 46 34 / 22%);
@@ -199,6 +199,28 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .outline-other-toggle strong { font: 600 12px/1.3 Georgia, serif; }
 .outline-other-toggle small { color: #9a8f7e; font-size: 9px; }
 .search-panel { width: min(390px, calc(100% - 28px)); }
+.knowledge-panel { width: min(440px, calc(100% - 28px)); }
+.outline-row:has(.outline-map-action) { grid-template-columns: 20px minmax(0, 1fr) auto; }
+.outline-map-action {
+  align-self: center; padding: 4px 6px; cursor: pointer; color: #72562c;
+  background: #f4eddf; border: 1px solid #d8c8aa; border-radius: 5px; font-size: 9px;
+}
+.knowledge-prepare {
+  width: 100%; margin: 2px 0 10px; padding: 8px; cursor: pointer; color: #fff;
+  background: #72562c; border: 0; border-radius: 6px; font-size: 11px; font-weight: 700;
+}
+.knowledge-prepare:disabled { cursor: wait; opacity: .6; }
+.knowledge-map { display: grid; gap: 12px; }
+.knowledge-section { padding-top: 8px; border-top: 1px solid #e0d8ca; }
+.knowledge-section h3 { margin: 0 0 6px; color: #4b4337; font: 600 13px/1.35 Georgia, serif; }
+.knowledge-section ol { display: grid; gap: 8px; margin: 0; padding-left: 22px; }
+.knowledge-section li { padding-left: 2px; color: #4a443a; font-size: 11px; }
+.knowledge-section strong { display: block; font-size: 12px; line-height: 1.4; }
+.knowledge-section p { margin: 2px 0 4px; color: #71695d; line-height: 1.45; }
+.knowledge-section button {
+  padding: 2px 0; cursor: pointer; color: #795c2f; background: transparent;
+  border: 0; border-bottom: 1px solid #cdbb99; font-size: 9px;
+}
 .marks-panel-heading { display: flex; align-items: center; justify-content: space-between; color: #514a3c; font: 13px Georgia, serif; }
 .marks-panel-heading button { cursor: pointer; color: #756d60; background: none; border: 0; font-size: 20px; }
 .search-form { display: flex; gap: 6px; margin-top: 10px; }

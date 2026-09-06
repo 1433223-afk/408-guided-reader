@@ -17,18 +17,26 @@ class JobRepository:
     def enqueue_pages(
         self, revision_id: str, page_count: int, foundation_version: int
     ) -> None:
+        self.enqueue_page_range(revision_id, 0, page_count, foundation_version)
+
+    def enqueue_page_range(
+        self,
+        revision_id: str,
+        page_start: int,
+        page_end: int,
+        foundation_version: int,
+    ) -> None:
+        if page_start < 0 or page_end <= page_start:
+            raise ValueError("Page preparation range is invalid")
         timestamp = now()
         with self.database.connect() as connection:
             connection.executemany(
                 """
-                INSERT INTO jobs(
+                INSERT OR IGNORE INTO jobs(
                     id, job_type, book_source_revision_id, page_start, page_end,
                     foundation_version, status, priority, cancel_requested,
                     attempts, created_at, updated_at
                 ) VALUES (?, 'PAGE_PREPARE', ?, ?, ?, ?, 'QUEUED', 0, 0, 0, ?, ?)
-                ON CONFLICT(
-                    job_type, book_source_revision_id, page_start, page_end, foundation_version
-                ) DO NOTHING
                 """,
                 (
                     (
@@ -40,7 +48,7 @@ class JobRepository:
                         timestamp,
                         timestamp,
                     )
-                    for index in range(page_count)
+                    for index in range(page_start, page_end)
                 ),
             )
 
@@ -51,7 +59,7 @@ class JobRepository:
         with self.database.connect() as connection:
             rows = connection.execute(
                 "SELECT id, page_start FROM jobs WHERE book_source_revision_id = ? "
-                "AND status = 'QUEUED'",
+                "AND job_type = 'PAGE_PREPARE' AND status = 'QUEUED'",
                 (revision_id,),
             )
             for row in rows:
@@ -90,8 +98,10 @@ class JobRepository:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
-                SELECT j.id, j.book_source_revision_id, j.page_start, j.page_end,
-                       j.foundation_version
+                SELECT j.id, j.job_type, j.book_source_revision_id,
+                       j.page_start, j.page_end, j.foundation_version,
+                       j.chapter_outline_node_id, j.chapter_identity_revision,
+                       j.chapter_physical_revision
                 FROM jobs j
                 JOIN book_source_revisions r ON r.id = j.book_source_revision_id
                 WHERE j.status = 'QUEUED' AND j.cancel_requested = 0 AND r.status = 'ACTIVE'
@@ -195,9 +205,47 @@ class JobRepository:
         with self.database.connect() as connection:
             rows = connection.execute(
                 "SELECT status, COUNT(*) AS count FROM jobs "
-                "WHERE book_source_revision_id = ? GROUP BY status",
+                "WHERE book_source_revision_id = ? AND job_type = 'PAGE_PREPARE' "
+                "GROUP BY status",
                 (revision_id,),
             )
             for row in rows:
                 result[row["status"]] = row["count"]
         return result
+
+    def prioritize_range(self, revision_id: str, page_start: int, page_end: int) -> None:
+        """Raise only the requested Chapter's prerequisite page jobs above its KP job."""
+        if page_end <= page_start:
+            raise ValueError("Preparation range must contain at least one page")
+        timestamp = now()
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE jobs
+                SET priority = 5000 - (page_start - ?), updated_at = ?
+                WHERE book_source_revision_id = ? AND job_type = 'PAGE_PREPARE'
+                  AND status = 'QUEUED' AND page_start >= ? AND page_start < ?
+                """,
+                (page_start, timestamp, revision_id, page_start, page_end),
+            )
+
+    def complete_already_ready_pages(
+        self, revision_id: str, page_start: int, page_end: int
+    ) -> int:
+        """Converge newly replayed page jobs with their authoritative OCRPage state."""
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET status = 'SUCCEEDED', updated_at = ?
+                WHERE job_type = 'PAGE_PREPARE' AND book_source_revision_id = ?
+                  AND status = 'QUEUED' AND page_start >= ? AND page_start < ?
+                  AND EXISTS (
+                      SELECT 1 FROM ocr_pages AS page
+                      WHERE page.book_source_revision_id = jobs.book_source_revision_id
+                        AND page.pdf_page_index = jobs.page_start
+                        AND page.status = 'READY'
+                  )
+                """,
+                (now(), revision_id, page_start, page_end),
+            )
+            return cursor.rowcount

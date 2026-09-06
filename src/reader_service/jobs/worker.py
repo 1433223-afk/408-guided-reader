@@ -9,6 +9,7 @@ from reader_service.library import LibraryService
 from .repository import JobRepository
 
 if TYPE_CHECKING:
+    from reader_service.knowledge import KnowledgeService
     from reader_service.outline import OutlineService
 
 
@@ -20,6 +21,7 @@ class PreparationCoordinator:
         jobs: JobRepository,
         worker_count: int = 1,
         outline: "OutlineService | None" = None,
+        knowledge: "KnowledgeService | None" = None,
     ):
         if worker_count < 1 or worker_count > 4:
             raise ValueError("Worker count must be between 1 and 4")
@@ -28,6 +30,7 @@ class PreparationCoordinator:
         self.jobs = jobs
         self.worker_count = worker_count
         self.outline = outline
+        self.knowledge = knowledge
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._dispatch_lock = threading.Lock()
@@ -38,6 +41,8 @@ class PreparationCoordinator:
             return
         self.foundation.repository.reset_interrupted_pages()
         self.jobs.recover()
+        if self.knowledge is not None:
+            self.knowledge.repository.recover_preparing_jobs()
         for index in range(self.worker_count):
             thread = threading.Thread(
                 target=self._run,
@@ -92,6 +97,21 @@ class PreparationCoordinator:
         self._wake.set()
         return True
 
+    def schedule_chapter(self, revision_id: str, chapter_id: str) -> tuple[dict, bool]:
+        if self.knowledge is None:
+            raise RuntimeError("Chapter Knowledge preparation is unavailable")
+        revision = self.foundation.ensure_revision(revision_id)
+        page_start, page_end = self.knowledge.required_page_range(revision_id, chapter_id)
+        with self._dispatch_lock:
+            self.jobs.enqueue_page_range(
+                revision_id, page_start, page_end, revision["foundation_version"]
+            )
+            self.jobs.complete_already_ready_pages(revision_id, page_start, page_end)
+            self.jobs.prioritize_range(revision_id, page_start, page_end)
+            result = self.knowledge.request_prepare(revision_id, chapter_id)
+        self._wake.set()
+        return result
+
     def _run(self) -> None:
         while not self._stop.is_set():
             with self._dispatch_lock:
@@ -99,6 +119,11 @@ class PreparationCoordinator:
             if job is None:
                 self._wake.wait(0.25)
                 self._wake.clear()
+                continue
+            if job["job_type"] == "CHAPTER_PREPARE":
+                if self.knowledge is not None:
+                    self.knowledge.run_job(job)
+                self.jobs.complete(job["id"], cancelled=self._stop.is_set())
                 continue
             cancelled = False
             for page_index in range(job["page_start"], job["page_end"] + 1):

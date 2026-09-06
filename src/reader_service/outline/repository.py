@@ -142,6 +142,7 @@ class OutlineRepository:
                     SET start_page = ?, resolution_state = CASE
                         WHEN ? IS NULL THEN 'UNRESOLVED' ELSE 'PARTIAL' END
                     WHERE book_source_revision_id = ? AND outline_node_id = ?
+                      AND resolution_state != 'RESOLVED'
                       AND (start_page IS NOT ? OR resolution_state != CASE
                           WHEN ? IS NULL THEN 'UNRESOLVED' ELSE 'PARTIAL' END)
                     """,
@@ -150,3 +151,87 @@ class OutlineRepository:
                         page_index, page_index,
                     ),
                 )
+
+    def resolve_chapter_ranges(
+        self,
+        revision_id: str,
+        chapter_id: str,
+        resolutions: dict[str, dict],
+        identity_snapshot: tuple[tuple, ...],
+    ) -> list[dict]:
+        """Atomically advance only one Chapter subtree's physical fields."""
+        timestamp = now()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                WITH RECURSIVE subtree(outline_node_id) AS (
+                    SELECT outline_node_id FROM outline_nodes
+                    WHERE book_source_revision_id = ? AND outline_node_id = ?
+                    UNION ALL
+                    SELECT child.outline_node_id
+                    FROM outline_nodes AS child
+                    JOIN subtree ON child.parent_id = subtree.outline_node_id
+                    WHERE child.book_source_revision_id = ?
+                )
+                SELECT outline_node_id, parent_id, depth, order_index, kind, title,
+                       identity_revision, start_page, start_y, end_page, end_y,
+                       resolution_state, physical_revision, evidence_json
+                FROM outline_nodes
+                WHERE book_source_revision_id = ?
+                  AND outline_node_id IN (SELECT outline_node_id FROM subtree)
+                ORDER BY depth, parent_id, order_index, outline_node_id
+                """,
+                (revision_id, chapter_id, revision_id, revision_id),
+            ).fetchall()
+            current_identity = tuple(
+                (
+                    row["outline_node_id"], row["parent_id"], row["depth"],
+                    row["order_index"], row["kind"], row["title"],
+                    row["identity_revision"],
+                )
+                for row in rows
+            )
+            if current_identity != identity_snapshot:
+                raise RuntimeError("Outline logical identity changed during Chapter preparation")
+            current_ids = {row["outline_node_id"] for row in rows}
+            if not resolutions or not set(resolutions).issubset(current_ids):
+                raise RuntimeError("Chapter resolution escaped the requested subtree")
+            for row in rows:
+                target = resolutions.get(row["outline_node_id"])
+                if target is None:
+                    continue
+                values = (
+                    target["start_page"], target["start_y"],
+                    target["end_page"], target["end_y"], "RESOLVED",
+                )
+                current = (
+                    row["start_page"], row["start_y"], row["end_page"],
+                    row["end_y"], row["resolution_state"],
+                )
+                if current == values:
+                    continue
+                evidence = json.loads(row["evidence_json"])
+                evidence["physical_resolution"] = {
+                    "source": "TARGET_CHAPTER_OCR",
+                    "resolved_at": timestamp,
+                    "heading_ref": target["heading_ref"],
+                }
+                connection.execute(
+                    """
+                    UPDATE outline_nodes
+                    SET start_page = ?, start_y = ?, end_page = ?, end_y = ?,
+                        resolution_state = 'RESOLVED',
+                        physical_revision = physical_revision + 1,
+                        confidence = MIN(confidence, ?), evidence_json = ?
+                    WHERE book_source_revision_id = ? AND outline_node_id = ?
+                    """,
+                    (
+                        target["start_page"], target["start_y"],
+                        target["end_page"], target["end_y"],
+                        target["confidence"],
+                        json.dumps(evidence, ensure_ascii=False, separators=(",", ":")),
+                        revision_id, row["outline_node_id"],
+                    ),
+                )
+        return self.list(revision_id)

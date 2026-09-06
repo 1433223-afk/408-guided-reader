@@ -19,6 +19,7 @@ from reader_service.foundation import (
 )
 from reader_service.foundation.rapidocr_adapter import RapidOcrEngine
 from reader_service.jobs import JobRepository, PreparationCoordinator
+from reader_service.knowledge import KnowledgeRepository, KnowledgeService
 from reader_service.outline import OutlineRepository, OutlineService
 from reader_service.server import ReaderServer, handler_factory
 from reader_service.saved_explanations import SavedExplanationService
@@ -56,15 +57,23 @@ def main() -> None:
     )
     page_labels = PageLabelService(service, PageLabelRepository(service.database))
     outline = OutlineService(service, OutlineRepository(service.database), page_labels)
+    annotations = AnnotationService(foundation, AnnotationRepository(service.database))
+    agent_runtime = ProviderRuntimeSet.from_environment()
+    knowledge = KnowledgeService(
+        service,
+        foundation,
+        outline,
+        KnowledgeRepository(service.database),
+        agent_runtime,
+    )
     preparation = PreparationCoordinator(
         service,
         foundation,
         JobRepository(service.database),
         worker_count=args.prepare_workers,
         outline=outline,
+        knowledge=knowledge,
     )
-    annotations = AnnotationService(foundation, AnnotationRepository(service.database))
-    agent_runtime = ProviderRuntimeSet.from_environment()
     assistant = AssistantService(
         AssistantContextBuilder(foundation, outline),
         agent_runtime,
@@ -83,6 +92,7 @@ def main() -> None:
             preparation=preparation,
             annotations=annotations,
             outline=outline,
+            knowledge=knowledge,
             assistant=assistant,
             saved_explanations=saved_explanations,
         ),

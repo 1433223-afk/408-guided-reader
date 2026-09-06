@@ -5,6 +5,7 @@ import json
 import re
 import threading
 import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 from uuid import UUID, uuid5
 
@@ -26,6 +27,12 @@ _WATERMARKS = (
     re.compile(r"公众号\s*[:：]?\s*研池悟空"),
     re.compile(r"微信扫一扫.*$"),
 )
+
+
+class ChapterResolutionError(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 class OutlineService:
@@ -114,6 +121,229 @@ class OutlineService:
     def page_label_snapshot(self, revision_id: str) -> dict:
         values = self.page_labels.infer(revision_id)
         return values
+
+    def resolve_chapter_physical(self, revision_id: str, chapter_id: str) -> dict:
+        """Resolve only the requested Chapter and its knowledge-bearing children."""
+        revision = self.library.revision(revision_id)
+        nodes = self.repository.list(revision_id)
+        by_id = {node["outline_node_id"]: node for node in nodes}
+        chapter = by_id.get(chapter_id)
+        if chapter is None or chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
+            raise ChapterResolutionError("INVALID_CHAPTER", "Knowledge Map requires one Chapter")
+
+        ordered = self._topological(nodes)
+        descendants = []
+        accepted_parents = {chapter_id}
+        for node in ordered:
+            if node["outline_node_id"] == chapter_id:
+                descendants.append(node)
+                continue
+            if node.get("parent_id") in accepted_parents:
+                descendants.append(node)
+                accepted_parents.add(node["outline_node_id"])
+        required = [
+            node for node in descendants
+            if node["kind"] in {"CHAPTER", "SECTION", "SUBSECTION"}
+        ]
+        if not any(node["kind"] == "SECTION" for node in required):
+            raise ChapterResolutionError("NO_SECTIONS", "Chapter has no existing Section owner")
+
+        start_page = chapter.get("start_page")
+        if start_page is None:
+            raise ChapterResolutionError(
+                "CHAPTER_START_UNRESOLVED", "Chapter has no safe physical start"
+            )
+        roots = [node for node in ordered if node["parent_id"] is None]
+        later_roots = [
+            node for node in roots
+            if node["order_index"] > chapter["order_index"]
+            and node.get("start_page") is not None
+            and node["start_page"] >= start_page
+        ]
+        next_root = min(later_roots, key=lambda node: node["order_index"], default=None)
+        end_page_exclusive = (
+            int(next_root["start_page"]) if next_root is not None else revision["page_count"]
+        )
+        if end_page_exclusive <= start_page:
+            raise ChapterResolutionError("INVALID_CHAPTER_RANGE", "Chapter page range is invalid")
+
+        statuses, ready_pages = self.repository.ready_snapshot(revision_id)
+        status_by_page = {row["pdf_page_index"]: row["status"] for row in statuses}
+        missing = [
+            page for page in range(start_page, end_page_exclusive)
+            if status_by_page.get(page) != "READY"
+        ]
+        if missing:
+            code = (
+                "SOURCE_PAGE_FAILED"
+                if any(status_by_page.get(page) == "FAILED" for page in missing)
+                else "SOURCE_NOT_READY"
+            )
+            raise ChapterResolutionError(code, "Chapter OCR evidence is not fully ready")
+
+        lines = [
+            line
+            for page in range(start_page, end_page_exclusive)
+            for line in ready_pages.get(page, [])
+        ]
+        matched: dict[str, dict] = {}
+        previous = (start_page, -1.0)
+        for node in descendants:
+            if node["kind"] == "CHAPTER":
+                same_page_lines = [
+                    line for line in lines if line["pdf_page_index"] == start_page
+                ]
+                match = self._match_heading(node, same_page_lines, previous)
+                if match is None:
+                    # Embedded bookmarks are authoritative at page granularity.
+                    # Page-top is real PDF geometry and avoids mistaking a later
+                    # running header for the Chapter's start heading.
+                    match = {
+                        "page": start_page, "start_y": 0.0, "end_y": 0.0,
+                        "line_ordinal": None, "confidence": float(node["confidence"]),
+                    }
+            else:
+                match = self._match_heading(node, lines, previous)
+            if match is None:
+                if node in required:
+                    raise ChapterResolutionError(
+                        "HEADING_NOT_RESOLVED", f"Could not resolve heading for {node['title']}"
+                    )
+                if node.get("start_page") is None:
+                    continue
+                match = {
+                    "page": int(node["start_page"]), "start_y": 0.0, "end_y": 0.0,
+                    "line_ordinal": None, "confidence": float(node["confidence"]),
+                }
+            position = (match["page"], match["start_y"])
+            if position < previous:
+                if node in required:
+                    raise ChapterResolutionError(
+                        "HEADING_ORDER_INVALID", "Resolved headings contradict Outline order"
+                    )
+                continue
+            matched[node["outline_node_id"]] = match
+            previous = position
+
+        chapter_boundary = (end_page_exclusive, 0.0)
+        if next_root is not None:
+            boundary_match = self._match_heading(
+                next_root,
+                ready_pages.get(end_page_exclusive, []),
+                (end_page_exclusive, -1.0),
+            )
+            if boundary_match is not None:
+                chapter_boundary = (boundary_match["page"], boundary_match["start_y"])
+
+        resolutions: dict[str, dict] = {}
+        for index, node in enumerate(descendants):
+            if node not in required:
+                continue
+            heading = matched[node["outline_node_id"]]
+            end = chapter_boundary
+            for candidate in descendants[index + 1:]:
+                candidate_match = matched.get(candidate["outline_node_id"])
+                if candidate_match is not None and candidate["depth"] <= node["depth"]:
+                    end = (candidate_match["page"], candidate_match["start_y"])
+                    break
+            start = (heading["page"], heading["start_y"])
+            if end <= start:
+                raise ChapterResolutionError(
+                    "INVALID_RESOLVED_RANGE", "Resolved Outline range is empty or reversed"
+                )
+            resolutions[node["outline_node_id"]] = {
+                "start_page": start[0], "start_y": start[1],
+                "end_page": end[0], "end_y": end[1],
+                "confidence": heading["confidence"],
+                "heading_ref": {
+                    "pdf_page_index": heading["page"],
+                    "line_ordinal": heading["line_ordinal"],
+                },
+            }
+
+        excluded_ranges = []
+        for index, node in enumerate(descendants):
+            if node["kind"] not in {"EXERCISES", "ANSWERS"}:
+                continue
+            heading = matched.get(node["outline_node_id"])
+            if heading is None:
+                continue
+            end = chapter_boundary
+            for candidate in descendants[index + 1:]:
+                candidate_match = matched.get(candidate["outline_node_id"])
+                if candidate_match is not None and candidate["depth"] <= node["depth"]:
+                    end = (candidate_match["page"], candidate_match["start_y"])
+                    break
+            start = (heading["page"], heading["start_y"])
+            if end > start:
+                excluded_ranges.append(
+                    {"kind": node["kind"], "title": node["title"], "start": start, "end": end}
+                )
+
+        identity_snapshot = tuple(
+            (
+                node["outline_node_id"], node["parent_id"], node["depth"],
+                node["order_index"], node["kind"], node["title"],
+                node["identity_revision"],
+            )
+            for node in sorted(
+                descendants,
+                key=lambda value: (
+                    value["depth"], value["parent_id"] or "",
+                    value["order_index"], value["outline_node_id"],
+                ),
+            )
+        )
+        updated = self.repository.resolve_chapter_ranges(
+            revision_id, chapter_id, resolutions, identity_snapshot
+        )
+        updated_by_id = {node["outline_node_id"]: node for node in updated}
+        return {
+            "chapter": updated_by_id[chapter_id],
+            "nodes": [updated_by_id[node["outline_node_id"]] for node in required],
+            "page_start": start_page,
+            "page_end_exclusive": end_page_exclusive,
+            "excluded_ranges": excluded_ranges,
+        }
+
+    @classmethod
+    def _match_heading(
+        cls, node: dict, lines: list[dict], after: tuple[int, float]
+    ) -> dict | None:
+        target = cls._heading_parts(node["title"])
+        candidates = []
+        for line in lines:
+            ys = [float(point[1]) for point in line["quad"]]
+            position = (int(line["pdf_page_index"]), min(ys))
+            if position < after:
+                continue
+            value = cls._heading_parts(cls.classification_text(line["text"]))
+            if not target[0] or target[0] != value[0]:
+                continue
+            similarity = SequenceMatcher(None, target[1], value[1]).ratio()
+            hint = node.get("start_page")
+            page_distance = abs(position[0] - int(hint)) if hint is not None else 0
+            candidates.append(
+                (
+                    page_distance, -similarity, position, int(line["line_ordinal"]),
+                    {
+                        "page": position[0], "start_y": position[1], "end_y": max(ys),
+                        "line_ordinal": int(line["line_ordinal"]),
+                        "confidence": float(line["confidence"]),
+                    },
+                )
+            )
+        return min(candidates, key=lambda item: item[:-1])[-1] if candidates else None
+
+    @staticmethod
+    def _heading_parts(value: str) -> tuple[str | None, str]:
+        normalized = unicodedata.normalize("NFKC", value)
+        compact = re.sub(r"[\s·•:：—_\-]", "", normalized)
+        compact = compact.lstrip("*＊")
+        chapter = re.match(r"^(第\d+章)(.*)$", compact)
+        numbered = re.match(r"^(\d+(?:\.\d+)+)(.*)$", compact)
+        match = chapter or numbered
+        return (match.group(1), match.group(2)) if match else (None, compact)
 
     def _bookmark_candidates(self, revision_id: str, pdf_path: Path) -> tuple[str, list[dict]]:
         cached = self._bookmarks.get(revision_id)

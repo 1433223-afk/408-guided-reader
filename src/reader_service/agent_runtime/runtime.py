@@ -132,11 +132,12 @@ class ProviderConfig:
         if not 1 <= self.cooling_seconds <= 600:
             raise ValueError("provider cooling period is invalid")
 
-    def effective_config(self) -> dict:
+    def effective_config(self, *, max_tokens: int | None = None) -> dict:
+        effective_max_tokens = self.max_tokens if max_tokens is None else max_tokens
         answer_mapping = (
-            "shared Skill controls concise answer; max_tokens=4096 includes provider reasoning"
+            f"shared Skill controls concise answer; max_tokens={effective_max_tokens} includes provider reasoning"
             if self.provider in ("deepseek", "zhipu")
-            else f"max_tokens={self.max_tokens}"
+            else f"max_tokens={effective_max_tokens}"
         )
         return {
             "provider": self.provider,
@@ -148,7 +149,7 @@ class ProviderConfig:
             },
             "request_parameters": {
                 "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
+                "max_tokens": effective_max_tokens,
                 "stream": False,
                 "timeout_seconds": self.timeout_seconds,
             },
@@ -263,8 +264,15 @@ class AgentRuntime:
         return self.complete_with_metadata(messages, interaction_id=interaction_id).answer
 
     def complete_with_metadata(
-        self, messages: list[dict], *, interaction_id: str | None = None
+        self,
+        messages: list[dict],
+        *,
+        interaction_id: str | None = None,
+        max_tokens: int | None = None,
     ) -> ProviderCompletion:
+        effective_max_tokens = self.config.max_tokens if max_tokens is None else max_tokens
+        if isinstance(effective_max_tokens, bool) or not 1 <= effective_max_tokens <= 16384:
+            raise ValueError("provider call max_tokens must be between 1 and 16384")
         if not self._configuration_valid:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,
@@ -290,7 +298,7 @@ class AgentRuntime:
             "model": self.config.model,
             "messages": copy.deepcopy(messages),
             "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": effective_max_tokens,
             "stream": False,
         }
         call_id = interaction_id or str(uuid4())
@@ -342,7 +350,9 @@ class AgentRuntime:
                     answer=normalized.answer,
                     latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
                     usage=copy.deepcopy(normalized.usage),
-                    effective_config=self.config.effective_config(),
+                    effective_config=self.config.effective_config(
+                        max_tokens=effective_max_tokens
+                    ),
                 )
         assert last_failure is not None
         raise last_failure
@@ -473,6 +483,7 @@ class ProviderRuntimeSet:
         messages: list[dict],
         *,
         interaction_id: str | None = None,
+        max_tokens: int | None = None,
     ) -> ProviderCompletion:
         runtime = self.runtimes.get(provider)
         if runtime is None:
@@ -481,7 +492,9 @@ class ProviderRuntimeSet:
                 "invalid_active_provider",
                 "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
             )
-        return runtime.complete_with_metadata(messages, interaction_id=interaction_id)
+        return runtime.complete_with_metadata(
+            messages, interaction_id=interaction_id, max_tokens=max_tokens
+        )
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:
         selected = provider or self.active_provider

@@ -8,7 +8,7 @@ import { renderAssistantAnswer, renderedSelectionToRaw } from "/assistant-render
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-toggle", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -27,6 +27,8 @@ const state = {
   annotationData: new Map(), selection: null, selecting: false, selectionMenuPoint: null,
   searchRequest: 0, searchMatch: null,
   outlineRequest: 0, outlineNodes: [], pageLabels: new Map(), mapTimer: 0,
+  knowledgeRequest: 0, knowledgeChapterId: null, knowledgeMap: null,
+  knowledgePollTimer: 0,
   readerSessionId: null, assistantConfigured: false, assistantCooling: false,
   assistantActiveProvider: "deepseek", assistantModelSelectionInitialized: false,
   assistantStatusAvailable: false, assistantOffReason: null,
@@ -160,13 +162,13 @@ async function importPdf(file, bookId = null) {
 }
 
 async function removeBook(book) {
-  const confirmed = window.confirm(`删除《${book.title}》？\n\n这会永久删除本应用中保存的 PDF 版本、阅读位置、高亮和笔记，且无法撤销。`);
+  const confirmed = window.confirm(`删除《${book.title}》？\n\n这会永久删除本应用中保存的 PDF 版本、阅读位置、学习地图、高亮和笔记，且无法撤销。`);
   if (!confirmed) return;
   try {
     await api(`/api/books/${book.id}`, { method: "DELETE" });
     if (state.book?.id === book.id) state.book = null;
     await loadBooks();
-    announce("已删除教材、阅读位置、高亮和笔记。");
+    announce("已删除教材、阅读位置、学习地图、高亮和笔记。");
   } catch (_error) {
     if (state.book?.id === book.id) state.book = null;
     await loadBooks();
@@ -189,6 +191,9 @@ async function openBook(book) {
   state.assistantSaveIntents.clear();
   state.assistantSavedTurns.clear();
   clearAssistantReviewPolls();
+  clearTimeout(state.knowledgePollTimer);
+  state.knowledgeChapterId = null;
+  state.knowledgeMap = null;
   state.annotationData.clear();
   state.assistantScrollPositions.clear();
   state.assistantChildRequests.clear();
@@ -243,20 +248,26 @@ function closeReader() {
   state.assistantSavedTurns.clear();
   clearAssistantReviewPolls();
   state.annotationData.clear();
+  clearTimeout(state.knowledgePollTimer);
+  state.knowledgeChapterId = null;
+  state.knowledgeMap = null;
   state.assistantScrollPositions.clear();
   state.assistantChildRequests.clear();
   elements.reader.hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-panel"].hidden = true;
   elements["outline-panel"].hidden = true;
+  elements["knowledge-panel"].hidden = true;
   setAssistantPanelOpen(false, { relayout: false });
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
+  elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
   elements["library-home"].hidden = false;
   elements.pages.replaceChildren();
   state.outlineRequest += 1;
   state.outlineNodes = [];
+  state.knowledgeRequest += 1;
   state.pageLabels.clear();
   clearTimeout(state.mapTimer);
   clearTimeout(state.assistantStatusTimer);
@@ -707,6 +718,7 @@ function renderOutline(payload) {
       let toggleDescendants = null;
       if (node.start_page !== null || descendants.length) {
         target.addEventListener("click", () => {
+          selectKnowledgeChapterForNode(node);
           toggleDescendants?.();
           if (node.start_page !== null) {
             goToPage(node.start_page);
@@ -715,6 +727,17 @@ function renderOutline(payload) {
         });
       }
       row.append(disclosure, target);
+      if (node.kind === "CHAPTER") {
+        const map = document.createElement("button");
+        map.type = "button";
+        map.className = "outline-map-action";
+        map.textContent = "学习地图";
+        map.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openKnowledgePanel(node.outline_node_id);
+        });
+        row.append(map);
+      }
       item.append(row);
       if (descendants.length) {
         const nested = branch(descendants, depth + 1);
@@ -750,6 +773,139 @@ function renderOutline(payload) {
     elements["outline-status"].textContent = "已发现目录页，正在等待连续目录页准备完成。";
   } else {
     elements["outline-status"].textContent = "未发现可用的 PDF 书签或已准备目录页。";
+  }
+}
+
+function selectKnowledgeChapterForNode(node) {
+  let current = node;
+  const byId = new Map(state.outlineNodes.map((value) => [value.outline_node_id, value]));
+  while (current && current.kind !== "CHAPTER") current = byId.get(current.parent_id);
+  if (current?.kind === "CHAPTER") state.knowledgeChapterId = current.outline_node_id;
+}
+
+function chapterForCurrentPage() {
+  const chapters = state.outlineNodes
+    .filter((node) => node.kind === "CHAPTER" && node.parent_id === null && node.start_page !== null)
+    .sort((a, b) => a.order_index - b.order_index);
+  return chapters.filter((node) => node.start_page <= state.currentPage).at(-1) || chapters[0] || null;
+}
+
+async function openKnowledgePanel(chapterId = null) {
+  const chapter = state.outlineNodes.find((node) => node.outline_node_id === chapterId)
+    || chapterForCurrentPage();
+  if (!chapter) {
+    announce("教材目录中还没有可准备的章节。", true);
+    return;
+  }
+  state.knowledgeChapterId = chapter.outline_node_id;
+  elements["knowledge-panel"].hidden = false;
+  elements["knowledge-toggle"].setAttribute("aria-expanded", "true");
+  elements["outline-panel"].hidden = true;
+  elements["outline-toggle"].setAttribute("aria-expanded", "false");
+  elements["search-panel"].hidden = true;
+  elements["search-toggle"].setAttribute("aria-expanded", "false");
+  elements["marks-panel"].hidden = true;
+  elements["marks-toggle"].setAttribute("aria-expanded", "false");
+  setAssistantPanelOpen(false);
+  await loadKnowledgeMap();
+}
+
+async function loadKnowledgeMap() {
+  const revisionId = state.revision?.id;
+  const chapterId = state.knowledgeChapterId;
+  if (!revisionId || !chapterId) return;
+  const request = ++state.knowledgeRequest;
+  clearTimeout(state.knowledgePollTimer);
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/chapters/${chapterId}/knowledge-map`);
+    if (request !== state.knowledgeRequest || state.revision?.id !== revisionId
+        || state.knowledgeChapterId !== chapterId) return;
+    state.knowledgeMap = payload;
+    renderKnowledgeMap(payload);
+    if (payload.status === "PREPARING") {
+      state.knowledgePollTimer = setTimeout(loadKnowledgeMap, 700);
+    }
+  } catch (_error) {
+    if (request !== state.knowledgeRequest) return;
+    elements["knowledge-status"].textContent = "学习地图状态暂时无法读取，阅读不受影响。";
+    elements["knowledge-prepare"].hidden = true;
+  }
+}
+
+function renderKnowledgeMap(payload) {
+  elements["knowledge-title"].textContent = payload.chapter_title || "章节学习地图";
+  elements["knowledge-map"].replaceChildren();
+  elements["knowledge-empty"].hidden = payload.status === "READY";
+  elements["knowledge-prepare"].hidden = payload.status === "READY" || payload.status === "PREPARING";
+  elements["knowledge-prepare"].disabled = payload.status === "PREPARING";
+  if (payload.status === "NOT_PREPARED") {
+    elements["knowledge-status"].textContent = "本章学习地图尚未准备；PDF 阅读和现有工具可继续使用。";
+    elements["knowledge-empty"].textContent = "尚未准备这个章节的学习地图。";
+    elements["knowledge-prepare"].textContent = "准备本章学习地图";
+    return;
+  }
+  if (payload.status === "PREPARING") {
+    elements["knowledge-status"].textContent = "正在准备本章来源范围、知识点与独立结构审查；地图会在整体通过后一次出现。";
+    elements["knowledge-empty"].textContent = "准备期间不会显示部分草稿。";
+    return;
+  }
+  if (payload.status === "FAILED") {
+    const stage = payload.failure_stage ? `（${payload.failure_stage} / ${payload.failure_code || "失败"}）` : "";
+    elements["knowledge-status"].textContent = `本章学习地图准备失败${stage}；PDF 阅读和现有工具不受影响。`;
+    elements["knowledge-empty"].textContent = "没有发布任何部分草稿，可以明确重试。";
+    elements["knowledge-prepare"].textContent = "重试准备";
+    return;
+  }
+  const route = `${payload.generator_provider} / ${payload.generator_model} → ${payload.reviewer_provider} / ${payload.reviewer_model}`;
+  elements["knowledge-status"].textContent = `结构版本 ${payload.structure_version} · ${payload.knowledge_points.length} 个知识点 · ${route}`;
+  const groups = new Map();
+  for (const point of payload.knowledge_points) {
+    if (!groups.has(point.primary_section_id)) groups.set(point.primary_section_id, []);
+    groups.get(point.primary_section_id).push(point);
+  }
+  const rendered = [];
+  for (const points of groups.values()) {
+    const section = document.createElement("section");
+    section.className = "knowledge-section";
+    const title = document.createElement("h3");
+    title.textContent = points[0].primary_section_title;
+    const list = document.createElement("ol");
+    for (const point of points) {
+      const item = document.createElement("li");
+      const heading = document.createElement("strong");
+      heading.textContent = point.title;
+      const definition = document.createElement("p");
+      definition.textContent = point.one_sentence_definition;
+      const source = document.createElement("button");
+      source.type = "button";
+      source.textContent = `回到教材 · PDF 第 ${point.start_page + 1} 页`;
+      source.addEventListener("click", () => {
+        goToPage(point.start_page, point.start_y);
+        elements.viewer.focus({ preventScroll: true });
+      });
+      item.append(heading, definition, source);
+      list.append(item);
+    }
+    section.append(title, list);
+    rendered.push(section);
+  }
+  elements["knowledge-map"].replaceChildren(...rendered);
+}
+
+async function prepareKnowledgeMap() {
+  if (!state.revision || !state.knowledgeChapterId) return;
+  elements["knowledge-prepare"].disabled = true;
+  try {
+    const payload = await api(`/api/revisions/${state.revision.id}/chapters/${state.knowledgeChapterId}/knowledge-map/prepare`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    });
+    state.knowledgeMap = payload.chapter_map;
+    renderKnowledgeMap(payload.chapter_map);
+    clearTimeout(state.knowledgePollTimer);
+    state.knowledgePollTimer = setTimeout(loadKnowledgeMap, 350);
+  } catch (_error) {
+    elements["knowledge-status"].textContent = "学习地图请求未能启动；阅读不受影响，可以重试。";
+    elements["knowledge-prepare"].disabled = false;
   }
 }
 
@@ -1247,8 +1403,10 @@ function openAssistantPanel() {
   setAssistantPanelOpen(true);
   elements["search-panel"].hidden = true;
   elements["marks-panel"].hidden = true;
+  elements["knowledge-panel"].hidden = true;
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
+  elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
   state.searchRequest += 1;
   clearSearchMatch();
 }
@@ -2337,8 +2495,10 @@ elements["outline-toggle"].addEventListener("click", async () => {
   if (opening) {
     elements["search-panel"].hidden = true;
     elements["marks-panel"].hidden = true;
+    elements["knowledge-panel"].hidden = true;
     elements["search-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
+    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
     state.searchRequest += 1;
     clearSearchMatch();
     await loadBookMap();
@@ -2348,6 +2508,20 @@ elements["outline-close"].addEventListener("click", () => {
   elements["outline-panel"].hidden = true;
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
 });
+elements["knowledge-toggle"].addEventListener("click", () => {
+  if (elements["knowledge-panel"].hidden) openKnowledgePanel(state.knowledgeChapterId);
+  else {
+    elements["knowledge-panel"].hidden = true;
+    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
+    clearTimeout(state.knowledgePollTimer);
+  }
+});
+elements["knowledge-close"].addEventListener("click", () => {
+  elements["knowledge-panel"].hidden = true;
+  elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
+  clearTimeout(state.knowledgePollTimer);
+});
+elements["knowledge-prepare"].addEventListener("click", prepareKnowledgeMap);
 elements["search-toggle"].addEventListener("click", () => {
   const opening = elements["search-panel"].hidden;
   elements["search-panel"].hidden = !opening;
@@ -2356,6 +2530,8 @@ elements["search-toggle"].addEventListener("click", () => {
     setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
+    elements["knowledge-panel"].hidden = true;
+    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-panel"].hidden = true;
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
     runSearch();
@@ -2392,6 +2568,8 @@ elements["marks-toggle"].addEventListener("click", async () => {
     setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
+    elements["knowledge-panel"].hidden = true;
+    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
     elements["search-panel"].hidden = true;
     elements["search-toggle"].setAttribute("aria-expanded", "false");
     state.searchRequest += 1;

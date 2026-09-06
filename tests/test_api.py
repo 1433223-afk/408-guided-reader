@@ -21,6 +21,7 @@ def running_server(
     annotations=None,
     preparation=None,
     outline=None,
+    knowledge=None,
     assistant=None,
     saved_explanations=None,
 ):
@@ -28,7 +29,7 @@ def running_server(
     server = ReaderServer(
         ("127.0.0.1", 0), handler_factory(
             service, token, annotations=annotations, preparation=preparation, outline=outline,
-            assistant=assistant, saved_explanations=saved_explanations,
+            knowledge=knowledge, assistant=assistant, saved_explanations=saved_explanations,
         )
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)

@@ -506,6 +506,28 @@ def test_dev_gate_off_routes_only_the_active_provider_and_refuses_comparison():
     assert sum(len(adapter.calls) for adapter in adapters.values()) == 1
 
 
+def test_named_provider_per_call_token_budget_override_keeps_default_unchanged():
+    providers, adapters = runtime_set(
+        bakeoff_enabled=False,
+        outcomes={"deepseek": ("large structured answer", "ordinary answer")},
+    )
+    messages = [{"role": "user", "content": "bounded"}]
+    overridden = providers.complete_for_with_metadata(
+        "deepseek", messages, interaction_id="large-structure", max_tokens=12_288
+    )
+    defaulted = providers.complete_for_with_metadata(
+        "deepseek", messages, interaction_id="ordinary-assistant"
+    )
+
+    assert [call["body"]["max_tokens"] for call in adapters["deepseek"].calls] == [
+        12_288, 4096,
+    ]
+    assert overridden.effective_config["request_parameters"]["max_tokens"] == 12_288
+    assert defaulted.effective_config["request_parameters"]["max_tokens"] == 4096
+    with pytest.raises(ValueError, match="between 1 and 16384"):
+        providers.complete_for_with_metadata("deepseek", messages, max_tokens=16_385)
+
+
 def test_selected_provider_is_the_only_call_and_follow_up_stays_pinned(assistant_fixture):
     providers, adapters = runtime_set(bakeoff_enabled=False)
     assistant = AssistantService(assistant_fixture["contexts"], providers)

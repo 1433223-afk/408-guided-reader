@@ -1,4 +1,4 @@
 from .repository import OutlineRepository
-from .service import OutlineService
+from .service import ChapterResolutionError, OutlineService
 
-__all__ = ["OutlineRepository", "OutlineService"]
+__all__ = ["ChapterResolutionError", "OutlineRepository", "OutlineService"]
