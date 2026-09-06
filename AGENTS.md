@@ -51,24 +51,36 @@ blueprints are frozen.
 
 ## 4. Who does what
 
-Three coding/review models collaborate here. **Model identity does not confer authority.** Authority
-comes from the current task and its approval gate, and an agent may perform only the actions that
-gate authorizes — whichever model it is.
+**Model identity does not confer authority.** Authority comes from the current task and its
+approval gate, and an agent may perform only the actions that gate authorizes — whichever model it
+is.
 
 | Role | Owns | Must not |
 |---|---|---|
-| **Codex** | Primary implementation, integration, test execution, repository changes. Produces implementation evidence and development reports. | Implement outside approved Product + engineering authority; self-authorize major architecture or dependency changes. |
-| **ZCode** | Independent review and adjudication, when a Phase brief actually triggers it (§5, "risk-triggered review"). Attacks implementation and contract correctness. | Review an implementation path it produced; silently become the primary implementer; review by default when nothing risk-triggered it. |
-| **Claude Code** | High-context architecture, planning, audit and research: preparing the next Phase brief (§7), architecture analysis, technical spikes, audit reports, and explicitly delegated implementation. | Treat its own drafting as authorization; act as final independent acceptance for work it took part in; mechanically pre-write future briefs from the roadmap. |
+| **Codex Pro — Planner** | The next Phase brief (§7), in its own separate planning conversation: current product-state assessment, next-slice candidates, the Prior-art check, product/architecture options, scope, acceptance, Not-now, authority-to-read, must-report boundaries. | Write product code; pre-design implementation trivia for the Implementer; treat its own draft as accepted. Durable output lands in repo authority docs; handover after a docs-only checkpoint. |
+| **Codex Pro — Implementer** | One accepted Phase end to end, in a fresh conversation cold-started from repository authority: code-level plan, implementation, targeted tests, real-use golden path, affected regression, same-Phase bugs and UAT rework, development report and checkpoint. | Work outside accepted authority; swap implementation model mid-Phase for ordinary bugs; cold-restart on a user UAT FAIL instead of continuing this conversation. |
+| **ZCode** | Independent auditor — narrow/adversarial review, high-risk and contract/security/authority audit, attack-test recommendations — when a Phase brief triggers it (§5). Exception: adjudicating a Frozen-authority conflict or a planning dead-end. | Default into the next-slice planning chain; review an implementation path whose core design it adjudicated; silently become the primary implementer; review when nothing risk-triggered it. |
+| **Deep Research** | External prior-art / GitHub / technical research evidence for a Planner or the user. | Hold project authority; introduce a dependency or change Frozen semantics because a report recommends it — results are adjudicated by the Planner, the user and the authority hierarchy. |
+| **Cheap / low-context models** | Credential/API preflight, config checks, model-slug lookup, narrow diagnostics, one-off low-context tasks. | Take over an in-progress Phase implementation. |
 
-Binding on all three:
+Binding on every role:
 
 - `PRODUCT_BLUEPRINT.md` and `IMPLEMENTATION_BLUEPRINT.md` are the Frozen Core (§2).
 - Repository truth outranks model memory (§5).
 - Review failure, or reviewer-invocation failure, never becomes PASS (§5).
-- User approval gates are controlling. None of the three can waive one.
+- User approval gates are controlling. No role can waive one.
 - **Independence is a property of the work, not the model.** Whoever produced a change cannot also
-  be its independent acceptance — this applies to all three roles symmetrically.
+  be its independent acceptance — symmetric across roles. No ZCode-plans → Codex-implements →
+  ZCode-reviews-its-own-design.
+
+Planner and Implementer are separate conversations on purpose: continuity comes from repository
+authority, not from a persistent chat. The Planner's durable results — accepted brief, decision
+records, material prior-art evidence — are written to the repo; the Implementer cold-starts from
+those facts and does not inherit discarded ideas, temporary guesses, rejected options or
+conversational reasoning. Small work — a CSS tweak, a button bug, a known local defect, a
+same-Phase UAT delta — skips the two-conversation split: it stays in the original Implementer
+conversation (reproduce → minimal fix → targeted test → real-use check → user retest), no process
+tax.
 
 Per-model role documents may be introduced later **only if they materially help**, and this file
 would then route to them. They should not exist for symmetry. This file stays a router.
@@ -130,6 +142,22 @@ PDF engine, OCR runtime/model, job system, state-machine framework, or other lar
 project; licence; what would be reused; why it fits; dependencies it brings; maintenance/risk;
 recommendation — then wait for approval (escalation conditions 5–6).
 
+The trigger is broader than infrastructure. Interaction-model problems — conversation branching,
+recursive/nested chat, tree navigation, Markdown/math rendering, editor/selection,
+search/indexing, RAG, streaming, auth — are mature OSS problem domains: look before designing.
+Research is likewise REQUIRED when about to hand-build a generic capability (parser, framework,
+state-machine abstraction, rendering pipeline, generic navigation/tree/storage abstraction), on a
+new core dependency or stack change, when the product/architecture itself is uncertain (the user
+cannot name the best UX; materially different data/state/context models are live options; the
+implementation is ballooning into a generic system), or when a user-acceptance failure exposes one
+of those uncertainties. A clear, local, known-cause defect — a stale disabled condition, a
+CSS/null/event-handler bug, a local readiness regression — needs no research. A user-visible
+capability that fails user acceptance again after a fix is REQUIRED research by default, unless
+the failures are demonstrably independent local bugs. Research itself is autonomous — search
+GitHub, read READMEs, source, issues and PRs, compare architectures, borrow patterns; ask before
+adoption, not before learning, and record what was borrowed. Copying substantive code or adopting
+a dependency remains the approval case above.
+
 **Failure never becomes success.** A bounded retry that exhausts, a review that does not run, or a
 tool that fails to respond is **not** a PASS. Never convert an invocation failure into "no findings".
 Report what actually happened, including when it is inconvenient.
@@ -146,6 +174,35 @@ label the result `IMPLEMENTATION_READY` (built and correctness-tested at the mat
 available) rather than claiming a larger-scale criterion passed, and name what's still missing as
 `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING`. Don't block implementation over a missing scale that a
 smaller real fixture can safely stand in for while building.
+
+**Test execution is tiered; user-visible interaction is proven on the real path first.** For a
+bug, reproduce it before fixing. Then: minimal implementation → targeted tests (the new/changed
+behaviour and its nearest invariants) → agent real-use golden path (user-visible work only) →
+affected regression (existing suites that share the changed risk surface) → broad/closure suite
+when justified → user retest. The golden path drives the site as actually served, with real
+material and real pointer/keyboard paths, proves the key controls are genuinely operable, and
+includes at least one reversal or recovery (Back / reopen / close / failure / retry). Machine PASS
+≠ agent real-use PASS. A broad suite is REQUIRED at least once before Phase / UAT-rework closure,
+and earlier when shared infrastructure changed, targeted failures suggest cross-module
+contamination, or the blast radius is unclear. High risk ≠ full suite after every edit: it means
+the corresponding invariant tests run promptly, can never be permanently skipped via
+`INTENTIONALLY_NOT_RUN`, and the required broad regression cannot be escaped before the relevant
+checkpoint or acceptance. A suite that shares no risk surface with the change may be skipped,
+recorded in the development report as `INTENTIONALLY_NOT_RUN` with a one-line risk-based reason —
+never for the current golden path, the current high-risk invariants, or a closure suite, and never
+merely because it is slow. TARGETED / AFFECTED / CLOSURE are execution and report vocabulary only
+— no test tags, no metadata system; a Phase brief may always require more.
+
+**Protect concrete invariants, not hypothetical states; validate at the narrowest side-effect
+boundary.** Every `disabled`, readiness gate, early return or blocking state must be able to name
+the concrete invariant it protects — "safer", "might fail later", "theoretically possible" are not
+invariants. Reversible local UI — open a panel, create a local draft, select, Back, focus or Root
+switch, resize, reopen a historical explanation — must not depend on provider readiness,
+credential availability or persistent state it does not yet need. The check runs at the real
+boundary: Send checks provider readiness; Persist checks schema and durable authority; destructive
+close checks deletion scope. The fail-closed hard boundaries — credential/secret, egress/security,
+persistence/migration, destructive authority, source anchoring, mastery authority, durable
+identity — are unchanged and absolute. This discipline moves validation; it never deletes it.
 
 **Independent review is risk-triggered, not routine.** The normal path is Codex → tests → real-use
 acceptance → development report → checkpoint, with no ZCode involvement required. A Phase brief
@@ -196,8 +253,9 @@ question needs a calibration/spike report:
 OCR/geometry/layout/anchor work may specifically pull the OCR calibration evidence — read its
 conclusions, not its full working log — when that work is actually in scope.
 
-**Role difference.** Codex executing a Phase brief gets exactly Tier A + Tier B — narrow, on purpose.
-Claude preparing the *next* brief (§7) may read more broadly when genuinely necessary — current
+**Role difference.** The Implementer executing a Phase brief gets exactly Tier A + Tier B — narrow,
+on purpose. The Planner preparing the *next* brief (§7) may read more broadly when genuinely
+necessary — current
 product/code state, a wider Frozen Core section, the user's actual usage feedback, the template in
 `docs/phases/README.md` — but should still avoid archive archaeology unless it's actually needed.
 
@@ -208,35 +266,19 @@ direction; it is not a queue of ready-made briefs. The next one is derived, once
 reaches that layer, from: what exists now; the previous development report; the user's actual usage
 and feedback; relevant Frozen Core constraints; and deferred debt that has become relevant. Prefer
 one minimal useful slice over a broad "complete phase." Do not mechanically expand the roadmap into
-detailed future briefs ahead of need.
+detailed future briefs ahead of need. The **Planner** (§4) owns this derivation in its own
+conversation; the handover artifact is the accepted brief plus decision records, never the planning
+chat.
 
 ## 8. Current state
 
-Both blueprints are frozen at Gate D (2026-09-03). R1, R2, R3, Find in Book, Map the Book and Ask
-About This are closed. Find in Book passed user real-use acceptance 2026-09-04. Map the Book passed
-user real-use acceptance and its required independent narrow review on 2026-09-04; the review
-explicitly allowed closure with three non-blocking P2 observations recorded in its development
-report. Cross-version annotation round-trip remains a pending capability gap because OCR
-reprocessing does not exist.
-**Ask About This** (`docs/phases/ASK_ABOUT_THIS.md`) passed user real-use acceptance and its required
-independent narrow review on 2026-09-04. ZCode explicitly allowed closure with P0 = 0, P1 = 0 and
-three deferred non-blocking P2 observations recorded in its development report. User decisions
-**D-4** (first provider = DeepSeek) and **D-5** (§21.3 recommended egress boundary) were
-resolved/confirmed 2026-09-04 and remain recorded in the brief; `IMPLEMENTATION_BLUEPRINT.md` §26
-still carries them as open rows pending the user's Frozen Core sync.
-**Provider Bake-off** (`docs/phases/PROVIDER_BAKEOFF.md`) is closed — user acceptance PASS and narrow
-independent review PASS (P0=0 / P1=0 / P2=3), 2026-09-05. The normal Reader keeps a compact
-single-model Assistant with a pre-send model selector; DeepSeek `deepseek-v4-pro` and Zhipu
-`GLM-5.3-Flash` completed all real-book comparisons, while the frozen OpenRouter
-`google/gemini-3.8-flash` model returns a direct no-proxy `model_region` 403 — that region-access
-question and the default-provider choice remain open user decisions with the retained evidence; no
-winner or default change was made.
-**Ask Deeper** (`docs/phases/ASK_DEEPER.md`) is the current Phase brief — `UAT REWORK / OPEN`.
-Implementation, machine acceptance and real-provider acceptance passed, but user acceptance FAILED
-(2026-09-06): a directed ZCode adjudication found the Child provider payload leading with internal
-tree state (`【父子关系】`, depth counter, offsets) instead of the selected focus, plus navigation
-stricter than frozen §24.7. The rework is governed by `docs/phases/ASK_DEEPER_UAT_REWORK.md`
-(user adjudication of 2026-09-06; user decisions D1 Child-subtree close — Implementation §14.8 amended
-accordingly, D2 marked/DOMPurify/KaTeX — register A-19, D3 dock resize/expanded mode; staged
-A→B→C→D acceptance with real-use golden paths; independent review required before closure). Derive
-later briefs per §7 — the Phase's Not-now list is not a future order.
+Both blueprints are frozen at Gate D (2026-09-03). Since then the Frozen Core has changed only by
+user-approved amendments recorded in the blueprints themselves (Implementation §14.8 per Ask Deeper
+decision D1; Decision Register A-19 for the Markdown/math/sanitizer libraries). One Frozen-level
+sync still awaits the user: `IMPLEMENTATION_BLUEPRINT.md` §26 carries the D-4/D-5 rows already
+resolved in `ASK_ABOUT_THIS.md`.
+
+Per-Phase status — open, closed, rework, pending user decisions — lives in the
+[`docs/phases/README.md`](docs/phases/README.md) index. Phase-specific authority, decisions and
+evidence live in the current Phase brief and its development report. Do not copy per-Phase detail
+into this file.

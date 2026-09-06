@@ -9,10 +9,10 @@ brief names the exact sections of each that this increment needs, and nothing el
 Phases are named, not numbered against any prior scheme (`IMPLEMENTATION_BLUEPRINT.md` §24 states
 *direction* for later phases — it is not a queue of ready-made briefs).
 
-**This README is a template/reference for whoever prepares the next brief (normally Claude Code) —
-it is not itself required Codex cold-start reading.** The brief it produces *is* required reading
-(`AGENTS.md` §6, Tier A). See `AGENTS.md` §7 for how the next brief actually gets scoped: from
-current product/code state,
+**This README is a template/reference for whoever prepares the next brief (the Codex Pro Planner,
+`AGENTS.md` §4) — it is not itself required Implementer cold-start reading.** The brief it produces
+*is* required reading (`AGENTS.md` §6, Tier A). See `AGENTS.md` §7 for how the next brief actually
+gets scoped: from current product/code state,
 the previous development report, and real usage feedback — never by mechanically expanding the
 roadmap ahead of need. Write only the next minimal useful slice, not several phases in advance.
 
@@ -35,6 +35,10 @@ The concrete, observable thing a user can now do. Prefer a single quotable sente
 ## Authority to read
 Exact Product Blueprint sections and exact Implementation Blueprint sections this Phase needs —
 by number. Nothing else from either blueprint is required reading for this Phase.
+
+## Prior-art check
+REQUIRED / NOT_NEEDED — one-line reason. If REQUIRED, name 0–3 candidate repos or problem-domain
+classes (`AGENTS.md` §5, external reuse). No OPTIONAL state; no research report owed.
 
 ## Hard rules
 Only the load-bearing invariants relevant to this Phase — the things that must not be violated
