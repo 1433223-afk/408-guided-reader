@@ -231,8 +231,12 @@ single-model Assistant with a pre-send model selector; DeepSeek `deepseek-v4-pro
 `google/gemini-3.8-flash` model returns a direct no-proxy `model_region` 403 — that region-access
 question and the default-provider choice remain open user decisions with the retained evidence; no
 winner or default change was made.
-**Ask Deeper** (`docs/phases/ASK_DEEPER.md`) is the current Phase brief — accepted 2026-09-05,
-awaiting implementation: the frozen §24.4–§24.7 recursive Child explanation model (depth 5,
-multi-Root temporary workspace) as a memory-only slice with no new egress category and no independent
-review required by default (escalation conditions in the brief). Derive later briefs per §7 — the
-Phase's Not-now list is not a future order.
+**Ask Deeper** (`docs/phases/ASK_DEEPER.md`) is the current Phase brief — `UAT REWORK / OPEN`.
+Implementation, machine acceptance and real-provider acceptance passed, but user acceptance FAILED
+(2026-09-06): a directed ZCode adjudication found the Child provider payload leading with internal
+tree state (`【父子关系】`, depth counter, offsets) instead of the selected focus, plus navigation
+stricter than frozen §24.7. The rework is governed by `docs/phases/ASK_DEEPER_UAT_REWORK.md`
+(user adjudication of 2026-09-06; user decisions D1 Child-subtree close — Implementation §14.8 amended
+accordingly, D2 marked/DOMPurify/KaTeX — register A-19, D3 dock resize/expanded mode; staged
+A→B→C→D acceptance with real-use golden paths; independent review required before closure). Derive
+later briefs per §7 — the Phase's Not-now list is not a future order.

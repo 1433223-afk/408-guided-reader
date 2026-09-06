@@ -81,4 +81,4 @@ criterion names — `IMPLEMENTATION_READY` vs `FULL_REAL_MATERIAL_ACCEPTANCE_PEN
 | Map the Book | [`MAP_THE_BOOK.md`](./MAP_THE_BOOK.md) | `CLOSED` — accepted after user real-use + independent narrow review (2026-09-04) |
 | Ask About This | [`ASK_ABOUT_THIS.md`](./ASK_ABOUT_THIS.md) | `CLOSED` — accepted after user real-use + independent narrow review (2026-09-04) |
 | Provider Bake-off | [`PROVIDER_BAKEOFF.md`](./PROVIDER_BAKEOFF.md) | `CLOSED / COMPLETE` — user acceptance PASS + narrow independent review PASS; OpenRouter `google/gemini-3.8-flash` region access remains separately pending and the default Assistant provider decision remains open |
-| Ask Deeper | [`ASK_DEEPER.md`](./ASK_DEEPER.md) | `ACCEPTED` — ready for implementation (2026-09-05), per the accepted ZCode next-slice adjudication |
+| Ask Deeper | [`ASK_DEEPER.md`](./ASK_DEEPER.md) | `UAT REWORK / OPEN` — implemented; machine + real-provider acceptance PASS; **user acceptance FAIL (2026-09-06)**; rework under [`ASK_DEEPER_UAT_REWORK.md`](./ASK_DEEPER_UAT_REWORK.md) (user adjudication, decisions D1–D3) |

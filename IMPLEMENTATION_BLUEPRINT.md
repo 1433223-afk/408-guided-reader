@@ -1400,11 +1400,19 @@ ReaderAssistantState
 ```
 
 Opening a new Root, switching to an existing Root, or navigating to a Node's parent all just reassign
-`focused_ref` — **no context is created, copied, or destroyed by a focus change.** Only two operations
+`focused_ref` — **no context is created, copied, or destroyed by a focus change.** Only three operations
 destroy state: explicit Close of a Root (removes that Root and its subtree from `roots`, and reassigns
-focus elsewhere if it was focused) and Reader/app close (clears `roots` entirely). This is the
-mechanical reason focus can never substitute for close (§24.5 item 10): they are different fields,
-touched by disjoint operations.
+focus elsewhere if it was focused); explicit Close of a Child subtree (removes that Child node and its
+descendants only — never its parent, siblings or Root — returns focus to its parent and re-enables
+Child creation there, aborting any pending request inside the subtree and discarding late completions
+as typed cancellations); and Reader/app close (clears `roots` entirely). This is the mechanical reason
+focus can never substitute for close (§24.5 item 10): they are different fields, touched by disjoint
+operations.
+
+> **Amended 2026-09-06 (user decision D1, Ask Deeper UAT rework).** The Child-subtree close was added
+> as the third destructive operation, realizing Product §24.7's return-and-replace / mark-historical
+> handling for a parent that already has a Child. No other lifetime rule changed; Product Blueprint
+> §24.5 item 6 (Root close) is untouched.
 
 The UI is handed the full `roots` list (for a Root/context switcher) plus `focused_ref` plus each
 node's `depth` — enough to build a breadcrumb, a recent-context list, and a `3 / 5` depth indicator
@@ -2275,6 +2283,7 @@ Every phase ends with a development report (AGENTS.md §5).
 | **A-16** | Localhost HTTP + SSE | RECOMMENDED_FOR_DRAFT | Traffic is mostly server→client progress; SSE reconnects natively and debugs trivially | WebSocket; polling; native IPC | Bidirectional realtime need |
 | **A-17** | Deterministic gates before any reviewer model call | RECOMMENDED_FOR_DRAFT | Cheap mechanical checks catch most failures; model calls are the expensive scarce resource | Model review only | — |
 | **A-18** | Provider credentials in the OS credential store | RECOMMENDED_FOR_DRAFT | Keeps secrets out of config, DB and repo | Config file; env only | Deployment model changes |
+| **A-19** | Assistant answer rendering: LLM Markdown via **marked + DOMPurify + KaTeX** (`trust=false`, no raw HTML, no cross-message macro state), with a verbatim raw↔rendered selection mapping for Child creation offsets | **RESOLVED [E]** (user decision D2, 2026-09-06 — Ask Deeper UAT rework) | Hand-written Markdown/LaTeX parsing is an unnecessary risk surface; the mapping requirement protects the frozen Child CURRENT FOCUS from rendering-induced offset drift | Hand-rolled parser subset; MathJax; React-specific stacks (remark/rehype — the Reader frontend is not React) | A rendering need outside the Markdown+math set, or a sanitizer/KaTeX security advisory |
 
 ---
 

@@ -1,5 +1,11 @@
 # Phase / Ask Deeper
 
+> **Status: UAT REWORK / OPEN (2026-09-06).** Implementation, machine acceptance and real-provider
+> acceptance passed, but **user acceptance = FAIL**. This Phase stays open under the rework authority
+> [`ASK_DEEPER_UAT_REWORK.md`](./ASK_DEEPER_UAT_REWORK.md) (user adjudication of 2026-09-06; user
+> decisions D1–D3). All Hard rules below remain binding except as that brief explicitly amends
+> execution; Implementation §14.8 was amended per D1.
+
 ## Goal
 
 Close the local-explanation loop: any text inside an Assistant answer can itself be asked about,
