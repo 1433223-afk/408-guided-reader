@@ -2,15 +2,29 @@
 
 ## Result
 
-`IMPLEMENTATION_READY` / `AGENT_REAL_USE_PASS` / `READY_FOR_USER_RETEST` /
-`READY_FOR_NARROW_INDEPENDENT_REVIEW`.
+`PHASE_STATUS: CLOSED / COMPLETE`
+
+`USER_ACCEPTANCE: PASS`
+
+`NARROW_INDEPENDENT_REVIEW: PASS (P0=0 / P1=0 / P2=3, all deferred)`
 
 Users can explicitly save one completed Root or Child Assistant answer as a durable, visibly
 AI-authored Annotation. The save commits before Review begins. Marks presents SOURCE, PROVENANCE,
 and AI CONTENT separately, and Review changes only verification metadata on that same asset.
 Assistant conversations remain process-memory-only.
 
-This report does not claim `USER_ACCEPTANCE PASS` and does not close the Phase.
+## Final acceptance and independent review (closure, 2026-09-06)
+
+The user completed final real-use acceptance and recorded `USER_ACCEPTANCE: PASS`. The required
+narrow independent review also passed with `P0=0 / P1=0 / P2=3`. The user explicitly deferred all
+three P2 observations without fixes in this closure:
+
+1. migration backup has no retention policy;
+2. `recover_interrupted_reviews()` has a constructor side effect;
+3. orphan `PENDING` recovery is passive only.
+
+These observations do not block closure. This checkpoint is documentation-only; it changes no
+product code, tests, or Blueprint authority.
 
 ## Implemented
 
@@ -74,11 +88,16 @@ None. Prior-art remained `NOT_NEEDED`; no product direction was reopened.
   is outside this Phase, while the required prepared 348-page real-material UI path did run.
 - `npm test` — **30 passed**. `python -m compileall -q src`, JavaScript syntax checks, pinned dependency
   inspection, and `git diff --check` — **PASS**.
-- The user has not yet performed UAT. The required narrow independent review was deliberately not run
-  by the Implementer and remains the next review gate.
+- User final real-use acceptance — **PASS**. Required narrow independent review — **PASS**
+  (`P0=0 / P1=0 / P2=3`, all deferred by user decision).
 
 ## Known limitations / deferred debt
 
+- Independent-review P2: migration backup has no retention policy. Deferred by user decision.
+- Independent-review P2: `recover_interrupted_reviews()` performs durable recovery from a service
+  constructor. Deferred by user decision.
+- Independent-review P2: orphan `PENDING` Review rows recover only when the service next starts.
+  Deferred by user decision.
 - Review is non-streaming and single-item only. A semantic FAIL is durable metadata and has no rewrite
   loop in this Phase.
 - Assistant history, whole-tree save, Mastery/Progress/Learning History, Teaching assets, multimodal
@@ -113,5 +132,6 @@ None. Prior-art remained `NOT_NEEDED`; no product direction was reopened.
 
 ## Git checkpoint
 
-The implementation checkpoint is the commit containing this report; its exact hash is recorded in the
-completion handoff.
+- Implementation checkpoint: `f132988`.
+- The closure checkpoint is the docs-only commit containing this updated report; its exact hash is
+  recorded in the completion handoff.

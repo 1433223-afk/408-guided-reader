@@ -1,8 +1,9 @@
 # Phase / Save Assistant Explanation to Notes
 
-> **Status: ACCEPTED — ready for implementation (2026-09-06).** This brief was accepted by the
-> user after Planner second review. It authorizes this Phase only; it is not an implementation or
-> completion result.
+> **Status: CLOSED / COMPLETE (2026-09-06).** User acceptance PASS and required narrow independent
+> review PASS (P0=0 / P1=0 / P2=3, all deferred). The Hard rules below remain this Phase's frozen
+> record. Closure evidence:
+> [development report](../development-reports/SAVE_ASSISTANT_EXPLANATION_TO_NOTES.md).
 
 ## Goal
 
