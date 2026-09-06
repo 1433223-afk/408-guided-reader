@@ -2,20 +2,47 @@
 
 ## Result
 
-`IMPLEMENTATION_READY`
+`PHASE_STATUS: CLOSED / COMPLETE`
 
-`AGENT_REAL_USE_PASS`
+`USER_ACCEPTANCE: PASS_WITH_UI_POLISH_DEFERRED`
 
-`READY_FOR_USER_RETEST`
+`NARROW_INDEPENDENT_REVIEW: PASS (P0=0 / P1=0 / P2=4, all deferred)`
 
-`READY_FOR_NARROW_INDEPENDENT_REVIEW`
+This report records the Ask Deeper implementation, the UAT rework through Stage D, the post-Stage-D
+conversation-layout deltas, the user's final acceptance, and the final narrow independent review
+that closes the Phase. The four review P2 observations are deferred and do not block closure; the
+user separately deferred overall Assistant UI visual polish.
 
-`REVIEW_REQUIRED: YES`
+## Final acceptance and independent review (closure, 2026-09-06)
 
-This report records the completed Ask Deeper UAT rework through Stage D. It does not claim
-`USER_ACCEPTANCE PASS` or close the Phase. The user still owns real-use acceptance; after that pass,
-the required independent review remains narrowly scoped to context projection/transport canaries,
-Child-subtree lifecycle, sanitizer security, and rendered-selection/raw mapping.
+User real-use acceptance passed: `PASS_WITH_UI_POLISH_DEFERRED`. The functionality, recursive
+interaction, context handoff, Markdown/math rendering, rendered-selection mapping, and
+resize/expanded workspace were accepted. The user remains not fully satisfied with the overall
+Assistant UI visual design and explicitly deferred further UI polish as separate later work — it
+is not a Phase blocker, and no UI change is part of this closure.
+
+The required narrow independent review (a fresh review-only session, scoped per the rework brief
+to context projection/transport canaries, Child-subtree lifecycle, sanitizer security, and
+rendered-selection/raw mapping) returned **PASS — P0 = 0, P1 = 0, P2 = 4**. All four P2 items are
+deferred, none blocking:
+
+1. marked GFM task-list syntax can leave a disabled `<input>` in the rendered DOM; a future
+   rendering polish may add `input` to the DOMPurify `FORBID_TAGS`.
+2. A Reader session that disappears without calling `/api/assistant/close` (e.g. a browser crash)
+   leaves its pure-memory AssistantService slot until process restart; the normal close path
+   reclaims properly, and the pre-existing `_session_locks` debt is gone.
+3. No direct test exists for "close a Child subtree while a *sibling* creation is pending";
+   implementation reading and the adjacent race tests support the current semantics.
+4. `GUIDED_READER_*_MODEL` development environment overrides can still replace the frozen model
+   IDs — the carried Provider Bake-off deferred debt.
+
+A separate real-material finding: OCR can still misread math superscripts and two-dimensional
+formula structure (for example `512 = 2^9` visually flattened). This is OCR/Foundation
+machine-layer debt — `OUT_OF_PHASE` for Ask Deeper, non-blocking, and intentionally not touched by
+this closure.
+
+The user-supplied Deep Research report remains pattern evidence only, never authority; nothing was
+adopted from it beyond the already-approved decisions D1–D3.
 
 ## Why the original user acceptance failed
 
@@ -252,11 +279,16 @@ absent from final provider HTTP bodies.
 - Streaming, persistent Assistant history, saved AI notes, Forward navigation, cross-page selection,
   persisted Dock preferences, generic graph frameworks, and default-provider/OpenRouter-region
   decisions remain outside this Phase.
-- The narrow independent review required by the rework authority remains pending user retest and is
-  not replaced by these implementation tests.
+- The four independent-review P2 observations above are deferred; none blocks closure.
+- Overall Assistant UI visual polish is deferred by explicit user decision
+  (`PASS_WITH_UI_POLISH_DEFERRED`); no UI change ships in this closure.
+- OCR misreading of math superscripts / two-dimensional formula structure is Foundation
+  machine-layer debt, `OUT_OF_PHASE` here.
 
 ## Git checkpoints
 
 - Pre-rework authority checkpoint: `4165453`.
 - UAT rework implementation checkpoint: `d453a2a`.
-- The report checkpoint is the commit containing this file.
+- Post-Stage-D UI delta checkpoints: `0f21ba4` (expanded reading width), `7c9204b` (expanded
+  message layout), `5ffd272` (conversation hierarchy in both modes).
+- The closure checkpoint is the commit containing this file.

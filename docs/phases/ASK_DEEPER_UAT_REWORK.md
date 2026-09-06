@@ -1,6 +1,7 @@
 # Phase / Ask Deeper — UAT Rework
 
-> **Status: UAT REWORK / OPEN (2026-09-06).**
+> **Status: CLOSED / COMPLETE (2026-09-06)** — all four stage golden paths PASS; user acceptance
+> `PASS_WITH_UI_POLISH_DEFERRED`; independent narrow review PASS (P0=0 / P1=0 / P2=4 deferred).
 > Authority: user adjudication of 2026-09-06 — the directed ZCode adjudication of the USER
 > ACCEPTANCE FAIL, plus user decisions **D1–D3** approved in that same directive. This brief is
 > the rework authority for [`ASK_DEEPER.md`](./ASK_DEEPER.md); it does **not** replace it. Every

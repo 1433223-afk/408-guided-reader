@@ -1,10 +1,11 @@
 # Phase / Ask Deeper
 
-> **Status: UAT REWORK / OPEN (2026-09-06).** Implementation, machine acceptance and real-provider
-> acceptance passed, but **user acceptance = FAIL**. This Phase stays open under the rework authority
+> **Status: CLOSED / COMPLETE (2026-09-06).** Machine acceptance, agent real-use, user acceptance
+> (`PASS_WITH_UI_POLISH_DEFERRED`), and the required narrow independent review (PASS, P0=0 / P1=0 /
+> P2=4 deferred) all passed. The UAT rework was executed under
 > [`ASK_DEEPER_UAT_REWORK.md`](./ASK_DEEPER_UAT_REWORK.md) (user adjudication of 2026-09-06; user
-> decisions D1–D3). All Hard rules below remain binding except as that brief explicitly amends
-> execution; Implementation §14.8 was amended per D1.
+> decisions D1–D3; Implementation §14.8 amended per D1). The Hard rules below remain this Phase's
+> frozen record. Closure evidence: [development report](../development-reports/ASK_DEEPER.md).
 
 ## Goal
 
