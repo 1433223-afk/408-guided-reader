@@ -29,6 +29,9 @@ const mockProvider = createServer(async (request, response) => {
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   providerCalls.push({ method: request.method, url: request.url, headers: request.headers, body });
   const latest = body.messages.at(-1)?.content || "";
+  const currentFocus = latest.startsWith("【当前解释焦点（用户所选）】\n")
+    ? latest.split("\n")[1] : "";
+  const isChild = latest.includes("【直接上一轮】");
   let answer;
   if (latest === "延迟回答") {
     await new Promise((resolve) => setTimeout(resolve, 800));
@@ -37,11 +40,16 @@ const mockProvider = createServer(async (request, response) => {
     answer = "因为总线仲裁要在多个请求者中依据优先级决定谁先使用总线。";
   } else if (latest === "再简单一点") {
     answer = "把优先级想成排队号码：号码靠前的请求先使用总线。";
-  } else if (latest.includes("【当前回答选区】") && latest.endsWith("优先级")) {
+  } else if (isChild && currentFocus === "优先级") {
+    await new Promise((resolve) => setTimeout(resolve, 180));
     answer = "优先级是发生竞争时决定先后次序的规则，也可以理解为排队号码。";
-  } else if (latest.includes("【当前回答选区】") && latest.endsWith("排队号码")) {
+  } else if (isChild && currentFocus === "排队号码") {
+    await new Promise((resolve) => setTimeout(resolve, 180));
     answer = "排队号码只是帮助理解优先级的比喻；真正执行的是仲裁规则。";
-  } else if (latest.includes("【当前回答选区】")) {
+  } else if (isChild && currentFocus === "总线仲裁") {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    answer = "总线仲裁负责在多个请求者之间确定本轮由谁使用总线。";
+  } else if (isChild && currentFocus) {
     answer = "这个选中概念只结合直接父回答和当前教材范围继续解释。";
   } else {
     answer = "一次总线事务会经过地址、数据与控制阶段；总线仲裁决定多个部件竞争时谁先使用总线。";
@@ -181,10 +189,22 @@ try {
   assert.equal(followState.current.turns.length, 2);
   await page.locator(".assistant-answer-bubble").getByText("优先级", { exact: false }).waitFor();
 
+  await page.locator("#assistant-turns").evaluate((element) => {
+    element.style.maxHeight = "110px";
+    element.scrollTop = Math.min(37, element.scrollHeight - element.clientHeight);
+  });
+  const rootScroll = await page.locator("#assistant-turns").evaluate((element) => element.scrollTop);
+  assert.ok(rootScroll > 0, "Root page was not made scrollable for restoration coverage");
+
   await selectAssistantAnswerText(page, "优先级");
   const childResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
+  await page.locator(".assistant-pending").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.equal(await page.locator(".assistant-answer-bubble").count(), 0,
+    "Parent answer remained stacked on the pending Child page");
   const childState = (await (await childResponse).json()).assistant;
+  const childAId = childState.current.node_id;
   assert.equal(childState.current.depth, 2);
   assert.equal(childState.current.parent_ref.root_id, firstRoot.root_id);
   assert.equal(childState.current.parent_ref.node_id, null);
@@ -201,15 +221,80 @@ try {
   await page.locator('.assistant-answer-bubble[data-current-answer="true"]')
     .getByText("排队号码", { exact: false }).waitFor();
 
+  await page.locator("#assistant-turns").evaluate((element) => {
+    element.scrollTop = Math.min(53, element.scrollHeight - element.clientHeight);
+  });
+  const childScroll = await page.locator("#assistant-turns").evaluate((element) => element.scrollTop);
+  assert.ok(childScroll > 0, "Child page was not scrollable for restoration coverage");
+
   await selectAssistantAnswerText(page, "排队号码");
   const grandchildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
+  await page.locator(".assistant-pending").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
   const grandchildState = (await (await grandchildResponse).json()).assistant;
   const firstDeepNode = grandchildState.current.node_id;
   assert.equal(grandchildState.current.depth, 3);
   assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
   assert.equal(grandchildState.roots[0].nodes.length, 2);
   await page.screenshot({ path: path.join(artifacts, "ask-deeper-depth-3.png"), fullPage: false });
+
+  const backToChildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-back").click();
+  const backToChild = (await (await backToChildResponse).json()).assistant;
+  assert.equal(backToChild.current.node_id, childAId);
+  await page.waitForFunction((expected) => (
+    document.querySelector("#assistant-turns").scrollTop === expected
+  ), childScroll);
+
+  const backToRootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-back").click();
+  const backToRoot = (await (await backToRootResponse).json()).assistant;
+  assert.equal(backToRoot.current.depth, 1);
+  await page.waitForFunction((expected) => (
+    document.querySelector("#assistant-turns").scrollTop === expected
+  ), rootScroll);
+  assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), ["优先级"]);
+
+  await selectAssistantAnswerText(page, "总线仲裁");
+  const siblingResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
+  await page.locator("#assistant-ask-deeper").click();
+  await page.locator(".assistant-pending").waitFor({ state: "visible" });
+  const siblingState = (await (await siblingResponse).json()).assistant;
+  const childBId = siblingState.current.node_id;
+  assert.equal(siblingState.roots[0].nodes.length, 3);
+
+  const siblingBackResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-back").click();
+  await siblingBackResponse;
+  assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), [
+    "优先级", "总线仲裁",
+  ]);
+  const callsBeforeReopen = providerCalls.length;
+  const reopenResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-child-list button").filter({ hasText: "优先级" }).click();
+  const reopenedState = (await (await reopenResponse).json()).assistant;
+  assert.equal(reopenedState.current.node_id, childAId);
+  assert.equal(providerCalls.length, callsBeforeReopen);
+  assert.ok(reopenedState.roots[0].nodes.some((node) => node.node_id === firstDeepNode));
+
+  const closeChildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/close-child"));
+  assert.equal(await page.locator("#assistant-close-root").textContent(), "关闭本层解释");
+  await page.locator("#assistant-close-root").click();
+  const afterChildClose = (await (await closeChildResponse).json()).assistant;
+  assert.equal(afterChildClose.current.depth, 1);
+  assert.ok(!afterChildClose.roots[0].nodes.some((node) => node.node_id === childAId));
+  assert.ok(!afterChildClose.roots[0].nodes.some((node) => node.node_id === firstDeepNode));
+  assert.ok(afterChildClose.roots[0].nodes.some((node) => node.node_id === childBId));
+  assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), ["总线仲裁"]);
+  await selectAssistantAnswerText(page, "优先级");
+  assert.equal(await page.locator("#assistant-answer-actions").isVisible(), true,
+    "Parent answer selection did not recover after closing a Child subtree");
+  await page.keyboard.press("Escape");
+
+  const focusSiblingResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-child-list button").filter({ hasText: "总线仲裁" }).click();
+  await focusSiblingResponse;
 
   await page.locator("#assistant-close").click();
   await page.locator("#assistant-panel").waitFor({ state: "hidden" });
@@ -232,15 +317,15 @@ try {
   const switchResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
   await page.locator("#assistant-root-switcher").selectOption(firstRoot.root_id);
   const switchedState = (await (await switchResponse).json()).assistant;
-  assert.equal(switchedState.current.node_id, firstDeepNode);
-  assert.equal(switchedState.current.depth, 3);
+  assert.equal(switchedState.current.node_id, childBId);
+  assert.equal(switchedState.current.depth, 2);
   assert.equal(switchedState.roots.length, 2);
-  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
 
   const backResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
   await page.locator("#assistant-back").click();
   const backedState = (await (await backResponse).json()).assistant;
-  assert.equal(backedState.current.depth, 2);
+  assert.equal(backedState.current.depth, 1);
   assert.equal(backedState.roots.length, 2);
 
   const delayedFollowResponse = page.waitForResponse(
@@ -266,18 +351,22 @@ try {
   assert.equal(inspection.calls.length, providerCalls.length);
   assert.deepEqual(inspection.calls.map((call) => call.request_body), providerCalls.map((call) => call.body));
   const childCall = inspection.calls.find((call) => (
-    call.request_body.messages.at(-1).content.includes("【当前回答选区】")
+    call.request_body.messages.at(-1).content.includes("【直接上一轮】")
   ));
   assert.ok(childCall);
   assert.deepEqual(childCall.request_body.messages.map((message) => message.role), ["system", "user"]);
   const childContext = childCall.request_body.messages.at(-1).content;
-  assert.ok(childContext.includes("【触发再问一层的完整父回合】"));
-  assert.ok(childContext.includes("【来源脉络】"));
-  assert.ok(childContext.includes("【最小必要引用语境"));
+  assert.ok(childContext.startsWith("【当前解释焦点（用户所选）】"));
+  assert.ok(childContext.includes("【解释路径（仅用于消歧）】"));
+  assert.ok(childContext.includes("【Reader 教材依据（仅用于消歧和 grounding）】"));
+  assert.ok(childContext.includes("【同一 PDF 页的有界 OCR 语境】"));
+  assert.ok(!childContext.includes("【父子关系】"));
+  assert.ok(!childContext.includes("ORIGINAL_PDF"));
+  assert.ok(!childContext.includes("字符范围"));
   assert.ok(!JSON.stringify(inspection).includes("mock-secret-never-inspect"));
   assert.ok(!JSON.stringify(inspection).includes("Authorization"));
-  assert.deepEqual(providerCalls.slice(0, 5).map((call) => call.body.model), Array(5).fill("GLM-5.3-Flash"));
-  assert.equal(providerCalls[5].body.model, "deepseek-v4-pro");
+  assert.deepEqual(providerCalls.slice(0, 6).map((call) => call.body.model), Array(6).fill("GLM-5.3-Flash"));
+  assert.equal(providerCalls[6].body.model, "deepseek-v4-pro");
   assert.equal(providerCalls.at(-1).body.model, "GLM-5.3-Flash");
 
   const antiBypassCalls = providerCalls.length;
@@ -338,6 +427,10 @@ try {
     multipleRootsRetained: true,
     rootSwitchRestoredPreviousDepth: true,
     parentBackWorked: true,
+    parentScrollRestored: true,
+    siblingChildrenRetained: true,
+    historicalChildReopenProviderCalls: 0,
+    childSubtreeClosePreservedSibling: true,
     closedRootDestroyedOnlyItsSubtree: true,
     inflightClosedRootResponseCancelled: true,
     assistantAnswerAntiBypass: true,
@@ -357,11 +450,32 @@ try {
 
 async function selectAssistantAnswerText(page, text) {
   await page.locator('.assistant-answer-bubble[data-current-answer="true"]').evaluate((bubble, value) => {
-    const offset = bubble.textContent.indexOf(value);
-    if (offset < 0 || !bubble.firstChild) throw new Error(`answer does not contain ${value}`);
+    const nodes = [];
+    const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      if (!walker.currentNode.parentElement.closest("[data-assistant-unselectable='true']")) {
+        nodes.push(walker.currentNode);
+      }
+    }
+    const combined = nodes.map((node) => node.data).join("");
+    const offset = combined.indexOf(value);
+    if (offset < 0) throw new Error(`answer does not contain ${value}`);
+    const point = (target, atEnd = false) => {
+      let cursor = 0;
+      for (const node of nodes) {
+        const next = cursor + node.data.length;
+        if (target < next || (atEnd && target === next)) {
+          return { node, offset: target - cursor };
+        }
+        cursor = next;
+      }
+      return { node: nodes.at(-1), offset: nodes.at(-1).data.length };
+    };
+    const start = point(offset);
+    const end = point(offset + value.length, true);
     const range = document.createRange();
-    range.setStart(bubble.firstChild, offset);
-    range.setEnd(bubble.firstChild, offset + value.length);
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);

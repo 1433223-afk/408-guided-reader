@@ -33,9 +33,11 @@ from reader_service.assistant import (
     AssistantContextBuilder,
     AssistantService,
     AssistantStateError,
+    ScopeResolution,
     ScopeResolver,
     SelectionSourceKind,
 )
+from reader_service.assistant.service import AssistantNode, Turn
 from reader_service.assistant.service import SYSTEM_MESSAGE
 from reader_service.assistant.skill import EXPLANATION_SKILL_PATH, load_explanation_skill
 from reader_service.foundation import (
@@ -289,8 +291,13 @@ def test_selection_ask_follow_up_payload_and_scope_isolation(assistant_fixture):
     assert follow_messages[-1]["content"] == "为什么？"
     assert "第一答" in follow_messages[2]["content"]
     initial_content = adapter.calls[0]["body"]["messages"][-1]["content"]
-    assert initial_content.endswith("【当前解释焦点（用户所选）】\n总线事务")
-    assert initial_content.index("【同一 PDF 页的有界 OCR 语境（辅助）】") < initial_content.rindex("总线事务")
+    assert initial_content.startswith("【当前解释焦点（用户所选）】\n总线事务\n")
+    assert initial_content.index("【当前解释焦点（用户所选）】") < initial_content.index(
+        "【教材定位（仅用于定位和消歧）】"
+    )
+    assert initial_content.index("【教材定位（仅用于定位和消歧）】") < initial_content.index(
+        "【同一 PDF 页的有界 OCR 语境（辅助）】"
+    )
     assert "用户问题" not in initial_content
     assert "这是什么意思" not in initial_content
     assert "请只依据" not in initial_content
@@ -346,8 +353,8 @@ def test_same_page_selections_keep_distinct_visible_and_provider_focus(assistant
     assert [turn["question"] for turn in second["turns"]] == ["事务"]
     first_focus = adapter.calls[0]["body"]["messages"][-1]["content"]
     second_focus = adapter.calls[1]["body"]["messages"][-1]["content"]
-    assert first_focus.endswith("【当前解释焦点（用户所选）】\n总线")
-    assert second_focus.endswith("【当前解释焦点（用户所选）】\n事务")
+    assert first_focus.startswith("【当前解释焦点（用户所选）】\n总线\n")
+    assert second_focus.startswith("【当前解释焦点（用户所选）】\n事务\n")
     assert first_focus != second_focus
     assert first["root_id"] != second["root_id"]
     assert len(second_state["roots"]) == 2
@@ -637,7 +644,9 @@ def test_bakeoff_selection_is_memory_only_and_close_clears_it(assistant_fixture)
     messages = [adapters[name].calls[0]["body"]["messages"] for name in PROVIDER_CREDENTIAL_TARGETS]
     assert messages[0] == messages[1] == messages[2]
     assert messages[0][0]["content"] == SYSTEM_MESSAGE
-    assert messages[0][-1]["content"].endswith("【当前解释焦点（用户所选）】\n总线事务")
+    assert messages[0][-1]["content"].startswith(
+        "【当前解释焦点（用户所选）】\n总线事务\n"
+    )
     typed = assistant.bake_off_selection(
         "reader-session-bakeoff",
         assistant_fixture["revision_id"],
@@ -649,7 +658,10 @@ def test_bakeoff_selection_is_memory_only_and_close_clears_it(assistant_fixture)
     assert typed["selected_text"] == "总线事务"
     typed_messages = [adapters[name].calls[1]["body"]["messages"] for name in PROVIDER_CREDENTIAL_TARGETS]
     assert typed_messages[0] == typed_messages[1] == typed_messages[2]
-    assert typed_messages[0][-1]["content"].endswith("【用户问题】\n机器周期就等于总线周期？")
+    assert typed_messages[0][-1]["content"].startswith(
+        "【当前解释焦点（用户所选）】\n总线事务\n\n"
+        "【用户问题】\n机器周期就等于总线周期？\n"
+    )
     assistant.close_session("reader-session-bakeoff")
     assert assistant.comparison_count() == 0
     with assistant_fixture["database"].connect() as connection:
@@ -1079,13 +1091,20 @@ def test_child_payload_is_minimal_and_never_walks_other_roots_or_ancestors(assis
     child_payload = adapter.calls[2]["body"]["messages"]
     assert [message["role"] for message in child_payload] == ["system", "user"]
     child_text = child_payload[-1]["content"]
-    assert "父概念" in child_text
+    assert child_text.startswith("【当前解释焦点（用户所选）】\n父概念\n")
     assert "ROOT_PARENT_SENTINEL 含父概念" in child_text
+    assert "焦点或问题：总线事务" in child_text
+    assert "总线事务 › 父概念" in child_text
     assert "总线事务" in child_text
-    assert "SECTION" in child_text
+    assert "Reader 范围：第6章 总线 › 6.2.1 总线事务" in child_text
+    assert "PDF 页码：4" in child_text
     assert "291" in child_text
     assert "OTHER_ROOT_SENTINEL" not in child_text
     assert "PAGE:5" not in child_text
+    assert "SECTION" not in child_text
+    assert "ORIGINAL_PDF" not in child_text
+    assert "字符范围" not in child_text
+    assert "父子关系" not in child_text
 
     grandchild_state = create_child_for_text(
         assistant, session_id, child_state, "孙概念"
@@ -1093,12 +1112,274 @@ def test_child_payload_is_minimal_and_never_walks_other_roots_or_ancestors(assis
     grandchild_payload = adapter.calls[3]["body"]["messages"]
     assert [message["role"] for message in grandchild_payload] == ["system", "user"]
     grandchild_text = grandchild_payload[-1]["content"]
+    assert grandchild_text.startswith("【当前解释焦点（用户所选）】\n孙概念\n")
     assert "CHILD_PARENT_SENTINEL 含孙概念" in grandchild_text
+    assert "总线事务 › 父概念 › 孙概念" in grandchild_text
     assert "ROOT_PARENT_SENTINEL" not in grandchild_text
     assert "OTHER_ROOT_SENTINEL" not in grandchild_text
     assert "PAGE:5" not in grandchild_text
     assert focused(grandchild_state)["depth"] == 3
     assert len(root_two["roots"]) == 2
+
+
+def test_child_transport_body_is_allowlisted_and_metadata_canaries_never_egress(
+    assistant_fixture,
+):
+    captured_bodies = []
+    answers = deque([
+        "时钟脉冲信号像乐队里的节拍器",
+        "这个比喻强调统一节奏如何协调不同部件。",
+    ])
+
+    class CapturingProviderHandler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers["Content-Length"])
+            captured_bodies.append(json.loads(self.rfile.read(length)))
+            payload = json.dumps({
+                "choices": [{"message": {"content": answers.popleft()}}]
+            }, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), CapturingProviderHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    inspector = PayloadInspector(limit=8)
+    agent = AgentRuntime(
+        OpenAICompatibleAdapter("deepseek"),
+        config=ProviderConfig(
+            provider="deepseek",
+            endpoint=f"http://127.0.0.1:{server.server_port}/chat/completions",
+            model="deepseek-v4-pro",
+            credential_target=DEEPSEEK_CREDENTIAL_TARGET,
+            max_attempts=1,
+        ),
+        credential_loader=lambda: "transport-test-secret",
+        inspector=inspector,
+    )
+    assistant = AssistantService(assistant_fixture["contexts"], agent)
+    session_id = "reader-session-transport-canary"
+    try:
+        root_state = assistant.ask_selection(
+            session_id, assistant_fixture["revision_id"], 3, **selection(3)
+        )
+        root_id = focused(root_state)["root_id"]
+        slot = assistant._sessions[session_id]
+        with slot.lock:
+            root = slot.state.roots[root_id]
+            root.reader_session_id = "ROOT_METADATA_CANARY"
+            root.scope = ScopeResolution(
+                key="BRANCH_CANARY",
+                kind="ORIGINAL_PDF",
+                pdf_page_index=3,
+                section_id="PARENT_CHILD_RELATIONSHIP_CANARY",
+                section_title="6.2.1 总线事务",
+                chapter_title="第6章 总线",
+            )
+            root.reference_context.update({
+                "root_metadata": "ROOT_METADATA_CANARY",
+                "parent_child_relationship": "PARENT_CHILD_RELATIONSHIP_CANARY",
+                "active_child": "ACTIVE_CHILD_CANARY",
+                "branch": "BRANCH_CANARY",
+                "offset": "OFFSET_CANARY",
+            })
+            root.turns[-1].provider_user_content = "\n".join((
+                "ROOT_METADATA_CANARY",
+                "PARENT_CHILD_RELATIONSHIP_CANARY",
+                "ACTIVE_CHILD_CANARY",
+                "BRANCH_CANARY",
+                "OFFSET_CANARY",
+                "ASSISTANT_ANSWER",
+            ))
+
+        create_child_for_text(
+            assistant, session_id, root_state, "像乐队里的节拍器"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert len(captured_bodies) == 2
+    transport_body = captured_bodies[-1]
+    assert inspector.snapshot()[-1]["request_body"] == transport_body
+    assert [message["role"] for message in transport_body["messages"]] == [
+        "system", "user"
+    ]
+    user_content = transport_body["messages"][-1]["content"]
+    assert user_content.startswith(
+        "【当前解释焦点（用户所选）】\n像乐队里的节拍器\n"
+    )
+    assert user_content.index("【直接上一轮】") > user_content.index("【当前解释焦点")
+    assert user_content.index("【解释路径") > user_content.index("【直接上一轮】")
+    assert user_content.index("【Reader 教材依据") > user_content.index("【解释路径")
+    assert "焦点或问题：总线事务" in user_content
+    assert "完整讲解：时钟脉冲信号像乐队里的节拍器" in user_content
+    assert "总线事务 › 像乐队里的节拍器" in user_content
+    assert "PDF 页码：4" in user_content
+    assert "同一 PDF 页的有界 OCR 语境" in user_content
+    body_text = json.dumps(transport_body, ensure_ascii=False)
+    for canary in (
+        "ROOT_METADATA_CANARY",
+        "PARENT_CHILD_RELATIONSHIP_CANARY",
+        "ACTIVE_CHILD_CANARY",
+        "BRANCH_CANARY",
+        "OFFSET_CANARY",
+        "ORIGINAL_PDF",
+        "ASSISTANT_ANSWER",
+    ):
+        assert canary not in body_text
+    for metadata_label in (
+        "Root",
+        "Child",
+        "Node",
+        "父子关系",
+        "parent/child relationship",
+        "active child",
+        "branch ID",
+        "当前解释深度",
+        "深度 2/5",
+        "字符范围",
+        "active_child_id",
+        "focusedNodeId",
+        "request ID",
+        "pending",
+        "scroll position",
+        "subtree",
+    ):
+        assert metadata_label not in body_text
+    assert "transport-test-secret" not in body_text
+
+
+def test_child_projection_ignores_sibling_answers(assistant_fixture):
+    adapter = MockAdapter([
+        "根层讲解包含第一焦点",
+        "当前路径讲解包含下一焦点",
+        "更深层讲解",
+    ])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-sibling-isolation"
+    root_state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    child_state = create_child_for_text(
+        assistant, session_id, root_state, "第一焦点"
+    )
+    root_id = focused(child_state)["root_id"]
+    slot = assistant._sessions[session_id]
+    with slot.lock:
+        root = slot.state.roots[root_id]
+        sibling_id = "historical-sibling-node"
+        root.nodes[sibling_id] = AssistantNode(
+            node_id=sibling_id,
+            parent_node_id=None,
+            depth=2,
+            selected_text="SIBLING_FOCUS_CANARY",
+            turns=[Turn(
+                "historical-sibling-turn",
+                "SIBLING_QUESTION_CANARY",
+                "SIBLING_ANSWER_CANARY",
+                "SIBLING_PROVIDER_CONTEXT_CANARY",
+            )],
+        )
+
+    create_child_for_text(assistant, session_id, child_state, "下一焦点")
+    body_text = json.dumps(adapter.calls[-1]["body"], ensure_ascii=False)
+    assert "当前路径讲解包含下一焦点" in body_text
+    assert "总线事务 › 第一焦点 › 下一焦点" in body_text
+    assert "SIBLING_FOCUS_CANARY" not in body_text
+    assert "SIBLING_QUESTION_CANARY" not in body_text
+    assert "SIBLING_ANSWER_CANARY" not in body_text
+    assert "SIBLING_PROVIDER_CONTEXT_CANARY" not in body_text
+
+
+def test_rendered_markdown_source_spans_reconstruct_exact_visible_focus(assistant_fixture):
+    raw = "粗体前**高低电平**粗体后"
+    adapter = MockAdapter([raw, "精确映射后的解释"])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-rendered-source-spans"
+    root_state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    current = focused(root_state)
+    bold_start = raw.index("高低电平")
+    suffix_start = raw.index("粗体后")
+    child_state = assistant.create_child(
+        session_id,
+        current["root_id"],
+        parent_node_id=None,
+        turn_id=current["turns"][-1]["turn_id"],
+        start_offset=0,
+        end_offset=len(raw),
+        source_spans=[
+            {"start": 0, "end": raw.index("**")},
+            {"start": bold_start, "end": bold_start + len("高低电平")},
+            {"start": suffix_start, "end": len(raw)},
+        ],
+    )
+    assert focused(child_state)["turns"][0]["question"] == "粗体前高低电平粗体后"
+    transport = adapter.calls[-1]["body"]["messages"][-1]["content"]
+    assert transport.startswith(
+        "【当前解释焦点（用户所选）】\n粗体前高低电平粗体后\n"
+    )
+    assert "**" not in transport.split("【直接上一轮】", 1)[0]
+
+
+def test_rendered_source_spans_reject_overlap_without_provider_call(assistant_fixture):
+    adapter = MockAdapter(["重复短语重复短语"])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-invalid-source-spans"
+    state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    current = focused(state)
+    with pytest.raises(AssistantStateError) as rejected:
+        assistant.create_child(
+            session_id,
+            current["root_id"],
+            parent_node_id=None,
+            turn_id=current["turns"][-1]["turn_id"],
+            start_offset=0,
+            end_offset=4,
+            source_spans=[{"start": 0, "end": 4}, {"start": 2, "end": 6}],
+        )
+    assert rejected.value.code == "INVALID_ANSWER_SELECTION"
+    assert len(adapter.calls) == 1
+
+
+def test_depth_five_projection_contains_only_direct_previous_full_answer(
+    assistant_fixture,
+):
+    adapter = MockAdapter([
+        "ANCESTOR_DEPTH_ONE_FULL_ANSWER；其中有第二层焦点",
+        "ANCESTOR_DEPTH_TWO_FULL_ANSWER；其中有第三层焦点",
+        "ANCESTOR_DEPTH_THREE_FULL_ANSWER；其中有第四层焦点",
+        "DIRECT_DEPTH_FOUR_FULL_ANSWER；其中有第五层焦点",
+        "第五层最终解释",
+    ])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-depth-five-context"
+    state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    for text in ("第二层焦点", "第三层焦点", "第四层焦点", "第五层焦点"):
+        state = create_child_for_text(assistant, session_id, state, text)
+
+    assert focused(state)["depth"] == 5
+    final_text = adapter.calls[-1]["body"]["messages"][-1]["content"]
+    assert final_text.startswith("【当前解释焦点（用户所选）】\n第五层焦点\n")
+    assert "焦点或问题：第四层焦点" in final_text
+    assert "完整讲解：DIRECT_DEPTH_FOUR_FULL_ANSWER；其中有第五层焦点" in final_text
+    assert "总线事务 › 第二层焦点 › 第三层焦点 › 第四层焦点 › 第五层焦点" in final_text
+    assert "ANCESTOR_DEPTH_ONE_FULL_ANSWER" not in final_text
+    assert "ANCESTOR_DEPTH_TWO_FULL_ANSWER" not in final_text
+    assert "ANCESTOR_DEPTH_THREE_FULL_ANSWER" not in final_text
 
 
 def test_provider_and_model_remain_pinned_across_complete_root_tree(assistant_fixture):
@@ -1129,7 +1410,9 @@ def test_provider_and_model_remain_pinned_across_complete_root_tree(assistant_fi
     assert adapters["openrouter"].calls == []
 
 
-def test_provider_failure_creates_no_partial_child_and_retry_identity_is_stable(assistant_fixture):
+def test_provider_failure_keeps_only_typed_failed_child_attempt_and_retry_identity_is_stable(
+    assistant_fixture,
+):
     transient = ProviderFailure(
         ProviderFailureKind.TRANSIENT, "network", "AI 服务暂时不可用。"
     )
@@ -1143,10 +1426,13 @@ def test_provider_failure_creates_no_partial_child_and_retry_identity_is_stable(
     )
     with pytest.raises(ProviderFailure):
         create_child_for_text(assistant, session_id, parent_state, "失败概念")
-    unchanged = assistant.state(session_id)
-    assert focused(unchanged)["depth"] == 1
-    assert focused(unchanged)["active_child_id"] is None
-    assert unchanged["roots"][0]["nodes"] == []
+    failed = assistant.state(session_id)
+    assert focused(failed)["depth"] == 2
+    assert focused(failed)["pending"] is False
+    assert focused(failed)["error"] == "AI 服务暂时不可用。"
+    assert focused(failed)["turns"] == []
+    assert len(failed["roots"][0]["nodes"]) == 1
+    assert failed["roots"][0]["child_pending"] is False
 
     retry_adapter = MockAdapter([transient, "重试后成功"])
     retry_runtime = runtime(retry_adapter, max_attempts=2)
@@ -1160,6 +1446,238 @@ def test_provider_failure_creates_no_partial_child_and_retry_identity_is_stable(
     assert focused(retried)["depth"] == 1
     assert retried["roots"][0]["nodes"] == []
     assert len(focused(retried)["turns"]) == 1
+
+
+def test_parent_retains_sibling_children_and_reopen_is_network_free(assistant_fixture):
+    adapter = MockAdapter([
+        "根回答同时包含概念甲和概念乙",
+        "CHILD_A_ANSWER",
+        "CHILD_B_ANSWER",
+    ])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-historical-siblings"
+    root_state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    root_id = focused(root_state)["root_id"]
+    child_a_state = create_child_for_text(assistant, session_id, root_state, "概念甲")
+    child_a_id = focused(child_a_state)["node_id"]
+
+    parent_state = assistant.focus(session_id, root_id)
+    child_b_state = create_child_for_text(assistant, session_id, parent_state, "概念乙")
+    child_b_id = focused(child_b_state)["node_id"]
+    assert child_a_id != child_b_id
+    assert len(child_b_state["roots"][0]["nodes"]) == 2
+    assert [child["label"] for child in assistant.focus(session_id, root_id)["current"]["children"]] == [
+        "概念甲", "概念乙"
+    ]
+    assert child_b_state["roots"][0]["active_child_id"] == child_b_id
+
+    calls_before_reopen = len(adapter.calls)
+    reopened = assistant.focus(session_id, root_id, node_id=child_a_id)
+    assert len(adapter.calls) == calls_before_reopen
+    assert focused(reopened)["turns"][0]["answer"] == "CHILD_A_ANSWER"
+    child_b_payload = adapter.calls[2]["body"]["messages"][-1]["content"]
+    assert "总线事务 › 概念乙" in child_b_payload
+    assert "CHILD_A_ANSWER" not in child_b_payload
+
+
+def test_close_child_subtree_keeps_parent_root_and_sibling(assistant_fixture):
+    adapter = MockAdapter([
+        "根回答同时包含概念甲和概念乙",
+        "概念甲回答包含孙概念",
+        "孙概念回答",
+        "概念乙回答",
+    ])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-close-child-subtree"
+    root_state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    root_id = focused(root_state)["root_id"]
+    child_a_state = create_child_for_text(assistant, session_id, root_state, "概念甲")
+    child_a_id = focused(child_a_state)["node_id"]
+    grandchild_state = create_child_for_text(
+        assistant, session_id, child_a_state, "孙概念"
+    )
+    grandchild_id = focused(grandchild_state)["node_id"]
+    parent_state = assistant.focus(session_id, root_id)
+    child_b_state = create_child_for_text(assistant, session_id, parent_state, "概念乙")
+    child_b_id = focused(child_b_state)["node_id"]
+
+    assistant.focus(session_id, root_id, node_id=child_a_id)
+    closed = assistant.close_child_subtree(session_id, root_id, child_a_id)
+    assert focused(closed)["depth"] == 1
+    assert focused(closed)["root_id"] == root_id
+    remaining_ids = {node["node_id"] for node in closed["roots"][0]["nodes"]}
+    assert child_a_id not in remaining_ids
+    assert grandchild_id not in remaining_ids
+    assert remaining_ids == {child_b_id}
+    assert [child["label"] for child in focused(closed)["children"]] == ["概念乙"]
+    assert closed["roots"][0]["active_child_id"] == child_b_id
+
+
+def test_pending_child_can_close_without_late_resurrection(assistant_fixture):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingChildAdapter(MockAdapter):
+        def complete(self, endpoint, api_key, body, timeout):
+            self.calls.append({
+                "endpoint": endpoint, "api_key": api_key, "body": body, "timeout": timeout,
+            })
+            if len(self.calls) == 1:
+                return "父回答包含待关闭概念"
+            entered.set()
+            assert release.wait(timeout=3)
+            return "不应复活的回答"
+
+    assistant = AssistantService(
+        assistant_fixture["contexts"], runtime(BlockingChildAdapter())
+    )
+    session_id = "reader-session-close-pending-child"
+    root_state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    root_id = focused(root_state)["root_id"]
+    outcome = []
+
+    thread = threading.Thread(
+        target=lambda: _capture_result(
+            outcome,
+            lambda: create_child_for_text(
+                assistant, session_id, root_state, "待关闭概念"
+            ),
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=3)
+    pending = assistant.state(session_id)
+    pending_child = focused(pending)
+    assert pending_child["depth"] == 2
+    assert pending_child["pending"] is True
+    closed = assistant.close_child_subtree(
+        session_id, root_id, pending_child["node_id"]
+    )
+    assert focused(closed)["depth"] == 1
+    assert closed["roots"][0]["nodes"] == []
+    release.set()
+    thread.join(timeout=3)
+    assert not thread.is_alive()
+    assert isinstance(outcome[0], AssistantStateError)
+    assert outcome[0].code == "REQUEST_CANCELLED"
+    assert assistant.state(session_id)["roots"][0]["nodes"] == []
+
+
+def test_pending_sibling_response_stays_bound_after_focus_moves(assistant_fixture):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingSiblingAdapter(MockAdapter):
+        def complete(self, endpoint, api_key, body, timeout):
+            self.calls.append({
+                "endpoint": endpoint, "api_key": api_key, "body": body, "timeout": timeout,
+            })
+            if len(self.calls) == 1:
+                return "根回答同时包含概念甲和概念乙"
+            if len(self.calls) == 2:
+                return "概念乙的历史回答"
+            entered.set()
+            assert release.wait(timeout=3)
+            return "概念甲的延迟回答"
+
+    assistant = AssistantService(
+        assistant_fixture["contexts"], runtime(BlockingSiblingAdapter())
+    )
+    session_id = "reader-session-pending-sibling-focus"
+    root_state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    root_id = focused(root_state)["root_id"]
+    child_b_state = create_child_for_text(assistant, session_id, root_state, "概念乙")
+    child_b_id = focused(child_b_state)["node_id"]
+    parent_state = assistant.focus(session_id, root_id)
+    outcome = []
+    thread = threading.Thread(
+        target=lambda: _capture_result(
+            outcome,
+            lambda: create_child_for_text(
+                assistant, session_id, parent_state, "概念甲"
+            ),
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=3)
+    pending = assistant.state(session_id)
+    child_a_id = focused(pending)["node_id"]
+    moved = assistant.focus(session_id, root_id, node_id=child_b_id)
+    assert focused(moved)["turns"][0]["answer"] == "概念乙的历史回答"
+    release.set()
+    thread.join(timeout=3)
+    assert not thread.is_alive()
+    assert isinstance(outcome[0], dict)
+    final = assistant.state(session_id)
+    assert focused(final)["node_id"] == child_b_id
+    child_a = next(node for node in final["roots"][0]["nodes"] if node["node_id"] == child_a_id)
+    assert child_a["turns"][0]["answer"] == "概念甲的延迟回答"
+
+
+def test_pending_child_back_keeps_parent_focused_after_completion(assistant_fixture):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingChildAdapter(MockAdapter):
+        def complete(self, endpoint, api_key, body, timeout):
+            self.calls.append({
+                "endpoint": endpoint, "api_key": api_key, "body": body, "timeout": timeout,
+            })
+            if len(self.calls) == 1:
+                return "根回答包含延迟概念"
+            entered.set()
+            assert release.wait(timeout=3)
+            return "延迟概念的回答"
+
+    assistant = AssistantService(
+        assistant_fixture["contexts"], runtime(BlockingChildAdapter())
+    )
+    session_id = "reader-session-pending-child-back"
+    root_state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3, **selection(3)
+    )
+    root_id = focused(root_state)["root_id"]
+    outcome = []
+    thread = threading.Thread(
+        target=lambda: _capture_result(
+            outcome,
+            lambda: create_child_for_text(
+                assistant, session_id, root_state, "延迟概念"
+            ),
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=3)
+    pending = assistant.state(session_id)
+    pending_child_id = focused(pending)["node_id"]
+    assert focused(pending)["pending"] is True
+    backed = assistant.focus(session_id, root_id)
+    assert focused(backed)["depth"] == 1
+    release.set()
+    thread.join(timeout=3)
+    assert not thread.is_alive()
+    final = assistant.state(session_id)
+    assert focused(final)["depth"] == 1
+    child = next(
+        node for node in final["roots"][0]["nodes"]
+        if node["node_id"] == pending_child_id
+    )
+    assert child["turns"][0]["answer"] == "延迟概念的回答"
+
+
+def _capture_result(outcomes: list, action) -> None:
+    try:
+        outcomes.append(action())
+    except Exception as exc:
+        outcomes.append(exc)
 
 
 def test_concurrent_child_creation_has_exactly_one_winner(assistant_fixture):

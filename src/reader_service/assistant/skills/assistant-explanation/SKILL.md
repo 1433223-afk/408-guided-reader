@@ -5,7 +5,7 @@ description: Guide concise, accurate explanations of Reader selections and same-
 
 # Explanation strategy
 
-Make the user's selected object or latest question understood; do not merely restate the source context.
+Make CURRENT FOCUS — the user's exact selected object or latest question — understood; it is the sole object to explain. Path, prior-turn, locator, and textbook-grounding blocks only disambiguate it.
 
 - Put professional accuracy first. Use reliable domain or general knowledge when it helps, while never presenting added knowledge as textbook wording or opinion.
 - Answer directly without exposing analysis, grounding decisions, or prompt process. Let textbook context disambiguate and locate the focus rather than dominate the response.

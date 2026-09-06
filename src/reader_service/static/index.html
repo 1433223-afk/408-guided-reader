@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>408 Guided Reader</title>
+    <link rel="stylesheet" href="/vendor/katex.css">
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
@@ -80,6 +81,8 @@
         <p id="marks-empty" class="marks-empty">本页没有标记。</p>
       </aside>
       <aside id="assistant-panel" class="assistant-panel" aria-label="问 AI" hidden>
+        <div id="assistant-resize-handle" class="assistant-resize-handle" role="separator" tabindex="0"
+             aria-label="调整临时解释面板宽度" aria-orientation="vertical"></div>
         <div class="assistant-heading">
           <div><span class="eyebrow">临时解释</span><strong id="assistant-title">问 AI</strong></div>
           <div class="assistant-heading-actions">
@@ -94,6 +97,8 @@
               </label>
               <small id="assistant-model-lock" class="assistant-model-lock" hidden>当前会话已锁定</small>
             </div>
+            <button id="assistant-expand" class="assistant-expand" type="button" aria-pressed="false"
+                    aria-label="展开临时解释面板" title="展开临时解释面板">展开</button>
             <button id="assistant-close" type="button" aria-label="收起临时解释面板">×</button>
           </div>
         </div>
@@ -102,10 +107,13 @@
           <select id="assistant-root-switcher" aria-label="切换保留的解释主题"></select>
           <button id="assistant-back" type="button">← 上一层</button>
           <output id="assistant-depth" aria-label="当前解释深度">1/5</output>
-          <button id="assistant-close-root" type="button">关闭此解释</button>
+          <button id="assistant-close-root" type="button">关闭此主题</button>
         </div>
         <nav id="assistant-breadcrumb" class="assistant-breadcrumb" aria-label="解释层级路径" hidden></nav>
-        <button id="assistant-next-depth" class="assistant-next-depth" type="button" hidden>进入已有的下一层 →</button>
+        <section id="assistant-children" class="assistant-children" aria-label="已展开的解释" hidden>
+          <span>已展开</span>
+          <div id="assistant-child-list" class="assistant-child-list"></div>
+        </section>
         <p id="assistant-scope" class="assistant-scope">等待教材选区</p>
         <form id="assistant-first-turn" class="assistant-first-turn" hidden>
           <p><span>准备解释</span><q id="assistant-draft-text"></q></p>

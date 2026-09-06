@@ -1,0 +1,467 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { chromium } from "playwright-core";
+
+const sourceDataDir = process.env.READER_DATA_DIR
+  || path.join(process.env.LOCALAPPDATA || "", "408 Guided Reader");
+const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-workspace-"));
+const dataDir = path.join(acceptanceRoot, "data");
+await cp(sourceDataDir, dataDir, { recursive: true });
+
+const providerCalls = [];
+const provider = createServer(async (request, response) => {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  providerCalls.push(body);
+  const prompt = body.messages.at(-1).content;
+  let answer;
+  if (prompt.includes("【当前解释焦点（用户所选）】\n高低电平变化")) {
+    answer = "高低电平变化就是数字时钟在两个逻辑状态之间有规律地切换。";
+  } else if (prompt.includes("【当前解释焦点（用户所选）】\n像乐队里的节拍器")) {
+    answer = Array.from(
+      { length: 28 },
+      (_, index) => `第 ${index + 1} 段：节拍由高低电平变化表达，解释仍属于像乐队里的节拍器。`,
+    ).join("\n\n");
+  } else if (prompt.includes("【当前解释焦点（用户所选）】\n时钟周期")) {
+    answer = "时钟周期是相邻两个同相位时刻之间的时间。";
+  } else if (prompt.includes("识别异常和中断")) {
+    answer = "识别异常和中断是处理器响应非正常控制流的基础。";
+  } else {
+    answer = [
+      "## 时钟脉冲信号",
+      "",
+      "它**像乐队里的节拍器**，让各部件按照共同节奏工作。",
+      "",
+      "- **时钟周期**决定相邻节拍之间的时间。",
+      "- 上升沿和下降沿形成可识别的节拍。",
+      "",
+      "\\[T=\\frac{1}{f}\\]",
+      "",
+      ...Array.from({ length: 12 }, (_, index) => `补充 ${index + 1}：同步部件只在约定节拍更新状态。`),
+    ].join("\n");
+  }
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  response.writeHead(200, { "Content-Type": "application/json" });
+  response.end(JSON.stringify({ choices: [{ message: { content: answer } }] }));
+});
+await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
+
+let running;
+let browser;
+try {
+  running = await startService({
+    GUIDED_READER_DEEPSEEK_API_KEY: "workspace-test-secret",
+    GUIDED_READER_DEEPSEEK_ENDPOINT: `http://127.0.0.1:${provider.address().port}/chat/completions`,
+  });
+  browser = await chromium.launch({ executablePath: chromePath(), headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  await page.goto(running.url);
+  await openBook(page, 348);
+
+  assert.equal(await selectExactReaderText(page, 24, "时钟脉冲信号"), "时钟脉冲信号");
+  assert.equal(await page.locator("#selection-actions").isVisible(), true);
+  await page.locator("#ask-selection").click();
+  await page.locator("#assistant-model").selectOption("deepseek");
+  assert.equal(providerCalls.length, 0);
+  assert.equal(await page.locator("#assistant-start").isEnabled(), true);
+  const rootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
+  await page.locator("#assistant-start").click();
+  const firstRootState = (await (await rootResponse).json()).assistant;
+  const firstRootId = firstRootState.current.root_id;
+  const callsAfterRoot = providerCalls.length;
+  const rootBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  await rootBubble.waitFor();
+  assert.equal(await rootBubble.locator("h2").textContent(), "时钟脉冲信号");
+  assert.deepEqual(await rootBubble.locator("strong").allTextContents(), ["像乐队里的节拍器", "时钟周期"]);
+  assert.equal(await rootBubble.locator("ul li").count(), 2);
+  assert.equal(await rootBubble.locator(".assistant-math-block .katex").count(), 1);
+  assert.ok(!(await rootBubble.innerText()).includes("\\frac"));
+
+  const initial = await panelMetrics(page);
+  await dragDockToWidth(page, initial.panelWidth + 150);
+  const wider = await panelMetrics(page);
+  assert.ok(wider.panelWidth >= initial.panelWidth + 140);
+  assert.ok(wider.viewerWidth <= initial.viewerWidth - 140);
+  assert.equal(await page.locator("#assistant-title").textContent(), "时钟脉冲信号");
+  assert.equal(providerCalls.length, callsAfterRoot);
+
+  await dragDockToWidth(page, 1200);
+  const maximum = Number(await page.locator("#assistant-resize-handle").getAttribute("aria-valuemax"));
+  assert.ok(Math.abs((await panelMetrics(page)).panelWidth - maximum) <= 2);
+  await dragDockToWidth(page, 120);
+  const minimum = Number(await page.locator("#assistant-resize-handle").getAttribute("aria-valuemin"));
+  assert.ok(Math.abs((await panelMetrics(page)).panelWidth - minimum) <= 2);
+  await dragDockToWidth(page, 520);
+  await waitForReaderOverlay(page, 24);
+
+  assert.equal(await selectExactReaderText(page, 24, "时钟脉冲信号"), "时钟脉冲信号");
+  assert.equal(await page.locator("#selection-actions").isVisible(), true);
+  await page.locator("#cancel-selection").click();
+
+  assert.equal(await selectAssistantTextByMouse(page, "像乐队里的节拍器"), "像乐队里的节拍器");
+  const rootScroll = await makeScrollableAndSet(page, 41);
+  const childResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
+  await page.locator("#assistant-ask-deeper").click();
+  await page.locator(".assistant-pending").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#assistant-title").textContent(), "像乐队里的节拍器");
+  assert.equal(await page.locator('.assistant-answer-bubble[data-current-answer="true"]').count(), 0);
+  const childState = (await (await childResponse).json()).assistant;
+  const childId = childState.current.node_id;
+  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
+    "时钟脉冲信号", "像乐队里的节拍器",
+  ]);
+
+  assert.equal(await selectAssistantTextByMouse(page, "高低电平变化"), "高低电平变化");
+  const childScroll = await makeScrollableAndSet(page, 57);
+  const grandchildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
+  await page.locator("#assistant-ask-deeper").click();
+  await page.locator(".assistant-pending").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
+  const grandchildState = (await (await grandchildResponse).json()).assistant;
+  const grandchildId = grandchildState.current.node_id;
+  assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
+    "时钟脉冲信号", "像乐队里的节拍器", "高低电平变化",
+  ]);
+
+  let focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-back").click();
+  assert.equal((await (await focusResponse).json()).assistant.current.node_id, childId);
+  await waitForScroll(page, childScroll);
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-back").click();
+  assert.equal((await (await focusResponse).json()).assistant.current.root_id, firstRootId);
+  await waitForScroll(page, rootScroll);
+  assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), ["像乐队里的节拍器"]);
+  assert.equal(await selectAssistantTextByMouse(page, "时钟周期"), "时钟周期");
+  const siblingResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
+  await page.locator("#assistant-ask-deeper").click();
+  const siblingState = (await (await siblingResponse).json()).assistant;
+  const siblingId = siblingState.current.node_id;
+
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-back").click();
+  await focusResponse;
+  assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), [
+    "像乐队里的节拍器", "时钟周期",
+  ]);
+  const callsBeforeReopen = providerCalls.length;
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-child-list button").filter({ hasText: "像乐队里的节拍器" }).click();
+  const reopened = (await (await focusResponse).json()).assistant;
+  assert.equal(reopened.current.node_id, childId);
+  assert.deepEqual(reopened.current.children.map((child) => child.label), ["高低电平变化"]);
+  const reopenProviderCalls = providerCalls.length - callsBeforeReopen;
+  assert.equal(reopenProviderCalls, 0);
+
+  const closeChildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/close-child"));
+  assert.equal(await page.locator("#assistant-close-root").textContent(), "关闭本层解释");
+  await page.locator("#assistant-close-root").click();
+  const afterClose = (await (await closeChildResponse).json()).assistant;
+  assert.ok(!afterClose.roots[0].nodes.some((node) => node.node_id === childId));
+  assert.ok(!afterClose.roots[0].nodes.some((node) => node.node_id === grandchildId));
+  assert.ok(afterClose.roots[0].nodes.some((node) => node.node_id === siblingId));
+  assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), ["时钟周期"]);
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-child-list button").filter({ hasText: "时钟周期" }).click();
+  await focusResponse;
+
+  assert.equal(await selectExactReaderText(page, 262, "识别异常和中断"), "识别异常和中断");
+  await page.locator("#ask-selection").click();
+  assert.equal(await page.locator("#assistant-model").isEnabled(), true);
+  assert.equal(providerCalls.length, 4);
+  const secondRootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
+  await page.locator("#assistant-start").click();
+  const secondRootState = (await (await secondRootResponse).json()).assistant;
+  const secondRootId = secondRootState.current.root_id;
+  assert.notEqual(secondRootId, firstRootId);
+
+  const callsBeforeSwitch = providerCalls.length;
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-root-switcher").selectOption(firstRootId);
+  const restoredFirstRoot = (await (await focusResponse).json()).assistant;
+  assert.equal(restoredFirstRoot.current.node_id, siblingId);
+  assert.equal(providerCalls.length, callsBeforeSwitch);
+  focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
+  await page.locator("#assistant-root-switcher").selectOption(secondRootId);
+  assert.equal((await (await focusResponse).json()).assistant.current.root_id, secondRootId);
+  assert.equal(providerCalls.length, callsBeforeSwitch);
+
+  await dragDockToWidth(page, 610);
+  const widthBeforeExpanded = (await panelMetrics(page)).panelWidth;
+  const scroller = page.locator("#assistant-turns");
+  await scroller.evaluate((element) => { element.scrollTop = 1; });
+  const scrollBeforeExpanded = await scroller.evaluate((element) => element.scrollTop);
+  const callsBeforeExpanded = providerCalls.length;
+  await page.locator("#assistant-expand").click();
+  const expanded = await panelMetrics(page);
+  assert.equal(await page.locator("#assistant-expand").getAttribute("aria-pressed"), "true");
+  assert.ok(expanded.panelWidth >= 1438);
+  assert.equal(providerCalls.length, callsBeforeExpanded);
+  const screenshot = path.join(process.cwd(), "test-results", "ask-deeper-stage-d-golden.png");
+  await mkdir(path.dirname(screenshot), { recursive: true });
+  await page.screenshot({ path: screenshot });
+  await page.locator("#assistant-expand").click();
+  assert.ok(Math.abs((await panelMetrics(page)).panelWidth - widthBeforeExpanded) <= 2);
+  assert.equal(await scroller.evaluate((element) => element.scrollTop), scrollBeforeExpanded);
+  assert.equal(providerCalls.length, callsBeforeExpanded);
+
+  assert.equal(await selectExactReaderText(page, 24, "时钟脉冲信号"), "时钟脉冲信号");
+  assert.equal(await page.locator("#selection-actions").isVisible(), true);
+  await page.locator("#cancel-selection").click();
+
+  const serializedPayloads = JSON.stringify(providerCalls);
+  assert.ok(!/assistantDockWidth|dock width|expanded mode|focusedNodeId|scroll position|viewport state/i.test(serializedPayloads));
+  const childPayloads = providerCalls
+    .map((body) => body.messages.at(-1).content)
+    .filter((content) => content.includes("【直接上一轮】"));
+  assert.equal(childPayloads.length, 3);
+  assert.ok(childPayloads.some((content) => content.startsWith(
+    "【当前解释焦点（用户所选）】\n像乐队里的节拍器\n",
+  )));
+  assert.ok(childPayloads.some((content) => content.startsWith(
+    "【当前解释焦点（用户所选）】\n高低电平变化\n",
+  )));
+  const siblingPayload = childPayloads.find((content) => content.startsWith(
+    "【当前解释焦点（用户所选）】\n时钟周期\n",
+  ));
+  assert.ok(siblingPayload);
+  assert.ok(!siblingPayload.includes("第 1 段：节拍由高低电平变化表达"));
+  assert.ok(childPayloads.every((content) => (
+    !/父子关系|当前解释深度|ORIGINAL_PDF|ASSISTANT_ANSWER|字符范围/.test(content)
+  )));
+  assert.deepEqual(pageErrors, []);
+
+  console.log(JSON.stringify({
+    status: "PASS",
+    realBook: {
+      pages: 348,
+      sha256: "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd",
+    },
+    dockResize: "PASS",
+    minWidth: minimum,
+    maxWidth: maximum,
+    readerSelectionAfterResize: "PASS",
+    contextMenuAfterResize: "PASS",
+    expandedEnter: "PASS",
+    expandedExit: "PASS",
+    widthRestored: true,
+    treeStatePreserved: true,
+    scrollPreserved: true,
+    rootSwitching: "PASS",
+    childPageImmediateFocus: true,
+    pendingOwner: "CHILD",
+    parentScrollRestored: true,
+    parentSelectableAfterBack: true,
+    historicalChildrenVisible: true,
+    siblingChildCreation: "PASS",
+    reopenProviderCalls,
+    childSubtreeClose: "PASS",
+    siblingSurvivesClose: true,
+    currentFocusExact: true,
+    markdownMathRendered: true,
+    viewportStateInProviderPayload: false,
+    providerCalls: providerCalls.length,
+    externalProviderCalls: 0,
+    screenshot,
+    childId,
+    grandchildId,
+    siblingId,
+  }));
+} finally {
+  if (browser) await browser.close();
+  if (running) await stopService(running.child);
+  await new Promise((resolve) => provider.close(resolve));
+  await rm(acceptanceRoot, { recursive: true, force: true });
+}
+
+async function panelMetrics(page) {
+  return page.evaluate(() => {
+    const panel = document.querySelector("#assistant-panel").getBoundingClientRect();
+    const viewer = document.querySelector("#viewer").getBoundingClientRect();
+    return { panelWidth: panel.width, panelLeft: panel.left, viewerWidth: viewer.width };
+  });
+}
+
+async function dragDockToWidth(page, width) {
+  const handle = page.locator("#assistant-resize-handle");
+  const box = await handle.boundingBox();
+  assert.ok(box);
+  await page.mouse.move(box.x + box.width / 2, box.y + 120);
+  await page.mouse.down();
+  await page.mouse.move(1440 - width, box.y + 120, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(180);
+}
+
+async function makeScrollableAndSet(page, desired) {
+  const value = await page.locator("#assistant-turns").evaluate((element, target) => {
+    element.style.maxHeight = "112px";
+    element.scrollTop = Math.min(target, element.scrollHeight - element.clientHeight);
+    return element.scrollTop;
+  }, desired);
+  assert.ok(value > 0, "Focused explanation page was not scrollable");
+  return value;
+}
+
+async function waitForScroll(page, expected) {
+  await page.waitForFunction((value) => (
+    document.querySelector("#assistant-turns").scrollTop === value
+  ), expected);
+}
+
+async function selectAssistantTextByMouse(page, needle) {
+  const bubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  const points = await bubble.evaluate((element, text) => {
+    const nodes = Array.from(element.querySelectorAll(".assistant-source-text"), (span) => span.firstChild);
+    const combined = nodes.map((node) => node.data).join("");
+    const start = combined.indexOf(text);
+    if (start < 0) throw new Error(`Assistant answer does not contain ${text}`);
+    const point = (target, atEnd = false) => {
+      let cursor = 0;
+      for (const node of nodes) {
+        const next = cursor + node.data.length;
+        if (target < next || (atEnd && target === next)) return { node, offset: target - cursor };
+        cursor = next;
+      }
+      return { node: nodes.at(-1), offset: nodes.at(-1).data.length };
+    };
+    const firstPoint = point(start);
+    const lastPoint = point(start + text.length, true);
+    const full = document.createRange();
+    full.setStart(firstPoint.node, firstPoint.offset);
+    full.setEnd(lastPoint.node, lastPoint.offset);
+    const scroller = element.closest("#assistant-turns");
+    const target = full.getBoundingClientRect();
+    const viewport = scroller.getBoundingClientRect();
+    scroller.scrollTop += target.top - viewport.top - viewport.height / 2;
+    const first = document.createRange();
+    first.setStart(firstPoint.node, firstPoint.offset);
+    first.setEnd(firstPoint.node, firstPoint.offset + 1);
+    const last = document.createRange();
+    last.setStart(lastPoint.node, Math.max(0, lastPoint.offset - 1));
+    last.setEnd(lastPoint.node, lastPoint.offset);
+    const center = (rect, right) => ({
+      x: right ? rect.right - 1 : rect.left + 1,
+      y: rect.top + rect.height / 2,
+    });
+    return { start: center(first.getBoundingClientRect(), false), end: center(last.getBoundingClientRect(), true) };
+  }, needle);
+  await page.mouse.move(points.start.x, points.start.y);
+  await page.mouse.down();
+  await page.mouse.move(points.end.x, points.end.y, { steps: 10 });
+  await page.mouse.up();
+  await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
+  return page.evaluate(() => getSelection()?.toString() || "");
+}
+
+async function selectExactReaderText(page, pageIndex, needle) {
+  await goToPage(page, pageIndex);
+  const revisionId = await currentRevisionId(page);
+  const overlay = await page.evaluate(async ({ id, index }) => (
+    await (await fetch(`/api/revisions/${id}/overlay?page=${index}`)).json()
+  ).page, { id: revisionId, index: pageIndex });
+  const line = overlay.lines.find((candidate) => candidate.text.includes(needle));
+  assert.ok(line, `OCR line missing: ${needle}`);
+  const start = line.text.indexOf(needle);
+  const end = start + needle.length;
+  const firstCell = line.cells.findIndex((cell) => cell[3] > start && cell[2] < end);
+  const lastCell = line.cells.findLastIndex((cell) => cell[3] > start && cell[2] < end);
+  const boundaryX = (index) => {
+    if (index === 0) return line.cells[0][0];
+    if (index === line.cells.length) return line.cells.at(-1)[1];
+    return (line.cells[index - 1][1] + line.cells[index][0]) / 2;
+  };
+  const overlayBox = await page.locator(`.page[data-index="${pageIndex}"] .text-overlay`).boundingBox();
+  const ys = line.quad.map(([, y]) => y);
+  const y = overlayBox.y + ((Math.min(...ys) + Math.max(...ys)) / 2) * overlayBox.height;
+  const startX = overlayBox.x + boundaryX(firstCell) * overlayBox.width;
+  const endX = overlayBox.x + boundaryX(lastCell + 1) * overlayBox.width;
+  await page.mouse.move(startX, y);
+  await page.mouse.down();
+  await page.mouse.move(endX, y, { steps: 10 });
+  await page.mouse.up();
+  await page.mouse.click((startX + endX) / 2, y, { button: "right" });
+  await page.locator("#selection-actions").waitFor({ state: "visible" });
+  return page.evaluate(() => getSelection()?.toString() || "");
+}
+
+async function currentRevisionId(page) {
+  return page.evaluate(async () => {
+    const books = (await (await fetch("/api/books")).json()).books;
+    return books.find((book) => book.active_revision.page_count === 348).active_revision.id;
+  });
+}
+
+async function openBook(page, pageCount) {
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
+  await page.locator("#reader").waitFor({ state: "visible" });
+  await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
+}
+
+async function goToPage(page, pageIndex) {
+  await page.locator("#page-number").fill(String(pageIndex + 1));
+  await page.locator("#page-number").press("Enter");
+  await waitForReaderOverlay(page, pageIndex);
+}
+
+async function waitForReaderOverlay(page, pageIndex) {
+  await page.locator(`.page[data-index="${pageIndex}"] canvas`).waitFor({ state: "visible", timeout: 30_000 });
+  await page.locator(`.page[data-index="${pageIndex}"] .text-overlay`).waitFor({ state: "attached" });
+}
+
+async function startService(extraEnv) {
+  const child = spawn(
+    process.env.READER_PYTHON || "python",
+    ["-m", "reader_service", "--no-open", "--port", "0", "--data-dir", dataDir],
+    {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+      env: { ...process.env, ...extraEnv },
+    },
+  );
+  let errors = "";
+  child.stderr.on("data", (chunk) => { errors += chunk.toString(); });
+  return { child, url: await readyUrl(child, () => errors) };
+}
+
+async function stopService(child) {
+  if (!child || child.exitCode !== null) return;
+  child.kill();
+  await new Promise((resolve) => child.once("exit", resolve));
+}
+
+function readyUrl(child, errors) {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    const timeout = setTimeout(() => reject(new Error(errors())), 20_000);
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+      const match = output.match(/READY (http:\/\/[^\s]+)/);
+      if (match) {
+        clearTimeout(timeout);
+        resolve(match[1]);
+      }
+    });
+  });
+}
+
+function chromePath() {
+  const candidates = [
+    process.env.READER_CHROMIUM,
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+  ].filter(Boolean);
+  const fs = process.getBuiltinModule("node:fs");
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!found) throw new Error("Chrome or Edge is required");
+  return found;
+}

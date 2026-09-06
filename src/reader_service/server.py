@@ -71,6 +71,9 @@ def handler_factory(
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
     pdfjs_root = root.joinpath("node_modules", "pdfjs-dist", "build")
+    marked_root = root.joinpath("node_modules", "marked", "lib")
+    dompurify_root = root.joinpath("node_modules", "dompurify", "dist")
+    katex_root = root.joinpath("node_modules", "katex", "dist")
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
@@ -225,17 +228,28 @@ def handler_factory(
                     self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                 return
             if parsed.path.startswith("/vendor/"):
-                filename = {
-                    "/vendor/pdf.mjs": "pdf.mjs",
-                    "/vendor/pdf.worker.mjs": "pdf.worker.mjs",
+                vendor_target = {
+                    "/vendor/pdf.mjs": pdfjs_root.joinpath("pdf.mjs"),
+                    "/vendor/pdf.worker.mjs": pdfjs_root.joinpath("pdf.worker.mjs"),
+                    "/vendor/marked.esm.js": marked_root.joinpath("marked.esm.js"),
+                    "/vendor/purify.es.mjs": dompurify_root.joinpath("purify.es.mjs"),
+                    "/vendor/katex.mjs": katex_root.joinpath("katex.mjs"),
+                    "/vendor/katex.css": katex_root.joinpath("katex.css"),
                 }.get(parsed.path)
-                if not filename or not pdfjs_root.joinpath(filename).is_file():
+                if parsed.path.startswith("/vendor/fonts/"):
+                    font_name = parsed.path.removeprefix("/vendor/fonts/")
+                    if font_name and Path(font_name).name == font_name:
+                        vendor_target = katex_root.joinpath("fonts", font_name)
+                if vendor_target is None or not vendor_target.is_file():
                     self._json(
                         HTTPStatus.SERVICE_UNAVAILABLE,
-                        {"error": "PDF.js is unavailable; run npm install"},
+                        {"error": "Frontend dependency is unavailable; run npm install"},
                     )
                     return
-                self._file(pdfjs_root.joinpath(filename), "text/javascript; charset=utf-8")
+                content_type = mimetypes.guess_type(vendor_target.name)[0]
+                if vendor_target.suffix in (".js", ".mjs"):
+                    content_type = "text/javascript; charset=utf-8"
+                self._file(vendor_target, content_type or "application/octet-stream")
                 return
             self._static(parsed.path, static_root)
 
@@ -322,6 +336,8 @@ def handler_factory(
                         turn_id=payload["turn_id"],
                         start_offset=int(payload["start_offset"]),
                         end_offset=int(payload["end_offset"]),
+                        node_id=payload.get("node_id"),
+                        source_spans=payload.get("source_spans"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_CHILD", "error": str(exc)})
@@ -334,6 +350,36 @@ def handler_factory(
                     return
                 except ProviderFailure as exc:
                     self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, {"assistant": state})
+                return
+            if parsed.path == "/api/assistant/close-child":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "AI_UNCONFIGURED", "error": "AI 功能不可用"
+                    })
+                    return
+                try:
+                    payload = self._read_json()
+                    state = assistant.close_child_subtree(
+                        payload["reader_session_id"],
+                        payload["root_id"],
+                        payload["node_id"],
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {
+                        "code": "INVALID_ASSISTANT_CHILD", "error": str(exc)
+                    })
+                    return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {
+                        "code": "ASSISTANT_LEVEL_GONE", "error": str(exc)
+                    })
                     return
                 self._json(HTTPStatus.OK, {"assistant": state})
                 return
@@ -645,7 +691,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/app.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/app.js", "/assistant-render.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

@@ -9,6 +9,8 @@ from reader_service.agent_runtime import AgentRuntime, ProviderFailure, Provider
 
 from .context import (
     AssistantContextBuilder,
+    ModelVisibleContext,
+    ModelVisibleReaderGrounding,
     ScopeResolution,
     provider_child_message,
     provider_user_message,
@@ -23,7 +25,9 @@ MAX_HISTORY_CHARS = 8_000
 MAX_DEPTH = 5
 SYSTEM_BOUNDARY = (
     "你是附着在原始教材页面上的临时中文讲解助手。用简体中文清楚、直接地回答。"
-    "选区触发的首轮消息中，‘当前解释焦点’就是用户希望解释的对象。"
+    "凡由选区触发的解释（首轮或继续再问一层），用户消息第一块"
+    "【当前解释焦点（用户所选）】就是 CURRENT FOCUS，也是唯一需要解释的对象；只解释它。"
+    "解释路径、直接上一轮、Reader 定位和教材语境只用于消歧与 grounding，不是解释对象。"
     "关于教材本身的陈述只能来自本次提供的教材语境；概念解释可以使用可靠的专业或通识知识，"
     "但不得把补充知识伪装成教材原文、教材观点或本页已有内容，也不得编造引文或印刷页码。"
 )
@@ -95,6 +99,7 @@ class AssistantNode:
     active_child_id: str | None = None
     pending_child_id: str | None = None
     pending_turn_id: str | None = None
+    error: str | None = None
 
     def __post_init__(self) -> None:
         if not 2 <= self.depth <= MAX_DEPTH:
@@ -102,7 +107,7 @@ class AssistantNode:
 
     @property
     def label(self) -> str:
-        return _preview(self.selected_text)
+        return self.selected_text
 
 
 @dataclass(slots=True)
@@ -163,6 +168,7 @@ class ReaderAssistantState:
             },
             "focused_node_id": root.focused_node_id,
             "active_child_id": root.active_child_id,
+            "child_pending": root.pending_child_id is not None,
             "turns": [turn.public() for turn in root.turns],
             "nodes": [self._node_public(root, node) for node in root.nodes.values()],
         }
@@ -177,6 +183,9 @@ class ReaderAssistantState:
             "depth": node.depth,
             "label": node.label,
             "active_child_id": node.active_child_id,
+            "child_pending": node.pending_child_id is not None,
+            "pending": node.pending_turn_id is not None,
+            "error": node.error,
             "turns": [turn.public() for turn in node.turns],
         }
 
@@ -189,6 +198,10 @@ class ReaderAssistantState:
                 "depth": 1,
                 "label": root.label,
                 "active_child_id": root.active_child_id,
+                "child_pending": root.pending_child_id is not None,
+                "pending": root.pending_turn_id is not None,
+                "error": None,
+                "children": self._children_public(root, None),
                 "provider": root.provider,
                 "model": root.model,
                 "scope": root.scope.public(),
@@ -198,10 +211,23 @@ class ReaderAssistantState:
         return {
             **self._node_public(root, node),
             "root_id": root.root_id,
+            "children": self._children_public(root, node.node_id),
             "provider": root.provider,
             "model": root.model,
             "scope": root.scope.public(),
         }
+
+    def _children_public(self, root: AssistantRoot, parent_node_id: str | None) -> list[dict]:
+        return [
+            {
+                "node_id": node.node_id,
+                "label": node.label,
+                "pending": node.pending_turn_id is not None,
+                "error": node.error,
+            }
+            for node in root.nodes.values()
+            if node.parent_node_id == parent_node_id
+        ]
 
     def _breadcrumb(self, root: AssistantRoot, node_id: str | None) -> list[dict]:
         chain = [{"root_id": root.root_id, "node_id": None, "depth": 1, "label": root.label}]
@@ -313,6 +339,8 @@ class AssistantService:
         turn_id: str,
         start_offset: int,
         end_offset: int,
+        node_id: str | None = None,
+        source_spans: list[dict] | None = None,
     ) -> dict:
         session_id = self._validate_session_id(reader_session_id)
         clean_root_id = self._validate_id(root_id, "Root id")
@@ -321,7 +349,9 @@ class AssistantService:
         if not isinstance(start_offset, int) or not isinstance(end_offset, int):
             raise ValueError("回答选区范围无效")
         interaction_id = str(uuid4())
-        node_id = str(uuid4())
+        requested_node_id = (
+            str(uuid4()) if node_id is None else self._validate_id(node_id, "Node id")
+        )
         slot = self._existing_slot(session_id)
         with self._state_lock:
             if self._sessions.get(session_id) is not slot:
@@ -331,6 +361,11 @@ class AssistantService:
                 state = slot.state
                 root = self._root(state, clean_root_id)
                 parent = self._level(root, clean_node_id)
+                if parent.pending_child_id is not None:
+                    raise AssistantStateError(
+                        "ACTIVE_CHILD_ALREADY_EXISTS",
+                        "这一层正在创建新的深入解释，请稍候。",
+                    )
                 if state.focused_root_id != root.root_id or root.focused_node_id != clean_node_id:
                     raise AssistantStateError(
                         "PARENT_NOT_FOCUSED",
@@ -342,10 +377,10 @@ class AssistantService:
                         "CHILD_DEPTH_LIMIT_REACHED",
                         f"已经到第 {MAX_DEPTH} 层；仍可在当前层继续追问。",
                     )
-                if parent.active_child_id is not None or parent.pending_child_id is not None:
+                if requested_node_id in root.nodes:
                     raise AssistantStateError(
-                        "ACTIVE_CHILD_ALREADY_EXISTS",
-                        "这一层已有更深解释；请进入已有层级继续。",
+                        "CHILD_ID_ALREADY_EXISTS",
+                        "这层解释已经存在，请直接进入。",
                     )
                 if not parent.turns or parent.turns[-1].turn_id != clean_turn_id:
                     raise AssistantStateError(
@@ -353,36 +388,52 @@ class AssistantService:
                         "只能从当前层最新一条回答中继续再问一层。",
                     )
                 triggering_turn = parent.turns[-1]
-                selected_text = self._answer_selection(
-                    triggering_turn.answer, start_offset, end_offset
+                selected_text = (
+                    self._answer_selection_spans(triggering_turn.answer, source_spans)
+                    if source_spans is not None
+                    else self._answer_selection(triggering_turn.answer, start_offset, end_offset)
                 )
                 child_depth = depth + 1
                 parent.pending_child_id = interaction_id
-                focus_version = state.focus_version
-                parent_label = root.label if clean_node_id is None else root.nodes[clean_node_id].label
-                user_content = provider_child_message(
-                    selected_text=selected_text,
-                    selected_range={"start": start_offset, "end": end_offset},
-                    triggering_question=triggering_turn.question,
-                    triggering_answer=triggering_turn.answer,
-                    source_lineage=root.created_from.lineage(),
-                    scope=root.scope,
-                    reference_context=root.reference_context,
-                    parent_label=parent_label,
-                    depth=child_depth,
-                    max_depth=MAX_DEPTH,
+                model_context = self._project_child_context(
+                    root,
+                    clean_node_id,
+                    selected_text,
+                    triggering_turn,
                 )
+                user_content = provider_child_message(model_context)
                 provider = root.provider
+                child = AssistantNode(
+                    requested_node_id,
+                    clean_node_id,
+                    child_depth,
+                    selected_text,
+                    pending_turn_id=interaction_id,
+                )
+                root.nodes[requested_node_id] = child
+                parent.active_child_id = requested_node_id
+                root.focused_node_id = requested_node_id
+                state.focus_version += 1
+                state.state_version += 1
         try:
             answer = self._complete(
                 provider,
                 self._messages([], user_content),
                 interaction_id=interaction_id,
             )
-        except Exception:
-            self._clear_pending_child(
-                session_id, slot, generation, clean_root_id, clean_node_id, interaction_id
+        except Exception as exc:
+            failure_recorded = self._fail_pending_child(
+                session_id,
+                slot,
+                generation,
+                clean_root_id,
+                clean_node_id,
+                requested_node_id,
+                interaction_id,
+                exc,
             )
+            if not failure_recorded:
+                raise self._request_cancelled() from exc
             raise
         with self._state_lock:
             if self._sessions.get(session_id) is not slot:
@@ -397,26 +448,18 @@ class AssistantService:
                     parent = self._level(root, clean_node_id)
                 except LookupError:
                     raise self._request_cancelled() from None
-                if parent.pending_child_id != interaction_id or parent.active_child_id is not None:
-                    raise self._request_cancelled()
-                child = AssistantNode(
-                    node_id,
-                    clean_node_id,
-                    child_depth,
-                    selected_text,
-                    turns=[Turn(interaction_id, selected_text, answer, user_content)],
-                )
-                root.nodes[node_id] = child
-                parent.pending_child_id = None
-                parent.active_child_id = node_id
-                slot.state.state_version += 1
+                child = root.nodes.get(requested_node_id)
                 if (
-                    slot.state.focus_version == focus_version
-                    and slot.state.focused_root_id == root.root_id
-                    and root.focused_node_id == clean_node_id
+                    parent.pending_child_id != interaction_id
+                    or child is None
+                    or child.pending_turn_id != interaction_id
                 ):
-                    root.focused_node_id = node_id
-                    slot.state.focus_version += 1
+                    raise self._request_cancelled()
+                parent.pending_child_id = None
+                child.pending_turn_id = None
+                child.error = None
+                child.turns.append(Turn(interaction_id, selected_text, answer, user_content))
+                slot.state.state_version += 1
                 return slot.state.public()
 
     def follow_up(
@@ -454,10 +497,12 @@ class AssistantService:
                 provider = root.provider
         try:
             answer = self._complete(provider, messages, interaction_id=turn_id)
-        except Exception:
-            self._clear_pending_turn(
+        except Exception as exc:
+            failure_recorded = self._clear_pending_turn(
                 session_id, slot, generation, clean_root_id, clean_node_id, turn_id
             )
+            if not failure_recorded:
+                raise self._request_cancelled() from exc
             raise
         with self._state_lock:
             if self._sessions.get(session_id) is not slot:
@@ -513,6 +558,42 @@ class AssistantService:
                 slot.state.focus_version += 1
                 slot.state.state_version += 1
                 return slot.state.public()
+
+    def close_child_subtree(
+        self, reader_session_id: str, root_id: str, node_id: str
+    ) -> dict:
+        session_id = self._validate_session_id(reader_session_id)
+        clean_root_id = self._validate_id(root_id, "Root id")
+        clean_node_id = self._validate_id(node_id, "Node id")
+        slot = self._existing_slot(session_id)
+        with self._state_lock:
+            if self._sessions.get(session_id) is not slot:
+                raise self._request_cancelled()
+            with slot.lock:
+                state = slot.state
+                root = self._root(state, clean_root_id)
+                target = self._level(root, clean_node_id)
+                if not isinstance(target, AssistantNode):
+                    raise AssistantStateError(
+                        "ROOT_REQUIRES_ROOT_CLOSE", "第一层请使用“关闭此主题”。"
+                    )
+                if state.focused_root_id != clean_root_id or root.focused_node_id != clean_node_id:
+                    raise AssistantStateError(
+                        "LEVEL_NOT_FOCUSED", "只能关闭当前正在查看的这层解释。"
+                    )
+                parent_node_id = target.parent_node_id
+                parent = self._level(root, parent_node_id)
+                removed_ids = self._subtree_ids(root, clean_node_id)
+                if parent.pending_child_id == target.pending_turn_id:
+                    parent.pending_child_id = None
+                for removed_id in removed_ids:
+                    root.nodes.pop(removed_id, None)
+                parent.active_child_id = self._latest_child_id(root, parent_node_id)
+                root.focused_node_id = parent_node_id
+                state.focused_root_id = clean_root_id
+                state.focus_version += 1
+                state.state_version += 1
+                return state.public()
 
     def close_session(self, reader_session_id: str) -> None:
         session_id = self._validate_session_id(reader_session_id)
@@ -656,30 +737,46 @@ class AssistantService:
             with slot.lock:
                 return slot.generation, slot.state.focus_version
 
-    def _clear_pending_child(
+    def _fail_pending_child(
         self,
         session_id: str,
         slot: _ReaderSessionSlot,
         generation: int,
         root_id: str,
-        node_id: str | None,
+        parent_node_id: str | None,
+        child_node_id: str,
         interaction_id: str,
-    ) -> None:
+        error: Exception,
+    ) -> bool:
         with self._state_lock:
             if self._sessions.get(session_id) is not slot:
-                return
+                return False
             with slot.lock:
                 if slot.generation != generation:
-                    return
+                    return False
                 root = slot.state.roots.get(root_id)
                 if root is None:
-                    return
+                    return False
                 try:
-                    level = self._level(root, node_id)
+                    parent = self._level(root, parent_node_id)
                 except LookupError:
-                    return
-                if level.pending_child_id == interaction_id:
-                    level.pending_child_id = None
+                    return False
+                child = root.nodes.get(child_node_id)
+                if (
+                    parent.pending_child_id != interaction_id
+                    or child is None
+                    or child.pending_turn_id != interaction_id
+                ):
+                    return False
+                parent.pending_child_id = None
+                child.pending_turn_id = None
+                child.error = (
+                    error.user_message
+                    if isinstance(error, (ProviderFailure, AssistantStateError))
+                    else "AI 解释失败，请稍后再试。"
+                )
+                slot.state.state_version += 1
+                return True
 
     def _clear_pending_turn(
         self,
@@ -689,22 +786,24 @@ class AssistantService:
         root_id: str,
         node_id: str | None,
         turn_id: str,
-    ) -> None:
+    ) -> bool:
         with self._state_lock:
             if self._sessions.get(session_id) is not slot:
-                return
+                return False
             with slot.lock:
                 if slot.generation != generation:
-                    return
+                    return False
                 root = slot.state.roots.get(root_id)
                 if root is None:
-                    return
+                    return False
                 try:
                     level = self._level(root, node_id)
                 except LookupError:
-                    return
+                    return False
                 if level.pending_turn_id == turn_id:
                     level.pending_turn_id = None
+                    return True
+                return False
 
     @staticmethod
     def _root(state: ReaderAssistantState, root_id: str) -> AssistantRoot:
@@ -727,6 +826,27 @@ class AssistantService:
         return 1 if isinstance(level, AssistantRoot) else level.depth
 
     @staticmethod
+    def _subtree_ids(root: AssistantRoot, node_id: str) -> set[str]:
+        removed = {node_id}
+        changed = True
+        while changed:
+            changed = False
+            for candidate in root.nodes.values():
+                if candidate.node_id not in removed and candidate.parent_node_id in removed:
+                    removed.add(candidate.node_id)
+                    changed = True
+        return removed
+
+    @staticmethod
+    def _latest_child_id(root: AssistantRoot, parent_node_id: str | None) -> str | None:
+        matching = [
+            node.node_id
+            for node in root.nodes.values()
+            if node.parent_node_id == parent_node_id
+        ]
+        return matching[-1] if matching else None
+
+    @staticmethod
     def _reference_context(context: dict) -> dict:
         return {
             "same_page_ocr_context": context["same_page_ocr_context"],
@@ -734,14 +854,90 @@ class AssistantService:
         }
 
     @staticmethod
+    def _project_child_context(
+        root: AssistantRoot,
+        parent_node_id: str | None,
+        selected_text: str,
+        triggering_turn: Turn,
+    ) -> ModelVisibleContext:
+        """Project tree state field-by-field into the provider-visible allowlist."""
+        node_labels = []
+        current_node_id = parent_node_id
+        while current_node_id is not None:
+            node = root.nodes[current_node_id]
+            node_labels.append(node.selected_text)
+            current_node_id = node.parent_node_id
+        concept_path = (
+            root.created_from.selected_text,
+            *reversed(node_labels),
+            selected_text,
+        )
+        return ModelVisibleContext(
+            current_focus=selected_text,
+            direct_previous_focus=triggering_turn.question,
+            direct_previous_answer=triggering_turn.answer,
+            concept_path=concept_path,
+            reader_grounding=ModelVisibleReaderGrounding(
+                pdf_page_number=root.created_from.pdf_page_index + 1,
+                chapter_title=root.scope.chapter_title,
+                section_title=root.scope.section_title,
+                printed_page_label=root.reference_context.get("printed_page_label"),
+                bounded_same_page_ocr=root.reference_context.get(
+                    "same_page_ocr_context", ""
+                ),
+            ),
+        )
+
+    @staticmethod
     def _answer_selection(answer: str, start: int, end: int) -> str:
         if start < 0 or end <= start or end > len(answer):
             raise AssistantStateError("INVALID_ANSWER_SELECTION", "回答选区范围无效。")
-        selected = answer[start:end].strip()
-        if not selected or len(selected) > MAX_ANSWER_SELECTION_CHARS:
+        selected = answer[start:end]
+        if not selected.strip() or len(selected) > MAX_ANSWER_SELECTION_CHARS:
             raise AssistantStateError(
                 "INVALID_ANSWER_SELECTION",
                 f"请选择 1 到 {MAX_ANSWER_SELECTION_CHARS} 个回答文字。",
+            )
+        return selected
+
+    @staticmethod
+    def _answer_selection_spans(answer: str, spans: list[dict]) -> str:
+        if not isinstance(spans, list) or not 1 <= len(spans) <= 128:
+            raise AssistantStateError(
+                "INVALID_ANSWER_SELECTION", "回答选区的来源映射无效。"
+            )
+        pieces = []
+        previous_end = -1
+        total = 0
+        for span in spans:
+            if not isinstance(span, dict):
+                raise AssistantStateError(
+                    "INVALID_ANSWER_SELECTION", "回答选区的来源映射无效。"
+                )
+            start = span.get("start")
+            end = span.get("end")
+            if (
+                not isinstance(start, int)
+                or isinstance(start, bool)
+                or not isinstance(end, int)
+                or isinstance(end, bool)
+                or start < 0
+                or end <= start
+                or end > len(answer)
+                or start < previous_end
+            ):
+                raise AssistantStateError(
+                    "INVALID_ANSWER_SELECTION", "回答选区的来源映射无效。"
+                )
+            piece = answer[start:end]
+            pieces.append(piece)
+            total += len(piece)
+            previous_end = end
+        selected = "".join(pieces)
+        if not selected.strip() or selected != selected.strip() or total > MAX_ANSWER_SELECTION_CHARS:
+            raise AssistantStateError(
+                "INVALID_ANSWER_SELECTION",
+                f"请选择 1 到 {MAX_ANSWER_SELECTION_CHARS} 个普通正文文字。",
             )
         return selected
 

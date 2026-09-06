@@ -3,11 +3,12 @@ import {
   lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
   selectionPresentationQuads,
 } from "/selection.js";
+import { renderAssistantAnswer, renderedSelectionToRaw } from "/assistant-render.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-next-depth", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -32,12 +33,18 @@ const state = {
   assistantState: { version: 0, roots: [], focused_ref: null, current: null },
   assistantDraft: null, assistantAnswerSelection: null, assistantProviderStatuses: [],
   assistantPending: false, assistantStatusTimer: 0,
+  assistantScrollPositions: new Map(), assistantChildRequests: new Map(),
+  assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
+  assistantExpanded: false, assistantResizeAnchor: null,
 };
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 const ASSISTANT_PROVIDER_LABELS = {
   deepseek: "DeepSeek", zhipu: "Zhipu", openrouter: "OpenRouter",
 };
+const ASSISTANT_DOCK_MIN_WIDTH = 320;
+const ASSISTANT_DOCK_MAX_WIDTH = 760;
+const ASSISTANT_READER_MIN_WIDTH = 280;
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -177,6 +184,8 @@ async function openBook(book) {
   state.assistantState = emptyAssistantState();
   state.assistantDraft = null;
   state.assistantAnswerSelection = null;
+  state.assistantScrollPositions.clear();
+  state.assistantChildRequests.clear();
   state.zoom = state.revision.position.zoom || 1;
   state.currentPage = state.revision.position.pdf_page_index || 0;
   state.pdf = null;
@@ -224,12 +233,13 @@ function closeReader() {
   state.assistantState = emptyAssistantState();
   state.assistantDraft = null;
   state.assistantAnswerSelection = null;
+  state.assistantScrollPositions.clear();
+  state.assistantChildRequests.clear();
   elements.reader.hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-panel"].hidden = true;
   elements["outline-panel"].hidden = true;
-  elements["assistant-panel"].hidden = true;
-  elements["assistant-toggle"].setAttribute("aria-expanded", "false");
+  setAssistantPanelOpen(false, { relayout: false });
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
@@ -1078,6 +1088,118 @@ function emptyAssistantState() {
   return { version: 0, roots: [], focused_ref: null, current: null };
 }
 
+function assistantLocationKey(rootId, nodeId = null) {
+  return `${rootId}:${nodeId || "root"}`;
+}
+
+function rememberAssistantScroll() {
+  const current = state.assistantState.current;
+  if (!current) return;
+  state.assistantScrollPositions.set(
+    assistantLocationKey(current.root_id, current.node_id),
+    elements["assistant-turns"].scrollTop,
+  );
+}
+
+function forgetAssistantScroll(rootId, removedNodeIds = null) {
+  if (removedNodeIds === null) {
+    for (const key of state.assistantScrollPositions.keys()) {
+      if (key.startsWith(`${rootId}:`)) state.assistantScrollPositions.delete(key);
+    }
+    return;
+  }
+  for (const nodeId of removedNodeIds) {
+    state.assistantScrollPositions.delete(assistantLocationKey(rootId, nodeId));
+  }
+}
+
+function assistantDockLimits() {
+  const minimum = Math.min(ASSISTANT_DOCK_MIN_WIDTH, Math.max(240, window.innerWidth - 24));
+  const maximum = Math.max(
+    minimum,
+    Math.min(ASSISTANT_DOCK_MAX_WIDTH, window.innerWidth - ASSISTANT_READER_MIN_WIDTH),
+  );
+  return { minimum, maximum };
+}
+
+function applyAssistantDockWidth(width) {
+  const { minimum, maximum } = assistantDockLimits();
+  state.assistantDockWidth = Math.round(Math.max(minimum, Math.min(maximum, width)));
+  elements.reader.style.setProperty("--assistant-dock-width", `${state.assistantDockWidth}px`);
+  elements["assistant-resize-handle"].setAttribute("aria-valuemin", String(minimum));
+  elements["assistant-resize-handle"].setAttribute("aria-valuemax", String(maximum));
+  elements["assistant-resize-handle"].setAttribute("aria-valuenow", String(state.assistantDockWidth));
+}
+
+function renderAssistantViewportMode() {
+  const expanded = state.assistantExpanded && !elements["assistant-panel"].hidden;
+  elements.reader.classList.toggle("assistant-expanded", expanded);
+  elements["assistant-expand"].setAttribute("aria-pressed", String(expanded));
+  elements["assistant-expand"].textContent = expanded ? "还原" : "展开";
+  elements["assistant-expand"].setAttribute(
+    "aria-label", expanded ? "还原临时解释面板" : "展开临时解释面板",
+  );
+  elements["assistant-expand"].title = expanded ? "还原临时解释面板" : "展开临时解释面板";
+}
+
+function setAssistantExpanded(expanded) {
+  if (elements["assistant-panel"].hidden && expanded) return;
+  if (expanded === state.assistantExpanded) return;
+  if (expanded) state.assistantDockWidthBeforeExpanded = state.assistantDockWidth;
+  state.assistantExpanded = expanded;
+  if (!expanded) applyAssistantDockWidth(state.assistantDockWidthBeforeExpanded);
+  renderAssistantViewportMode();
+  hideAssistantAnswerActions(true);
+}
+
+function setAssistantPanelOpen(open, { focusViewer = false, relayout = true } = {}) {
+  const wasOpen = !elements["assistant-panel"].hidden;
+  const anchor = relayout && wasOpen !== open ? captureZoomAnchor() : null;
+  if (!open && state.assistantExpanded) setAssistantExpanded(false);
+  elements["assistant-panel"].hidden = !open;
+  elements.reader.classList.toggle("assistant-dock-open", open);
+  elements["assistant-toggle"].setAttribute("aria-expanded", String(open));
+  renderAssistantViewportMode();
+  hideAssistantAnswerActions(true);
+  if (focusViewer) elements.viewer.focus({ preventScroll: true });
+  if (anchor && state.revision) requestAnimationFrame(() => relayoutPages(anchor));
+}
+
+function updateAssistantDockFromPointer(clientX) {
+  applyAssistantDockWidth(window.innerWidth - clientX);
+}
+
+function beginAssistantResize(event) {
+  if (event.button !== 0 || state.assistantExpanded) return;
+  event.preventDefault();
+  event.stopPropagation();
+  state.assistantResizeAnchor = captureZoomAnchor();
+  elements["assistant-panel"].classList.add("resizing");
+  elements["assistant-resize-handle"].setPointerCapture(event.pointerId);
+  updateAssistantDockFromPointer(event.clientX);
+  hideSelectionActions();
+  hideAssistantAnswerActions(true);
+}
+
+function continueAssistantResize(event) {
+  if (!elements["assistant-panel"].classList.contains("resizing")) return;
+  event.preventDefault();
+  updateAssistantDockFromPointer(event.clientX);
+}
+
+function finishAssistantResize(event) {
+  if (!elements["assistant-panel"].classList.contains("resizing")) return;
+  event.preventDefault();
+  updateAssistantDockFromPointer(event.clientX);
+  elements["assistant-panel"].classList.remove("resizing");
+  if (elements["assistant-resize-handle"].hasPointerCapture(event.pointerId)) {
+    elements["assistant-resize-handle"].releasePointerCapture(event.pointerId);
+  }
+  const anchor = state.assistantResizeAnchor;
+  state.assistantResizeAnchor = null;
+  if (anchor && state.revision) relayoutPages(anchor);
+}
+
 function resetAssistantPanel() {
   elements["assistant-title"].textContent = "问 AI";
   elements["assistant-scope"].textContent = state.assistantConfigured
@@ -1089,19 +1211,21 @@ function resetAssistantPanel() {
   elements["assistant-follow-up"].hidden = true;
   elements["assistant-context-bar"].hidden = true;
   elements["assistant-breadcrumb"].hidden = true;
-  elements["assistant-next-depth"].hidden = true;
+  elements["assistant-children"].hidden = true;
+  elements["assistant-child-list"].replaceChildren();
   elements["assistant-question"].value = "";
   state.assistantPending = false;
   state.assistantState = emptyAssistantState();
   state.assistantDraft = null;
+  state.assistantScrollPositions.clear();
+  state.assistantChildRequests.clear();
   renderAssistantNavigation(null);
   hideAssistantAnswerActions();
   syncModelSelector();
 }
 
 function openAssistantPanel() {
-  elements["assistant-panel"].hidden = false;
-  elements["assistant-toggle"].setAttribute("aria-expanded", "true");
+  setAssistantPanelOpen(true);
   elements["search-panel"].hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-toggle"].setAttribute("aria-expanded", "false");
@@ -1141,7 +1265,8 @@ function renderAssistantNavigation(current) {
   elements["assistant-back"].hidden = !current?.parent_ref;
   elements["assistant-depth"].textContent = current ? `${current.depth}/5` : "";
   elements["assistant-close-root"].disabled = !current;
-  elements["assistant-next-depth"].hidden = !current?.active_child_id;
+  elements["assistant-close-root"].textContent = current?.depth > 1
+    ? "关闭本层解释" : "关闭此主题";
   const crumbs = (current?.breadcrumb || []).flatMap((crumb, index) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1158,6 +1283,19 @@ function renderAssistantNavigation(current) {
   });
   elements["assistant-breadcrumb"].replaceChildren(...crumbs);
   elements["assistant-breadcrumb"].hidden = crumbs.length === 0;
+
+  const children = current?.children || [];
+  elements["assistant-child-list"].replaceChildren(...children.map((child) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = child.label;
+    button.title = child.error ? `${child.label}（生成失败）` : child.label;
+    button.dataset.rootId = current.root_id;
+    button.dataset.nodeId = child.node_id;
+    if (child.pending) button.setAttribute("aria-busy", "true");
+    return button;
+  }));
+  elements["assistant-children"].hidden = children.length === 0;
 }
 
 function renderAssistantWorkspace() {
@@ -1187,9 +1325,9 @@ function renderAssistantWorkspace() {
     const question = document.createElement("p");
     question.className = "assistant-question-bubble";
     question.textContent = turn.question;
-    const answer = document.createElement("p");
+    const answer = document.createElement("div");
     answer.className = "assistant-answer-bubble";
-    answer.textContent = turn.answer;
+    renderAssistantAnswer(answer, turn.answer);
     if (index === current.turns.length - 1) {
       answer.dataset.rootId = current.root_id;
       answer.dataset.nodeId = current.node_id || "";
@@ -1200,12 +1338,25 @@ function renderAssistantWorkspace() {
     article.append(question, answer);
     return article;
   });
+  if (current.pending) {
+    const pending = document.createElement("div");
+    pending.className = "assistant-pending";
+    pending.textContent = `正在解释“${current.label}”……`;
+    turns.push(pending);
+  } else if (current.error) {
+    const error = document.createElement("div");
+    error.className = "assistant-error";
+    error.textContent = current.error;
+    turns.push(error);
+  }
   elements["assistant-turns"].replaceChildren(...turns);
   elements["assistant-empty"].hidden = turns.length > 0;
-  elements["assistant-follow-up"].hidden = false;
+  elements["assistant-follow-up"].hidden = current.pending || current.turns.length === 0;
   syncModelSelector();
+  const locationKey = assistantLocationKey(current.root_id, current.node_id);
+  const savedScroll = state.assistantScrollPositions.get(locationKey);
   requestAnimationFrame(() => {
-    elements["assistant-turns"].scrollTop = elements["assistant-turns"].scrollHeight;
+    elements["assistant-turns"].scrollTop = savedScroll ?? elements["assistant-turns"].scrollHeight;
   });
 }
 
@@ -1326,7 +1477,9 @@ async function sendAssistantFollowUp() {
     elements["assistant-question"].value = "";
     applyAssistantState(payload.assistant);
   } catch (error) {
-    if (state.readerSessionId === readerSessionId
+    const stillBound = state.assistantState.current?.root_id === current.root_id
+      && state.assistantState.current?.node_id === current.node_id;
+    if (state.readerSessionId === readerSessionId && stillBound
         && error.code !== "ASSISTANT_REQUEST_CANCELLED") showAssistantError(error);
     if (error.code?.startsWith("AI_")) {
       await refreshAssistantStatus();
@@ -1353,6 +1506,7 @@ async function clearAssistantSession({ keepalive = false } = {}) {
 async function focusAssistant(rootId, nodeId = null) {
   const readerSessionId = state.readerSessionId;
   if (!readerSessionId || !rootId) return;
+  rememberAssistantScroll();
   state.assistantDraft = null;
   hideAssistantAnswerActions(true);
   try {
@@ -1367,18 +1521,108 @@ async function focusAssistant(rootId, nodeId = null) {
   }
 }
 
-async function closeFocusedAssistantRoot() {
+function optimisticChildState(childSelection, nodeId) {
+  const nextState = structuredClone(state.assistantState);
+  const parent = nextState.current;
+  const root = nextState.roots.find((candidate) => candidate.root_id === childSelection.rootId);
+  if (!parent || !root) return false;
+  const parentRef = { root_id: childSelection.rootId, node_id: childSelection.nodeId };
+  const node = {
+    node_id: nodeId,
+    parent_ref: parentRef,
+    depth: parent.depth + 1,
+    label: childSelection.selectedText,
+    active_child_id: null,
+    child_pending: false,
+    pending: true,
+    error: null,
+    turns: [],
+  };
+  root.nodes.push(node);
+  root.focused_node_id = nodeId;
+  if (childSelection.nodeId) {
+    const parentNode = root.nodes.find((candidate) => candidate.node_id === childSelection.nodeId);
+    if (parentNode) {
+      parentNode.active_child_id = nodeId;
+      parentNode.child_pending = true;
+    }
+  } else {
+    root.active_child_id = nodeId;
+    root.child_pending = true;
+  }
+  nextState.focused_ref = { root_id: childSelection.rootId, node_id: nodeId };
+  nextState.current = {
+    ...node,
+    root_id: childSelection.rootId,
+    provider: parent.provider,
+    model: parent.model,
+    scope: parent.scope,
+    children: [],
+    breadcrumb: [
+      ...(parent.breadcrumb || []),
+      { root_id: childSelection.rootId, node_id: nodeId, depth: node.depth, label: node.label },
+    ],
+  };
+  state.assistantState = nextState;
+  renderAssistantWorkspace();
+  return true;
+}
+
+function markOptimisticChildError(rootId, nodeId, message) {
+  const root = state.assistantState.roots.find((candidate) => candidate.root_id === rootId);
+  const node = root?.nodes.find((candidate) => candidate.node_id === nodeId);
+  if (!node) return;
+  node.pending = false;
+  node.error = message || "AI 解释失败，请稍后再试。";
+  const parent = node.parent_ref.node_id
+    ? root.nodes.find((candidate) => candidate.node_id === node.parent_ref.node_id)
+    : root;
+  if (parent) parent.child_pending = false;
+  if (state.assistantState.current?.node_id === nodeId) {
+    state.assistantState.current.pending = false;
+    state.assistantState.current.error = node.error;
+    renderAssistantWorkspace();
+  }
+}
+
+function assistantSubtreeIds(root, nodeId) {
+  const removed = new Set([nodeId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of root?.nodes || []) {
+      if (!removed.has(node.node_id) && removed.has(node.parent_ref?.node_id)) {
+        removed.add(node.node_id);
+        changed = true;
+      }
+    }
+  }
+  return removed;
+}
+
+async function closeFocusedAssistantLevel() {
   const current = state.assistantState.current;
   const readerSessionId = state.readerSessionId;
   if (!current || !readerSessionId) return;
+  rememberAssistantScroll();
   hideAssistantAnswerActions(true);
+  const closingChild = current.depth > 1;
+  const root = state.assistantState.roots.find((candidate) => candidate.root_id === current.root_id);
+  const removedNodeIds = closingChild ? assistantSubtreeIds(root, current.node_id) : null;
   try {
-    const payload = await api("/api/assistant/close-root", {
+    const payload = await api(closingChild ? "/api/assistant/close-child" : "/api/assistant/close-root", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reader_session_id: readerSessionId, root_id: current.root_id }),
+      body: JSON.stringify({
+        reader_session_id: readerSessionId,
+        root_id: current.root_id,
+        ...(closingChild ? { node_id: current.node_id } : {}),
+      }),
     });
-    if (state.readerSessionId === readerSessionId) applyAssistantState(payload.assistant);
+    if (state.readerSessionId === readerSessionId) {
+      forgetAssistantScroll(current.root_id, removedNodeIds);
+      applyAssistantState(payload.assistant);
+    }
   } catch (error) {
     if (state.readerSessionId === readerSessionId) showAssistantError(error);
   }
@@ -1389,7 +1633,8 @@ function captureAssistantAnswerSelection() {
   const current = state.assistantState.current;
   const selection = window.getSelection();
   if (!current || !selection || selection.isCollapsed || selection.rangeCount !== 1
-      || current.depth >= 5 || current.active_child_id || state.assistantPending) return;
+      || current.depth >= 5 || current.child_pending || current.pending
+      || state.assistantPending) return;
   const range = selection.getRangeAt(0);
   const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
     ? range.startContainer : range.startContainer.parentElement;
@@ -1398,21 +1643,23 @@ function captureAssistantAnswerSelection() {
   const startBubble = startElement?.closest(".assistant-answer-bubble");
   const endBubble = endElement?.closest(".assistant-answer-bubble");
   if (!startBubble || startBubble !== endBubble || startBubble.dataset.currentAnswer !== "true") return;
-  const prefix = range.cloneRange();
-  prefix.selectNodeContents(startBubble);
-  prefix.setEnd(range.startContainer, range.startOffset);
-  const selectedText = range.toString().trim();
-  if (!selectedText) return;
-  const leadingWhitespace = range.toString().length - range.toString().trimStart().length;
-  const startOffset = Array.from(prefix.toString()).length + Array.from(range.toString().slice(0, leadingWhitespace)).length;
-  const endOffset = startOffset + Array.from(selectedText).length;
+  const mapped = renderedSelectionToRaw(range, startBubble);
+  if (mapped?.blocked) {
+    announce(mapped.reason, true);
+    return;
+  }
+  if (!mapped) {
+    announce("这段渲染内容暂时无法精确对应原回答，请选择普通正文文字。", true);
+    return;
+  }
   state.assistantAnswerSelection = {
     rootId: startBubble.dataset.rootId,
     nodeId: startBubble.dataset.nodeId || null,
     turnId: startBubble.dataset.turnId,
-    startOffset,
-    endOffset,
-    selectedText,
+    startOffset: mapped.startOffset,
+    endOffset: mapped.endOffset,
+    sourceSpans: mapped.sourceSpans,
+    selectedText: mapped.selectedText,
   };
   const rect = range.getBoundingClientRect();
   const action = elements["assistant-answer-actions"];
@@ -1432,10 +1679,13 @@ async function sendAssistantChild() {
   const childSelection = state.assistantAnswerSelection;
   const readerSessionId = state.readerSessionId;
   if (!childSelection || !readerSessionId || state.assistantPending) return;
-  state.assistantPending = true;
+  const requestKey = assistantLocationKey(childSelection.rootId, childSelection.nodeId);
+  if (state.assistantChildRequests.has(requestKey)) return;
+  const nodeId = crypto.randomUUID();
+  rememberAssistantScroll();
   hideAssistantAnswerActions(true);
-  showAssistantPending(childSelection.selectedText);
-  syncModelSelector();
+  if (!optimisticChildState(childSelection, nodeId)) return;
+  state.assistantChildRequests.set(requestKey, nodeId);
   try {
     const payload = await api("/api/assistant/child", {
       method: "POST",
@@ -1447,15 +1697,19 @@ async function sendAssistantChild() {
         turn_id: childSelection.turnId,
         start_offset: childSelection.startOffset,
         end_offset: childSelection.endOffset,
+        source_spans: childSelection.sourceSpans,
+        node_id: nodeId,
       }),
     });
     if (state.readerSessionId === readerSessionId) applyAssistantState(payload.assistant);
   } catch (error) {
     if (state.readerSessionId === readerSessionId
-        && error.code !== "ASSISTANT_REQUEST_CANCELLED") showAssistantError(error);
+        && error.code !== "ASSISTANT_REQUEST_CANCELLED") {
+      markOptimisticChildError(childSelection.rootId, nodeId, error.message);
+    }
     if (error.code?.startsWith("AI_")) await refreshAssistantStatus();
   } finally {
-    state.assistantPending = false;
+    state.assistantChildRequests.delete(requestKey);
     syncModelSelector();
   }
 }
@@ -1862,8 +2116,7 @@ elements["search-toggle"].addEventListener("click", () => {
   elements["search-panel"].hidden = !opening;
   elements["search-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
-    elements["assistant-panel"].hidden = true;
-    elements["assistant-toggle"].setAttribute("aria-expanded", "false");
+    setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-panel"].hidden = true;
@@ -1899,8 +2152,7 @@ elements["marks-toggle"].addEventListener("click", () => {
   elements["marks-panel"].hidden = !opening;
   elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
-    elements["assistant-panel"].hidden = true;
-    elements["assistant-toggle"].setAttribute("aria-expanded", "false");
+    setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["search-panel"].hidden = true;
@@ -1921,10 +2173,29 @@ elements["assistant-toggle"].addEventListener("click", () => {
   if (opening) {
     openAssistantPanel();
   } else {
-    elements["assistant-panel"].hidden = true;
-    elements["assistant-toggle"].setAttribute("aria-expanded", "false");
-    elements.viewer.focus({ preventScroll: true });
+    setAssistantPanelOpen(false, { focusViewer: true });
   }
+});
+elements["assistant-expand"].addEventListener("click", () => {
+  setAssistantExpanded(!state.assistantExpanded);
+});
+elements["assistant-resize-handle"].addEventListener("pointerdown", beginAssistantResize);
+elements["assistant-resize-handle"].addEventListener("pointermove", continueAssistantResize);
+elements["assistant-resize-handle"].addEventListener("pointerup", finishAssistantResize);
+elements["assistant-resize-handle"].addEventListener("pointercancel", finishAssistantResize);
+elements["assistant-resize-handle"].addEventListener("keydown", (event) => {
+  if (state.assistantExpanded) return;
+  const { minimum, maximum } = assistantDockLimits();
+  let width = state.assistantDockWidth;
+  if (event.key === "ArrowLeft") width += 16;
+  else if (event.key === "ArrowRight") width -= 16;
+  else if (event.key === "Home") width = minimum;
+  else if (event.key === "End") width = maximum;
+  else return;
+  event.preventDefault();
+  const anchor = captureZoomAnchor();
+  applyAssistantDockWidth(width);
+  if (anchor && state.revision) relayoutPages(anchor);
 });
 elements["assistant-model"].addEventListener("change", () => {
   if ((state.assistantState.current && !state.assistantDraft) || state.assistantPending) {
@@ -1951,20 +2222,17 @@ elements["assistant-back"].addEventListener("click", () => {
   const parent = state.assistantState.current?.parent_ref;
   if (parent) focusAssistant(parent.root_id, parent.node_id);
 });
-elements["assistant-next-depth"].addEventListener("click", () => {
-  const current = state.assistantState.current;
-  if (current?.active_child_id) focusAssistant(current.root_id, current.active_child_id);
+elements["assistant-child-list"].addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-node-id]");
+  if (button) focusAssistant(button.dataset.rootId, button.dataset.nodeId);
 });
 elements["assistant-breadcrumb"].addEventListener("click", (event) => {
   const button = event.target.closest("button[data-root-id]");
   if (button && !button.disabled) focusAssistant(button.dataset.rootId, button.dataset.nodeId || null);
 });
-elements["assistant-close-root"].addEventListener("click", closeFocusedAssistantRoot);
+elements["assistant-close-root"].addEventListener("click", closeFocusedAssistantLevel);
 elements["assistant-close"].addEventListener("click", () => {
-  elements["assistant-panel"].hidden = true;
-  elements["assistant-toggle"].setAttribute("aria-expanded", "false");
-  hideAssistantAnswerActions(true);
-  elements.viewer.focus({ preventScroll: true });
+  setAssistantPanelOpen(false, { focusViewer: true });
 });
 elements["assistant-follow-up"].addEventListener("submit", (event) => {
   event.preventDefault();
@@ -2045,6 +2313,7 @@ document.addEventListener("pointerdown", (event) => {
       && !event.target.closest(".assistant-answer-bubble")) hideAssistantAnswerActions();
 }, true);
 window.addEventListener("resize", () => {
+  applyAssistantDockWidth(state.assistantDockWidth);
   positionSelectionActions();
   clearTimeout(state.resizeTimer);
   state.resizeTimer = setTimeout(relayoutPages, 120);
@@ -2055,4 +2324,6 @@ window.addEventListener("pagehide", () => {
   clearAssistantSession({ keepalive: true }).catch(() => {});
 });
 
+applyAssistantDockWidth(state.assistantDockWidth);
+renderAssistantViewportMode();
 loadBooks().catch(() => announce("书库加载失败，请刷新后重试。", true));

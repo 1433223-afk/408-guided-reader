@@ -31,6 +31,40 @@ class ScopeResolution:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ModelVisibleReaderGrounding:
+    """Allowlisted Reader evidence that may cross the provider boundary."""
+
+    pdf_page_number: int
+    chapter_title: str | None
+    section_title: str | None
+    printed_page_label: str | None
+    bounded_same_page_ocr: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModelVisibleContext:
+    """Semantic-only Child projection; it deliberately cannot hold tree state."""
+
+    current_focus: str
+    direct_previous_focus: str
+    direct_previous_answer: str
+    concept_path: tuple[str, ...]
+    reader_grounding: ModelVisibleReaderGrounding
+
+    def __post_init__(self) -> None:
+        if not self.current_focus or not self.current_focus.strip():
+            raise ValueError("Current focus cannot be empty")
+        if not self.direct_previous_focus or not self.direct_previous_focus.strip():
+            raise ValueError("Direct previous focus cannot be empty")
+        if not self.direct_previous_answer or not self.direct_previous_answer.strip():
+            raise ValueError("Direct previous answer cannot be empty")
+        if not 2 <= len(self.concept_path) <= 5:
+            raise ValueError("Concept path must contain 2 to 5 semantic labels")
+        if self.concept_path[-1] != self.current_focus:
+            raise ValueError("Concept path must end at the current focus")
+
+
 class ScopeResolver:
     """Pure read over the stored Pass-1 Outline; it never resolves or mints nodes."""
 
@@ -178,9 +212,16 @@ class AssistantContextBuilder:
 def provider_user_message(context: dict, question: str | None = None) -> str:
     scope: ScopeResolution = context["scope"]
     lines = [
+        "【当前解释焦点（用户所选）】",
+        context["selected_text"],
+    ]
+    if question:
+        lines.extend(["", "【用户问题】", question])
+    lines.extend([
+        "",
         "【教材定位（仅用于定位和消歧）】",
         f"范围类型：{scope.kind}",
-    ]
+    ])
     if scope.chapter_title:
         lines.append(f"已安全确定的章标题：{scope.chapter_title}")
     if scope.section_title:
@@ -191,61 +232,42 @@ def provider_user_message(context: dict, question: str | None = None) -> str:
         [
             "【同一 PDF 页的有界 OCR 语境（辅助）】",
             context["same_page_ocr_context"],
-            "",
-            "【当前解释焦点（用户所选）】",
-            context["selected_text"],
         ]
     )
-    if question:
-        lines.extend(["", "【用户问题】", question])
     return "\n".join(lines)
 
 
 def provider_child_message(
-    *,
-    selected_text: str,
-    selected_range: dict,
-    triggering_question: str,
-    triggering_answer: str,
-    source_lineage: dict,
-    scope: ScopeResolution,
-    reference_context: dict,
-    parent_label: str,
-    depth: int,
-    max_depth: int,
+    context: ModelVisibleContext,
 ) -> str:
-    """Assemble only the frozen minimal Child context; never walk conversation state."""
+    """Serialize only the explicit semantic allowlist into the provider user message."""
+    grounding = context.reader_grounding
     lines = [
-        "【父子关系】",
-        f"当前解释深度：{depth}/{max_depth}",
-        f"直接父层主题：{parent_label}",
+        "【当前解释焦点（用户所选）】",
+        context.current_focus,
         "",
-        "【来源脉络】",
-        f"最初来源类型：{source_lineage['kind']}",
-        f"最初教材选区：{source_lineage['selected_text']}",
-        f"原始 PDF 页：{source_lineage['pdf_page_index'] + 1}",
+        "【直接上一轮】",
+        f"焦点或问题：{context.direct_previous_focus}",
+        f"完整讲解：{context.direct_previous_answer}",
         "",
-        "【当前相关 Reader 范围】",
-        f"范围类型：{scope.kind}",
+        "【解释路径（仅用于消歧）】",
+        " › ".join(context.concept_path),
+        f"这是对上一轮回答中『{context.current_focus}』的进一步解释。",
+        "",
+        "【Reader 教材依据（仅用于消歧和 grounding）】",
     ]
-    if scope.chapter_title:
-        lines.append(f"已安全确定的章标题：{scope.chapter_title}")
-    if scope.section_title:
-        lines.append(f"已安全确定的节标题：{scope.section_title}")
-    printed_label = reference_context.get("printed_page_label")
-    if printed_label:
-        lines.append(f"已知印刷页码：{printed_label}")
+    readable_scope = " › ".join(filter(None, (
+        grounding.chapter_title,
+        grounding.section_title,
+    )))
+    if readable_scope:
+        lines.append(f"Reader 范围：{readable_scope}")
+    lines.append(f"PDF 页码：{grounding.pdf_page_number}")
+    if grounding.printed_page_label:
+        lines.append(f"印刷页码：{grounding.printed_page_label}")
     lines.extend([
         "",
-        "【最小必要引用语境：同一 PDF 页的有界 OCR】",
-        reference_context.get("same_page_ocr_context", ""),
-        "",
-        "【触发再问一层的完整父回合】",
-        f"用户：{triggering_question}",
-        f"助手：{triggering_answer}",
-        "",
-        "【当前回答选区】",
-        f"字符范围：{selected_range['start']}..{selected_range['end']}",
-        selected_text,
+        "【同一 PDF 页的有界 OCR 语境】",
+        grounding.bounded_same_page_ocr,
     ])
     return "\n".join(lines)
