@@ -14,6 +14,7 @@
 | Reconciliation | Completed 2026-09-03 (Transition Plan step 5). Evidence-driven changes are marked **`[E]`** inline; §29 records every disposition; §30 is the candidate port matrix. |
 | Semantic closure | Completed 2026-09-03, following `LEGACY_PRODUCT_SEMANTICS_DELTA_AUDIT.md` and independent ZCode review. Assistant recursion (§14.3–§14.11), Master Topic/mastery authority (§15.5–§15.7), Review rework/terminal-failure (§13.7a–§13.7b), Section/Chapter isolation (§17.5–§17.6), and foundation-version staleness scoping (§19.2a) realize the corresponding `PRODUCT_BLUEPRINT.md` freezes. §32 records disposition of every P0/P1 audit finding — none remains unresolved. |
 | Outline conceptual correction | Same-day follow-up, 2026-09-03. A second ZCode pass found a new blocking issue (P1-5) in the closure patch's Outline fix; a product-intent clarification then established that logical directory structure and physical range resolution had been conflated. §9 (Product) and §11, §12.2/§12.6, §18.2, §19.1–§19.2b (Implementation) are rewritten accordingly; `OutlineRegion` is removed. See §32.1. |
+| Chapter Knowledge Map UAT correction | User-approved amendment, 2026-09-07, after real-use `empty_response`/latency failure and external KP research review. §12.2 makes private generation and retry Section-scoped while retaining Chapter-level Review/validation/atomic publication; §12.4 removes deterministic no-overlap and assigns overlap/duplicate judgment to structural Review; §22 requires safe per-attempt diagnostics and minimum Section progress. Durable replacement identity and availability/attempt separation are explicitly required before Mastery or first regeneration, but are not authorized as part of this UAT rework. |
 | Authorizes | **Gate D: CLOSED (PASS).** This document is now engineering authority for 408 Guided Reader — where it and `PRODUCT_BLUEPRINT.md` disagree, the Product Blueprint still wins. **Gate E (code porting / implementation) is a separate, still-unopened authorization** — this closure does not itself authorize writing, porting, or installing anything. |
 
 ### 0.1 Why the clean-room, and what happens next
@@ -1021,15 +1022,42 @@ fully available for it (§14, §20).
 
 ```
 Chapter content assembly (outline range → OCR lines, regions, exam evidence)
-   → KP draft generation            [AgentRuntime, internal pipeline role]
+   → private Section-scoped KP draft generation/retry
+                                      [AgentRuntime, internal pipeline role]
+   → assemble one private Chapter candidate set
    → deterministic range resolution  (draft KP ranges → concrete page/y, from OCR geometry)
-   → independent structural review   [AgentRuntime, different context; different provider preferred]
+   → independent Chapter-level structural review
+                                      [AgentRuntime, different context; different provider preferred]
    → deterministic validation        (see 12.4)
-   → atomic publish                  (stable IDs assigned here)
+   → atomic Chapter publish           (stable IDs assigned here)
 ```
 
 Range resolution is **deterministic and not a model output**: the generator identifies boundaries by
 referencing content; the resolver converts those to geometry. A model never emits coordinates.
+
+Generation input and transport retry are scoped to one existing primary Section at a time. A
+Section call receives only the Chapter identity/provenance needed to enforce ownership, that
+Section's existing Outline projection, and its bounded source evidence. A transient or structured-
+output failure retries that Section call; it does not resend already-successful sibling Section
+payloads during the same in-process attempt. Section candidates remain private and disposable. If
+any required Section fails, the whole Chapter attempt fails and **no** Section candidate becomes a
+published or user-visible partial map.
+
+After every required Section has produced a valid private candidate set, the structural reviewer
+receives the **whole Chapter candidate map collectively**, grouped by the real Section structure,
+together with bounded source evidence and generation provenance. It reviews at least:
+
+- independently trackable granularity and split/merge quality;
+- coverage of the Chapter's major learnable content;
+- semantic duplicates and unjustified near-duplicates;
+- subject-specific instructional value rather than generic reasoning/test-taking labels;
+- source faithfulness, range sufficiency and correct primary Section ownership;
+- map-level balance across Sections.
+
+Overlap is supplied as a deterministic review/warning signal where present; it is not itself a
+publication failure. Chapter-level Review, final deterministic validation and atomic publication
+remain mandatory. The UI may expose only stage/progress metadata before publication — never titles,
+definitions, ranges or any other partial candidate content.
 
 The KP generator and structural reviewer are **internal pipeline roles, not user-facing Product
 Agents** (§13.2) — an important boundary the Product Blueprint draws explicitly (§16).
@@ -1040,6 +1068,11 @@ Draft KPs carry pipeline-local keys only. **Stable `knowledge_point_id`s are min
 transaction.** Nothing outside the pipeline can reference a draft. This makes a failed or abandoned
 preparation garbage rather than debris, and makes "partial draft masquerading as READY" (§14)
 structurally impossible.
+
+For the first publication, every published KP is a new concept and receives a new opaque ID. For a
+future replacement publication, §12.4a supersedes "minted" where continuity is established: the
+publish transaction reuses a reconciled prior ID and mints only genuinely new concepts. That future
+path remains unavailable until all §12.4a prerequisites are implemented.
 
 ### 12.4 Entity and deterministic validation
 
@@ -1054,13 +1087,38 @@ KnowledgePoint
 Validation gates publication:
 
 - every KP has exactly one primary section, and its range lies within that section;
-- ranges are continuous and monotonic; siblings do not overlap;
+- each range is continuous and monotonic;
 - KP count and granularity are plausible for the chapter's extent (a chapter yielding one KP, or two
   hundred, is a pipeline failure, not a result);
 - excluded node kinds (exercises, answers) produced no KPs.
 
+> **User-approved correction, 2026-09-07.** KP source ranges are evidence mappings, not a partition
+> of Chapter text. Two independently trackable KPs may legitimately share source evidence, while
+> connective prose may legitimately belong to no KP. Deterministic validation therefore requires
+> neither zero overlap nor zero gaps. It emits overlap metadata for the Chapter-level structural
+> reviewer, which judges whether the overlap signals a semantic duplicate, an unjustified split, or
+> legitimate shared evidence. Exact duplicate candidate identity/semantic keys remain invalid;
+> semantic near-duplicates remain a Review concern.
+
 **Cross-section relations** (prerequisite, bridge, related) are a separate association table. They
 never affect primary ownership, which is what mastery depends on (§12).
+
+### 12.4a Replacement boundary — `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`
+
+The first published map may use §12.3's opaque IDs exactly as specified. Before any `READY` map can
+be regenerated, or before Mastery/Learning state may reference its KPs, authority and implementation
+must additionally provide both of the following:
+
+1. replacement identity reconciliation: an equivalent concept reuses its durable opaque
+   `knowledge_point_id`, a genuinely new concept receives a new ID only in the publication
+   transaction, and an ambiguous match/split/merge blocks V1 publication rather than guessing;
+2. published availability independent of prepare-attempt lifecycle, so `READY(vN)` remains visible
+   while replacement `vN+1` is running or failed and changes only by an atomic current-version
+   pointer switch.
+
+This amendment records a required boundary; it does **not** authorize either capability in the
+current Chapter-first-publication UAT rework. Until both exist, a `READY` Chapter is not regenerable
+and no Learning/Mastery state may be introduced for it.
 
 ### 12.5 Structural protection — `FROZEN_FROM_PRODUCT` (§15)
 
@@ -1073,7 +1131,10 @@ where durable assets are KP progress, KP-linked Master threads, and KP-linked an
 never re-derived from geometry, and its absence on an otherwise-unrelated annotation simply means that
 annotation doesn't count toward the lock.
 
-- **Unlocked** → regenerate freely; the previous structure version is replaced.
+- **Unlocked** → before first publication, retry/regenerate disposable private candidates freely.
+  After a map is `READY`, regeneration remains unavailable until §12.4a's identity-reconciliation
+  and availability/attempt prerequisites exist; once they do, an unlocked Chapter may use that
+  guarded replacement path.
 - **Locked** → destructive republication is **refused**. No silent merge, split or re-ID.
 
 Post-progress structure upgrade is `DEFERRED_WITH_BOUNDARY`. The boundary that future migration will
@@ -2088,6 +2149,18 @@ without reading code.
 
 **Provider invocation records:** role, provider, model, latency, token usage, outcome, retry count,
 failure classification — **metadata only, not payloads**. Retained with a bounded window.
+
+For Chapter Knowledge preparation, the retained record is per Section generation attempt and must
+also include: Chapter/Section IDs, pipeline stage, logical attempt number, start/end time,
+`finish_reason` when supplied, response-content presence/length, reasoning-content presence/length
+when supplied, and typed failure code. Reasoning/content bodies are not observability metadata and
+must not be retained through this path. A terminal `empty_response` must remain diagnosable after the
+call completes; it cannot collapse to only one Chapter-level failure code with no per-attempt facts.
+
+**Minimum Chapter progress:** while private Section generation is running, the Reader may show the
+current stage and completed/total Section count (and retry attempt where useful). Progress contains
+no candidate KP content and confers no readiness. Restart may honestly restart disposable private
+work, but must not leave a dead process looking like live, indefinitely unchanging preparation.
 
 **Version stamping:** every generated artifact and every log line about one carries the relevant
 version IDs (§19.1). Without this, staleness bugs are undebuggable.

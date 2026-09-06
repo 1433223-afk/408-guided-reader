@@ -2,7 +2,20 @@
 
 ## Result
 
-`IMPLEMENTATION_READY`
+`PHASE_STATUS: UAT_REWORK_REQUIRED`
+
+`USER_ACCEPTANCE: FAIL (2026-09-07)`
+
+The implementation checkpoint remains valid historical engineering evidence, but its
+`IMPLEMENTATION_READY` / `READY_FOR_USER_RETEST` conclusion is superseded. Real user preparation
+took approximately eight minutes and ended at `GENERATION / TRANSIENT / empty_response`; another
+Chapter was left `PREPARING` when the service process ended. The user then approved a docs-only UAT
+authority correction in the Phase brief and `IMPLEMENTATION_BLUEPRINT.md` §12.2, §12.4 and §22.
+
+Required implementation rework is now: private Section-scoped generation/retry; Chapter-level
+structural Review with duplicate, instructional-specificity, split/merge and map-balance checks;
+overlap as a Review signal rather than deterministic failure; and safe per-attempt diagnostics plus
+minimum Section progress. No product code for that correction is included in this report update.
 
 The Reader can prepare one requested Chapter on demand, show honest Simplified Chinese
 `NOT_PREPARED` / `PREPARING` / `READY` / `FAILED` states, publish one complete Knowledge Map only
@@ -10,8 +23,9 @@ after deterministic validation and structural Review, group the durable KPs by t
 primary Section, and navigate each KP back to its real PDF source range. Failure and retry remain
 Chapter-local and do not block reading or the existing Reader tools.
 
-This report does not claim `USER_ACCEPTANCE: PASS` and does not close the Phase. User retest and the
-required narrow independent review remain pending.
+The Phase remains open. A fresh targeted → real-use golden path → affected → closure sequence and the
+required narrow independent review remain pending after implementation rework. Nothing here claims
+`USER_ACCEPTANCE: PASS`.
 
 ## Implemented
 
@@ -46,19 +60,34 @@ required narrow independent review remain pending.
 - Generator and reviewer receive independent calls and fresh contexts. A different configured
   route is supported and preferred; an actual same-provider clean-context route is recorded
   honestly when used.
-- KP structured generation and structural Review use per-call `max_tokens=12288`. Real runs showed
-  that the provider reasoning channel could consume the prior 4096 budget and return an empty
-  response. The override is bounded to these two KP calls; ordinary Assistant calls retain their
-  configured defaults, verified at the transport and effective-config boundaries.
+- KP structured generation and structural Review use per-call `max_tokens=12288`. Earlier evidence
+  suggested that provider reasoning could consume the prior 4096 budget, but the user UAT produced
+  `empty_response` at 12288 as well. The adapter did not retain `finish_reason`, reasoning-content
+  presence/length, usage or per-attempt latency, so reasoning-budget exhaustion is no longer treated
+  as an established root cause. The override remains bounded to KP calls; ordinary Assistant calls
+  retain their configured defaults.
 - Local payload inspection is bounded process memory and secret-free. It exists to prove the final
   generation/Review allowlists and is not a second durable draft store.
 
 ## Deviations from Spec
 
-None. No external code, dependency, new job framework, storage technology, Learning/Mastery/Master/
-Teaching/ExamEvidence write, sibling-Chapter preparation or whole-book physical pass was added.
+The implementation matched the original accepted brief, but no longer matches the user-approved UAT
+authority correction dated 2026-09-07:
+
+- generation is still one monolithic Chapter request instead of private Section-scoped calls;
+- structural Review lacks explicit duplicate, instructional-specificity, split/merge-quality and
+  map-level-balance criteria;
+- deterministic validation and the generator prompt still reject all range overlap;
+- failure records do not retain enough safe per-attempt metadata to diagnose `empty_response`, and
+  the Reader exposes no Section/stage progress.
+
+The correction adds no external code/dependency, new job framework/storage, Learning/Mastery/Master/
+Teaching/ExamEvidence write, sibling-Chapter preparation or whole-book physical pass.
 
 ## Acceptance evidence
+
+The following is historical evidence for implementation checkpoint `89f3f67`; it is not current UAT
+PASS evidence and must be rerun after the approved correction.
 
 Evidence was executed in the required order: TARGETED → AGENT REAL-USE GOLDEN PATH → AFFECTED
 REGRESSION → CLOSURE / BROAD.
@@ -107,11 +136,42 @@ REGRESSION → CLOSURE / BROAD.
   same served UI controls on the 348-page book, while the direct Map and AI_SAVED served regressions
   plus the broad Python suite covered their changed persistence/provider risk surfaces.
 
-Overall agent evidence: `AGENT_REAL_USE_PASS`, `READY_FOR_USER_RETEST`, and
-`READY_FOR_NARROW_INDEPENDENT_REVIEW`.
+At implementation checkpoint `89f3f67`, agent evidence was `AGENT_REAL_USE_PASS`,
+`READY_FOR_USER_RETEST`, and `READY_FOR_NARROW_INDEPENDENT_REVIEW`. User UAT subsequently failed, so
+those readiness labels are superseded and cannot be carried into the corrected implementation.
+
+### User UAT failure and Research Delta (2026-09-07)
+
+- Real Chapter 6 (`[292, 309)`) used 281 OCR lines and 7,699 textbook-text characters. Its canonical
+  generator user payload was 47,287 characters / 60,760 UTF-8 bytes; including the system prompt,
+  the request messages were 61,751 bytes.
+- Production-default `deepseek / deepseek-v4-pro` ran from
+  `2026-09-06T22:43:32.137272Z` to `2026-09-06T22:51:31.920693Z` and ended
+  `GENERATION / TRANSIENT / empty_response`. No KP or structure version was published.
+- Real Chapter 1 (`[12, 36)`) has 494 OCR lines and 13,270 textbook-text characters; its canonical
+  generator payload is 80,032 characters / 102,780 UTF-8 bytes, or 103,771 request-message bytes.
+  The service process ended while this job was `RUNNING`, leaving the Chapter `PREPARING`; restart
+  recovery correctly reclaimed it but repeated the same monolithic provider request.
+- The adapter proves only that the final provider response was syntactically readable and
+  `choices[0].message.content` was blank. It discarded the other metadata needed to identify the
+  provider-side cause. Whole-Chapter transport retry amplified that opaque failure up to three full
+  calls. The two structured-output attempts are reached only after a non-empty response fails schema;
+  they did not cause this blank-content retry sequence.
+- The earlier successful external acceptance explicitly selected
+  `zhipu / GLM-5.3-Flash`; it did not validate the production-default DeepSeek generator route used
+  by the user.
+- External KP research was evaluated as evidence only. Existing one-Chapter scope, Outline logical
+  identity protection, target-only physical resolution, private draft identity, opaque first-
+  publication IDs, Chapter-atomic visibility, Section-grouped UI, source navigation and zero
+  Learning/Mastery writes remain `KEEP`.
 
 ## Known limitations / deferred debt
 
+- `BLOCKING_NOW`: implement and re-accept the four UAT authority corrections recorded above.
+- `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: same-concept ID reuse/new-concept mint with
+  ambiguous split/merge blocking; and published availability separated from replacement-attempt
+  lifecycle. They are recorded boundaries, not current UAT-rework implementation scope. Until then,
+  a READY map remains non-regenerable and no Learning/Mastery state may be introduced.
 - External provider availability remains variable. Typed transport/empty-response failures are
   visible and safely retryable; they do not weaken the publication gate. No additional provider
   fallback was invented.
@@ -156,3 +216,6 @@ credential. Neither runner mutates the source acceptance Library.
 ## Git checkpoint
 
 Implementation checkpoint: `89f3f67e536dba5e00733a12b5796684bf8fbdc7`.
+
+UAT authority-correction checkpoint: the docs-only commit containing this updated report; its exact
+hash is recorded in the handoff.

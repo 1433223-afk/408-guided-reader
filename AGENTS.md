@@ -274,9 +274,10 @@ chat.
 
 Both blueprints are frozen at Gate D (2026-09-03). Since then the Frozen Core has changed only by
 user-approved amendments recorded in the blueprints themselves (Implementation §14.8 per Ask Deeper
-decision D1; Decision Register A-19 for the Markdown/math/sanitizer libraries). One Frozen-level
-sync still awaits the user: `IMPLEMENTATION_BLUEPRINT.md` §26 carries the D-4/D-5 rows already
-resolved in `ASK_ABOUT_THIS.md`.
+decision D1; Decision Register A-19 for the Markdown/math/sanitizer libraries; Implementation
+§12.2/§12.4/§22 for the First Chapter Knowledge Map UAT correction accepted 2026-09-07). One
+Frozen-level sync still awaits the user: `IMPLEMENTATION_BLUEPRINT.md` §26 carries the D-4/D-5 rows
+already resolved in `ASK_ABOUT_THIS.md`.
 
 Per-Phase status — open, closed, rework, pending user decisions — lives in the
 [`docs/phases/README.md`](docs/phases/README.md) index. Phase-specific authority, decisions and
