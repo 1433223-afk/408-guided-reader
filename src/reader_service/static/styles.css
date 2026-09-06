@@ -316,18 +316,31 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .assistant-turn { margin-bottom: 14px; }
 .assistant-question-bubble { margin: 0 0 7px 36px; padding: 8px 10px; color: #382f22; background: #ead9b8; border-radius: 9px 9px 2px 9px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
 .assistant-answer-bubble { margin: 0 24px 0 0; padding: 11px 12px; color: #3f3a32; background: #fff; border: 1px solid #ded6c7; border-radius: 2px 9px 9px; font: 13px/1.65 Georgia, "Microsoft YaHei", serif; user-select: text; }
-.reader.assistant-expanded .assistant-turns,
+.reader.assistant-expanded .assistant-heading,
+.reader.assistant-expanded .assistant-context-bar {
+  width: min(100%, 70rem); margin-inline: auto;
+}
+.reader.assistant-expanded .assistant-context-bar {
+  grid-template-columns: auto minmax(12rem, 32rem) auto auto; justify-content: center;
+}
+.reader.assistant-expanded .assistant-breadcrumb,
+.reader.assistant-expanded .assistant-children,
+.reader.assistant-expanded .assistant-scope,
+.reader.assistant-expanded .assistant-turns {
+  width: min(100%, 56rem); margin-inline: auto;
+}
 .reader.assistant-expanded .assistant-first-turn,
 .reader.assistant-expanded .assistant-empty,
 .reader.assistant-expanded .assistant-follow-up,
 .reader.assistant-expanded .assistant-lifetime {
-  width: min(100%, 56rem); margin-inline: auto;
+  width: min(calc(100% - 2rem), 46rem); margin-inline: auto;
 }
 .reader.assistant-expanded .assistant-answer-bubble {
-  width: fit-content; max-width: 100%; margin-right: auto;
+  width: fit-content; max-width: min(82%, 46rem); margin-right: auto;
+  padding: 5px 2px 12px; background: transparent; border: 0; border-radius: 0;
 }
 .reader.assistant-expanded .assistant-question-bubble {
-  width: fit-content; max-width: min(76%, 40rem); margin-right: 0; margin-left: auto;
+  width: fit-content; max-width: min(48%, 28rem); margin-right: 0; margin-left: auto;
 }
 .assistant-answer-bubble > :first-child { margin-top: 0; }
 .assistant-answer-bubble > :last-child { margin-bottom: 0; }

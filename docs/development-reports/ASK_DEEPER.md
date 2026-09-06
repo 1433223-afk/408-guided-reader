@@ -185,25 +185,32 @@ provider:
 
 Visual evidence: `test-results/ask-deeper-stage-d-golden.png`.
 
-## Post-Stage-D expanded-layout UAT delta
+## Post-Stage-D expanded-layout UAT deltas
 
-The user's near-final retest found that expanded mode correctly enlarged the workspace but also let
-ordinary message cards and the composer grow across an approximately 1920 px viewport. The fix
-applies only while expanded: the workspace header, model controls, context bar, and breadcrumb still
-use the application width, while turns, draft/empty state, composer, and lifetime note share a
-responsive centered reading column capped at `56rem`. Assistant and user bubbles use intrinsic width
-within that column, so short messages remain compact and long prose stays at a comfortable Chinese
-line length. Code, tables, and block math retain local horizontal overflow rather than widening
-ordinary prose. Normal Dock selectors and widths are unchanged.
+The user's first near-final retest found that expanded mode correctly enlarged the workspace but also
+let ordinary message cards and the composer grow across an approximately 1920 px viewport. Capping a
+centered conversation lane at `56rem` fixed the viewport-wide layout, but the next retest correctly
+identified that the Assistant card still occupied virtually the entire lane and retained a
+document-card appearance.
+
+The follow-up fix remains expanded-only. The user bubble is intrinsically sized, right aligned, and
+capped at 48% of the lane. The Assistant explanation is left aligned, capped at 82%, and loses the
+large white background/border in favour of natural reading text; long answers still wrap at a
+comfortable Chinese line length. The composer uses the same 46rem reading width as the Assistant
+content. Header/context controls are separately capped, and the topic selector is capped at 32rem
+instead of stretching with the workspace. Code, tables, and block math retain local horizontal
+overflow rather than widening ordinary prose. Normal Dock selectors and presentation are unchanged.
 
 `tests-e2e/assistant-workspace.mjs` was rerun at a real 1920×1080 Chromium viewport against the real
-348-page textbook and deterministic loopback provider: **PASS**. Normal Dock content remained 573 px;
-expanded workspace/header measured 1920/1884 px, while the centered conversation and composer both
-measured 896 px, the long answer 893 px, and the short user bubble 92 px. Markdown/math, rendered
-selection to Child, two-level depth, Back, breadcrumb, siblings, historical reopen, Child-subtree
-close, Root switching, scroll, provider payload isolation, and exit width/state restoration all
-remained green. External provider calls: zero. Visual evidence:
-`test-results/ask-deeper-expanded-readable.png` (expanded) and
+348-page textbook and deterministic loopback provider: **PASS**. Expanded workspace/lane measured
+1920/896 px; the long Assistant answer measured 732 px, the short user bubble 92 px, and the centered
+composer 736 px. Header/topic controls measured 1120/512 px. A deliberately oversized code line had
+a 728 px viewport and 1540 px scroll width, proving local overflow. The normal Dock remained 573 px
+with its existing card layout. Markdown/math, rendered selection to Child, two-level depth, Back,
+breadcrumb, siblings, historical reopen, Child-subtree close, Root switching, scroll, provider
+payload isolation, and exit width/state restoration all remained green. External provider calls:
+zero. The final screenshot was visually inspected, not accepted from measurements alone. Evidence:
+`test-results/ask-deeper-expanded-chat-layout.png` (expanded) and
 `test-results/ask-deeper-normal-dock.png` (normal comparison).
 
 ## Intentionally skipped extended tests

@@ -43,6 +43,10 @@ const provider = createServer(async (request, response) => {
       "",
       "\\[T=\\frac{1}{f}\\]",
       "",
+      "```text",
+      `clock_bus = ${"01".repeat(120)}`,
+      "```",
+      "",
       ...Array.from({ length: 12 }, (_, index) => `补充 ${index + 1}：同步部件只在约定节拍更新状态。`),
     ].join("\n");
   }
@@ -222,15 +226,24 @@ try {
   assert.ok(expanded.panelWidth >= VIEWPORT_WIDTH - 2);
   assert.equal(providerCalls.length, callsBeforeExpanded);
   const expandedLayout = await conversationMetrics(page);
-  assert.ok(expandedLayout.headerWidth > 1600);
+  assert.ok(expandedLayout.headerWidth >= 1000 && expandedLayout.headerWidth <= 1120);
+  assert.ok(expandedLayout.rootSwitcherWidth <= 512);
   assert.ok(expandedLayout.turnsWidth <= 900);
-  assert.ok(expandedLayout.answerWidth <= expandedLayout.turnsWidth);
-  assert.ok(expandedLayout.questionWidth < expandedLayout.turnsWidth * 0.8);
+  assert.ok(expandedLayout.answerWidth > expandedLayout.questionWidth);
+  assert.ok(expandedLayout.answerWidth <= expandedLayout.turnsWidth * 0.83);
+  assert.ok(expandedLayout.answerWidth >= expandedLayout.turnsWidth * 0.75);
+  assert.ok(expandedLayout.questionWidth <= expandedLayout.turnsWidth * 0.5);
+  assert.ok(Math.abs(expandedLayout.answerLeft - expandedLayout.turnsLeft) <= 2);
+  assert.ok(Math.abs(expandedLayout.questionRight - expandedLayout.turnsRight) <= 6);
   assert.ok(Math.abs(expandedLayout.turnsCenter - VIEWPORT_WIDTH / 2) <= 2);
   assert.ok(Math.abs(expandedLayout.composerCenter - expandedLayout.turnsCenter) <= 2);
-  assert.ok(Math.abs(expandedLayout.composerWidth - expandedLayout.turnsWidth) <= 2);
+  assert.ok(expandedLayout.composerWidth <= expandedLayout.turnsWidth * 0.83);
+  assert.ok(expandedLayout.composerWidth >= expandedLayout.turnsWidth * 0.75);
   assert.equal(await page.locator(".assistant-math-block .katex").count(), 1);
-  const screenshot = path.join(process.cwd(), "test-results", "ask-deeper-expanded-readable.png");
+  assert.equal(expandedLayout.answerHasCardChrome, false);
+  assert.equal(expandedLayout.codeOverflow, "auto");
+  assert.ok(expandedLayout.codeScrollWidth > expandedLayout.codeClientWidth);
+  const screenshot = path.join(process.cwd(), "test-results", "ask-deeper-expanded-chat-layout.png");
   await mkdir(path.dirname(screenshot), { recursive: true });
   await page.screenshot({ path: screenshot });
   await page.locator("#assistant-expand").click();
@@ -326,14 +339,28 @@ async function conversationMetrics(page) {
     const answer = rect('.assistant-answer-bubble[data-current-answer="true"]');
     const question = rect(".assistant-question-bubble");
     const composer = rect("#assistant-follow-up");
+    const rootSwitcher = rect("#assistant-root-switcher");
+    const answerElement = document.querySelector('.assistant-answer-bubble[data-current-answer="true"]');
+    const answerStyle = getComputedStyle(answerElement);
+    const code = answerElement.querySelector("pre");
     return {
       headerWidth: header.width,
+      rootSwitcherWidth: rootSwitcher.width,
       turnsWidth: turns.width,
+      turnsLeft: turns.left,
+      turnsRight: turns.right,
       turnsCenter: turns.left + turns.width / 2,
       answerWidth: answer.width,
+      answerLeft: answer.left,
       questionWidth: question.width,
+      questionRight: question.right,
       composerWidth: composer.width,
       composerCenter: composer.left + composer.width / 2,
+      answerHasCardChrome: answerStyle.backgroundColor !== "rgba(0, 0, 0, 0)"
+        || answerStyle.borderTopWidth !== "0px",
+      codeOverflow: getComputedStyle(code).overflowX,
+      codeClientWidth: code.clientWidth,
+      codeScrollWidth: code.scrollWidth,
     };
   });
 }
