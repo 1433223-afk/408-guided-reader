@@ -84,6 +84,8 @@ try {
   const rootBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
   await rootBubble.waitFor();
   assert.equal(await rootBubble.locator("h2").textContent(), "时钟脉冲信号");
+  assert.equal(await rootBubble.locator("h2").isVisible(), false);
+  assert.equal(await page.locator("#assistant-title").isVisible(), false);
   assert.deepEqual(await rootBubble.locator("strong").allTextContents(), ["像乐队里的节拍器", "时钟周期"]);
   assert.equal(await rootBubble.locator("ul li").count(), 2);
   assert.equal(await rootBubble.locator(".assistant-math-block .katex").count(), 1);
@@ -120,8 +122,9 @@ try {
   const childState = (await (await childResponse).json()).assistant;
   const childId = childState.current.node_id;
   assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.equal(await page.locator("#assistant-root-switcher option:checked").textContent(), "时钟脉冲信号");
   assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
-    "时钟脉冲信号", "像乐队里的节拍器",
+    "像乐队里的节拍器",
   ]);
 
   assert.equal(await selectAssistantTextByMouse(page, "高低电平变化"), "高低电平变化");
@@ -133,7 +136,7 @@ try {
   const grandchildState = (await (await grandchildResponse).json()).assistant;
   const grandchildId = grandchildState.current.node_id;
   assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
-    "时钟脉冲信号", "像乐队里的节拍器", "高低电平变化",
+    "像乐队里的节拍器", "高低电平变化",
   ]);
 
   let focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
@@ -203,7 +206,7 @@ try {
   await page.locator("#assistant-root-switcher").selectOption(firstRootId);
   assert.equal((await (await focusResponse).json()).assistant.current.node_id, siblingId);
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-breadcrumb button").first().click();
+  await page.locator("#assistant-back").click();
   assert.equal((await (await focusResponse).json()).assistant.current.depth, 1);
 
   await dragDockToWidth(page, 610);
@@ -217,7 +220,13 @@ try {
   const callsBeforeExpanded = providerCalls.length;
   const normalLayout = await conversationMetrics(page);
   assert.ok(normalLayout.turnsWidth > 500);
-  const normalScreenshot = path.join(process.cwd(), "test-results", "ask-deeper-normal-dock.png");
+  assert.ok(normalLayout.answerWidth > normalLayout.questionWidth);
+  assert.ok(normalLayout.questionWidth <= normalLayout.turnsWidth * 0.82);
+  assert.ok(Math.abs(normalLayout.answerLeft - normalLayout.turnsLeft) <= 2);
+  assert.ok(Math.abs(normalLayout.questionRight - normalLayout.turnsRight) <= 6);
+  assert.equal(normalLayout.answerHasCardChrome, false);
+  assert.equal(normalLayout.visibleRepeatedHeadings, 0);
+  const normalScreenshot = path.join(process.cwd(), "test-results", "ask-deeper-normal-chat-layout.png");
   await mkdir(path.dirname(normalScreenshot), { recursive: true });
   await page.screenshot({ path: normalScreenshot });
   await page.locator("#assistant-expand").click();
@@ -226,8 +235,8 @@ try {
   assert.ok(expanded.panelWidth >= VIEWPORT_WIDTH - 2);
   assert.equal(providerCalls.length, callsBeforeExpanded);
   const expandedLayout = await conversationMetrics(page);
-  assert.ok(expandedLayout.headerWidth >= 1000 && expandedLayout.headerWidth <= 1120);
-  assert.ok(expandedLayout.rootSwitcherWidth <= 512);
+  assert.ok(expandedLayout.headerWidth >= 900 && expandedLayout.headerWidth <= 1000);
+  assert.ok(expandedLayout.rootSwitcherWidth <= 220);
   assert.ok(expandedLayout.turnsWidth <= 900);
   assert.ok(expandedLayout.answerWidth > expandedLayout.questionWidth);
   assert.ok(expandedLayout.answerWidth <= expandedLayout.turnsWidth * 0.83);
@@ -241,6 +250,7 @@ try {
   assert.ok(expandedLayout.composerWidth >= expandedLayout.turnsWidth * 0.75);
   assert.equal(await page.locator(".assistant-math-block .katex").count(), 1);
   assert.equal(expandedLayout.answerHasCardChrome, false);
+  assert.equal(expandedLayout.visibleRepeatedHeadings, 0);
   assert.equal(expandedLayout.codeOverflow, "auto");
   assert.ok(expandedLayout.codeScrollWidth > expandedLayout.codeClientWidth);
   const screenshot = path.join(process.cwd(), "test-results", "ask-deeper-expanded-chat-layout.png");
@@ -358,6 +368,8 @@ async function conversationMetrics(page) {
       composerCenter: composer.left + composer.width / 2,
       answerHasCardChrome: answerStyle.backgroundColor !== "rgba(0, 0, 0, 0)"
         || answerStyle.borderTopWidth !== "0px",
+      visibleRepeatedHeadings: Array.from(answerElement.querySelectorAll(".assistant-repeated-heading"))
+        .filter((element) => element.getClientRects().length > 0).length,
       codeOverflow: getComputedStyle(code).overflowX,
       codeClientWidth: code.clientWidth,
       codeScrollWidth: code.scrollWidth,

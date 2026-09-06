@@ -84,7 +84,9 @@
         <div id="assistant-resize-handle" class="assistant-resize-handle" role="separator" tabindex="0"
              aria-label="调整临时解释面板宽度" aria-orientation="vertical"></div>
         <div class="assistant-heading">
-          <div><span class="eyebrow">临时解释</span><strong id="assistant-title">问 AI</strong></div>
+          <div class="assistant-heading-title">
+            <span class="eyebrow">临时解释</span><strong id="assistant-title" class="sr-only">问 AI</strong>
+          </div>
           <div class="assistant-heading-actions">
             <div class="assistant-model-control">
               <label class="assistant-model" for="assistant-model">
@@ -103,13 +105,13 @@
           </div>
         </div>
         <div id="assistant-context-bar" class="assistant-context-bar" hidden>
-          <label for="assistant-root-switcher">解释主题</label>
+          <button id="assistant-back" type="button" aria-label="返回上一层解释">← 上一层</button>
+          <label class="sr-only" for="assistant-root-switcher">切换解释主题</label>
           <select id="assistant-root-switcher" aria-label="切换保留的解释主题"></select>
-          <button id="assistant-back" type="button">← 上一层</button>
+          <nav id="assistant-breadcrumb" class="assistant-breadcrumb" aria-label="解释层级路径" hidden></nav>
           <output id="assistant-depth" aria-label="当前解释深度">1/5</output>
           <button id="assistant-close-root" type="button">关闭此主题</button>
         </div>
-        <nav id="assistant-breadcrumb" class="assistant-breadcrumb" aria-label="解释层级路径" hidden></nav>
         <section id="assistant-children" class="assistant-children" aria-label="已展开的解释" hidden>
           <span>已展开</span>
           <div id="assistant-child-list" class="assistant-child-list"></div>

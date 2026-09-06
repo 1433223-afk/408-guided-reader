@@ -1267,15 +1267,15 @@ function renderAssistantNavigation(current) {
   elements["assistant-close-root"].disabled = !current;
   elements["assistant-close-root"].textContent = current?.depth > 1
     ? "关闭本层解释" : "关闭此主题";
-  const crumbs = (current?.breadcrumb || []).flatMap((crumb, index) => {
+  const semanticPath = (current?.breadcrumb || []).slice(1);
+  const crumbs = semanticPath.flatMap((crumb, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = crumb.label;
     button.title = crumb.label;
     button.dataset.rootId = crumb.root_id;
     button.dataset.nodeId = crumb.node_id || "";
-    button.disabled = index === current.breadcrumb.length - 1;
-    if (index === 0) return [button];
+    button.disabled = index === semanticPath.length - 1;
     const separator = document.createElement("span");
     separator.textContent = "›";
     separator.setAttribute("aria-hidden", "true");
@@ -1328,6 +1328,11 @@ function renderAssistantWorkspace() {
     const answer = document.createElement("div");
     answer.className = "assistant-answer-bubble";
     renderAssistantAnswer(answer, turn.answer);
+    const leadingHeading = answer.firstElementChild;
+    if (leadingHeading?.matches("h1, h2, h3")
+        && leadingHeading.textContent.trim() === turn.question.trim()) {
+      leadingHeading.classList.add("assistant-repeated-heading");
+    }
     if (index === current.turns.length - 1) {
       answer.dataset.rootId = current.root_id;
       answer.dataset.nodeId = current.node_id || "";

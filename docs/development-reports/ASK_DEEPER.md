@@ -185,7 +185,7 @@ provider:
 
 Visual evidence: `test-results/ask-deeper-stage-d-golden.png`.
 
-## Post-Stage-D expanded-layout UAT deltas
+## Post-Stage-D conversation-layout UAT deltas
 
 The user's first near-final retest found that expanded mode correctly enlarged the workspace but also
 let ordinary message cards and the composer grow across an approximately 1920 px viewport. Capping a
@@ -193,25 +193,36 @@ centered conversation lane at `56rem` fixed the viewport-wide layout, but the ne
 identified that the Assistant card still occupied virtually the entire lane and retained a
 document-card appearance.
 
-The follow-up fix remains expanded-only. The user bubble is intrinsically sized, right aligned, and
-capped at 48% of the lane. The Assistant explanation is left aligned, capped at 82%, and loses the
-large white background/border in favour of natural reading text; long answers still wrap at a
-comfortable Chinese line length. The composer uses the same 46rem reading width as the Assistant
-content. Header/context controls are separately capped, and the topic selector is capped at 32rem
-instead of stretching with the workspace. Code, tables, and block math retain local horizontal
-overflow rather than widening ordinary prose. Normal Dock selectors and presentation are unchanged.
+The next real-user retest found the remaining hierarchy issue: the normal Dock still rendered a
+short user message as a yellow full-row strip, while both modes repeated the same topic in a large
+heading, selector, answer heading, and user turn. The final narrow delta therefore applies the chat
+hierarchy to both modes. User turns are intrinsically sized and right aligned; Assistant explanations
+are wider, left aligned natural reading surfaces without the large white card. Expanded mode retains
+the stricter 48%/82% maxima and 46rem composer. The leading rendered Markdown heading is hidden only
+when its normalized visible text exactly equals that turn's question; the stored raw answer and
+source mapping are unchanged.
+
+The header now uses two compact levels: a low-weight Assistant identity/model row, then one semantic
+navigation row. The Root selector is the first path segment and Child breadcrumb segments continue
+after it, so Root switching and the semantic path remain without repeating the Root label in a
+separate large title. Depth and the existing close action remain in that row at low visual weight;
+no previous/next/forward navigation was added. Expanded mode uses an opaque focus surface, so its
+intentional whitespace no longer exposes a ghosted PDF underneath. Code, tables, and block math keep
+local horizontal overflow rather than widening ordinary prose.
 
 `tests-e2e/assistant-workspace.mjs` was rerun at a real 1920×1080 Chromium viewport against the real
 348-page textbook and deterministic loopback provider: **PASS**. Expanded workspace/lane measured
 1920/896 px; the long Assistant answer measured 732 px, the short user bubble 92 px, and the centered
-composer 736 px. Header/topic controls measured 1120/512 px. A deliberately oversized code line had
-a 728 px viewport and 1540 px scroll width, proving local overflow. The normal Dock remained 573 px
-with its existing card layout. Markdown/math, rendered selection to Child, two-level depth, Back,
-breadcrumb, siblings, historical reopen, Child-subtree close, Root switching, scroll, provider
-payload isolation, and exit width/state restoration all remained green. External provider calls:
-zero. The final screenshot was visually inspected, not accepted from measurements alone. Evidence:
-`test-results/ask-deeper-expanded-chat-layout.png` (expanded) and
-`test-results/ask-deeper-normal-dock.png` (normal comparison).
+composer 736 px. Header/topic controls measured 992/220 px. In the 573 px normal Dock, the same short
+user bubble measured 92 px while the Assistant reading surface measured 536 px. A deliberately
+oversized code line had a 726 px viewport and 1540 px scroll width, proving local overflow.
+Markdown/math, rendered selection to Child, two-level depth, Back, breadcrumb, siblings, historical
+reopen, Child-subtree close, Root switching, scroll, provider payload isolation, and exit width/state
+restoration all remained green. External provider calls: zero. Both final screenshots were visually
+inspected for repetition, control density, conversation axis, card weight, and intentional whitespace
+rather than accepted from measurements alone. Evidence:
+`test-results/ask-deeper-normal-chat-layout.png` (normal Dock) and
+`test-results/ask-deeper-expanded-chat-layout.png` (expanded).
 
 ## Intentionally skipped extended tests
 
