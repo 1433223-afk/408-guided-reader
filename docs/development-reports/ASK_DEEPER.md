@@ -4,240 +4,220 @@
 
 `IMPLEMENTATION_READY`
 
+`AGENT_REAL_USE_PASS`
+
 `READY_FOR_USER_RETEST`
 
-`REVIEW_REQUIRED: NO`
+`READY_FOR_NARROW_INDEPENDENT_REVIEW`
 
-The Reader Assistant is now a memory-only explanation workspace. Every non-Assistant Reader
-selection creates a retained topic at depth 1; selecting text in the current Assistant answer can
-create one deeper explanation at a time, up to depth 5. Users can continue at the same level, return
-to a parent, switch retained topics, see the current `n/5` depth, and close exactly one topic and all
-of its descendants. Closing/reopening the Reader or restarting the service clears all Assistant
-trees.
+`REVIEW_REQUIRED: YES`
 
-The first user retest exposed a pre-send readiness failure when the Core Service was running under a
-Windows identity that could not see the user's Credential Manager entries. The draft was valid, but
-Send was a silent disabled button. The Reader now evaluates readiness from the currently selected
-provider's live status, refreshes status when a draft is created or its model changes, sets the real
-ARIA disabled state, and shows the exact selected-provider configuration, credential, development,
-or cooling reason whenever Send must remain unavailable.
+This report records the completed Ask Deeper UAT rework through Stage D. It does not claim
+`USER_ACCEPTANCE PASS` or close the Phase. The user still owns real-use acceptance; after that pass,
+the required independent review remains narrowly scoped to context projection/transport canaries,
+Child-subtree lifecycle, sanitizer security, and rendered-selection/raw mapping.
 
-This report does not claim user acceptance. No independent review was run because no review
-escalation condition fired.
+## Why the original user acceptance failed
 
-## Implemented
+The first implementation passed presence/absence tests but inverted model-visible priority. A Child
+request began with `【父子关系】` plus depth, internal source enum, and character offsets, while the
+actual selected `CURRENT FOCUS` appeared last. The system/Skill wording did not define that focus as
+the sole explanation object for every selection-triggered explanation. In the real golden path the
+user selected `像乐队里的节拍器`, but the model explained `父子关系`. This was prompt
+contamination and contract failure, not provider quality.
 
-- Replaced the single-conversation memory model with `ReaderAssistantState`, `AssistantRoot`, and
-  `AssistantNode`. Roots own scope, source lineage, provider/model, depth-1 turns, focus, and their
-  node collection; nodes own a parent reference, structural depth 2–5, same-level turns, and one
-  active-child reference.
-- Added the single depth-increasing `create_child` transition. It validates the focused parent,
-  latest answer turn, selected character range, depth limit, and active/pending Child before any
-  provider call. A per-session lock makes the pending-child reservation atomic, so concurrent calls
-  have one winner and one typed rejection.
-- Added typed selection-source routing. `ORIGINAL_PDF` creates a new Root even in an existing scope;
-  `ASSISTANT_ANSWER` is structurally rejected by the Root endpoint and can proceed only through
-  `create_child`.
-- Added a dedicated Child context assembler containing only the current answer selection and range,
-  complete triggering parent turn, originating Reader lineage, current Root scope, bounded same-page
-  OCR reference context, parent/child relationship, and depth. It never traverses the Root tree or
-  reads other Roots, scope history, notes, highlights, or learning state.
-- Kept same-level context bounded by the existing six-turn / 8,000-character budget. Provider
-  transport retry reuses one interaction ID and never creates a Child or a second referenceable turn.
-- Pinned provider/model on each Root and routed Child, same-level follow-up, and retry through that
-  server-side binding. Only a new Reader selection can establish a newly selectable Root.
-- Added focus, parent navigation, Root close, and Reader-session close endpoints. Session generation,
-  state/focus versions, and post-response compare-and-set checks prevent in-flight results from
-  resurrecting a closed Root, attaching to the wrong node, or stealing focus after a switch.
-- Added a compact Simplified-Chinese Reader UI: retained-topic switcher, breadcrumb, parent/child
-  navigation, `n/5`, per-topic close, and a floating `再问一层` action on the latest current answer.
-  Merely hiding the Assistant panel does not destroy state.
-- Corrected pre-send readiness to use the selected provider's own current status instead of the
-  older derived readiness booleans. Draft creation and model changes trigger a fresh status read;
-  the disabled Send button now has `aria-disabled="true"` and an adjacent visible reason naming the
-  affected provider and credential target or configuration state. Other providers do not influence
-  this decision.
-- The lifecycle implementation naturally replaced the old unreclaimed `_session_locks` map with
-  reclaimable per-session slots; closing a Reader removes the complete slot.
+The UAT adjudication also found that the browser treated one-active-Child as lifetime cardinality,
+so a parent could not retain historical sibling explanations, and that plain `textContent` rendering
+could not safely support Markdown/math or preserve raw-answer offsets after rendering.
 
-## Important implementation decisions
+## Authority and evidence boundary
 
-The server is the state authority. The browser holds a rendered copy of the complete temporary
-workspace, but sends only IDs and the current answer's character range for a Child. The server
-re-derives the selected text from the stored answer, rejects stale/non-current turns, and assembles
-provider context from the owning Root and direct parent only.
+The rework is governed by `docs/phases/ASK_DEEPER_UAT_REWORK.md`, the existing Ask Deeper authority,
+Implementation §14.8 as amended by user decision D1, and Decision Register A-19. Product Blueprint
+was not changed.
 
-One-active-child is a reservation followed by commit: under the session lock the parent receives a
-private pending interaction ID; the provider call runs without holding the lock; commit succeeds only
-if the same session generation, Root, parent, and reservation still exist. Provider failure clears
-only that reservation. Root/session close can therefore win safely while the network call is in
-flight, and the late answer is discarded with a typed cancellation.
+The user-supplied Deep Research report *Recursive Explanation and Branching Chat for a
+Reader-Native AI Assistant* was pattern evidence only, never authority. Its suggestions were not
+used to introduce a Node/Attempt rewrite, React rendering stack, Forward navigation, branch IDs, or
+a generic graph framework. The existing reservation/CAS design and the Frozen Core remained
+controlling.
 
-Focus is deliberately independent from tree ownership. A Root remembers its focused node; switching
-away and back restores that node. A response may mutate its owning tree but changes visible focus
-only when the focus version and original parent still match.
+## Stage A — context correctness
 
-Provider status is intentionally live rather than captured when the service starts. The backend
-reads Credential Manager on every status/send path. The browser re-reads `/api/assistant/status`
-when staging a Reader-selection draft and when changing its pre-send provider, then derives the
-button state from that selected provider only. A failed provider cannot disable or select another
-provider, and a successful Root still becomes the sole server-authoritative provider/model lock for
-its complete tree.
+- Introduced the explicit boundary `TreeState → semantic projection → ModelVisibleContext →
+  provider serializer`. `ModelVisibleContext` is an allowlist assembled field by field; provider
+  code never receives a Root, Node, or tree/navigation object.
+- Child depth 2–5 uses one fixed semantic payload order: exact `CURRENT FOCUS` first; direct previous
+  semantic focus/question plus its complete Assistant explanation; human-readable concept path;
+  then the already-authorized bounded Reader grounding.
+- The projection does not recurse through complete ancestor answers and does not include sibling
+  answers, other Roots/scopes, notes, highlights, study history, navigation state, offsets, internal
+  source enums, pending state, or viewport state.
+- The explanation Skill received one compact focus-priority sentence. It remains teaching strategy,
+  not a state-machine or provider contract.
+- Final HTTP-body canary tests inject Root/relationship/active-child/branch/offset metadata into
+  internal state and prove that none reaches provider transport.
+- Provider/model remains locked by Root; no fallback or egress-boundary change was introduced.
 
-## Deviations from Spec
+The accepted real-provider Stage A path used the real 348-page textbook, Root `时钟脉冲信号`, and
+Child focus `像乐队里的节拍器`. The final request placed the exact focus first, included only the
+direct previous turn, concept path, and bounded same-page Reader grounding, contained no application
+metadata, and produced an answer about the selected analogy rather than tree structure.
 
-None. No persistence, migration, new provider endpoint, fallback, proxy/redirect change, telemetry,
-source/scope authority change, or expanded Child context was introduced. Frozen Blueprints were not
-modified.
+## Stage B — recursive UX and lifecycle
 
-## Acceptance evidence
+- A parent now retains multiple historical Children. `active_child_id` is a latest/focus/reservation
+  hint, not a permanent one-Child existence lock. Atomic concurrent creation still has exactly one
+  winner during the pending transition.
+- The Dock renders one focused explanation page. A new Child owns its pending/error/answer state and
+  is focused immediately; the parent answer is not replaced by a pending placeholder.
+- Back changes focus only, performs no provider call, preserves the Child, restores the parent's
+  answer and per-node scroll, and leaves parent answer selection enabled.
+- Breadcrumbs contain semantic selected-text labels and the compact `n/5` indicator. Historical
+  Children appear under `已展开`; reopening one preserves its descendants and makes zero provider
+  calls.
+- User decision D1 amended Frozen Implementation §14.8: `关闭本层解释` at depth >1 aborts requests
+  in that Child subtree, deletes that node and descendants only, keeps parent/siblings/Root, rejects
+  late completion, and focuses the parent. `关闭此主题` at depth 1 still deletes only that Root tree.
+- Root switching remains independent of recursive navigation and restores each Root's latest focused
+  node without egress.
+- Request identity and post-response CAS checks keep pending responses bound to their original node;
+  Back, focus switches, Child close, Root close, and Reader close cannot resurrect or misattach state.
 
-- `python -m compileall -q src`: **PASS**.
-- `pytest -o addopts= -q -ra --basetemp=test-results/pytest-final-ask-deeper-20260906-a`:
-  **95 passed, 2 skipped**. The two skips are the unchanged optional external-path OCR calibration
-  cases (`READER_REAL_DMA`, `READER_REAL_PRIMARY`). Coverage includes depth 1→5, typed depth-6
-  rejection, same-level follow-up at depth 5, retry identity, source anti-bypass, multi-Root state,
-  focus retention, subtree close, per-parent concurrent Child creation, provider/model pinning,
-  provider failure rollback, exact Child-context isolation, close/in-flight races, restart cleanup,
-  secret hygiene, AI-off, and absence of Assistant persistence/schema additions.
-- `npm test`: **30 passed**. `node --check` passed for the Assistant client and all directly affected
-  Ask/provider real-use harnesses.
-- `npm run test:e2e:ask` with `READER_DATA_DIR=var/manual-browser`: **PASS** on the prepared real
-  29/348-page library with the loopback mock provider. It exercised a three-level tree, same-level
-  depth stability, two retained Roots, Root switching, parent/back, selective Root close,
-  one-provider tree pinning, source anti-bypass, minimal Child payload, in-flight close cancellation,
-  Reader-close cleanup, Reader reopen with zero stale Root options, AI-off Reader regressions, and
-  a Zhipu-selected credential-unavailable draft that makes zero provider calls, has a genuinely
-  disabled/`aria-disabled` Send control, and visibly names the Zhipu credential problem. Switching
-  that same draft to an available DeepSeek profile immediately re-enables Send without egress.
-  The depth-3 UI screenshot was visually inspected at `test-results/ask-deeper-depth-3.png`.
-- Existing 348-page browser regressions after the final lifecycle correction:
-  `npm run test:e2e:r3` **PASS**, `npm run test:e2e:find` **PASS**, and
-  `npm run test:e2e:map` **PASS**. These cover Reader selection/copy/annotation behavior, R3, Find,
-  Map, persistence cleanup of their own data, and original-PDF navigation.
+## Stage C — safe rendering and workspace ergonomics
 
-### User-acceptance readiness delta
+### Rendering and raw-selection mapping
 
-The failed screenshot flow was reproduced against the already running service and the real 348-page
-textbook: PDF page 263, selection `识别异常和中断`, model Zhipu `GLM-5.3-Flash`. Before the fix the
-actual DOM was `button.disabled=true`, no `aria-disabled`, empty CSS class, an enabled Zhipu selector,
-zero Roots, and no Root-lock indicator. The exact old disabled expression was
-`!assistantDraft || !assistantConfigured || assistantCooling || assistantPending`; the sole true term
-was `!assistantConfigured`.
+The approved non-React dependencies are exact-pinned in both manifest and lockfile:
 
-The listener was owned by `CYM\CodexSandboxOnline`, while the credentials had been saved for
-`CYM\26389`. Its real status contract reported all three providers with
-`configuration_valid=true`, correct provider/model identity, `configured=false`,
-`credential_available=false`, `credential_reason=CREDENTIAL_NOT_FOUND`, `cooling=false`, and no
-`DEVELOPMENT_DISABLED`. There was no frontend/backend shape disagreement, no startup-only credential
-cache, no OpenRouter-wide readiness gate, and no mistaken pre-Root provider lock. Restarting the
-same code under `CYM\26389` changed the live status for all three providers to `configured=true`,
-`credential_available=true`, `credential_source=WINDOWS_CREDENTIAL_MANAGER`, and `cooling=false`.
-The backend still rereads those credentials rather than preserving this result as startup state.
+- `marked 18.0.11`
+- `dompurify 3.4.14`
+- `katex 0.18.6`
 
-After the minimal UI correction, the same page-263 draft made zero calls before Send, selecting
-Zhipu left Send at `disabled=false` and `aria-disabled=false`, and the first answer succeeded. The
-Root locked Zhipu and a same-level follow-up also succeeded through Zhipu. A separate page-74
-`大端方式` Root succeeded and locked DeepSeek `deepseek-v4-pro`. A new `小端方式` draft reopened
-model selection; its OpenRouter `google/gemini-3.8-flash` request returned the existing typed
-`model_region` failure and visibly stated that no provider/proxy switch occurred. No failed Root was
-created. Switching back restored the complete DeepSeek Root at depth `1/5`, and a DeepSeek follow-up
-succeeded. The separate Zhipu browser session still retained both Zhipu turns and its Zhipu lock.
+There is no CDN or remote runtime dependency. The actual DOM path is:
 
-This retest issued five provider requests total: Zhipu twice, DeepSeek twice, and OpenRouter once.
-The local secret-free inspector captured the Zhipu calls as provider `zhipu`, model
-`GLM-5.3-Flash`, direct endpoint `https://open.bigmodel.cn/api/paas/v4/chat/completions`, attempt 1,
-with message counts 2 then 4. The remaining direct-provider identities were corroborated by their
-server-authoritative Root locks and the OpenRouter-specific typed failure; machine payload tests
-continue to inspect every request body and prove provider pinning, no fallback, and no cross-Root or
-cross-scope context. No credential, Authorization header, note, highlight, learning state, or
-unrelated Root content was exposed by the inspector.
+`immutable raw answer → protect code/math → escape model HTML → marked → KaTeX → DOMPurify → DOM → raw-source-span annotations`
 
-The final regression set after this correction was: `python -m compileall -q src` **PASS**;
-`pytest -o addopts= -q -ra --basetemp=test-results/pytest-ask-deeper-user-retest-fix`
-**95 passed, 2 skipped** (the unchanged optional external-path OCR cases); `npm test`
-**30 passed**; all directly relevant `node --check` invocations **PASS**; and, with the real prepared
-library data directory, `npm run test:e2e:ask`, `test:e2e:r3`, `test:e2e:find`, and
-`test:e2e:map` all **PASS**. One earlier Ask E2E launch without `READER_DATA_DIR` correctly failed
-because that default library did not contain the 348-page book; rerunning with the required real
-library path passed.
+The renderer supports headings, paragraphs, emphasis, lists, inline/fenced code, Chinese mixing,
+and `$...$`, `$$...$$`, `\(...\)`, `\[...\]` math. Model HTML is not trusted; links and images are
+suppressed; the final fragment always passes through DOMPurify. KaTeX uses `trust=false`, bounded
+expansion/size, and no shared mutable macro state. Answer length, math count, and TeX length are
+bounded.
 
-### Authorized five-call DeepSeek acceptance
+Visible ordinary-text nodes carry ordered raw code-point spans. A rendered selection may produce
+multiple spans; the server validates ordering/non-overlap and reconstructs the exact stored raw
+selection while excluding Markdown markers. Sequential mapping distinguishes repeated phrases and
+works across rendered text nodes. Direct selection inside code or rendered math is explicitly and
+honestly declined instead of fabricating a raw span.
 
-On 2026-09-06 the real harness used the prepared 348-page textbook (SHA-256
-`6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`) and the user's strict
-five-call authorization for DeepSeek `deepseek-v4-pro`:
+The accepted real-provider C1 path used DeepSeek `deepseek-v4-pro` on the real textbook. Markdown,
+lists, Chinese, and block `T=1/f` math rendered without raw markers/LaTeX. A real mouse selection of
+`时钟周期` produced the exact same server `CURRENT FOCUS`; the inspected transport had no metadata
+contamination. That path made three direct DeepSeek calls and did not fallback.
 
-1. created an “大端方式” Root;
-2. selected a term in that real answer and created depth 2;
-3. selected a term in the depth-2 answer and created depth 3;
-4. returned to the textbook and created a second “小端方式” Root;
-5. switched back to the first Root and made a same-level follow-up at depth 3.
+### Dock resize and expanded mode
 
-All five calls returned HTTP 200 before the harness advanced. Both Root answers passed Chinese,
-minimum-length, and endian/address/byte relevance assertions; both Child answers and the same-level
-answer passed Chinese/minimum-length assertions. The first tree was still focused at depth 3 after
-switching back, and the same-level turn left depth unchanged.
+- The Dock's left separator supports pointer drag and keyboard adjustment from 320 to 760 CSS px.
+  Reader layout responds to the width without replacing conversation state or interfering with PDF
+  selection/context menus.
+- `展开` uses application-area layout only, not Fullscreen API/F11/new windows. `还原` restores the
+  pre-expanded width.
+- Root, focused node, breadcrumb, historical Children, pending/answer state, and Assistant scroll
+  remain in the existing DOM/state across mode changes.
+- Width is session-only. It is not persisted, added to the Assistant tree, sent to the server, or
+  projected into provider context.
 
-The in-memory inspector reported exactly five calls, all to provider `deepseek`, model
-`deepseek-v4-pro`, and the unchanged direct endpoint
-`https://api.deepseek.com/chat/completions`. The inspected Child request had exactly `system,user`
-messages, included the selected term and complete triggering parent answer, and no unrelated Root
-answer. The fifth request after switching back contained no second-Root answer. Inspection contained
-neither an `Authorization` field nor an API-key pattern. Machine payload tests additionally prove
-that later Child creation does not walk the ancestor tree or include another scope, notes,
-highlights, or learning state.
+## Stage D — risk-driven regression
 
-After these five successful calls, the command exited non-zero only at its final client lifecycle
-assertion: the old backend session was already gone (the stale follow-up returned 404), but the
-reopened panel still contained one hidden stale `<option>`. The fix now clears navigation DOM during
-Assistant reset, and the identical close/reopen assertion passes in the full 348-page mock E2E. The
-real provider harness was deliberately not rerun because all five authorized calls had been used.
-Thus the real-provider egress portion and all pre-failure real-book assertions passed; the final
-client-only correction is supported by post-fix same-material mock evidence rather than an
-unauthorized sixth DeepSeek call.
+### Tests actually run
 
-## Known limitations / deferred debt
+- Assistant Python core: the first closure run exposed two obsolete `endswith(CURRENT FOCUS)` test
+  assertions left from the pre-Stage-A payload order (`57 passed, 2 failed`). The assertions were
+  corrected to require focus-first ordering; the complete direct file then passed: **59 passed**.
+- JavaScript unit suite: `npm test` — **30 passed**.
+- Syntax checks: `node --check` for the Assistant client, renderer, and all Ask Deeper browser
+  harnesses — **PASS**.
+- Assistant tree/context/lifecycle browser suite: `tests-e2e/ask-about-this.mjs` — **PASS**. It covers
+  three levels, same-level depth stability, multiple Roots, Back/scroll, sibling retention,
+  zero-call historical reopen, Child/Root close, in-flight cancellation, source anti-bypass,
+  provider pinning, AI-off, and Reader-close cleanup.
+- Rendering/security/mapping browser suite: `tests-e2e/assistant-rendering.mjs` — **PASS**. It covers
+  Markdown/code/math/Chinese, raw HTML and script-like input, sanitizer execution, code/math
+  isolation, exact marker-free mapping, duplicate phrases, and multi-node selections.
+- Workspace browser suite and final integrated golden path:
+  `tests-e2e/assistant-workspace.mjs` — **PASS** on the real 348-page textbook. It used five local
+  deterministic provider calls and zero external calls.
+- Reader-neighbor smoke: `tests-e2e/ask-deeper-stage-d-reader-smoke.mjs` — **PASS** on the same real
+  textbook. Real pointer selection/context menu, Highlight, Add note, Find `中断向量` (10 results,
+  jumped to PDF page 263), and Map `6.2.1 总线事务` (jumped to PDF page 303) all worked with the
+  resized/expanded Assistant behavior present.
+- One closure Python overall run:
+  `python -m pytest -o addopts= -q -ra --basetemp=test-results/pytest-stage-d-overall` —
+  **105 passed, 2 skipped**. The skips are the unchanged optional external OCR paths
+  `READER_REAL_DMA` and `READER_REAL_PRIMARY`.
+- `python -m compileall -q src`, `npm ls --depth=0 marked dompurify katex`, and
+  `git diff --check` — **PASS**.
 
-No Ask Deeper-specific completion debt remains. Streaming, persistence, saved AI notes,
-multimodal/figure explanation, cross-page selection, and later teaching/mastery features remain
-outside this Phase. Existing provider-region/default-provider decisions are unchanged. The previous
-`_session_locks` memory-growth P2 was retired naturally by the scoped lifecycle implementation.
+### Final agent real-use golden path
 
-## Reproducible entry points
+The integrated path used the real 348-page textbook with SHA-256
+`6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`, real browser pointer
+selection, the actual localhost service/UI/HTTP boundary, and a secret-free deterministic loopback
+provider:
 
-```powershell
-python -m compileall -q src
-pytest -o addopts= -q -ra --basetemp=test-results/pytest-ask-deeper
-npm test
+1. selected `时钟脉冲信号`, opened the draft, selected DeepSeek identity, proved Send enabled and
+   zero pre-send calls, then created a Root;
+2. rendered a Markdown heading, bold phrases, list, and block math without raw markers;
+3. selected rendered `像乐队里的节拍器`, created/focused its Child immediately, and observed the
+   pending state only on that Child;
+4. selected `高低电平变化`, reached depth 3, then used Back twice and recovered Child/Root scroll;
+5. selected `时钟周期` at the Root to create a sibling; both historical Children remained visible;
+6. reopened the first Child with **0** provider calls and found its grandchild intact;
+7. closed that Child subtree; its grandchild disappeared while the `时钟周期` sibling and Root
+   remained;
+8. created `识别异常和中断` from PDF page 263 as a second Root and switched between Roots while
+   preserving the first Root's sibling focus;
+9. dragged the Dock, entered/exited expanded mode, restored width/scroll/tree state, and then made
+   another real Reader selection/context-menu interaction;
+10. inspected all five loopback request bodies: exact CURRENT FOCUS first, three Child payloads,
+    sibling-answer isolation, no internal tree/source/offset metadata, no viewport state, and no
+    fallback.
 
-$env:READER_DATA_DIR='D:\path\to\prepared-real-library'
-npm run test:e2e:ask
-npm run test:e2e:r3
-npm run test:e2e:find
-npm run test:e2e:map
-```
+Visual evidence: `test-results/ask-deeper-stage-d-golden.png`.
 
-`npm run test:e2e:ask:real` requires a configured DeepSeek credential and makes exactly five real
-calls; run it only with fresh user authorization. Manual retest: select “大端方式”, send the Root,
-select a term in the latest answer and use `再问一层` two times, make a same-level follow-up, create
-“小端方式” as a second topic, switch back, navigate to a parent, close one topic, then close/reopen
-the Reader and verify the workspace is empty.
+## Intentionally skipped extended tests
 
-## Important files / architecture entry points
+The complete historical R3, Find, and Map browser acceptance suites were not repeated. Stage D used
+the explicit risk-driven smoke above because the shared risk surface was Reader pointer selection,
+context menus, DOM layout, and navigation—not persistence/restart/identity coverage already closed
+by those Phases. This is a deliberate regression decision, not missing evidence.
 
-- `src/reader_service/assistant/service.py` — in-memory Root/Node state machine, atomic reservations,
-  provider pinning, focus, close, and lifecycle CAS.
-- `src/reader_service/assistant/context.py` — Root context and exact minimal Child payload assembly.
-- `src/reader_service/server.py` — typed HTTP transitions and failure mapping.
-- `src/reader_service/static/app.js`, `index.html`, `styles.css` — compact Reader-native workspace,
-  answer selection, navigation, and lifecycle rendering.
-- `tests/test_ask_about_this.py`, `tests-e2e/ask-about-this.mjs`, and
-  `tests-e2e/ask-about-this-real.mjs` — state-machine, browser/mock, and authorized real-provider
-  acceptance.
+The real-provider Stage A/B/C harnesses and provider bake-off were not rerun during Stage D. Stage A
+and C1 already had accepted bounded real-provider evidence, while Stage D needed state/lifecycle and
+workspace consistency; the deterministic loopback path exercised those transitions without
+duplicating external egress. No R3/Find/Map full E2E, provider bake-off, OpenRouter retry, or unrelated
+historical browser suite was run.
 
-## Git checkpoint
+## Security and persistence result
 
-Implementation checkpoint: `491a6eb`.
+No new provider endpoint, proxy, redirect, fallback, telemetry, credential handling, DB table,
+migration, durable Assistant identity, Assistant history file, note/mastery write, or context/egress
+category was added. Assistant trees and Dock preferences remain memory/session-only. Inspection and
+tests contain no Authorization header or secret. Viewport state and tree/navigation metadata are
+absent from final provider HTTP bodies.
 
-The report checkpoint is the commit containing this report.
+## Known deferred debt
+
+- Direct Ask Deeper selection inside rendered formulas or code is not supported; the UI states this
+  explicitly. Formula/image semantic understanding remains a later multimodal capability.
+- Streaming, persistent Assistant history, saved AI notes, Forward navigation, cross-page selection,
+  persisted Dock preferences, generic graph frameworks, and default-provider/OpenRouter-region
+  decisions remain outside this Phase.
+- The narrow independent review required by the rework authority remains pending user retest and is
+  not replaced by these implementation tests.
+
+## Git checkpoints
+
+- Pre-rework authority checkpoint: `4165453`.
+- UAT rework implementation checkpoint: `d453a2a`.
+- The report checkpoint is the commit containing this file.
