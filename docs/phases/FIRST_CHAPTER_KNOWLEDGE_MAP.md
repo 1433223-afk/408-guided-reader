@@ -1,27 +1,39 @@
 # Phase / First Chapter Knowledge Map
 
-> **Status: ACCEPTED — UAT REWORK AUTHORITY CORRECTION (2026-09-07).** The original brief was
-> accepted after Planner second review on 2026-09-06. Real-use acceptance then failed on production-
-> default Chapter preparation latency and `GENERATION / empty_response`. The user approved the
-> correction below after a Research Delta + UAT Failure Review. This brief remains the implementation
-> authority for the open Phase; it does not claim user acceptance or Phase closure.
+> **Status: ACCEPTED — ARCHITECTURE CORRECTION READY FOR IMPLEMENTATION (2026-09-07); user retest
+> and independent narrow review pending.** The product shell remains accepted. Repeated real-use failures
+> showed that the LLM-first semantic middle was not a stable implementation of that product. The user
+> accepted the bounded deterministic-first replacement below after external Prior-art Research. This
+> brief remains the implementation authority for the open Phase; it does not claim user acceptance or
+> Phase closure.
 
-## User-approved UAT authority correction
+## User-approved architecture correction
 
-External KP research remains evidence, not authority. The user approved these current-Phase changes:
+This correction supersedes the earlier generation, Review and whole-Section semantic-repair contract
+wherever this brief, the current implementation or its development report still describes it.
+External research remains evidence; the decisions below are authority because the user accepted them.
 
-1. generate and retry private candidates one existing primary Section at a time, then assemble the
-   complete private Chapter candidate set for Chapter-level structural Review, deterministic
-   validation and one atomic publication;
-2. require structural Review to cover granularity, semantic duplicates, instructional specificity,
-   split/merge quality, coverage and map-level balance;
-3. remove deterministic no-overlap as a publication invariant: overlap is a Review/warning signal,
-   while no-gaps remains deliberately unrequired;
-4. add secret-safe per-generation-attempt observability and minimum Section progress in the Reader,
-   without exposing partial candidate content.
+**KEEP — the product and publication shell:** existing Outline/OCR/source authority; target-Chapter
+physical resolution; `CHAPTER_PREPARE` jobs and durable lifecycle; persistence, ownership and
+cascade; Reader state/progress and Section-grouped map; KP → source navigation; stable IDs at publish;
+independent structural Review; deterministic final validation; and one Chapter-atomic publication.
 
-`IMPLEMENTATION_BLUEPRINT.md` §12.2, §12.4 and §22 carry the corresponding minimum Frozen
-amendment. Two research conclusions are explicitly **not** current UAT-rework scope. They are now
+**REBUILD — the semantic middle:**
+
+```text
+deterministic candidate/evidence units
+→ bounded AI KEEP / MERGE / DROP + short title / one-sentence meaning
+→ deterministic KP materialization
+→ complete compact Chapter structural Review
+→ existing deterministic validation and atomic publication
+```
+
+**SUPERSEDED:** LLM-first complete-KP generation; model-authored Section/page/line/geometry/source
+references; Review payloads that resend the whole Chapter OCR/layout body; and semantic repair that
+regenerates a complete Section. No partial KP becomes visible during the replacement pipeline.
+
+`IMPLEMENTATION_BLUEPRINT.md` §12.2, §12.4 and §22 carry the corresponding minimum Frozen amendment.
+Two earlier research conclusions remain explicitly outside this correction. They are
 `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`:
 
 - same-concept durable-ID reconciliation, new-concept minting and ambiguous split/merge blocking;
@@ -48,6 +60,9 @@ Knowledge Map identifies the learning units within one Chapter; it is not a repl
 
 **Directly relevant development reports (Tier A):**
 
+- `docs/development-reports/FIRST_CHAPTER_KNOWLEDGE_MAP.md` — current implementation, repeated real-
+  provider/UAT failure evidence, retained shell behavior, and the semantic middle now superseded by
+  this accepted correction
 - `docs/development-reports/MAP_THE_BOOK.md` — current logical Outline identity, navigation,
   incremental publication, and physical-target limitations
 - `docs/development-reports/SAVE_ASSISTANT_EXPLANATION_TO_NOTES.md` — latest closed product state,
@@ -85,17 +100,25 @@ Nothing else from either Blueprint is required reading for this Phase.
 
 ## Prior-art check
 
-**REQUIRED — completed for planning.** Document hierarchy and heading/range recognition are mature
-problem domains. The bounded check inspected Docling's heading-hierarchy source and PR 3688, plus
-Marker's section-header processor. The usable pattern is: preserve the authoritative existing
-hierarchy, combine multiple signals for physical matching, and require deterministic validation
-before publication. No external code, dependency, framework, or architecture is approved for
-adoption. If implementation discovers such a need, stop and report under `AGENTS.md` §5.
+**REQUIRED — completed after repeated UAT failure (2026-09-07).** The bounded research went beyond
+README-level comparison: it inspected document-structure source/architecture and relevant issues/PRs
+in Docling, PageIndex, MinerU, GROBID, Unstructured and Marker, plus DeepTutor PR 707's directly
+analogous reasoning-token/structured-output truncation failure. The evidence that changed this Phase
+was consistent:
 
-**Research Delta — completed after UAT FAIL (2026-09-07).** The supplied KP research was reviewed
-against current authority, implementation and real failure evidence. It led only to the
-user-approved correction above. This remains pattern/evidence use: no external source code,
-dependency, framework, graph/RAG system or imported data model is approved.
+- mature document systems establish typed blocks, hierarchy, reading order and source provenance
+  deterministically or with bounded classifiers before semantic generation;
+- PageIndex Flash's layout-built tree becoming the default (PR 404) and its deterministic merge plus
+  bounded bottom-up enrichment (PR 373) are especially direct evidence against one large LLM-built
+  structure;
+- Docling, GROBID, Unstructured and MinerU's normalized intermediate structures keep geometry and
+  document identity outside generative output;
+- bounded packets, strict typed contracts, deterministic validation and localized retry/repair avoid
+  making one malformed or length-limited response invalidate a whole long document.
+
+The accepted borrowing is the architecture pattern only. No external code, dependency, model,
+framework, document parser or storage technology is approved for adoption. If implementation finds
+one necessary, stop and report under `AGENTS.md` §5.
 
 ## Hard rules
 
@@ -113,11 +136,23 @@ dependency, framework, graph/RAG system or imported data model is approved.
 - **KP semantics are load-bearing.** A KP is an independently worthwhile learning-state unit, not a
   paragraph or heading mechanically copied into a list. Every KP has exactly one existing primary
   Section and one continuous source range in the first version (Product §§11–13).
-- **Generation and retry are Section-scoped; acceptance remains Chapter-scoped.** Each generator
-  call receives one existing primary Section and its bounded source evidence. Successful sibling
-  Section candidates remain private inside the current attempt; one required Section failing fails
-  the Chapter attempt. Only a collectively reviewed, validated Chapter set may publish
-  (Implementation §12.2).
+- **Evidence-unit authority is deterministic.** A minimal Phase-local builder derives ordered,
+  bounded evidence units from the requested Chapter's existing Outline and OCR/layout evidence. The
+  server assigns every unit its existing primary Section, deterministic order, continuous source
+  evidence and pipeline-local unit ID. A model may neither mint a unit nor decide or alter its
+  Section, page, line, geometry, source range or source revision (Implementation §12.2, §12.4).
+- **AI has one bounded semantic job.** For each bounded Section-local packet, AI may only classify
+  supplied unit IDs as `KEEP`, `MERGE` or `DROP`, and provide a short title plus one-sentence meaning
+  for each kept/merged candidate. Its output must account for each packet unit exactly once. It may
+  not emit complete KP records or source references (Implementation §12.2).
+- **Merge authority is narrow.** `MERGE` may cover only a contiguous run of adjacent units in the
+  same existing primary Section and current packet. Cross-Section, non-adjacent, invented, repeated
+  or missing unit IDs fail deterministic contract validation; they are never coerced into a result.
+- **KP materialization is deterministic.** The server creates private candidate KPs from validated
+  decisions and its unit ledger. Primary Section, order, source revision and the continuous range
+  come only from the underlying unit mapping; AI supplies only learning semantics. One required
+  packet failing fails the private Chapter attempt, but no successful unrelated packet is
+  semantically regenerated as a side effect (Implementation §12.2–§12.4).
 - **Ranges are evidence, not a text partition.** A published KP still has one continuous range
   inside its primary Section, but distinct KPs may share evidence when Review confirms independent
   learning value. Gaps are normal. Overlap is inspected as a duplicate/split warning and is never by
@@ -136,16 +171,30 @@ dependency, framework, graph/RAG system or imported data model is approved.
   deterministic validation pass. Review failure, invalid output, exhausted retry, unavailable
   reviewer, or invocation failure never becomes PASS or `READY` (Product §16; Implementation
   §13.7–§13.8).
-- **Structural Review judges the whole learning map.** It must explicitly check independently
+- **Structural Review judges one complete but compact Chapter ledger.** It must check independently
   trackable granularity, coverage, duplicate semantics, instructional specificity, split/merge
-  quality, source/Section faithfulness and map-level balance. It receives overlap warnings and must
-  distinguish legitimate shared evidence from duplicate or unjustifiably split KPs. It judges but
-  does not rewrite candidates (Implementation §12.2, §12.4).
-- **Review context is fresh and allowlisted.** It may contain only this Chapter's candidate KP map,
-  the necessary Chapter/Section Outline projection, its bounded source text/layout evidence, and
-  required generation provenance. It must not contain other Chapters, Assistant trees or saved
-  explanations, notes/highlights, Learning/Mastery/Progress, Master threads, Teaching assets,
-  unrelated navigation state, or secrets (Implementation §13.3, §21.2–§21.5).
+  quality, source/Section faithfulness and map-level balance. Its ledger contains only the Chapter's
+  real Section/unit order, complete KEEP/MERGE/DROP accounting, candidate-to-unit membership,
+  title/meaning, bounded deterministic evidence excerpts/fingerprints, overlap/warning metadata and
+  required provenance. It does **not** resend the raw whole-Chapter OCR line stream, geometry dump or
+  generator reasoning (Implementation §12.2, §12.4).
+- **Review judges; repair is localized.** Review may return a verdict and typed findings only; it
+  never authors or rewrites candidates. Every blocking semantic finding must identify an existing
+  Section and the smallest relevant unit-ID set. One bounded semantic-repair round may rerun only
+  the affected packet(s), after which deterministic materialization rebuilds the compact Chapter
+  ledger and the whole map is reviewed again. An invalid/unaddressable finding fails closed; a
+  semantic finding never authorizes complete-Section regeneration.
+- **Technical retry is packet/stage-local.** A provider, timeout, empty/length-limited response or
+  invalid structured output retries only the current semantic packet; a technical Review failure
+  retries only the current compact Review stage. Successful unrelated packet decisions are not
+  resent or regenerated. Technical failure never consumes the semantic-repair round and never
+  becomes PASS. Existing durable-job recovery and disposable-draft semantics remain; this Phase does
+  not add a generic checkpoint/workflow framework (Implementation §12.2, §13.5, §13.8, §18.4–§18.5).
+- **Review context is fresh and allowlisted.** It may contain only the compact Chapter ledger just
+  defined. It must not contain raw whole-Chapter OCR/layout payloads, other Chapters, Assistant trees
+  or saved explanations, notes/highlights, Learning/Mastery/Progress, Master threads, Teaching
+  assets, unrelated navigation state, generator reasoning, or secrets (Implementation §13.3,
+  §21.2–§21.5).
 - **Review independence is role/context independence first.** A genuinely different configured
   provider/model is preferred where available; an actual same-provider clean-context route is an
   honest fallback. No silent fallback may masquerade as the intended reviewer, and provider
@@ -169,8 +218,10 @@ dependency, framework, graph/RAG system or imported data model is approved.
   Mastery, ExamEvidence, or Teaching asset. Chapter publication may make future KP-dependent
   capabilities eligible; it must not infer or write their state.
 - **No generic platform expansion.** Use the existing storage, AgentRuntime, provider boundary, and
-  durable job substrate. Do not introduce a generic workflow/state-machine system, RAG layer,
-  vector store, knowledge graph, new storage technology, or second job framework.
+  durable job substrate. The V1 evidence-unit builder and packetizer are local to this Chapter-map
+  pipeline; they must not become a generic document framework. Do not introduce a generic workflow/
+  state-machine system, RAG layer, vector store, knowledge graph, new storage technology, or second
+  job framework.
 
 ## Build
 
@@ -179,16 +230,21 @@ dependency, framework, graph/RAG system or imported data model is approved.
   Chinese wording are implementation loose edges).
 - Target-Chapter-only physical matching/resolution sufficient to validate the Chapter and its child
   Section/Subsection source ranges, without changing their logical identities.
-- The corrected one-Chapter pipeline: bounded source projection → private Section-scoped KP
-  generation/retry → complete Chapter candidate assembly → deterministic range resolution →
-  independent Chapter-level structural Review → deterministic validation → atomic publication.
+- The corrected one-Chapter pipeline: deterministic source projection/evidence-unit construction →
+  bounded Section-local semantic packets → AI `KEEP`/`MERGE`/`DROP` plus short title/meaning →
+  deterministic private KP materialization → complete compact Chapter ledger → deterministic
+  prechecks → independent Chapter structural Review → targeted unit-addressed semantic repair when
+  required → final deterministic validation → existing atomic publication.
+- The smallest real-book evidence-unit builder needed by this Chapter: deterministic unit IDs,
+  Section ownership/order, source evidence mapping and bounded packetization, without a new generic
+  parser, document model or framework.
 - Durable Chapter preparation state, published structure version, stable KnowledgePoint identity,
-  source-revision ownership, ranges, generation/reviewer provenance, and correct book-delete cascade.
+  source-revision ownership, ranges, semantic/reviewer provenance, and correct book-delete cascade.
 - A user-visible `READY` map grouped by primary Section, with the minimum useful KP presentation and
   a KP → textbook navigation action that returns to the real source range.
 - Honest failure presentation, explicit retry, duplicate-request convergence, worker/service restart
   recovery, and preservation/reopen of the published map.
-- Minimum Section progress UI plus retained, bounded, secret-safe generation-attempt observability
+- Minimum Section progress UI plus retained, bounded, secret-safe semantic/Review attempt observability
   needed to diagnose latency/`empty_response` and prove scope, Review routing, failure semantics and
   secret hygiene. Progress never includes draft KP content.
 
@@ -205,7 +261,10 @@ dependency, framework, graph/RAG system or imported data model is approved.
   cross-page selection. These remain V2/backlog unless later evidence shows they block a mainline
   slice.
 - RAG, authoritative RAG, vector retrieval, a knowledge graph, generic workflow infrastructure, or a
-  new UI design system.
+  new UI design system; adoption of Docling, PageIndex, MinerU, GROBID, Unstructured, Marker or any
+  other external document framework/dependency.
+- LLM-authored document hierarchy, Section/page/line/geometry/source ranges, whole-Chapter OCR Review
+  payloads, complete-Section semantic regeneration, or persistent partial candidate publication.
 - READY-map regeneration, durable-ID reconciliation/migration, split/merge migration, immutable
   replacement-version publication, and availability/attempt lifecycle separation. These are not
   optional debt: they are `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`, deliberately outside this
@@ -218,54 +277,76 @@ dependency, framework, graph/RAG system or imported data model is approved.
 
 ### TARGETED
 
-With deterministic generation/Review doubles, fault injection, and a real database where persistence
+With deterministic semantic/Review doubles, fault injection, and a real database where persistence
 is under test:
 
 1. One requested Chapter transitions honestly through not-prepared/preparing to one atomic `READY`
    publication; no sibling Chapter is prepared or physically changed.
 2. Target-Chapter physical matching preserves every logical Outline node's identity, title, order,
-   hierarchy, and ownership while advancing only necessary physical evidence.
-3. Every published KP has exactly one valid primary Section in the requested Chapter, a valid
-   source revision, deterministic order, and a continuous range contained by the appropriate
-   Chapter/Section boundaries.
-4. Draft IDs are never durable/user-visible; stable IDs and one structure version appear only in the
-   publication transaction.
-5. Generation, range-resolution, semantic Review, technical Review, invalid structured output,
-   deterministic-validation, and publication failures each remain non-READY and expose no partial
-   KP set. A failed candidate cannot overwrite an existing published version.
-6. Final generator and Review transports contain only their declared Chapter-scoped allowlists;
-   canaries prove the absence of other Chapters, Assistant state, annotations, learning state,
-   Teaching assets, unrelated user material, and secrets.
-7. The actual generator/reviewer provider/model route and typed failure are recorded honestly;
-   silent fallback and invocation-failure-as-PASS are impossible.
-8. Duplicate click, HTTP retry, response-loss replay, concurrent prepare calls, worker interruption,
-   service restart, and explicit retry converge without duplicate preparations, versions, or KPs.
-9. `FAILED`/`PREPARING` preparation leaves reading, OCR selection/copy, Find, Outline, Marks,
-   Notes/Highlights, and Assistant usable.
-10. The Section-grouped map and KP → textbook action resolve through the published KP's real source
-    range and source revision, not through generated wording.
-11. Migration/upgrade preserves existing Book, BookSourceRevision, Outline, USER Annotation, and
-    AI_SAVED Annotation identity, ownership, anchors, content, restart recovery, and deletion
+   hierarchy and ownership while advancing only necessary physical evidence.
+3. The deterministic builder produces a complete ordered evidence-unit ledger for the in-scope
+   Sections. Every unit ID resolves server-side to exactly one existing primary Section, source
+   revision, continuous source span and deterministic order; repeated construction from unchanged
+   authority is equivalent.
+4. The semantic transport contains only the current bounded Section-local packet and declared
+   context. Its accepted output vocabulary is only supplied unit IDs, `KEEP`/`MERGE`/`DROP`, short
+   title and one-sentence meaning; it contains no model-authored Section/page/line/geometry/range or
+   source-revision fields.
+5. Contract validation rejects invented, duplicate, missing or multiply-consumed unit IDs, cross-
+   Section merges and non-contiguous merges. It never silently repairs, truncates or partially
+   accepts a length-limited/invalid semantic response.
+6. Deterministic materialization derives candidate primary Section, order, source revision and
+   continuous range exactly from one kept unit or one allowed contiguous merge. AI title/meaning
+   cannot change source authority. Every published KP satisfies the corresponding Chapter/Section
+   boundaries.
+7. Draft unit/candidate IDs are never durable or user-visible. Stable KP IDs and one structure
+   version appear only inside the existing atomic publication transaction.
+8. The Review transport is one complete compact Chapter ledger with candidate-to-unit membership,
+   full decision accounting, bounded deterministic evidence excerpts/fingerprints and warnings. It
+   excludes the raw whole-Chapter OCR line stream, geometry dump, generator context/reasoning and all
+   undeclared state; canaries prove both semantic and Review allowlists and secret hygiene.
+9. Adversarial ledgers prove structural Review rejects semantic duplicates, generic reasoning/test-
+   taking labels, unjustified splitting/merging, major learning-coverage omissions and materially
+   unbalanced Section granularity. Review judges the complete Chapter but cannot rewrite content.
+10. Every blocking semantic finding names a valid existing Section and relevant unit IDs. Invalid,
+    absent or over-broad repair targets fail closed; they never trigger complete-Section or complete-
+    Chapter regeneration.
+11. One bounded semantic repair reruns only the packet(s) containing the targeted unit IDs, retains
+    unrelated successful packet decisions, deterministically rematerializes candidates and sends the
+    rebuilt compact complete-Chapter ledger through Review again. A further blocking result remains
+    terminal and publishes nothing.
+12. A transient provider error, timeout, `empty_response`, `finish_reason=length` or invalid structured
+    output retries only the current semantic packet; a technical Review failure retries only the
+    current compact Review stage. Already-successful unrelated packets are not resent, and technical
+    failure neither consumes semantic-repair authority nor becomes PASS.
+13. Generation, materialization, semantic Review, technical Review, deterministic validation and
+    publication failures each remain non-READY and expose no partial KP set. A failed candidate cannot
+    overwrite an existing published version.
+14. The actual semantic/reviewer provider/model route, packet/stage and typed failure are recorded
+    honestly; silent fallback and invocation-failure-as-PASS are impossible.
+15. Duplicate click, HTTP retry, response-loss replay, concurrent prepare calls, worker interruption,
+    service restart and explicit retry converge without duplicate preparations, versions or KPs.
+16. `FAILED`/`PREPARING` preparation leaves reading, OCR selection/copy, Find, Outline, Marks,
+    Notes/Highlights and Assistant usable.
+17. The Section-grouped map and KP → textbook action resolve through the published KP's deterministic
+    source range and source revision, not through AI wording.
+18. Migration/upgrade preserves existing Book, BookSourceRevision, Outline, USER Annotation and
+    AI_SAVED Annotation identity, ownership, anchors, content, restart recovery and deletion
     semantics.
-12. Book deletion removes the owning Chapter preparation/map/KPs without cross-book effects, and
+19. Book deletion removes the owning Chapter preparation/map/KPs without cross-book effects, and
     retrying or deleting a book cannot leave user-visible orphan maps.
-13. Preparation, publication, Review, failure, retry, and navigation perform zero writes to Learning,
-    Mastery, Progress, Master, Teaching, and ExamEvidence state.
-14. AI-off and missing reviewer credentials keep the Reader usable and never fabricate `READY`.
-15. Each final generator payload contains exactly one existing primary Section and its bounded
-    evidence. A transient/empty/invalid response retries only that Section inside the logical
-    in-process attempt; already-successful sibling Section payloads are not resent, and failure of
-    any required Section exposes no candidate KP.
-16. Adversarial Chapter candidate sets prove structural Review rejects semantic duplicates, generic
-    reasoning/test-taking labels, unjustified over-splitting/merging, major coverage omissions and
-    materially unbalanced Section granularity; Review remains whole-Chapter and cannot rewrite.
-17. Two distinct KPs may pass with overlapping source evidence after Review, while a paraphrase
+20. Preparation, publication, Review, failure, retry and navigation perform zero writes to Learning,
+    Mastery, Progress, Master, Teaching and ExamEvidence state.
+21. AI-off and missing generator/reviewer credentials keep the Reader usable and never fabricate
+    `READY`.
+22. Two distinct KPs may pass with overlapping source evidence after Review, while a paraphrase
     duplicate using that overlap fails Review. Unmapped source gaps pass deterministic validation.
-18. During a delayed multi-Section run, the served Reader shows an honest stage and completed/total
-    Section count without titles/definitions/ranges. Every transport attempt records bounded
-    provider/model, Section, attempt, timing, finish reason where supplied, usage, content/reasoning
-    presence and lengths, and typed outcome; credentials and response/reasoning bodies are absent.
-19. A `READY` prepare request remains a no-op: no first regeneration or Learning/Mastery write is
+23. During a delayed multi-Section run, the served Reader shows the existing honest stage and
+    completed/total Section count without titles/meanings/ranges. Every semantic/Review attempt
+    records bounded provider/model, Section/packet or stage, attempt, timing, finish reason where
+    supplied, usage, content/reasoning presence and lengths, and typed outcome; credentials and
+    response/reasoning bodies are absent.
+24. A `READY` prepare request remains a no-op: no first regeneration or Learning/Mastery write is
     enabled by this correction.
 
 ### AGENT REAL-USE GOLDEN PATH
@@ -273,30 +354,31 @@ is under test:
 Use the real 348-page textbook through the actually served UI with real pointer/keyboard interaction.
 Prefer an unprepared Chapter 6 and:
 
-1. open/select a Section in that Chapter and observe an honest not-prepared state;
+1. open/select a Section in that Chapter and observe the existing honest not-prepared state;
 2. request its Knowledge Map and observe preparing state without losing Reader interaction;
-3. inspect local state/observability and prove that only Chapter 6 and its necessary child ranges are
-   being processed;
-4. complete one bounded real generator + reviewer path through the same production-default route a
-   normal user action selects when that authorized configured route is available; an explicit
-   test-only provider override does not substitute for this check. Record actual providers/models,
-   per-Section progress and final allowlisted payloads;
-5. observe the map appear atomically only after Review and validation PASS, grouped by primary
+3. inspect the deterministic evidence-unit ledger and prove that only Chapter 6 and its necessary
+   child ranges are processed, with Section ownership/ranges coming from Outline/OCR rather than AI;
+4. complete one real bounded semantic + reviewer path through the same production-default route a
+   normal user action selects when that authorized configured route is available; a test-only
+   provider override does not substitute. Record actual providers/models, packet count/size,
+   timing/token evidence, Section progress and final allowlisted payload shapes;
+5. inspect model results and prove they contain only unit decisions plus short title/meaning; inspect
+   the compact Review ledger and prove it does not resend the raw whole-Chapter OCR/geometry body;
+6. exercise one bounded `empty_response`, `finish_reason=length` or invalid-output failure on one
+   semantic packet; verify only that packet retries, successful unrelated packets are not resent,
+   per-attempt safe diagnostics remain, no draft content appears, and the Reader remains usable;
+7. exercise one blocking semantic finding addressed to a real Section/unit-ID set; verify only the
+   affected packet is repaired, the complete compact ledger is re-reviewed, and no whole Section is
+   regenerated;
+8. observe the map appear atomically only after Review and validation PASS, grouped by primary
    Section with no partial KP set visible beforehand;
-6. inspect representative KPs and use KP → textbook navigation to return to the correct source
-   positions/ranges;
-7. close and reopen the Reader, restart the service, and recover the same published structure
-   version and stable KP identities;
-8. inject one generation, Review, or validation failure on a bounded retry path and prove that the
-   Reader, Notes/Marks, Find, Outline, and Assistant remain usable;
-9. retry and prove convergence to one published map with no duplicate KPs/version;
-10. delete the book and verify the map/KPs cascade correctly without affecting another book;
-11. inspect persistence and prove zero Learning/Mastery/Master/Teaching/ExamEvidence writes.
-
-The real path must additionally exercise one bounded `empty_response`/delayed-Section failure and
-show that the UI identifies the active stage/Section progress, terminal failure retains per-attempt
-safe diagnostics, and no sibling draft content appears. It must confirm that a successful Section is
-not resent merely because another Section needs an in-process transport/structured-output retry.
+9. inspect representative kept and merged KPs and use KP → textbook navigation to return to the
+   exact deterministic source positions/ranges;
+10. close and reopen the Reader, restart the service, and recover the same published structure
+    version and stable KP identities;
+11. retry/replay one user action and prove convergence to one map with no duplicate KPs/version;
+12. delete the book and verify the map/KPs cascade correctly without affecting another book;
+13. inspect persistence and prove zero Learning/Mastery/Master/Teaching/ExamEvidence writes.
 
 The golden path must contain at least one reversal/recovery: failure → retry or close/restart →
 reopen. Missing authorized external credentials is reported honestly; it never becomes Review PASS
@@ -309,6 +391,8 @@ Run suites and served smoke paths that share the changed risk surface:
 - Map the Book logical identity, hierarchy, target navigation, per-node physical resolution, restart,
   and book cascade;
 - progressive OCR/layout preparation and source geometry consumed by target-Chapter resolution;
+- deterministic evidence-unit construction, bounded semantic packet contracts, deterministic KP
+  materialization, compact Chapter Review, localized repair and atomic publication;
 - Reader open/navigation, selection/copy, Find in Book, Notes/Highlights, and Marks presentation;
 - Assistant source scope and existing AI_SAVED Annotation persistence/cascade;
 - existing job claim/recovery/idempotency, provider routing, structured output, final-payload
@@ -330,9 +414,10 @@ targeted → agent real-use golden path → affected regression → closure broa
 ## Autonomy
 
 Ordinary implementation details are delegated under `AGENTS.md` §5: naming, file/component layout,
-helpers, local algorithms, use of the existing job/provider/storage abstractions, exact Simplified
-Chinese wording and control placement, ordinary error handling and CSS, test organization, and small
-local refactors need no approval when they preserve this brief's authority and boundaries.
+helpers, the local deterministic unit-building/packet-sizing algorithm, use of the existing job/
+provider/storage abstractions, exact Simplified Chinese wording and control placement, ordinary error
+handling and CSS, test organization, and small local refactors need no approval when they preserve
+this brief's authority and boundaries.
 
 ## Must report before proceeding
 
@@ -340,7 +425,10 @@ Stop and report if:
 
 - reliable preparation would require changing Outline logical identity or preparing beyond the one
   requested Chapter;
-- trustworthy KP source ranges cannot be established from the available real-book evidence;
+- trustworthy deterministic evidence units or KP source ranges cannot be established from the
+  available real-book evidence without giving source authority back to AI;
+- a bounded semantic packet cannot retain enough learning meaning without a generic document
+  framework, a new parser/runtime or whole-Chapter generative context;
 - a Frozen rule conflicts with this brief or Acceptance requires Learning, Master, Guide, Teaching,
   whole-book Pass 2, whole-book KP preparation, or another excluded capability;
 - durable identity, migration, ownership, cascade, structure protection, or publication authority
@@ -358,8 +446,10 @@ turn missing Review evidence into PASS.
 - Complete and report TARGETED, AGENT REAL-USE GOLDEN PATH, AFFECTED REGRESSION, and the required
   CLOSURE / BROAD suite in that order.
 - Obtain an **independent narrow review** before closure. It must attack migration/data preservation,
-  KP durable identity and ownership, source ranges, Outline logical-identity preservation,
-  draft/stable identity, atomic publication, idempotency/recovery, cascade, Review allowlist and
+  KP durable identity and ownership, evidence-unit/source-range authority, Outline logical-identity
+  preservation, the AI output allowlist, same-Section/adjacent-only merge enforcement, deterministic
+  materialization, compact Review-ledger allowlist, unit-addressed semantic repair, packet/stage-local
+  technical retry, draft/stable identity, atomic publication, idempotency/recovery, cascade,
   credential/egress isolation, failure-never-PASS, zero Learning/Mastery/Master/Teaching writes, and
   compatibility with future structure-lock authority.
 - Complete user real-use acceptance, write the concise development report in

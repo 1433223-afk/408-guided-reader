@@ -14,7 +14,8 @@
 | Reconciliation | Completed 2026-09-03 (Transition Plan step 5). Evidence-driven changes are marked **`[E]`** inline; §29 records every disposition; §30 is the candidate port matrix. |
 | Semantic closure | Completed 2026-09-03, following `LEGACY_PRODUCT_SEMANTICS_DELTA_AUDIT.md` and independent ZCode review. Assistant recursion (§14.3–§14.11), Master Topic/mastery authority (§15.5–§15.7), Review rework/terminal-failure (§13.7a–§13.7b), Section/Chapter isolation (§17.5–§17.6), and foundation-version staleness scoping (§19.2a) realize the corresponding `PRODUCT_BLUEPRINT.md` freezes. §32 records disposition of every P0/P1 audit finding — none remains unresolved. |
 | Outline conceptual correction | Same-day follow-up, 2026-09-03. A second ZCode pass found a new blocking issue (P1-5) in the closure patch's Outline fix; a product-intent clarification then established that logical directory structure and physical range resolution had been conflated. §9 (Product) and §11, §12.2/§12.6, §18.2, §19.1–§19.2b (Implementation) are rewritten accordingly; `OutlineRegion` is removed. See §32.1. |
-| Chapter Knowledge Map UAT correction | User-approved amendment, 2026-09-07, after real-use `empty_response`/latency failure and external KP research review. §12.2 makes private generation and retry Section-scoped while retaining Chapter-level Review/validation/atomic publication; §12.4 removes deterministic no-overlap and assigns overlap/duplicate judgment to structural Review; §22 requires safe per-attempt diagnostics and minimum Section progress. Durable replacement identity and availability/attempt separation are explicitly required before Mastery or first regeneration, but are not authorized as part of this UAT rework. |
+| Chapter Knowledge Map first UAT correction | User-approved amendment, 2026-09-07, after real-use `empty_response`/latency failure and external KP research review. It introduced Section-scoped private generation/retry, removed deterministic no-overlap, added structural duplicate/overlap Review, safe per-attempt diagnostics and minimum Section progress. Its LLM-first complete-KP generation and whole-Section semantic repair are superseded by the architecture correction below; its retained shell, overlap rule and observability remain authority. |
+| Chapter Knowledge Map architecture correction | User-approved amendment, 2026-09-07, after repeated invalid/length-limited generation and oversized/rejected Review. §12.2 now requires deterministic evidence units, bounded AI `KEEP`/`MERGE`/`DROP` plus short labels, deterministic KP materialization, compact Chapter Review and unit-addressed repair; §12.4 freezes the model/source-authority boundary; §22 makes diagnostics packet/stage-scoped. Existing Outline/OCR authority, jobs, persistence, Reader UI/navigation and atomic publication remain unchanged. Durable replacement identity and availability/attempt separation are still required before Mastery or first regeneration and are not authorized here. |
 | Authorizes | **Gate D: CLOSED (PASS).** This document is now engineering authority for 408 Guided Reader — where it and `PRODUCT_BLUEPRINT.md` disagree, the Product Blueprint still wins. **Gate E (code porting / implementation) is a separate, still-unopened authorization** — this closure does not itself authorize writing, porting, or installing anything. |
 
 ### 0.1 Why the clean-room, and what happens next
@@ -1021,31 +1022,53 @@ fully available for it (§14, §20).
 ### 12.2 Pipeline
 
 ```
-Chapter content assembly (outline range → OCR lines, regions, exam evidence)
-   → private Section-scoped KP draft generation/retry
-                                      [AgentRuntime, internal pipeline role]
-   → assemble one private Chapter candidate set
-   → deterministic range resolution  (draft KP ranges → concrete page/y, from OCR geometry)
-   → independent Chapter-level structural review
-                                      [AgentRuntime, different context; different provider preferred]
-   → deterministic validation        (see 12.4)
-   → atomic Chapter publish           (stable IDs assigned here)
+Chapter source projection              (existing Outline + OCR/layout authority)
+   → deterministic evidence-unit construction and bounded Section-local packetization
+   → semantic KEEP / MERGE / DROP + short title / one-sentence meaning
+                                         [AgentRuntime, internal pipeline role]
+   → deterministic private-KP materialization
+   → assemble one complete compact Chapter ledger
+   → deterministic pre-review contract validation
+   → independent Chapter-level structural review of the compact ledger
+                                         [AgentRuntime, different context; different provider preferred]
+   → localized unit-addressed semantic repair when required, then compact re-review
+   → deterministic final validation     (see 12.4)
+   → atomic Chapter publish              (stable IDs assigned here)
 ```
 
-Range resolution is **deterministic and not a model output**: the generator identifies boundaries by
-referencing content; the resolver converts those to geometry. A model never emits coordinates.
+> **User-approved architecture correction, 2026-09-07.** Repeated real use showed that even Section-
+> scoped complete-KP generation and whole-Section semantic regeneration retained the wrong authority
+> boundary and unstable structured-output shape. The accepted replacement keeps the product shell
+> and rebuilds only the semantic middle as deterministic evidence units → bounded semantic decisions
+> → deterministic KP materialization → compact Chapter Review. It supersedes any earlier LLM-first
+> generation/repair description.
 
-Generation input and transport retry are scoped to one existing primary Section at a time. A
-Section call receives only the Chapter identity/provenance needed to enforce ownership, that
-Section's existing Outline projection, and its bounded source evidence. A transient or structured-
-output failure retries that Section call; it does not resend already-successful sibling Section
-payloads during the same in-process attempt. Section candidates remain private and disposable. If
-any required Section fails, the whole Chapter attempt fails and **no** Section candidate becomes a
-published or user-visible partial map.
+The evidence-unit builder is deliberately local and minimal. From the requested Chapter's existing
+Outline and OCR/layout records, it deterministically assigns each bounded unit a pipeline-local ID,
+one existing primary Section, source revision, order and continuous source evidence. It does not
+infer or replace document hierarchy and is not a generic document framework. Unit IDs are model-
+visible references; their Section/page/line/geometry/range mapping remains server authority.
 
-After every required Section has produced a valid private candidate set, the structural reviewer
-receives the **whole Chapter candidate map collectively**, grouped by the real Section structure,
-together with bounded source evidence and generation provenance. It reviews at least:
+Each semantic invocation receives one bounded packet of ordered units from one Section. Its complete
+output vocabulary is: `KEEP`, `MERGE` or `DROP` over supplied unit IDs, plus a short title and one-
+sentence meaning for each kept/merged result. Every supplied ID is accounted for exactly once. A
+`MERGE` is valid only for a contiguous adjacent run inside the same Section and packet. The model
+cannot mint IDs or emit Section, page, line, geometry, source range or source-revision fields.
+Invented/duplicate/missing IDs, non-adjacent/cross-Section merges, partial output and invalid schema
+fail closed under §13.5.
+
+Materialization is **deterministic and not a model output**. The server inherits primary ownership,
+order, source revision and continuous range from the selected unit or allowed contiguous unit run;
+only title/meaning come from AI. Section-local packet results remain private and disposable. If any
+required packet fails, the Chapter attempt fails and **no** candidate becomes a published or user-
+visible partial map.
+
+After every packet has a valid decision set, the structural reviewer receives the **whole Chapter
+map collectively as one complete compact ledger**, grouped by the real Section structure. The ledger
+contains Section/unit order, complete decision accounting, candidate-to-unit membership,
+title/meaning, bounded deterministic evidence excerpts/fingerprints, overlap/warning metadata and
+required generation provenance. It does not resend the raw whole-Chapter OCR line stream, geometry
+dump, generator prompt or reasoning. Review checks at least:
 
 - independently trackable granularity and split/merge quality;
 - coverage of the Chapter's major learnable content;
@@ -1054,10 +1077,22 @@ together with bounded source evidence and generation provenance. It reviews at l
 - source faithfulness, range sufficiency and correct primary Section ownership;
 - map-level balance across Sections.
 
+Every blocking semantic finding identifies an existing Section and the smallest relevant unit-ID
+set. Review judges; it never rewrites. Within the authorized bounded repair budget, only packet(s)
+containing those IDs may be rerun; unaffected semantic decisions remain private and unchanged. The
+server rematerializes the candidate set and resubmits the complete compact Chapter ledger. An
+invalid/unaddressable finding fails closed and never triggers whole-Section regeneration.
+
+Technical retry is equally local: transient/empty/length-limited/invalid output retries only the
+current semantic packet, while technical Review failure retries only the current compact Review
+stage. It never replays successful unrelated packets, consumes semantic-repair authority or becomes
+PASS. Existing durable-job recovery and disposable-draft semantics remain; this correction adds no
+generic checkpoint/workflow framework.
+
 Overlap is supplied as a deterministic review/warning signal where present; it is not itself a
 publication failure. Chapter-level Review, final deterministic validation and atomic publication
 remain mandatory. The UI may expose only stage/progress metadata before publication — never titles,
-definitions, ranges or any other partial candidate content.
+meanings, ranges or any other partial candidate content.
 
 The KP generator and structural reviewer are **internal pipeline roles, not user-facing Product
 Agents** (§13.2) — an important boundary the Product Blueprint draws explicitly (§16).
@@ -1086,6 +1121,12 @@ KnowledgePoint
 
 Validation gates publication:
 
+- every semantic packet references only deterministic unit IDs supplied to it, accounts for each
+  supplied unit exactly once, and contains no model-authored source/ownership fields;
+- every merged candidate is backed by a contiguous adjacent unit run inside one existing primary
+  Section; invented, duplicate, missing, non-adjacent or cross-Section unit references are invalid;
+- every candidate's primary Section, source revision, order and continuous range are materialized
+  from the server-side unit ledger rather than accepted from model output;
 - every KP has exactly one primary section, and its range lies within that section;
 - each range is continuous and monotonic;
 - KP count and granularity are plausible for the chapter's extent (a chapter yielding one KP, or two
@@ -1099,6 +1140,11 @@ Validation gates publication:
 > reviewer, which judges whether the overlap signals a semantic duplicate, an unjustified split, or
 > legitimate shared evidence. Exact duplicate candidate identity/semantic keys remain invalid;
 > semantic near-duplicates remain a Review concern.
+
+The compact Review ledger is also deterministic output. It must completely represent unit decisions
+and candidate membership while bounding evidence excerpts/fingerprints; it is not a second generated
+document structure and cannot acquire source authority. Review findings used for semantic repair must
+resolve to the ledger's real Section/unit IDs before any repair call is allowed.
 
 **Cross-section relations** (prerequisite, bridge, related) are a separate association table. They
 never affect primary ownership, which is what mastery depends on (§12).
@@ -2150,17 +2196,21 @@ without reading code.
 **Provider invocation records:** role, provider, model, latency, token usage, outcome, retry count,
 failure classification — **metadata only, not payloads**. Retained with a bounded window.
 
-For Chapter Knowledge preparation, the retained record is per Section generation attempt and must
-also include: Chapter/Section IDs, pipeline stage, logical attempt number, start/end time,
-`finish_reason` when supplied, response-content presence/length, reasoning-content presence/length
-when supplied, and typed failure code. Reasoning/content bodies are not observability metadata and
-must not be retained through this path. A terminal `empty_response` must remain diagnosable after the
-call completes; it cannot collapse to only one Chapter-level failure code with no per-attempt facts.
+For Chapter Knowledge preparation, the retained record is per bounded semantic-packet attempt or
+compact Review-stage attempt and must also include: Chapter/Section IDs, a non-content packet/stage
+identifier, logical attempt number, start/end time, `finish_reason` when supplied, response-content
+presence/length, reasoning-content presence/length when supplied, and typed failure code. Unit text,
+unit decisions, title/meaning, Review ledger, reasoning/content bodies and source geometry are not
+observability metadata and must not be retained through this path. A terminal `empty_response` must
+remain diagnosable after the call completes; it cannot collapse to only one Chapter-level failure
+code with no per-attempt facts.
 
-**Minimum Chapter progress:** while private Section generation is running, the Reader may show the
-current stage and completed/total Section count (and retry attempt where useful). Progress contains
-no candidate KP content and confers no readiness. Restart may honestly restart disposable private
-work, but must not leave a dead process looking like live, indefinitely unchanging preparation.
+**Minimum Chapter progress:** while deterministic construction, private semantic classification or
+compact Review is running, the Reader may show the current stage and completed/total Section count
+(and retry attempt where useful). Internal packet granularity need not become a new user-facing
+progress model. Progress contains no evidence-unit or candidate KP content and confers no readiness.
+Restart may honestly restart disposable private work, but must not leave a dead process looking like
+live, indefinitely unchanging preparation.
 
 **Version stamping:** every generated artifact and every log line about one carries the relevant
 version IDs (§19.1). Without this, staleness bugs are undebuggable.
@@ -2296,9 +2346,10 @@ still works with AI disabled**.
 
 ### Phase R6 — Learning Structure
 **Goal:** lazy chapter knowledge maps and durable learning state.
-**Includes:** Knowledge context and full pipeline (generation → deterministic range resolution →
-independent structural review → validation → atomic publish), Learning context (KP status, section
-learning state with the §15.2 two-axis model, append-only history, Master threads).
+**Includes:** Knowledge context and full pipeline (deterministic evidence units → bounded AI semantic
+selection/labeling → deterministic KP materialization → compact independent structural review →
+validation → atomic publish), Learning context (KP status, section learning state with the §15.2 two-
+axis model, append-only history, Master threads).
 **Excludes:** teaching generation.
 **Schema:** Knowledge, Learning.
 **Acceptance:** chapter preparation is lazy and isolated — a FAILED chapter leaves reading, notes and
