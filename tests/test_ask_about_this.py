@@ -929,6 +929,76 @@ def test_deepseek_adapter_refuses_redirect_to_second_endpoint():
     assert hits == ["/chat/completions"]
 
 
+def test_empty_response_attempt_observer_retains_only_safe_finish_usage_and_lengths():
+    reasoning_canary = "PRIVATE_REASONING_BODY_MUST_NOT_BE_RETAINED"
+
+    class EmptyResponseHandler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers["Content-Length"])
+            self.rfile.read(length)
+            payload = json.dumps({
+                "choices": [{
+                    "message": {"content": "", "reasoning_content": reasoning_canary},
+                    "finish_reason": "length",
+                }],
+                "usage": {
+                    "prompt_tokens": 101,
+                    "completion_tokens": 202,
+                    "total_tokens": 303,
+                },
+            }).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format, *_args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), EmptyResponseHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    events = []
+    runtime = AgentRuntime(
+        OpenAICompatibleAdapter("deepseek"),
+        config=ProviderConfig(
+            provider="deepseek",
+            endpoint=f"http://127.0.0.1:{server.server_port}/chat/completions",
+            model="deepseek-v4-pro",
+            credential_target=DEEPSEEK_CREDENTIAL_TARGET,
+            max_attempts=1,
+        ),
+        credential_loader=lambda: "empty-response-test-secret",
+    )
+    try:
+        with pytest.raises(ProviderFailure) as caught:
+            runtime.complete_with_metadata(
+                [{"role": "user", "content": "bounded"}],
+                interaction_id="empty-response-observability",
+                attempt_observer=events.append,
+            )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert caught.value.code == "empty_response"
+    assert [event["status"] for event in events] == ["STARTED", "FAILED"]
+    failed = events[-1]
+    assert failed["finish_reason"] == "length"
+    assert failed["usage"] == {
+        "prompt_tokens": 101, "completion_tokens": 202, "total_tokens": 303,
+    }
+    assert failed["content_present"] is False
+    assert failed["content_length"] == 0
+    assert failed["reasoning_present"] is True
+    assert failed["reasoning_length"] == len(reasoning_canary)
+    serialized = json.dumps({"failure": caught.value.diagnostics, "events": events})
+    assert reasoning_canary not in serialized
+    assert "empty-response-test-secret" not in serialized
+
+
 def test_assistant_http_contract_round_trips_and_close_clears(assistant_fixture):
     from test_api import request_json, running_server
 

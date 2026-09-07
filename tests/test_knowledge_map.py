@@ -68,7 +68,13 @@ class ScriptedRuntime:
     active_provider = "deepseek"
 
     def __init__(self, generation, review):
-        self.answers = {"deepseek": list(generation), "zhipu": list(review)}
+        self.answers = {
+            "deepseek": (
+                {key: list(values) for key, values in generation.items()}
+                if isinstance(generation, dict) else list(generation)
+            ),
+            "zhipu": list(review),
+        }
         self.calls = []
         self._lock = threading.Lock()
 
@@ -80,18 +86,51 @@ class ScriptedRuntime:
         return provider, {"deepseek": "generator-model", "zhipu": "reviewer-model"}[provider]
 
     def complete_for_with_metadata(
-        self, provider, messages, *, interaction_id=None, max_tokens=None
+        self, provider, messages, *, interaction_id=None, max_tokens=None,
+        attempt_observer=None,
     ):
+        section_id = None
+        if provider == "deepseek":
+            payload = json.loads(messages[1]["content"])
+            section_id = payload["source_section"]["section_id"]
         with self._lock:
             self.calls.append(
                 {"provider": provider, "messages": json.loads(json.dumps(messages)),
                  "interaction_id": interaction_id, "max_tokens": max_tokens}
             )
-            if not self.answers[provider]:
+            answers = self.answers[provider]
+            queue = answers.get(section_id) if isinstance(answers, dict) else answers
+            if not queue:
                 raise AssertionError(f"No scripted answer for {provider}")
-            answer = self.answers[provider].pop(0)
+            answer = queue.pop(0)
+        if attempt_observer is not None:
+            attempt_observer({
+                "status": "STARTED", "provider": provider,
+                "model": {"deepseek": "generator-model", "zhipu": "reviewer-model"}[provider],
+                "interaction_id": interaction_id, "transport_attempt": 1,
+            })
         if isinstance(answer, Exception):
+            if attempt_observer is not None and isinstance(answer, ProviderFailure):
+                attempt_observer({
+                    "status": "FAILED", "provider": provider,
+                    "model": {"deepseek": "generator-model", "zhipu": "reviewer-model"}[provider],
+                    "interaction_id": interaction_id, "transport_attempt": 1,
+                    "latency_ms": 1, "failure_kind": answer.kind.value,
+                    "failure_code": answer.code,
+                    **(answer.diagnostics or {}),
+                })
             raise answer
+        if attempt_observer is not None:
+            attempt_observer({
+                "status": "SUCCEEDED", "provider": provider,
+                "model": {"deepseek": "generator-model", "zhipu": "reviewer-model"}[provider],
+                "interaction_id": interaction_id, "transport_attempt": 1,
+                "latency_ms": 1,
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+                "finish_reason": "stop", "content_present": True,
+                "content_length": len(answer), "reasoning_present": False,
+                "reasoning_length": 0,
+            })
         return ProviderCompletion(
             answer=answer, latency_ms=1, usage={"fixture": True},
             effective_config={
@@ -101,30 +140,35 @@ class ScriptedRuntime:
         )
 
 
-def generation_answer(section_ids: list[str]) -> str:
+def generation_answer(section_id: str, section_index: int, *, start_ref=None, end_ref=None,
+                      title=None, definition=None) -> str:
+    refs = [("p0:l2", "p1:l0"), ("p2:l1", "p3:l0")]
+    default_start, default_end = refs[section_index]
     return json.dumps(
         {
             "knowledge_points": [
                 {
-                    "draft_key": "private-a",
-                    "primary_section_id": section_ids[0],
-                    "title": "核心概念 A",
-                    "one_sentence_definition": "第一节中值得独立理解的核心概念。",
-                    "start_ref": "p0:l2",
-                    "end_ref": "p1:l0",
-                },
-                {
-                    "draft_key": "private-b",
-                    "primary_section_id": section_ids[1],
-                    "title": "核心概念 B",
-                    "one_sentence_definition": "第二节中值得独立理解的核心概念。",
-                    "start_ref": "p2:l1",
-                    "end_ref": "p3:l0",
+                    "draft_key": f"private-{section_index}",
+                    "primary_section_id": section_id,
+                    "title": title or f"核心概念 {section_index + 1}",
+                    "one_sentence_definition": definition or f"第{section_index + 1}节中值得独立理解的核心概念。",
+                    "start_ref": start_ref or default_start,
+                    "end_ref": end_ref or default_end,
                 },
             ]
         },
         ensure_ascii=False,
     )
+
+
+def generation_scripts(section_ids: list[str], *, first_override=None, repeats=1):
+    scripts = {
+        section_id: [generation_answer(section_id, index) for _ in range(repeats)]
+        for index, section_id in enumerate(section_ids)
+    }
+    if first_override is not None:
+        scripts[section_ids[0]] = list(first_override)
+    return scripts
 
 
 def build_fixture(service, *, runtime=None, post_review_validator=None):
@@ -163,7 +207,7 @@ def build_fixture(service, *, runtime=None, post_review_validator=None):
         key=lambda node: node["order_index"],
     )
     scripted = runtime or ScriptedRuntime(
-        [generation_answer([node["outline_node_id"] for node in sections])],
+        generation_scripts([node["outline_node_id"] for node in sections]),
         [json.dumps({"verdict": "PASS", "summary": "结构与来源范围通过。"}, ensure_ascii=False)],
     )
     repository = KnowledgeRepository(service.database)
@@ -242,14 +286,25 @@ def test_one_chapter_publishes_atomically_with_stable_ids_and_allowlisted_payloa
     assert set(source) == {"chapter", "outline", "source_sections"}
     assert set(review) == {
         "chapter", "outline", "bounded_source", "candidate_knowledge_points",
-        "generation_provenance",
+        "generation_provenance", "review_rubric", "overlap_warnings",
     }
     encoded = json.dumps(inspections, ensure_ascii=False)
     assert "CANARY_OTHER_CHAPTER" not in encoded
-    assert all(call["provider"] == expected for call, expected in zip(
-        fixture["runtime"].calls, ["deepseek", "zhipu"]
-    ))
-    assert [call["max_tokens"] for call in fixture["runtime"].calls] == [12_288, 12_288]
+    generation_calls = [call for call in fixture["runtime"].calls if call["provider"] == "deepseek"]
+    review_calls = [call for call in fixture["runtime"].calls if call["provider"] == "zhipu"]
+    assert len(generation_calls) == len(fixture["sections"])
+    assert len(review_calls) == 1
+    assert all(call["max_tokens"] == 12_288 for call in fixture["runtime"].calls)
+    for call in generation_calls:
+        payload = json.loads(call["messages"][1]["content"])
+        assert set(payload) == {"chapter", "outline", "source_section"}
+        assert set(payload["chapter"]) == {
+            "book_source_revision_id", "chapter_outline_node_id", "title",
+        }
+        assert {node["kind"] for node in payload["outline"]}.isdisjoint({"CHAPTER"})
+        assert payload["source_section"]["section_id"] == payload["outline"][0]["outline_node_id"]
+        assert set(payload["source_section"]) == {"section_id", "title", "lines"}
+        assert all(set(line) == {"line_ref", "text"} for line in payload["source_section"]["lines"])
 
     reopened = KnowledgeRepository(service.database).snapshot(revision_id, chapter_id)
     assert [point["knowledge_point_id"] for point in reopened["knowledge_points"]] == [
@@ -291,6 +346,189 @@ def test_duplicate_concurrent_requests_and_restart_recovery_converge(service):
     assert ready["status"] == "READY"
 
 
+def test_section_structured_retry_does_not_resend_successful_sibling_and_records_safe_attempts(service):
+    fixture = build_fixture(service)
+    section_ids = [section["outline_node_id"] for section in fixture["sections"]]
+    runtime = ScriptedRuntime(
+        generation_scripts(
+            section_ids,
+            first_override=[
+                "DO_NOT_STORE_RESPONSE_BODY",
+                generation_answer(section_ids[0], 0),
+            ],
+        ),
+        [json.dumps({"verdict": "PASS", "summary": "整章结构通过。"}, ensure_ascii=False)],
+    )
+    fixture["knowledge"] = KnowledgeService(
+        service, fixture["foundation"], fixture["outline"], fixture["repository"], runtime,
+        generator_provider="deepseek", reviewer_provider="zhipu",
+    )
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+    assert ready["status"] == "READY"
+
+    generation_calls = [call for call in runtime.calls if call["provider"] == "deepseek"]
+    section_calls = [
+        json.loads(call["messages"][1]["content"])["source_section"]["section_id"]
+        for call in generation_calls
+    ]
+    assert section_calls.count(section_ids[0]) == 2
+    assert section_calls.count(section_ids[1]) == 1
+    assert any("structured-2" in call["interaction_id"] for call in generation_calls)
+
+    attempts = fixture["repository"].generation_attempts(revision_id, chapter_id)
+    assert len(attempts) == 3
+    assert {attempt["status"] for attempt in attempts} == {"SUCCEEDED"}
+    assert {attempt["primary_section_id"] for attempt in attempts} == set(section_ids)
+    assert all(attempt["provider_role"] == "KP_GENERATOR" for attempt in attempts)
+    assert all(attempt["pipeline_stage"] == "GENERATION" for attempt in attempts)
+    assert all(attempt["finish_reason"] == "stop" for attempt in attempts)
+    assert all(attempt["total_tokens"] == 15 for attempt in attempts)
+    assert all(attempt["content_present"] == 1 for attempt in attempts)
+    assert all(attempt["reasoning_present"] == 0 for attempt in attempts)
+    serialized = json.dumps(attempts, ensure_ascii=False)
+    assert "DO_NOT_STORE_RESPONSE_BODY" not in serialized
+    assert "knowledge_points" not in serialized
+
+
+def test_overlap_is_review_signal_not_deterministic_failure(service):
+    fixture = build_fixture(service)
+    section_ids = [section["outline_node_id"] for section in fixture["sections"]]
+    overlapping = json.dumps(
+        {
+            "knowledge_points": [
+                {
+                    "draft_key": "shared-a",
+                    "primary_section_id": section_ids[0],
+                    "title": "共享证据下的概念 A",
+                    "one_sentence_definition": "可独立检查的第一个概念。",
+                    "start_ref": "p0:l2",
+                    "end_ref": "p1:l0",
+                },
+                {
+                    "draft_key": "shared-b",
+                    "primary_section_id": section_ids[0],
+                    "title": "共享证据下的概念 B",
+                    "one_sentence_definition": "可独立检查的第二个概念。",
+                    "start_ref": "p0:l2",
+                    "end_ref": "p1:l0",
+                },
+            ]
+        },
+        ensure_ascii=False,
+    )
+    runtime = ScriptedRuntime(
+        {
+            section_ids[0]: [overlapping],
+            section_ids[1]: [generation_answer(section_ids[1], 1)],
+        },
+        [json.dumps({"verdict": "PASS", "summary": "共享来源合理，结构通过。"}, ensure_ascii=False)],
+    )
+    fixture["knowledge"] = KnowledgeService(
+        service, fixture["foundation"], fixture["outline"], fixture["repository"], runtime,
+        generator_provider="deepseek", reviewer_provider="zhipu",
+    )
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+    assert ready["status"] == "READY"
+    assert len(ready["knowledge_points"]) == 3
+    review_payload = fixture["knowledge"].inspect_payloads(
+        revision_id, chapter_id
+    )["attempts"][-1]["review_payload"]
+    assert review_payload["overlap_warnings"] == [{
+        "first_candidate_index": 0,
+        "second_candidate_index": 1,
+        "primary_section_id": section_ids[0],
+        "signal": "SHARED_SOURCE_EVIDENCE_REVIEW_REQUIRED",
+    }]
+    assert set(review_payload["review_rubric"]) == {
+        "independently_trackable_granularity",
+        "duplicate_or_near_duplicate_semantics",
+        "instructional_specificity",
+        "split_merge_quality",
+        "major_learning_coverage",
+        "section_and_source_faithfulness",
+        "chapter_map_balance",
+    }
+    review_call = next(call for call in runtime.calls if call["provider"] == "zhipu")
+    system = review_call["messages"][0]["content"]
+    for phrase in ("语义重复", "泛化能力", "拆分/合并", "覆盖", "失衡", "overlap_warnings"):
+        assert phrase in system
+
+
+@pytest.mark.parametrize(
+    ("issue", "summary"),
+    [
+        ("duplicate", "语义重复或近重复"),
+        ("instructional_specificity", "候选只是泛化答题能力"),
+        ("split_merge_quality", "候选存在不合理拆分或合并"),
+        ("coverage", "遗漏主要可学习内容"),
+        ("map_balance", "各小节颗粒度明显失衡"),
+    ],
+)
+def test_chapter_structural_review_rejection_never_publishes_adversarial_map(
+    service, issue, summary
+):
+    fixture = build_fixture(service)
+    section_ids = [section["outline_node_id"] for section in fixture["sections"]]
+    runtime = ScriptedRuntime(
+        generation_scripts(section_ids),
+        [json.dumps({"verdict": "FAIL", "summary": f"{issue}: {summary}"}, ensure_ascii=False)],
+    )
+    fixture["knowledge"] = KnowledgeService(
+        service, fixture["foundation"], fixture["outline"], fixture["repository"], runtime,
+        generator_provider="deepseek", reviewer_provider="zhipu",
+    )
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+    assert failed["status"] == "FAILED"
+    assert failed["failure_stage"] == "REVIEW"
+    assert failed["failure_code"] == "review_rejected"
+    assert failed["knowledge_points"] == []
+    review_payload = fixture["knowledge"].inspect_payloads(
+        revision_id, chapter_id
+    )["attempts"][-1]["review_payload"]
+    assert len(review_payload["bounded_source"]) == len(section_ids)
+    assert len(review_payload["review_rubric"]) == 7
+
+
+def test_restart_marks_live_generation_attempt_interrupted_and_resets_private_progress(service):
+    fixture = build_fixture(service)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    section_id = fixture["sections"][0]["outline_node_id"]
+    preparing, _ = fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    fixture["repository"].update_progress(
+        revision_id, chapter_id, preparing["attempt_id"],
+        stage="GENERATING", sections_completed=1, sections_total=2,
+    )
+    fixture["repository"].record_generation_attempt(
+        revision_id, chapter_id, preparing["attempt_id"], section_id, 1,
+        {
+            "status": "STARTED", "provider": "deepseek", "model": "generator-model",
+            "interaction_id": "restart-canary", "transport_attempt": 1,
+        },
+    )
+
+    fixture["repository"].recover_preparing_jobs()
+    recovered = fixture["repository"].snapshot(revision_id, chapter_id)
+    assert recovered["status"] == "PREPARING"
+    assert recovered["prepare_stage"] == "QUEUED"
+    assert recovered["sections_completed"] == 0
+    assert recovered["sections_total"] == 0
+    attempts = fixture["repository"].generation_attempts(revision_id, chapter_id)
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "INTERRUPTED"
+    assert attempts[0]["failure_kind"] == "INTERRUPTED"
+    assert attempts[0]["failure_code"] == "service_restart"
+
+
 @pytest.mark.parametrize(
     ("generation", "review", "validator", "stage", "code"),
     [
@@ -315,7 +553,7 @@ def test_pipeline_failures_never_publish_partial_ready(
     base = build_fixture(service)
     section_ids = [section["outline_node_id"] for section in base["sections"]]
     runtime = ScriptedRuntime(
-        generation if generation is not None else [generation_answer(section_ids)],
+        generation_scripts(section_ids, first_override=generation),
         review if review is not None else [json.dumps({"verdict": "PASS", "summary": "通过"}, ensure_ascii=False)],
     )
     base["knowledge"] = KnowledgeService(
@@ -338,10 +576,17 @@ def test_pipeline_failures_never_publish_partial_ready(
 def test_range_failure_retry_and_book_cascade_without_learning_writes(service):
     fixture = build_fixture(service)
     section_ids = [section["outline_node_id"] for section in fixture["sections"]]
-    bad = json.loads(generation_answer(section_ids))
-    bad["knowledge_points"][1]["primary_section_id"] = section_ids[0]
+    bad = generation_answer(
+        section_ids[0], 0, start_ref="p1:l0", end_ref="p0:l2"
+    )
     runtime = ScriptedRuntime(
-        [json.dumps(bad, ensure_ascii=False), generation_answer(section_ids)],
+        {
+            section_ids[0]: [bad, generation_answer(section_ids[0], 0)],
+            section_ids[1]: [
+                generation_answer(section_ids[1], 1),
+                generation_answer(section_ids[1], 1),
+            ],
+        },
         [json.dumps({"verdict": "PASS", "summary": "通过"}, ensure_ascii=False)],
     )
     fixture["knowledge"] = KnowledgeService(
@@ -394,18 +639,20 @@ def test_running_chapter_job_converges_when_book_delete_wins(service):
 
     class BlockingRuntime(ScriptedRuntime):
         def complete_for_with_metadata(
-            self, provider, messages, *, interaction_id=None, max_tokens=None
+            self, provider, messages, *, interaction_id=None, max_tokens=None,
+            attempt_observer=None,
         ):
             if provider == "deepseek":
                 entered.set()
                 if not release.wait(5):
                     raise AssertionError("book-delete race was not released")
             return super().complete_for_with_metadata(
-                provider, messages, interaction_id=interaction_id, max_tokens=max_tokens
+                provider, messages, interaction_id=interaction_id, max_tokens=max_tokens,
+                attempt_observer=attempt_observer,
             )
 
     runtime = BlockingRuntime(
-        [generation_answer(section_ids)],
+        generation_scripts(section_ids),
         [json.dumps({"verdict": "PASS", "summary": "通过"}, ensure_ascii=False)],
     )
     base["knowledge"] = KnowledgeService(
@@ -517,7 +764,7 @@ def test_knowledge_map_http_contract_exposes_no_partial_draft(service):
         assert status == 200 and inspection["attempts"][-1]["outcome"] == "READY"
 
 
-def test_migration_8_preserves_existing_book_outline_annotation_and_page_job(tmp_path):
+def test_migrations_8_and_9_preserve_existing_assets_and_add_safe_kp_progress(tmp_path):
     path = tmp_path / "upgrade.sqlite3"
     connection = sqlite3.connect(path)
     connection.execute("PRAGMA foreign_keys = ON")
@@ -592,6 +839,18 @@ def test_migration_8_preserves_existing_book_outline_annotation_and_page_job(tmp
         assert upgraded.execute(
             "SELECT id, job_type, page_start, attempts FROM jobs"
         ).fetchone() == ("page-job", "PAGE_PREPARE", 0, 2)
+        preparation_columns = {
+            row[1] for row in upgraded.execute("PRAGMA table_info(chapter_preparations)")
+        }
+        assert {"prepare_stage", "sections_completed", "sections_total"}.issubset(
+            preparation_columns
+        )
+        assert upgraded.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chapter_generation_attempts'"
+        ).fetchone() == (1,)
+        assert upgraded.execute(
+            "SELECT MAX(version) FROM schema_migrations"
+        ).fetchone() == (9,)
         assert upgraded.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     finally:
         upgraded.close()

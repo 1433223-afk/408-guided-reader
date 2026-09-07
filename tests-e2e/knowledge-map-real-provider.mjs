@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +18,7 @@ const providerModels = {
 const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-knowledge-real-"));
 const dataDir = path.join(acceptanceRoot, "data");
 await cp(sourceDataDir, dataDir, { recursive: true });
+resetCopiedKnowledgeState();
 
 let running;
 let browser;
@@ -106,7 +107,15 @@ try {
   ]);
   assert.deepEqual(Object.keys(knowledgeInspection.attempts[0].review_payload).sort(), [
     "bounded_source", "candidate_knowledge_points", "chapter", "generation_provenance", "outline",
+    "overlap_warnings", "review_rubric",
   ]);
+  const sectionPayloads = knowledgeInspection.attempts[0].generation_payloads;
+  assert.equal(sectionPayloads.length, knowledgeInspection.attempts[0].source_payload.source_sections.length);
+  assert.ok(sectionPayloads.length > 1);
+  assert.ok(sectionPayloads.every((payload) => (
+    Object.keys(payload).sort().join(",") === "chapter,outline,source_section"
+      && payload.outline[0].outline_node_id === payload.source_section.section_id
+  )));
   const runtimeInspection = await json(page, "/api/assistant/inspection");
   const calls = runtimeInspection.calls.filter((call) => (
     call.interaction_id?.startsWith("kp-generation:") || call.interaction_id?.startsWith("kp-review:")
@@ -115,11 +124,22 @@ try {
   const reviewCalls = calls.filter((call) => call.interaction_id.startsWith("kp-review:"));
   assert.ok(calls.some((call) => call.provider === generatorProvider && call.request_body.model === providerModels[generatorProvider]));
   assert.ok(calls.some((call) => call.provider === reviewerProvider && call.request_body.model === providerModels[reviewerProvider]));
-  assert.ok(generationCalls.length >= 1);
+  assert.ok(generationCalls.length >= sectionPayloads.length);
   assert.ok(generationCalls.every((call) => call.request_body.max_tokens === 12_288));
+  assert.ok(generationCalls.every((call) => {
+    const payload = JSON.parse(call.request_body.messages[1].content);
+    return Object.keys(payload).sort().join(",") === "chapter,outline,source_section";
+  }));
   assert.ok(reviewCalls.length >= 1);
   assert.ok(reviewCalls.every((call) => call.request_body.max_tokens === 12_288));
   assert.ok(!/Authorization|api[_-]?key|credential/i.test(JSON.stringify(calls)));
+  assert.ok(knowledgeInspection.generation_attempts.length >= sectionPayloads.length);
+  assert.ok(knowledgeInspection.generation_attempts.every((attempt) => (
+    attempt.provider === generatorProvider
+      && attempt.model === providerModels[generatorProvider]
+      && !Object.hasOwn(attempt, "response_body")
+      && !Object.hasOwn(attempt, "reasoning_content")
+  )));
 
   const screenshot = path.join(process.cwd(), "test-results", "knowledge-map-real-provider.png");
   await mkdir(path.dirname(screenshot), { recursive: true });
@@ -130,6 +150,8 @@ try {
     generator: `${result.generator_provider}/${result.generator_model}`,
     reviewer: `${result.reviewer_provider}/${result.reviewer_model}`,
     providerCalls: calls.length,
+    sectionGenerationCalls: generationCalls.length,
+    sectionProgress: `${sectionPayloads.length}/${sectionPayloads.length}`,
     generatorMaxTokens: 12_288,
     reviewerMaxTokens: 12_288,
     structureVersion: result.structure_version,
@@ -201,4 +223,21 @@ function chromePath() {
   const found = candidates.find((candidate) => fs.existsSync(candidate));
   if (!found) throw new Error("Chrome or Edge is required");
   return found;
+}
+
+function resetCopiedKnowledgeState() {
+  const database = path.join(dataDir, "state.sqlite3");
+  const script = [
+    "import sqlite3, sys",
+    "connection = sqlite3.connect(sys.argv[1])",
+    "connection.execute(\"PRAGMA foreign_keys = ON\")",
+    "connection.execute(\"DELETE FROM jobs WHERE job_type = 'CHAPTER_PREPARE'\")",
+    "connection.execute(\"DELETE FROM chapter_preparations\")",
+    "connection.commit()",
+    "connection.close()",
+  ].join("; ");
+  const reset = spawnSync(process.env.READER_PYTHON || "python", ["-c", script, database], {
+    cwd: process.cwd(), windowsHide: true, encoding: "utf8",
+  });
+  if (reset.status !== 0) throw new Error(reset.stderr || "failed to reset copied Knowledge state");
 }

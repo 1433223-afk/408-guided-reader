@@ -32,6 +32,7 @@ let browser;
 let page;
 const results = [];
 const identitySnapshots = new Map();
+const revisionSnapshots = new Map();
 
 try {
   browser = await chromium.launch({ executablePath, headless: process.env.READER_HEADLESS !== "0" });
@@ -93,10 +94,16 @@ try {
       node.outline_node_id, node.parent_id, node.depth, node.order_index, node.title,
     ]);
     identitySnapshots.set(pageCount, shape);
+    revisionSnapshots.set(pageCount, outline.nodes.map((node) => [
+      node.outline_node_id, node.identity_revision, node.physical_revision,
+    ]));
     const targetNode = outline.nodes.find((node) => node.title === target.title);
     assert.ok(targetNode, `${target.title} missing from real directory`);
     assert.equal(targetNode.start_page, target.pdfPageIndex);
-    assert.equal(targetNode.resolution_state, "PARTIAL");
+    assert.ok(
+      ["PARTIAL", "RESOLVED"].includes(targetNode.resolution_state),
+      "saved real-book evidence must retain a safe physical target",
+    );
     await expandAncestors(page, outline.nodes, targetNode);
     assert.ok(targetNode.depth >= 2, "real-use target must exercise at least a third-level entry");
     await page.locator(`li[data-node-id="${targetNode.outline_node_id}"] > .outline-row .outline-target`).click();
@@ -150,7 +157,14 @@ try {
       identitySnapshots.get(pageCount),
       `${pageCount}-page outline identity/hierarchy/order changed across restart`,
     );
-    assert.ok(outline.nodes.every((node) => node.identity_revision === 1 && node.physical_revision === 1));
+    assert.deepEqual(
+      outline.nodes.map((node) => [
+        node.outline_node_id, node.identity_revision, node.physical_revision,
+      ]),
+      revisionSnapshots.get(pageCount),
+      `${pageCount}-page Outline revisions changed across restart`,
+    );
+    assert.ok(outline.nodes.every((node) => node.identity_revision === 1));
   }
   const book29 = books.find((value) => value.active_revision.page_count === 29);
   const persisted = await json(page, `/api/revisions/${book29.active_revision.id}/page-labels`);

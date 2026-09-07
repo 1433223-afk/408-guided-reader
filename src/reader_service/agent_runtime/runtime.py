@@ -58,17 +58,26 @@ class ProviderFailureKind(str, Enum):
 
 
 class ProviderFailure(RuntimeError):
-    def __init__(self, kind: ProviderFailureKind, code: str, user_message: str):
+    def __init__(
+        self,
+        kind: ProviderFailureKind,
+        code: str,
+        user_message: str,
+        *,
+        diagnostics: dict | None = None,
+    ):
         super().__init__(code)
         self.kind = kind
         self.code = code
         self.user_message = user_message
+        self.diagnostics = copy.deepcopy(diagnostics)
 
 
 @dataclass(frozen=True, slots=True)
 class ProviderResponse:
     answer: str
     usage: dict | None = None
+    diagnostics: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +86,7 @@ class ProviderCompletion:
     latency_ms: int
     usage: dict | None
     effective_config: dict
+    response_metadata: dict | None = None
 
 
 class ProviderAdapter(Protocol):
@@ -269,6 +279,7 @@ class AgentRuntime:
         *,
         interaction_id: str | None = None,
         max_tokens: int | None = None,
+        attempt_observer: Callable[[dict], None] | None = None,
     ) -> ProviderCompletion:
         effective_max_tokens = self.config.max_tokens if max_tokens is None else max_tokens
         if isinstance(effective_max_tokens, bool) or not 1 <= effective_max_tokens <= 16384:
@@ -305,6 +316,7 @@ class AgentRuntime:
         started = time.perf_counter()
         last_failure: ProviderFailure | None = None
         for attempt in range(1, self.config.max_attempts + 1):
+            transport_started = time.perf_counter()
             self.inspector.record(
                 provider=self.config.provider,
                 endpoint=self.config.endpoint,
@@ -319,12 +331,38 @@ class AgentRuntime:
                 attempt,
                 call_id,
             )
+            self._notify_attempt(
+                attempt_observer,
+                {
+                    "status": "STARTED",
+                    "provider": self.config.provider,
+                    "model": self.config.model,
+                    "interaction_id": call_id,
+                    "transport_attempt": attempt,
+                },
+            )
             try:
                 response = self.adapter.complete(
                     self.config.endpoint, api_key, body, self.config.timeout_seconds
                 )
             except ProviderFailure as failure:
                 last_failure = failure
+                self._notify_attempt(
+                    attempt_observer,
+                    {
+                        "status": "FAILED",
+                        "provider": self.config.provider,
+                        "model": self.config.model,
+                        "interaction_id": call_id,
+                        "transport_attempt": attempt,
+                        "latency_ms": max(
+                            0, round((time.perf_counter() - transport_started) * 1000)
+                        ),
+                        "failure_kind": failure.kind.value,
+                        "failure_code": failure.code,
+                        **copy.deepcopy(failure.diagnostics or {}),
+                    },
+                )
                 logger.warning(
                     "assistant_provider_failure provider=%s code=%s attempt=%d interaction_id=%s",
                     self.config.provider,
@@ -346,6 +384,26 @@ class AgentRuntime:
                 with self._lock:
                     self._cooling_until = 0.0
                 normalized = response if isinstance(response, ProviderResponse) else ProviderResponse(str(response))
+                response_metadata = copy.deepcopy(normalized.diagnostics or {})
+                response_metadata.setdefault("content_present", bool(normalized.answer))
+                response_metadata.setdefault("content_length", len(normalized.answer))
+                response_metadata.setdefault("reasoning_present", False)
+                response_metadata.setdefault("reasoning_length", 0)
+                self._notify_attempt(
+                    attempt_observer,
+                    {
+                        "status": "SUCCEEDED",
+                        "provider": self.config.provider,
+                        "model": self.config.model,
+                        "interaction_id": call_id,
+                        "transport_attempt": attempt,
+                        "latency_ms": max(
+                            0, round((time.perf_counter() - transport_started) * 1000)
+                        ),
+                        "usage": copy.deepcopy(normalized.usage),
+                        **response_metadata,
+                    },
+                )
                 return ProviderCompletion(
                     answer=normalized.answer,
                     latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
@@ -353,6 +411,7 @@ class AgentRuntime:
                     effective_config=self.config.effective_config(
                         max_tokens=effective_max_tokens
                     ),
+                    response_metadata=response_metadata,
                 )
         assert last_failure is not None
         raise last_failure
@@ -384,6 +443,17 @@ class AgentRuntime:
             self._cooling_until = max(
                 self._cooling_until, self.clock() + self.config.cooling_seconds
             )
+
+    @staticmethod
+    def _notify_attempt(observer: Callable[[dict], None] | None, event: dict) -> None:
+        if observer is None:
+            return
+        try:
+            observer(copy.deepcopy(event))
+        except Exception:
+            # Diagnostics are deliberately best-effort and must never change the
+            # provider result or turn an otherwise valid response into a failure.
+            logger.exception("provider_attempt_observer_failed")
 
 
 class ProviderRuntimeSet:
@@ -484,6 +554,7 @@ class ProviderRuntimeSet:
         *,
         interaction_id: str | None = None,
         max_tokens: int | None = None,
+        attempt_observer: Callable[[dict], None] | None = None,
     ) -> ProviderCompletion:
         runtime = self.runtimes.get(provider)
         if runtime is None:
@@ -493,7 +564,10 @@ class ProviderRuntimeSet:
                 "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
             )
         return runtime.complete_with_metadata(
-            messages, interaction_id=interaction_id, max_tokens=max_tokens
+            messages,
+            interaction_id=interaction_id,
+            max_tokens=max_tokens,
+            attempt_observer=attempt_observer,
         )
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:

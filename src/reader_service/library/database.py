@@ -513,6 +513,83 @@ MIGRATIONS = (
             );
         """,
     ),
+    (
+        9,
+        """
+        -- UAT diagnostics remain operational metadata: Chapter progress never
+        -- contains private candidate content, and provider attempt rows retain
+        -- only bounded route/timing/shape/failure facts.
+        ALTER TABLE chapter_preparations ADD COLUMN prepare_stage TEXT
+            CHECK (prepare_stage IS NULL OR prepare_stage IN (
+                'QUEUED', 'RESOLVING_SOURCE', 'GENERATING', 'REVIEWING',
+                'VALIDATING', 'PUBLISHING'
+            ));
+        ALTER TABLE chapter_preparations ADD COLUMN sections_completed INTEGER
+            NOT NULL DEFAULT 0 CHECK (sections_completed >= 0);
+        ALTER TABLE chapter_preparations ADD COLUMN sections_total INTEGER
+            NOT NULL DEFAULT 0 CHECK (sections_total >= 0);
+        UPDATE chapter_preparations
+        SET prepare_stage = CASE WHEN status = 'PREPARING' THEN 'QUEUED' ELSE NULL END;
+
+        CREATE TABLE chapter_generation_attempts (
+            id TEXT PRIMARY KEY,
+            book_source_revision_id TEXT NOT NULL,
+            chapter_outline_node_id TEXT NOT NULL,
+            preparation_attempt_id TEXT NOT NULL,
+            primary_section_id TEXT NOT NULL,
+            structured_attempt INTEGER NOT NULL CHECK (structured_attempt >= 1),
+            transport_attempt INTEGER NOT NULL CHECK (transport_attempt >= 1),
+            interaction_id TEXT NOT NULL CHECK (length(interaction_id) BETWEEN 1 AND 300),
+            provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 40),
+            model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 120),
+            provider_role TEXT NOT NULL CHECK (provider_role = 'KP_GENERATOR'),
+            pipeline_stage TEXT NOT NULL CHECK (pipeline_stage = 'GENERATION'),
+            status TEXT NOT NULL CHECK (
+                status IN ('STARTED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED')
+            ),
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0),
+            finish_reason TEXT CHECK (
+                finish_reason IS NULL OR length(finish_reason) <= 120
+            ),
+            prompt_tokens INTEGER CHECK (prompt_tokens IS NULL OR prompt_tokens >= 0),
+            completion_tokens INTEGER CHECK (
+                completion_tokens IS NULL OR completion_tokens >= 0
+            ),
+            total_tokens INTEGER CHECK (total_tokens IS NULL OR total_tokens >= 0),
+            content_present INTEGER CHECK (content_present IN (0, 1)),
+            content_length INTEGER CHECK (content_length IS NULL OR content_length >= 0),
+            reasoning_present INTEGER CHECK (reasoning_present IN (0, 1)),
+            reasoning_length INTEGER CHECK (
+                reasoning_length IS NULL OR reasoning_length >= 0
+            ),
+            failure_kind TEXT CHECK (
+                failure_kind IS NULL OR length(failure_kind) <= 80
+            ),
+            failure_code TEXT CHECK (
+                failure_code IS NULL OR length(failure_code) <= 120
+            ),
+            UNIQUE (
+                book_source_revision_id, chapter_outline_node_id,
+                preparation_attempt_id, primary_section_id,
+                structured_attempt, transport_attempt
+            ),
+            FOREIGN KEY (book_source_revision_id, chapter_outline_node_id)
+                REFERENCES chapter_preparations(
+                    book_source_revision_id, chapter_outline_node_id
+                ) ON DELETE CASCADE,
+            FOREIGN KEY (book_source_revision_id, primary_section_id)
+                REFERENCES outline_nodes(book_source_revision_id, outline_node_id)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX ix_chapter_generation_attempts_owner
+            ON chapter_generation_attempts(
+                book_source_revision_id, chapter_outline_node_id,
+                preparation_attempt_id, started_at
+            );
+        """,
+    ),
 )
 
 

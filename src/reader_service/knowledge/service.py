@@ -7,6 +7,7 @@ import os
 import re
 import threading
 from collections import deque
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from reader_service.agent_runtime import (
@@ -26,18 +27,30 @@ MAX_STRUCTURED_ATTEMPTS = 2
 MAX_SOURCE_CHARACTERS = 180_000
 DEFAULT_GENERATOR_MAX_TOKENS = 12_288
 DEFAULT_REVIEWER_MAX_TOKENS = 12_288
+DEFAULT_SECTION_GENERATION_WORKERS = 2
 
-GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部 KP 生成器，不是用户对话助手。
-只使用给定章节、Section 目录和 OCR 来源；Original PDF 是教材权威。
-KnowledgePoint 必须是值得独立记录理解状态的学习单元，不得机械复制每个段落或标题。
-每个 KP 必须且只能归属给定的一个 primary Section，并用给定 line_ref 指明一个连续来源范围。
-所有 KP 按教材顺序排列，来源范围彼此不得重叠；同一行也不得同时属于两个 KP 范围。
+REVIEW_RUBRIC = (
+    "independently_trackable_granularity",
+    "duplicate_or_near_duplicate_semantics",
+    "instructional_specificity",
+    "split_merge_quality",
+    "major_learning_coverage",
+    "section_and_source_faithfulness",
+    "chapter_map_balance",
+)
+
+GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部 KP 生成器（Section 级），不是用户对话助手。
+只使用给定章节身份、唯一一个 primary Section 的目录子树和该 Section 的 OCR 来源；Original PDF 是教材权威。
+KnowledgePoint 必须是值得独立记录理解状态、可独立检查的学习单元，不得机械复制每个段落、标题、词语或泛化的认知动作。
+每个 KP 必须且只能归属给定的 primary Section，并用给定 line_ref 指明一个连续且足以支撑该 KP 的主要来源范围。
+所有 KP 按教材顺序排列。教材文本不必被 KP 范围完整分割；不同 KP 只有在确有独立学习价值时才可共享来源证据。
 不得创建、删除、改名、重排或重挂 Outline；不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
 只返回一个 JSON 对象：{"knowledge_points":[{"draft_key":"本次草稿内唯一键","primary_section_id":"现有 Section ID","title":"知识点标题","one_sentence_definition":"一句话定义","start_ref":"pN:lN","end_ref":"pN:lN"}]}。
 不得返回坐标、Markdown 代码围栏、推理过程或其他字段。"""
 
 REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定候选是否可以发布。
-检查：KP 是否具有独立学习价值；是否遗漏核心内容或过度切碎；primary Section 是否正确；来源范围是否支持标题和定义；是否混入习题/答案；是否忠于给定教材范围。
+必须整体审查完整 Chapter map，并逐项检查：KP 是否是可独立追踪/检查的学习单元；是否存在语义重复或近重复；是否误把“推理、答题、问题解决”等泛化能力当成学科知识；拆分/合并是否合理；是否覆盖主要可学习内容；primary Section 与来源是否忠实且充分；各 Section 的颗粒度与数量是否明显失衡。
+overlap_warnings 只是共享来源证据的审查信号，不是自动失败：判断它代表合理共享证据，还是重复、近重复或不当拆分。来源空隙是正常的，不要求每行教材都有 KP。
 Original PDF 是教材权威。你只能审查，不能改写候选，不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
 只返回一个 JSON 对象，且只能含两个字段：{"verdict":"PASS 或 FAIL","summary":"不超过 1000 字的简体中文理由"}。
 不得返回 Markdown 代码围栏、修订后的 KP 或其他文字。"""
@@ -85,6 +98,7 @@ class KnowledgeService:
         reviewer_provider: str | None = None,
         generator_max_tokens: int | None = None,
         reviewer_max_tokens: int | None = None,
+        section_generation_workers: int | None = None,
         post_review_validator=None,
     ):
         self.library = library
@@ -115,10 +129,18 @@ class KnowledgeService:
                 "GUIDED_READER_KP_REVIEW_MAX_TOKENS", DEFAULT_REVIEWER_MAX_TOKENS
             )
         )
+        self.section_generation_workers = (
+            section_generation_workers if section_generation_workers is not None
+            else self._environment_int(
+                "GUIDED_READER_KP_SECTION_WORKERS", DEFAULT_SECTION_GENERATION_WORKERS
+            )
+        )
         if isinstance(self.generator_max_tokens, bool) or not 1 <= self.generator_max_tokens <= 16384:
             raise ValueError("KP generator max_tokens must be between 1 and 16384")
         if isinstance(self.reviewer_max_tokens, bool) or not 1 <= self.reviewer_max_tokens <= 16384:
             raise ValueError("KP reviewer max_tokens must be between 1 and 16384")
+        if isinstance(self.section_generation_workers, bool) or not 1 <= self.section_generation_workers <= 4:
+            raise ValueError("KP Section generation workers must be between 1 and 4")
         self.post_review_validator = post_review_validator
         self._inspections: deque[dict] = deque(maxlen=8)
         self._inspection_lock = threading.Lock()
@@ -176,10 +198,15 @@ class KnowledgeService:
             "generator_provider": self.generator_provider,
             "reviewer_provider": self.reviewer_provider,
             "source_payload": None,
+            "generation_payloads": [],
             "review_payload": None,
             "outcome": "PREPARING",
         }
         try:
+            self.repository.update_progress(
+                revision_id, chapter_id, attempt_id,
+                stage="RESOLVING_SOURCE", sections_completed=0, sections_total=0,
+            )
             resolved = self.outline.resolve_chapter_physical(revision_id, chapter_id)
             chapter = resolved["chapter"]
             revision = self.library.revision(revision_id)
@@ -194,8 +221,16 @@ class KnowledgeService:
             )
             inspection["source_payload"] = copy.deepcopy(source_payload)
             source_hash = self._digest(source_payload)
-            draft, generator_identity = self._generate(
-                source_payload, ref_index, section_bounds, attempt_id
+            section_payloads = self._section_generation_payloads(source_payload)
+            inspection["generation_payloads"] = copy.deepcopy(section_payloads)
+            self.repository.update_progress(
+                revision_id, chapter_id, attempt_id,
+                stage="GENERATING", sections_completed=0,
+                sections_total=len(section_payloads),
+            )
+            draft, generator_identity = self._generate_sections(
+                section_payloads, ref_index, section_bounds,
+                revision_id, chapter_id, attempt_id,
             )
             points = self._resolve_ranges(draft, ref_index, section_bounds)
             self._validate_points(points, section_bounds)
@@ -205,11 +240,19 @@ class KnowledgeService:
                 "bounded_source": copy.deepcopy(source_payload["source_sections"]),
                 "candidate_knowledge_points": copy.deepcopy(points),
                 "generation_provenance": {
-                    "provider": generator_identity[0], "model": generator_identity[1]
+                    "provider": generator_identity[0], "model": generator_identity[1],
+                    "section_count": len(section_payloads),
                 },
+                "review_rubric": list(REVIEW_RUBRIC),
+                "overlap_warnings": self._overlap_warnings(points),
             }
             inspection["review_payload"] = copy.deepcopy(review_payload)
             review_hash = self._digest(review_payload)
+            self.repository.update_progress(
+                revision_id, chapter_id, attempt_id,
+                stage="REVIEWING", sections_completed=len(section_payloads),
+                sections_total=len(section_payloads),
+            )
             verdict, reviewer_identity = self._review(review_payload, attempt_id)
             review_summary = verdict.summary
             if verdict.verdict != "PASS":
@@ -219,6 +262,11 @@ class KnowledgeService:
                     provider=reviewer_identity[0], model=reviewer_identity[1],
                     summary=verdict.summary,
                 )
+            self.repository.update_progress(
+                revision_id, chapter_id, attempt_id,
+                stage="VALIDATING", sections_completed=len(section_payloads),
+                sections_total=len(section_payloads),
+            )
             self._validate_points(points, section_bounds)
             if self.post_review_validator is not None:
                 try:
@@ -228,6 +276,11 @@ class KnowledgeService:
                         "DETERMINISTIC_VALIDATION", "INVALID_CANDIDATE",
                         "deterministic_validation_failed", type(failure).__name__,
                     ) from failure
+            self.repository.update_progress(
+                revision_id, chapter_id, attempt_id,
+                stage="PUBLISHING", sections_completed=len(section_payloads),
+                sections_total=len(section_payloads),
+            )
             published = self.repository.publish(
                 revision_id, chapter_id, attempt_id,
                 foundation_version=int(revision["foundation_version"]),
@@ -297,7 +350,12 @@ class KnowledgeService:
                 copy.deepcopy(item) for item in self._inspections
                 if item["revision_id"] == revision_id and item["chapter_id"] == chapter_id
             ]
-        return {"attempts": items}
+        return {
+            "attempts": items,
+            "generation_attempts": self.repository.generation_attempts(
+                revision_id, chapter_id
+            ),
+        }
 
     def _record_inspection(self, inspection: dict) -> None:
         with self._inspection_lock:
@@ -393,12 +451,170 @@ class KnowledgeService:
         }
         return payload, ref_index, section_bounds
 
-    def _generate(self, payload, ref_index, section_bounds, attempt_id):
+    @staticmethod
+    def _section_generation_payloads(source_payload: dict) -> list[dict]:
+        outline = source_payload["outline"]
+        children: dict[str | None, list[dict]] = {}
+        for node in outline:
+            children.setdefault(node["parent_id"], []).append(node)
+
+        payloads = []
+        for source_section in source_payload["source_sections"]:
+            section_id = source_section["section_id"]
+            subtree = []
+            pending = [section_id]
+            included = set()
+            while pending:
+                node_id = pending.pop()
+                if node_id in included:
+                    continue
+                included.add(node_id)
+                pending.extend(
+                    child["outline_node_id"] for child in children.get(node_id, [])
+                )
+            for node in outline:
+                if node["outline_node_id"] in included:
+                    subtree.append(copy.deepcopy(node))
+            if not subtree or subtree[0]["outline_node_id"] != section_id:
+                raise ValueError("Section generation payload lacks its Outline root")
+            payloads.append(
+                {
+                    "chapter": {
+                        key: source_payload["chapter"][key]
+                        for key in (
+                            "book_source_revision_id",
+                            "chapter_outline_node_id",
+                            "title",
+                        )
+                    },
+                    "outline": [
+                        {
+                            key: node[key]
+                            for key in (
+                                "outline_node_id", "parent_id", "kind", "title",
+                                "order_index",
+                            )
+                        }
+                        for node in subtree
+                    ],
+                    "source_section": {
+                        "section_id": section_id,
+                        "title": source_section["title"],
+                        "lines": [
+                            {"line_ref": line["line_ref"], "text": line["text"]}
+                            for line in source_section["lines"]
+                        ],
+                    },
+                }
+            )
+        return payloads
+
+    def _generate_sections(
+        self,
+        payloads: list[dict],
+        ref_index: dict,
+        section_bounds: dict,
+        revision_id: str,
+        chapter_id: str,
+        attempt_id: str,
+    ):
+        if not payloads:
+            raise ValueError("Chapter has no Section generation payloads")
+        results: dict[str, list[dict]] = {}
+        identities: set[tuple[str | None, str | None]] = set()
+        completed = 0
+        first_failure: Exception | None = None
+        workers = min(self.section_generation_workers, len(payloads))
+        executor = ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="kp-section-generate"
+        )
+        futures = {
+            executor.submit(
+                self._generate_section,
+                payload,
+                {
+                    ref: item for ref, item in ref_index.items()
+                    if item["section_id"] == payload["source_section"]["section_id"]
+                },
+                {
+                    payload["source_section"]["section_id"]:
+                        section_bounds[payload["source_section"]["section_id"]]
+                },
+                revision_id,
+                chapter_id,
+                attempt_id,
+            ): payload["source_section"]["section_id"]
+            for payload in payloads
+        }
+        try:
+            for future in as_completed(futures):
+                section_id = futures[future]
+                try:
+                    points, identity = future.result()
+                except CancelledError:
+                    continue
+                except Exception as failure:
+                    if first_failure is None:
+                        first_failure = failure
+                        for sibling in futures:
+                            if sibling is not future:
+                                sibling.cancel()
+                else:
+                    results[section_id] = points
+                    identities.add(identity)
+                    completed += 1
+                    self.repository.update_progress(
+                        revision_id, chapter_id, attempt_id,
+                        stage="GENERATING", sections_completed=completed,
+                        sections_total=len(payloads),
+                    )
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
+        if first_failure is not None:
+            raise first_failure
+        if len(results) != len(payloads):
+            raise KnowledgePipelineError(
+                "GENERATION", "TECHNICAL_FAILURE", "incomplete_section_generation",
+                "Not every required Section produced private candidates",
+            )
+        if len(identities) != 1:
+            raise KnowledgePipelineError(
+                "GENERATION", "TECHNICAL_FAILURE", "inconsistent_generator_route",
+                "Section generation did not retain one actual provider/model route",
+            )
+        points = []
+        for payload in payloads:
+            section_id = payload["source_section"]["section_id"]
+            points.extend(results[section_id])
+        if not 1 <= len(points) <= 120:
+            raise KnowledgePipelineError(
+                "GENERATION", "INVALID_STRUCTURED_OUTPUT",
+                "invalid_generation_output", "Chapter KP count is implausible",
+                provider=next(iter(identities))[0], model=next(iter(identities))[1],
+            )
+        return points, next(iter(identities))
+
+    def _generate_section(
+        self,
+        payload: dict,
+        ref_index: dict,
+        section_bounds: dict,
+        revision_id: str,
+        chapter_id: str,
+        attempt_id: str,
+    ):
         identity = self._configured_identity(self.generator_provider, "GENERATION")
+        section_id = payload["source_section"]["section_id"]
         for attempt in range(1, MAX_STRUCTURED_ATTEMPTS + 1):
             system = GENERATOR_SYSTEM_MESSAGE
             if attempt > 1:
                 system += "\n上一次输出未通过 JSON/schema 校验；请严格按同一 schema 重试。"
+            observer = lambda event, structured_attempt=attempt: (
+                self.repository.record_generation_attempt(
+                    revision_id, chapter_id, attempt_id, section_id,
+                    structured_attempt, event,
+                )
+            )
             try:
                 completion = self.runtime.complete_for_with_metadata(
                     self.generator_provider,
@@ -406,8 +622,11 @@ class KnowledgeService:
                         {"role": "system", "content": system},
                         {"role": "user", "content": self._canonical(payload)},
                     ],
-                    interaction_id=f"kp-generation:{attempt_id}",
+                    interaction_id=(
+                        f"kp-generation:{attempt_id}:{section_id}:structured-{attempt}"
+                    ),
                     max_tokens=self.generator_max_tokens,
+                    attempt_observer=observer,
                 )
             except ProviderFailure as failure:
                 raise KnowledgePipelineError(
@@ -470,7 +689,7 @@ class KnowledgeService:
         if not isinstance(value, dict) or set(value) != {"knowledge_points"}:
             raise ValueError("Generator output fields are invalid")
         points = value["knowledge_points"]
-        if not isinstance(points, list) or not 2 <= len(points) <= 120:
+        if not isinstance(points, list) or not 1 <= len(points) <= 120:
             raise ValueError("Generator output has an implausible KP count")
         keys = set()
         expected = {
@@ -535,9 +754,8 @@ class KnowledgeService:
 
     @staticmethod
     def _validate_points(points: list[dict], section_bounds: dict) -> None:
-        if not 2 <= len(points) <= 120:
+        if not 1 <= len(points) <= 120:
             raise ValueError("Published KP count is implausible")
-        previous_end = None
         for point in points:
             if set(point) != {
                 "primary_section_id", "title", "one_sentence_definition",
@@ -551,9 +769,29 @@ class KnowledgeService:
             bounds = section_bounds[point["primary_section_id"]]
             if not bounds[0] <= start < end <= bounds[1]:
                 raise ValueError("Resolved KP range is invalid")
-            if previous_end is not None and start < previous_end:
-                raise ValueError("KnowledgePoint ranges overlap")
-            previous_end = end
+
+    @staticmethod
+    def _overlap_warnings(points: list[dict]) -> list[dict]:
+        warnings = []
+        for left_index, left in enumerate(points):
+            left_start = (left["start_page"], left["start_y"])
+            left_end = (left["end_page"], left["end_y"])
+            for right_index in range(left_index + 1, len(points)):
+                right = points[right_index]
+                if left["primary_section_id"] != right["primary_section_id"]:
+                    continue
+                right_start = (right["start_page"], right["start_y"])
+                right_end = (right["end_page"], right["end_y"])
+                if max(left_start, right_start) < min(left_end, right_end):
+                    warnings.append(
+                        {
+                            "first_candidate_index": left_index,
+                            "second_candidate_index": right_index,
+                            "primary_section_id": left["primary_section_id"],
+                            "signal": "SHARED_SOURCE_EVIDENCE_REVIEW_REQUIRED",
+                        }
+                    )
+        return warnings
 
     @staticmethod
     def _validate_review(answer: str) -> ReviewVerdict:

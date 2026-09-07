@@ -845,7 +845,19 @@ function renderKnowledgeMap(payload) {
     return;
   }
   if (payload.status === "PREPARING") {
-    elements["knowledge-status"].textContent = "正在准备本章来源范围、知识点与独立结构审查；地图会在整体通过后一次出现。";
+    const stages = {
+      QUEUED: "等待开始",
+      RESOLVING_SOURCE: "正在解析本章来源范围",
+      GENERATING: "正在按小节生成知识点",
+      REVIEWING: "正在进行整章结构审查",
+      VALIDATING: "正在校验整章学习地图",
+      PUBLISHING: "正在整体发布学习地图",
+    };
+    const stage = stages[payload.prepare_stage] || "正在准备本章学习地图";
+    const total = Number(payload.sections_total) || 0;
+    const completed = Math.min(Number(payload.sections_completed) || 0, total);
+    const progress = total > 0 ? `；已完成 ${completed}/${total} 个小节` : "";
+    elements["knowledge-status"].textContent = `${stage}${progress}；地图会在整章通过后一次出现。`;
     elements["knowledge-empty"].textContent = "准备期间不会显示部分草稿。";
     return;
   }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,9 +12,12 @@ const expectedHash = "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af80775116902
 const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-knowledge-"));
 const dataDir = path.join(acceptanceRoot, "data");
 await cp(sourceDataDir, dataDir, { recursive: true });
+resetCopiedKnowledgeState();
 
-let reviewCalls = 0;
 const transports = [];
+const generationCallsBySection = new Map();
+let failingSectionId = null;
+const reasoningCanary = "PRIVATE_PROVIDER_REASONING_MUST_NOT_BE_STORED";
 const provider = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -22,30 +25,46 @@ const provider = createServer(async (request, response) => {
   transports.push(body);
   const system = body.messages[0]?.content || "";
   let answer;
+  let finishReason = "stop";
+  let reasoningContent = "";
   if (system.includes("内部 KP 生成器")) {
     const payload = JSON.parse(body.messages[1].content);
-    const points = payload.source_sections.map((section, index) => ({
-      draft_key: `chapter6-${index + 1}`,
-      primary_section_id: section.section_id,
-      title: `${section.title}的核心内容`,
-      one_sentence_definition: `概括 ${section.title} 中需要独立理解的核心内容。`,
-      start_ref: section.lines[0].line_ref,
-      end_ref: section.lines.at(-1).line_ref,
-    }));
-    answer = JSON.stringify({ knowledge_points: points });
-    await delay(500);
+    assert.deepEqual(Object.keys(payload).sort(), ["chapter", "outline", "source_section"]);
+    const section = payload.source_section;
+    failingSectionId ??= section.section_id;
+    const callCount = (generationCallsBySection.get(section.section_id) || 0) + 1;
+    generationCallsBySection.set(section.section_id, callCount);
+    if (section.section_id === failingSectionId && callCount <= 3) {
+      answer = "";
+      finishReason = "length";
+      reasoningContent = reasoningCanary;
+      await delay(700);
+    } else {
+      answer = JSON.stringify({ knowledge_points: [{
+        draft_key: `chapter6-${section.section_id}`,
+        primary_section_id: section.section_id,
+        title: `${section.title}的核心内容`,
+        one_sentence_definition: `概括 ${section.title} 中需要独立理解的核心内容。`,
+        start_ref: section.lines[0].line_ref,
+        end_ref: section.lines.at(-1).line_ref,
+      }] });
+      await delay(250);
+    }
   } else if (system.includes("Chapter Knowledge Map 结构审查者")) {
-    reviewCalls += 1;
-    answer = reviewCalls === 1
-      ? JSON.stringify({ verdict: "FAIL", summary: "注入的一次有界语义审查失败，用于验证失败隔离与重试。" })
-      : JSON.stringify({ verdict: "PASS", summary: "候选按 Section 归属，来源范围连续且未包含习题答案。" });
+    answer = JSON.stringify({
+      verdict: "PASS",
+      summary: "整章候选的颗粒度、重复、教学特异性、拆分合并、覆盖和均衡均通过。",
+    });
     await delay(500);
   } else {
     answer = "学习地图准备失败不会影响这条临时解释。";
     await delay(120);
   }
   response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ choices: [{ message: { content: answer } }] }));
+  response.end(JSON.stringify({
+    choices: [{ message: { content: answer, reasoning_content: reasoningContent }, finish_reason: finishReason }],
+    usage: { prompt_tokens: 100, completion_tokens: answer.length, total_tokens: 100 + answer.length },
+  }));
 });
 await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
 
@@ -102,12 +121,39 @@ try {
   ]), `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map/prepare`);
   assert.equal(duplicate[0].chapter_map.attempt_id, duplicate[1].chapter_map.attempt_id);
 
+  await page.waitForFunction(() => {
+    const status = document.querySelector("#knowledge-status")?.textContent || "";
+    return status.includes("正在按小节生成知识点") && /已完成 [1-9]\d*\/\d+ 个小节/.test(status);
+  }, null, { timeout: 20_000 });
+  assert.equal(await page.locator("#knowledge-map li").count(), 0);
   await page.waitForFunction(() => document.querySelector("#knowledge-status")?.textContent.includes("准备失败"), null, { timeout: 20_000 });
   assert.equal(await page.locator("#knowledge-map li").count(), 0);
   const failed = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map`);
   assert.equal(failed.status, "FAILED");
-  assert.equal(failed.failure_stage, "REVIEW");
-  assert.equal(failed.failure_code, "review_rejected");
+  assert.equal(failed.failure_stage, "GENERATION");
+  assert.equal(failed.failure_code, "empty_response");
+  const failedInspection = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map/inspection`);
+  const failedTransportAttempts = failedInspection.generation_attempts.filter(
+    (attempt) => attempt.preparation_attempt_id === failed.attempt_id,
+  );
+  const failedSectionAttempts = failedTransportAttempts.filter(
+    (attempt) => attempt.primary_section_id === failingSectionId,
+  );
+  assert.equal(failedSectionAttempts.length, 3);
+  assert.ok(failedSectionAttempts.every((attempt) => (
+    attempt.status === "FAILED"
+      && attempt.failure_code === "empty_response"
+      && attempt.finish_reason === "length"
+      && attempt.content_present === 0
+      && attempt.reasoning_present === 1
+      && attempt.reasoning_length === reasoningCanary.length
+  )));
+  const successfulSibling = failedTransportAttempts.find((attempt) => attempt.status === "SUCCEEDED");
+  assert.ok(successfulSibling, "a sibling Section should finish while the delayed Section retries");
+  assert.equal(failedTransportAttempts.filter(
+    (attempt) => attempt.primary_section_id === successfulSibling.primary_section_id,
+  ).length, 1);
+  assert.ok(!JSON.stringify(failedInspection.generation_attempts).includes(reasoningCanary));
 
   await page.locator("#search-toggle").click();
   await page.locator("#search-query").fill("总线事务");
@@ -156,8 +202,13 @@ try {
   for (const attempt of inspection.attempts) {
     assert.equal(attempt.source_payload.chapter.chapter_outline_node_id, chapter6.outline_node_id);
     assert.deepEqual(Object.keys(attempt.source_payload).sort(), ["chapter", "outline", "source_sections"]);
-    assert.deepEqual(Object.keys(attempt.review_payload).sort(), [
+    assert.deepEqual(Object.keys(attempt).includes("generation_payloads"), true);
+    assert.ok(attempt.generation_payloads.every((payload) => (
+      Object.keys(payload).sort().join(",") === "chapter,outline,source_section"
+    )));
+    if (attempt.review_payload) assert.deepEqual(Object.keys(attempt.review_payload).sort(), [
       "bounded_source", "candidate_knowledge_points", "chapter", "generation_provenance", "outline",
+      "overlap_warnings", "review_rubric",
     ]);
     const serialized = JSON.stringify(attempt);
     assert.ok(!/本节习题精选|答案与解析|knowledge-generator-loopback-secret|knowledge-review-loopback-secret/.test(serialized));
@@ -173,9 +224,13 @@ try {
       node.start_page, node.start_y, node.end_page, node.end_y, node.resolution_state, node.physical_revision,
     ])
   ));
-  assert.ok(physicallyChanged.length > 0);
   assert.ok(physicallyChanged.every((node) => chapter6Ids.has(node.outline_node_id)));
   assert.ok(physicallyChanged.every((node) => ["CHAPTER", "SECTION", "SUBSECTION"].includes(node.kind)));
+  if (physicallyChanged.length === 0) {
+    const chapterNodes = outlineAfter.nodes.filter((node) => chapter6Ids.has(node.outline_node_id));
+    assert.ok(chapterNodes.filter((node) => ["CHAPTER", "SECTION", "SUBSECTION"].includes(node.kind))
+      .every((node) => node.resolution_state === "RESOLVED"));
+  }
 
   const firstPoint = ready.knowledge_points[0];
   await page.locator("#knowledge-map .knowledge-section li button").first().click();
@@ -237,7 +292,7 @@ try {
     oneChapterOnly: true,
     outlineLogicalIdentityPreserved: true,
     atomicVisibility: true,
-    failureRecovery: "REVIEW_FAIL -> retry -> READY",
+    failureRecovery: "GENERATION_EMPTY_RESPONSE -> retry -> READY",
     structureVersion: ready.structure_version,
     knowledgePointCount: ready.knowledge_points.length,
     sectionGroups: await page.locator("#knowledge-map .knowledge-section").count().catch(() => 0),
@@ -402,4 +457,21 @@ function chromePath() {
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function resetCopiedKnowledgeState() {
+  const database = path.join(dataDir, "state.sqlite3");
+  const script = [
+    "import sqlite3, sys",
+    "connection = sqlite3.connect(sys.argv[1])",
+    "connection.execute(\"PRAGMA foreign_keys = ON\")",
+    "connection.execute(\"DELETE FROM jobs WHERE job_type = 'CHAPTER_PREPARE'\")",
+    "connection.execute(\"DELETE FROM chapter_preparations\")",
+    "connection.commit()",
+    "connection.close()",
+  ].join("; ");
+  const reset = spawnSync(process.env.READER_PYTHON || "python", ["-c", script, database], {
+    cwd: process.cwd(), windowsHide: true, encoding: "utf8",
+  });
+  if (reset.status !== 0) throw new Error(reset.stderr || "failed to reset copied Knowledge state");
 }

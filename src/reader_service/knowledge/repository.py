@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from reader_service.library.database import Database
+
+
+GENERATION_ATTEMPT_RETENTION = 512
 
 
 def now() -> str:
@@ -57,8 +59,9 @@ class KnowledgeRepository:
                         book_source_revision_id, chapter_outline_node_id, status,
                         foundation_version, chapter_identity_revision,
                         chapter_physical_revision, structure_version, attempt_id,
-                        requested_at, updated_at
-                    ) VALUES (?, ?, 'PREPARING', ?, ?, ?, 0, ?, ?, ?)
+                        requested_at, updated_at, prepare_stage,
+                        sections_completed, sections_total
+                    ) VALUES (?, ?, 'PREPARING', ?, ?, ?, 0, ?, ?, ?, 'QUEUED', 0, 0)
                     ON CONFLICT(book_source_revision_id, chapter_outline_node_id) DO UPDATE SET
                         status = 'PREPARING', foundation_version = excluded.foundation_version,
                         chapter_identity_revision = excluded.chapter_identity_revision,
@@ -70,7 +73,8 @@ class KnowledgeRepository:
                         failure_kind = NULL, failure_code = NULL,
                         source_payload_sha256 = NULL, review_payload_sha256 = NULL,
                         requested_at = excluded.requested_at, updated_at = excluded.updated_at,
-                        published_at = NULL
+                        published_at = NULL, prepare_stage = 'QUEUED',
+                        sections_completed = 0, sections_total = 0
                     """,
                     (
                         revision_id, chapter_id, chapter["foundation_version"],
@@ -97,6 +101,30 @@ class KnowledgeRepository:
         recovered = 0
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """
+                UPDATE chapter_generation_attempts
+                SET status = 'INTERRUPTED', completed_at = ?,
+                    failure_kind = 'INTERRUPTED', failure_code = 'service_restart'
+                WHERE status = 'STARTED'
+                  AND EXISTS (
+                    SELECT 1 FROM chapter_preparations AS prep
+                    WHERE prep.book_source_revision_id = chapter_generation_attempts.book_source_revision_id
+                      AND prep.chapter_outline_node_id = chapter_generation_attempts.chapter_outline_node_id
+                      AND prep.status = 'PREPARING'
+                  )
+                """,
+                (timestamp,),
+            )
+            connection.execute(
+                """
+                UPDATE chapter_preparations
+                SET prepare_stage = 'QUEUED', sections_completed = 0,
+                    sections_total = 0, updated_at = ?
+                WHERE status = 'PREPARING'
+                """,
+                (timestamp,),
+            )
             rows = connection.execute(
                 "SELECT * FROM chapter_preparations WHERE status = 'PREPARING'"
             ).fetchall()
@@ -185,6 +213,138 @@ class KnowledgeRepository:
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Chapter preparation attempt is no longer current")
+
+    def update_progress(
+        self,
+        revision_id: str,
+        chapter_id: str,
+        attempt_id: str,
+        *,
+        stage: str,
+        sections_completed: int,
+        sections_total: int,
+    ) -> None:
+        allowed = {
+            "QUEUED", "RESOLVING_SOURCE", "GENERATING", "REVIEWING",
+            "VALIDATING", "PUBLISHING",
+        }
+        if stage not in allowed:
+            raise ValueError("Unknown Chapter preparation stage")
+        if not 0 <= sections_completed <= sections_total:
+            raise ValueError("Invalid Chapter Section progress")
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE chapter_preparations
+                SET prepare_stage = ?, sections_completed = ?, sections_total = ?,
+                    updated_at = ?
+                WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                  AND status = 'PREPARING' AND attempt_id = ?
+                """,
+                (
+                    stage, sections_completed, sections_total, now(),
+                    revision_id, chapter_id, attempt_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Chapter preparation attempt is no longer current")
+
+    def record_generation_attempt(
+        self,
+        revision_id: str,
+        chapter_id: str,
+        preparation_attempt_id: str,
+        section_id: str,
+        structured_attempt: int,
+        event: dict,
+    ) -> None:
+        status = event.get("status")
+        if status not in {"STARTED", "SUCCEEDED", "FAILED", "INTERRUPTED"}:
+            raise ValueError("Invalid generation attempt status")
+        transport_attempt = event.get("transport_attempt")
+        if isinstance(transport_attempt, bool) or not isinstance(transport_attempt, int) \
+                or transport_attempt < 1:
+            raise ValueError("Invalid transport attempt")
+        timestamp = now()
+        completed_at = None if status == "STARTED" else timestamp
+        usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO chapter_generation_attempts(
+                    id, book_source_revision_id, chapter_outline_node_id,
+                    preparation_attempt_id, primary_section_id,
+                    structured_attempt, transport_attempt, interaction_id,
+                    provider, model, provider_role, pipeline_stage,
+                    status, started_at, completed_at,
+                    latency_ms, finish_reason, prompt_tokens, completion_tokens,
+                    total_tokens, content_present, content_length,
+                    reasoning_present, reasoning_length, failure_kind, failure_code
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(
+                    book_source_revision_id, chapter_outline_node_id,
+                    preparation_attempt_id, primary_section_id,
+                    structured_attempt, transport_attempt
+                ) DO UPDATE SET
+                    status = excluded.status,
+                    completed_at = excluded.completed_at,
+                    latency_ms = excluded.latency_ms,
+                    finish_reason = excluded.finish_reason,
+                    prompt_tokens = excluded.prompt_tokens,
+                    completion_tokens = excluded.completion_tokens,
+                    total_tokens = excluded.total_tokens,
+                    content_present = excluded.content_present,
+                    content_length = excluded.content_length,
+                    reasoning_present = excluded.reasoning_present,
+                    reasoning_length = excluded.reasoning_length,
+                    failure_kind = excluded.failure_kind,
+                    failure_code = excluded.failure_code
+                """,
+                (
+                    str(uuid4()), revision_id, chapter_id,
+                    self._bounded(preparation_attempt_id, 120),
+                    section_id, structured_attempt, transport_attempt,
+                    self._bounded(event.get("interaction_id"), 300),
+                    self._bounded(event.get("provider"), 40),
+                    self._bounded(event.get("model"), 120),
+                    "KP_GENERATOR", "GENERATION", status, timestamp, completed_at,
+                    self._nonnegative_int(event.get("latency_ms")),
+                    self._optional_bounded(event.get("finish_reason"), 120),
+                    self._nonnegative_int(usage.get("prompt_tokens")),
+                    self._nonnegative_int(usage.get("completion_tokens")),
+                    self._nonnegative_int(usage.get("total_tokens")),
+                    self._optional_bool(event.get("content_present")),
+                    self._nonnegative_int(event.get("content_length")),
+                    self._optional_bool(event.get("reasoning_present")),
+                    self._nonnegative_int(event.get("reasoning_length")),
+                    self._optional_bounded(event.get("failure_kind"), 80),
+                    self._optional_bounded(event.get("failure_code"), 120),
+                ),
+            )
+            connection.execute(
+                """
+                DELETE FROM chapter_generation_attempts
+                WHERE id IN (
+                    SELECT id FROM chapter_generation_attempts
+                    WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                    ORDER BY started_at DESC, id DESC
+                    LIMIT -1 OFFSET ?
+                )
+                """,
+                (revision_id, chapter_id, GENERATION_ATTEMPT_RETENTION),
+            )
+
+    def generation_attempts(self, revision_id: str, chapter_id: str) -> list[dict]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM chapter_generation_attempts
+                WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                ORDER BY started_at, structured_attempt, transport_attempt, id
+                """,
+                (revision_id, chapter_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def fail(
         self,
@@ -325,7 +485,7 @@ class KnowledgeRepository:
                     reviewer_provider = ?, reviewer_model = ?, review_summary = ?,
                     failure_stage = NULL, failure_kind = NULL, failure_code = NULL,
                     source_payload_sha256 = ?, review_payload_sha256 = ?,
-                    updated_at = ?, published_at = ?
+                    updated_at = ?, published_at = ?, prepare_stage = NULL
                 WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
                   AND status = 'PREPARING' AND attempt_id = ?
                 """,
@@ -383,6 +543,9 @@ class KnowledgeRepository:
                 "chapter_title": chapter["title"] if chapter else None,
                 "status": "NOT_PREPARED",
                 "structure_version": 0,
+                "prepare_stage": None,
+                "sections_completed": 0,
+                "sections_total": 0,
                 "knowledge_points": [],
             }
         result = dict(state)
@@ -406,3 +569,26 @@ class KnowledgeRepository:
                 points.append(dict(row))
         result["knowledge_points"] = points
         return result
+
+    @staticmethod
+    def _bounded(value: object, limit: int) -> str:
+        text = str(value or "")[:limit]
+        if not text:
+            raise ValueError("Required diagnostic field is empty")
+        return text
+
+    @staticmethod
+    def _optional_bounded(value: object, limit: int) -> str | None:
+        if not isinstance(value, str) or not value:
+            return None
+        return value[:limit]
+
+    @staticmethod
+    def _nonnegative_int(value: object) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
+
+    @staticmethod
+    def _optional_bool(value: object) -> int | None:
+        return int(value) if isinstance(value, bool) else None

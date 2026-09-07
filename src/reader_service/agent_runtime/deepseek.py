@@ -50,21 +50,41 @@ class OpenAICompatibleAdapter:
                 "AI 服务暂时无法连接，请稍后再试。",
             ) from error
 
+        usage = self._safe_usage(payload.get("usage"))
         try:
-            answer = payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            message = choice["message"]
         except (KeyError, IndexError, TypeError) as error:
             raise ProviderFailure(
                 ProviderFailureKind.TRANSIENT,
                 "invalid_response",
                 "AI 服务返回了无法读取的结果，请稍后再试。",
             ) from error
+        if not isinstance(choice, dict) or not isinstance(message, dict):
+            raise ProviderFailure(
+                ProviderFailureKind.TRANSIENT,
+                "invalid_response",
+                "AI 服务返回了无法读取的结果，请稍后再试。",
+            )
+        answer = message.get("content")
+        reasoning = message.get("reasoning_content")
+        metadata = self._safe_response_metadata(
+            answer=answer,
+            reasoning=reasoning,
+            finish_reason=choice.get("finish_reason"),
+        )
+        if usage is not None:
+            metadata["usage"] = usage
         if not isinstance(answer, str) or not answer.strip():
             raise ProviderFailure(
                 ProviderFailureKind.TRANSIENT,
                 "empty_response",
                 "AI 服务没有返回解释，请稍后再试。",
+                diagnostics=metadata,
             )
-        return ProviderResponse(answer=answer.strip(), usage=self._safe_usage(payload.get("usage")))
+        return ProviderResponse(
+            answer=answer.strip(), usage=usage, diagnostics=metadata
+        )
 
     def _raise_http_failure(self, error: HTTPError) -> None:
         # The remote body is used only for coarse classification and is never logged,
@@ -121,6 +141,24 @@ class OpenAICompatibleAdapter:
             if isinstance(item, int) and item >= 0:
                 usage[key] = item
         return usage or None
+
+    @staticmethod
+    def _safe_response_metadata(
+        *, answer: object, reasoning: object, finish_reason: object
+    ) -> dict:
+        content_length = len(answer) if isinstance(answer, str) else 0
+        reasoning_length = len(reasoning) if isinstance(reasoning, str) else 0
+        metadata = {
+            "content_present": bool(isinstance(answer, str) and answer.strip()),
+            "content_length": content_length,
+            "reasoning_present": bool(
+                isinstance(reasoning, str) and reasoning.strip()
+            ),
+            "reasoning_length": reasoning_length,
+        }
+        if isinstance(finish_reason, str) and finish_reason:
+            metadata["finish_reason"] = finish_reason[:120]
+        return metadata
 
 
 class DeepSeekAdapter(OpenAICompatibleAdapter):
