@@ -21,8 +21,9 @@ deterministic Chapter evidence units
 → bounded Section-local semantic packets
 → deterministic private KP materialization
 → one compact whole-Chapter structural Review
-→ one bounded unit-addressed packet repair when required
-→ whole-Chapter re-review and deterministic validation
+→ cumulative-bounded unit-addressed repair of newly implicated packets when required
+→ whole-Chapter re-review until PASS or a fail-closed repair bound
+→ deterministic validation
 → one atomic Chapter publication
 ```
 
@@ -30,6 +31,27 @@ Before publication, the Reader exposes only stage and completed/total Section pr
 unit, candidate title, definition or source range is user-visible.
 
 ## UAT root cause
+
+- The latest persistent-library Chapter 7 failure was attempt
+  `bac0dff8-ebe1-445d-8f11-e44c653629a2`: 223 units, 12 packets and 87 private candidates reached
+  two valid Reviews before terminal `REVIEW / SEMANTIC_FAILURE / review_rejected`. Round 0 identified
+  real duplicates in Section 7.1; after repairing only `p001`, round 1 discovered different real
+  blockers in untouched `p005` (near-identical I/O-port definitions) and `p009` (overlapping
+  DMA-controller functionality). The second findings were not repair regressions: the first Review
+  had not exhaustively reported all Chapter blockers.
+- Persistent-library Chapter 1 attempt `878ab11a-c00b-434c-a76f-594846a16780` showed the same
+  pattern. Its first Review repaired `p002`/`p006`; the next Review newly found an untouched Section
+  1.4 candidate whose “meaning” was only a `见常见问题和易混淆知识点1` pointer. One-repair-round
+  orchestration therefore made a genuine but non-exhaustive Review behave like an unavoidable whole-
+  Chapter rejection.
+- The upstream semantic causes were concrete: short numbered headings were emitted as independent
+  evidence units, the reducer could keep both heading and following definition, question/reference-
+  only evidence was not deterministically rejected, and repair lacked bounded same-Section peer
+  summaries. These defects could not be solved safely by lowering the Review rubric.
+- Chapter candidates are intentionally private and disposable. A terminal Review failure publishes
+  none of them, so a later user retry starts a new private Chapter attempt. This remains the accepted
+  no-partial-publication boundary; the correction instead permits bounded convergence inside one live
+  attempt.
 
 - The original real Chapter 1 failure was attempt
   `fb1a46b5-b5e7-4a1a-b2d6-a8c4cb5e6872`. All five Sections generated successfully and produced 46
@@ -57,6 +79,10 @@ unit, candidate title, definition or source range is user-visible.
   pipeline-local ID and server-owned Section, order, source revision and continuous physical range.
   AI receives only the current bounded packet's unit IDs/text and may return only
   `KEEP`/`MERGE`/`DROP`, title and one-sentence meaning.
+- Short numbered headings now remain attached to their following explanation instead of becoming a
+  sibling unit. A validated `KEEP`/`MERGE` grounded only in questions and/or `见` / `参见` / `详见`
+  references is rejected as `invalid_semantic_output.nonteaching_evidence`; substantive teaching
+  that merely contains a question or the word `参考` remains valid.
 - Kept semantic validation strict. Invented, missing, repeated, reordered or multiply consumed unit
   IDs, non-contiguous runs, unary `MERGE`, partial/invalid JSON and undeclared fields fail closed.
   Up to three structured attempts remain packet-local; error-code-specific retry instructions do
@@ -73,11 +99,16 @@ unit, candidate title, definition or source range is user-visible.
   The rubric covers independently trackable granularity, duplicate/near-duplicate semantics,
   instructional specificity, split/merge quality, major learning coverage, Section/source
   faithfulness and map-level balance.
-- Review findings must name one real Section and the smallest real unit-ID set. One semantic repair
-  round reruns only the affected packet(s), keeps every untouched packet result in memory,
-  rematerializes the whole candidate map and performs a full Chapter re-review. A second blocking
-  Review publishes nothing. A valid but over-broad finding is reported honestly as
-  `SEMANTIC_FAILURE / review_repair_scope_exceeded`, not misclassified as malformed Review output.
+- All seven Review dimensions remain mandatory. The contract now reserves `BLOCKING` for a high-
+  confidence defect that makes the supplied map unpublishable; alternative naming, optional
+  consolidation, mild balance issues and excerpt-limited uncertainty are `WARNING`, so “can be
+  improved” no longer means “cannot publish.” The Reviewer must scan every Section before deciding.
+- Review findings must name one real Section and the smallest real unit-ID set. Up to three semantic
+  repair rounds may converge across at most four packets and 48 implicated units, but a later round
+  may touch only newly discovered packets. Each repair receives bounded same-Section peer
+  title/meaning summaries and no source authority. A blocker recurring in a repaired packet,
+  invalid/unaddressable target, over-broad request or exhausted cumulative budget is terminal and
+  publishes nothing.
 - Removed deterministic no-overlap rejection. Overlap is a Review/warning signal; no-gaps remains
   unnecessary. Continuous Chapter/Section-contained source ranges remain hard validation gates.
 - Preserved the existing atomic publication transaction. `PREPARING` and `FAILED` snapshots contain
@@ -89,6 +120,9 @@ unit, candidate title, definition or source range is user-visible.
   content/reasoning presence and lengths, and typed failures. Structured validation failures now
   annotate the exact packet/round. Request bodies, response bodies, reasoning text, credentials and
   private candidate content are never retained.
+- Protected inspection now retains bounded actionable Review detail alongside dimension, severity
+  and real Section/unit IDs. It still retains no ledger, provider body, source text/geometry,
+  reasoning or credentials.
 - Kept the existing Simplified Chinese Section-progress UI and READY-only Section-grouped map. The
   KP action resolves the published `start_page/start_y` and scrolls that source anchor into the
   rendered Reader viewport.
@@ -98,11 +132,22 @@ unit, candidate title, definition or source range is user-visible.
 Evidence was executed in the required order: TARGETED → AGENT REAL-USE GOLDEN PATH → AFFECTED
 REGRESSION → CLOSURE / BROAD.
 
-- TARGETED: `pytest -q tests/test_knowledge_map.py` — **24 passed**. This covers deterministic unit
+- TARGETED: `pytest -q tests/test_knowledge_map.py` — **35 passed**. This covers deterministic unit
   accounting and ranges, Section-local bounded packets, strict semantic contracts, same-Section
-  sequential context with no cross-Section leakage, packet-local technical retry, unit-addressed
-  repair, whole-Chapter re-review, all seven Review dimensions, overlap-as-warning, atomic rollback,
-  restart/idempotency/cascade, safe telemetry and UI/API projections.
+  sequential context with no cross-Section leakage, heading/definition joining, question/reference-
+  only rejection, packet-local technical retry, new-packet-only bounded convergence, recurring-
+  blocker and cumulative-budget fail-closed behavior, peer repair context, actionable safe telemetry,
+  all seven Review dimensions, overlap-as-warning, atomic rollback, restart/idempotency/cascade and
+  UI/API projections.
+- AGENT REAL-USE GOLDEN PATH — PERSISTENT USER LIBRARY: the actually served Reader at
+  `127.0.0.1:8000` retried failed Chapter 7 through the production
+  `deepseek / deepseek-v4-pro → zhipu / GLM-5.3-Flash` route. Attempt
+  `e16aeab1-a455-4381-a275-6f199548bab9` completed in about 80 seconds: UI visibly advanced to 4/5
+  Sections without exposing candidates; nine semantic packet calls succeeded, one packet-local call
+  failed and recovered, the complete Chapter passed Review, and 58 KPs appeared atomically in five
+  Section groups. A published `回到教材` action moved the Reader from PDF page 312 to page 310;
+  close/reopen preserved the READY map. Outline identity remained revision 1; preparation changed no
+  logical Outline identity.
 - AGENT REAL-USE GOLDEN PATH: `npm run test:e2e:knowledge` — **PASS** against the prepared 348-page
   textbook (SHA-256
   `6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`), Chapter 6. It exercised a
@@ -121,7 +166,7 @@ REGRESSION → CLOSURE / BROAD.
     at READY, and Section-grouped rendering plus published source-anchor navigation passed.
 - AFFECTED REGRESSION: API, jobs, Map the Book, Ask Deeper, AI_SAVED, annotations, Library and
   Foundation Python suites — **PASS**.
-- CLOSURE / BROAD: full `pytest -q` — **144 passed, 2 skipped**; the unchanged skips are the optional
+- CLOSURE / BROAD: full `pytest -q` — **155 passed, 2 skipped**; the unchanged skips are the optional
   external real-OCR entrypoints. `npm test` — **30 passed**. `python -m compileall -q src`, Node syntax
   checks for both Knowledge E2E runners and `git diff --check` also passed.
 - `INTENTIONALLY_NOT_RUN`: standalone Reader/selectable-reader/annotations/find E2E runners were not

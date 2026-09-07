@@ -13,6 +13,15 @@ This correction supersedes the earlier generation, Review and whole-Section sema
 wherever this brief, the current implementation or its development report still describes it.
 External research remains evidence; the decisions below are authority because the user accepted them.
 
+The user subsequently authorized one minimal Review-gate convergence correction after real Chapter
+1 and Chapter 7 runs showed the same failure pattern: a valid first Review repaired real local
+defects, then a later Review discovered different blockers in previously untouched packets. This
+does not relax the seven Review dimensions or Chapter-atomic publication. It moves mechanically
+detectable local defects upstream, defines `BLOCKING` as a high-confidence unpublishable defect,
+and permits bounded re-review convergence only across newly implicated, previously untouched
+packets. A recurring blocker in an already repaired packet, an over-broad repair scope or an
+exhausted budget still fails closed.
+
 **KEEP — the product and publication shell:** existing Outline/OCR/source authority; target-Chapter
 physical resolution; `CHAPTER_PREPARE` jobs and durable lifecycle; persistence, ownership and
 cascade; Reader state/progress and Section-grouped map; KP → source navigation; stable IDs at publish;
@@ -145,6 +154,11 @@ one necessary, stop and report under `AGENTS.md` §5.
   supplied unit IDs as `KEEP`, `MERGE` or `DROP`, and provide a short title plus one-sentence meaning
   for each kept/merged candidate. Its output must account for each packet unit exactly once. It may
   not emit complete KP records or source references (Implementation §12.2).
+- **Obvious local non-KPs are closed upstream.** A short numbered heading is deterministically
+  attached to its following explanation where available, rather than offered as a separate sibling
+  KP. Evidence made only of a question and/or a `见` / `参见` / `详见` pointer cannot be kept or
+  merged into a candidate. The Section reducer must treat heading/definition duplicates,
+  reference-only pointers and same-Section peer candidates before the Chapter gate.
 - **Merge authority is narrow.** `MERGE` may cover only a contiguous run of adjacent units in the
   same existing primary Section and current packet. Cross-Section, non-adjacent, invented, repeated
   or missing unit IDs fail deterministic contract validation; they are never coerced into a result.
@@ -178,12 +192,22 @@ one necessary, stop and report under `AGENTS.md` §5.
   title/meaning, bounded deterministic evidence excerpts/fingerprints, overlap/warning metadata and
   required provenance. It does **not** resend the raw whole-Chapter OCR line stream, geometry dump or
   generator reasoning (Implementation §12.2, §12.4).
+- **Review blocks defects, not optional polish.** All seven dimensions remain mandatory. A
+  `BLOCKING` finding is reserved for a high-confidence defect that makes the map unpublishable from
+  the supplied ledger: duplicated learning state, non-instructional/fabricated KP, major learnable
+  omission, clearly wrong Section/source ownership, or a severe split/merge that creates meaningless
+  independent states. Alternative naming, optional consolidation, mild imbalance and cases that the
+  bounded excerpt cannot establish confidently are `WARNING`; remaining room for improvement alone
+  is not a Chapter rejection.
 - **Review judges; repair is localized.** Review may return a verdict and typed findings only; it
   never authors or rewrites candidates. Every blocking semantic finding must identify an existing
-  Section and the smallest relevant unit-ID set. One bounded semantic-repair round may rerun only
-  the affected packet(s), after which deterministic materialization rebuilds the compact Chapter
-  ledger and the whole map is reviewed again. An invalid/unaddressable finding fails closed; a
-  semantic finding never authorizes complete-Section regeneration.
+  Section and the smallest relevant unit-ID set. Bounded convergence may rerun only newly implicated
+  packet(s) that no prior semantic-repair round touched, after which deterministic materialization
+  rebuilds the compact Chapter ledger and the whole map is reviewed again. Repair receives bounded
+  same-Section peer title/meaning summaries so it can close local duplicates without source-range
+  authority. A blocker recurring in an already repaired packet is terminal. Invalid/unaddressable,
+  cumulative over-budget or round-exhausted findings fail closed; a semantic finding never
+  authorizes complete-Section regeneration.
 - **Technical retry is packet/stage-local.** A provider, timeout, empty/length-limited response or
   invalid structured output retries only the current semantic packet; a technical Review failure
   retries only the current compact Review stage. Successful unrelated packet decisions are not
@@ -305,16 +329,20 @@ is under test:
    full decision accounting, bounded deterministic evidence excerpts/fingerprints and warnings. It
    excludes the raw whole-Chapter OCR line stream, geometry dump, generator context/reasoning and all
    undeclared state; canaries prove both semantic and Review allowlists and secret hygiene.
-9. Adversarial ledgers prove structural Review rejects semantic duplicates, generic reasoning/test-
+9. Adversarial ledgers prove structural Review rejects high-confidence semantic duplicates, generic reasoning/test-
    taking labels, unjustified splitting/merging, major learning-coverage omissions and materially
-   unbalanced Section granularity. Review judges the complete Chapter but cannot rewrite content.
+   unbalanced Section granularity. Borderline optimization remains a warning. Review judges the
+   complete Chapter but cannot rewrite content.
 10. Every blocking semantic finding names a valid existing Section and relevant unit IDs. Invalid,
     absent or over-broad repair targets fail closed; they never trigger complete-Section or complete-
     Chapter regeneration.
-11. One bounded semantic repair reruns only the packet(s) containing the targeted unit IDs, retains
-    unrelated successful packet decisions, deterministically rematerializes candidates and sends the
-    rebuilt compact complete-Chapter ledger through Review again. A further blocking result remains
-    terminal and publishes nothing.
+11. Bounded semantic repair reruns only packet(s) containing newly targeted unit IDs, retains
+    unrelated successful packet decisions, supplies bounded same-Section peer summaries,
+    deterministically rematerializes candidates and sends the rebuilt compact complete-Chapter
+    ledger through Review again. A later finding may continue only when every implicated packet is
+    newly discovered and the cumulative packet/unit/round budget remains valid. A recurring blocker
+    in an already repaired packet, exhausted budget or over-broad request is terminal and publishes
+    nothing.
 12. A transient provider error, timeout, `empty_response`, `finish_reason=length` or invalid structured
     output retries only the current semantic packet; a technical Review failure retries only the
     current compact Review stage. Already-successful unrelated packets are not resent, and technical
@@ -323,7 +351,8 @@ is under test:
     publication failures each remain non-READY and expose no partial KP set. A failed candidate cannot
     overwrite an existing published version.
 14. The actual semantic/reviewer provider/model route, packet/stage and typed failure are recorded
-    honestly; silent fallback and invocation-failure-as-PASS are impossible.
+    honestly, together with bounded actionable Review finding detail; silent fallback and
+    invocation-failure-as-PASS are impossible.
 15. Duplicate click, HTTP retry, response-loss replay, concurrent prepare calls, worker interruption,
     service restart and explicit retry converge without duplicate preparations, versions or KPs.
 16. `FAILED`/`PREPARING` preparation leaves reading, OCR selection/copy, Find, Outline, Marks,

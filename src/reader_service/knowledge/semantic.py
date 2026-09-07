@@ -7,6 +7,7 @@ import re
 
 MAX_EVIDENCE_UNIT_CHARACTERS = 900
 SOFT_EVIDENCE_UNIT_CHARACTERS = 160
+MAX_SHORT_HEADING_CHARACTERS = 48
 MAX_SEMANTIC_PACKET_CHARACTERS = 4_800
 MAX_SEMANTIC_PACKET_UNITS = 24
 MAX_REVIEW_EXCERPT_CHARACTERS = 60
@@ -20,6 +21,15 @@ _HEADING_OR_ITEM = re.compile(
     r"^(?:第[一二三四五六七八九十百\d]+[章节篇]|"
     r"(?:\d+\.)+\d*\s*|[（(]?\d+[）)、.]\s*|"
     r"[一二三四五六七八九十]+[、.]\s*)"
+)
+_REFERENCE_ONLY = re.compile(
+    r"^(?:[（(]?\d+[）)、.．]?\s*)?(?:见|参见|详见|请参阅)"
+    r"(?:本章|本节|上文|下文|前文|后文|教材)?[^。！？!?；;]{0,80}"
+    r"[。！？!?；;]?$"
+)
+_HEADING_PLUS_REFERENCE_ONLY = re.compile(
+    r"^[^。！？!?；;]{1,48}(?:见|参见|详见|请参阅)"
+    r"[^。！？!?；;]{0,80}[。！？!?；;]?$"
 )
 
 
@@ -45,11 +55,13 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
             text = _normalize_text(line.get("text"))
             if not text:
                 continue
+            is_heading_or_item = bool(_HEADING_OR_ITEM.match(text))
+            is_short_heading = _is_short_heading(text)
             page_changed = bool(
                 current
                 and current[-1]["pdf_page_index"] != line["pdf_page_index"]
             )
-            starts_new_item = bool(current and _HEADING_OR_ITEM.match(text))
+            starts_new_item = bool(current and is_heading_or_item)
             exceeds_hard_limit = bool(
                 current
                 and current_characters + len(text) > MAX_EVIDENCE_UNIT_CHARACTERS
@@ -60,7 +72,7 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
                 current_characters = 0
             current.append({**line, "text": text})
             current_characters += len(text)
-            if _HEADING_OR_ITEM.match(text) or (
+            if (is_heading_or_item and not is_short_heading) or (
                 current_characters >= SOFT_EVIDENCE_UNIT_CHARACTERS
                 and (
                     _TERMINAL_PUNCTUATION.search(text)
@@ -258,6 +270,14 @@ def validate_semantic_output(answer: str, packet: dict) -> list[dict]:
                 raise _semantic_error("title", "Semantic title is invalid")
             if not isinstance(meaning, str) or not 1 <= len(meaning.strip()) <= 300:
                 raise _semantic_error("meaning", "Semantic meaning is invalid")
+            selected_texts = [
+                packet["units"][position[unit_id]]["text"] for unit_id in unit_ids
+            ]
+            if all(_is_non_teaching_prompt(text) for text in selected_texts):
+                raise _semantic_error(
+                    "nonteaching_evidence",
+                    "A published candidate cannot be grounded only in questions or references",
+                )
             item["title"] = title.strip()
             item["one_sentence_meaning"] = meaning.strip()
         normalized.append(item)
@@ -508,6 +528,31 @@ def _validate_packet_coverage(units: list[dict], packets: list[dict]) -> None:
 
 def _normalize_text(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _is_short_heading(text: str) -> bool:
+    return bool(
+        len(text) <= MAX_SHORT_HEADING_CHARACTERS
+        and _HEADING_OR_ITEM.match(text)
+        and not _TERMINAL_PUNCTUATION.search(text)
+    )
+
+
+def _is_non_teaching_prompt(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if _REFERENCE_ONLY.fullmatch(normalized) or _HEADING_PLUS_REFERENCE_ONLY.fullmatch(
+        normalized
+    ):
+        return True
+    pieces = [
+        piece.strip()
+        for piece in re.findall(r"[^。！？!?；;]+[。！？!?；;]?", normalized)
+        if piece.strip()
+    ]
+    return bool(pieces) and all(
+        piece.endswith(("？", "?")) or _REFERENCE_ONLY.fullmatch(piece)
+        for piece in pieces
+    )
 
 
 def _join_lines(lines: list[dict]) -> str:

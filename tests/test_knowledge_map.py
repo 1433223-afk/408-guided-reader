@@ -38,7 +38,12 @@ from reader_service.knowledge.semantic import (
     validate_compact_review_ledger,
     validate_semantic_output,
 )
-from reader_service.knowledge.service import REVIEW_RUBRIC, ReviewVerdict
+from reader_service.knowledge.service import (
+    GENERATOR_SYSTEM_MESSAGE,
+    REVIEW_RUBRIC,
+    REVIEW_SYSTEM_MESSAGE,
+    ReviewVerdict,
+)
 from reader_service.library.database import Database, MIGRATIONS
 from reader_service.outline import OutlineRepository, OutlineService
 
@@ -397,6 +402,109 @@ def test_deterministic_units_and_section_local_bounded_packets(service):
         }
 
 
+def test_deterministic_short_heading_is_attached_to_following_explanation():
+    source = {
+        "chapter": {"book_source_revision_id": "revision"},
+        "source_sections": [
+            {
+                "section_id": "section",
+                "title": "7.1 概述",
+                "lines": [
+                    {
+                        "text": "1. I/O 接口的功能",
+                        "pdf_page_index": 0,
+                        "line_ref": "l1",
+                        "y_start": 0.1,
+                        "y_end": 0.2,
+                    },
+                    {
+                        "text": "I/O 接口负责协调主机与外设之间的数据传送。",
+                        "pdf_page_index": 0,
+                        "line_ref": "l2",
+                        "y_start": 0.2,
+                        "y_end": 0.3,
+                    },
+                ],
+            }
+        ],
+    }
+
+    units = build_evidence_units(source)
+
+    assert len(units) == 1
+    assert units[0]["start_ref"] == "l1"
+    assert units[0]["end_ref"] == "l2"
+    assert "I/O 接口的功能" in units[0]["text"]
+    assert "协调主机与外设" in units[0]["text"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "为什么需要中断？",
+        "见常见问题和易混淆知识点1",
+        "什么是翻译程序？见常见问题和易混淆知识点1",
+        "（1）翻译程序见常见问题和易混淆知识点1",
+    ],
+)
+def test_semantic_output_rejects_question_or_reference_only_candidate(text):
+    packet = {
+        "units": [{"unit_id": "u0001", "text": text}],
+    }
+    answer = json.dumps(
+        {
+            "decisions": [
+                {
+                    "action": "KEEP",
+                    "unit_ids": ["u0001"],
+                    "title": "伪学习单元",
+                    "one_sentence_meaning": "没有教材实质讲解。",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    with pytest.raises(ValueError, match="questions or references"):
+        validate_semantic_output(answer, packet)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "参考地址是指令访问操作数时使用的地址。",
+        "中断可以提高CPU与外设并行工作的效率。为什么需要中断？",
+    ],
+)
+def test_semantic_output_allows_substantive_teaching_with_reference_word_or_question(text):
+    packet = {"units": [{"unit_id": "u0001", "text": text}]}
+    answer = json.dumps(
+        {
+            "decisions": [
+                {
+                    "action": "KEEP",
+                    "unit_ids": ["u0001"],
+                    "title": "可教学内容",
+                    "one_sentence_meaning": "教材提供了可独立学习的实质说明。",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    assert validate_semantic_output(answer, packet)[0]["action"] == "KEEP"
+
+
+def test_semantic_and_review_prompts_define_upstream_rules_and_blocking_threshold():
+    assert "短编号标题" in GENERATOR_SYSTEM_MESSAGE
+    assert "交叉引用" in GENERATOR_SYSTEM_MESSAGE
+    assert "必须 DROP" in GENERATOR_SYSTEM_MESSAGE
+    assert "BLOCKING 仅用于" in REVIEW_SYSTEM_MESSAGE
+    assert "存在优化空间" in REVIEW_SYSTEM_MESSAGE
+    assert "只能是 WARNING" in REVIEW_SYSTEM_MESSAGE
+    assert "扫描全部 Sections" in REVIEW_SYSTEM_MESSAGE
+
+
 def test_semantic_output_requires_complete_ordered_server_ids(service):
     fixture = build_fixture(service)
     source, _, packets, _ = semantic_inputs(fixture)
@@ -621,6 +729,69 @@ def test_multi_packet_section_is_sequential_and_prior_context_never_crosses_sect
     assert "prior_section_candidates" not in calls[other["packet_id"]]
 
 
+def test_same_section_multi_packet_repair_uses_newly_repaired_peer_context(service):
+    runtime = ScriptedRuntime()
+    fixture = build_fixture(service, runtime=runtime)
+    source, _, packets, _ = semantic_inputs(fixture)
+    first = packets[0]
+    repair_packets = []
+    for suffix, selected in (("a", first["units"][:1]), ("b", first["units"][1:])):
+        repair_packets.append(
+            {
+                **first,
+                "packet_id": f"{first['packet_id']}-{suffix}",
+                "packet_order": len(repair_packets),
+                "section_packet_index": len(repair_packets),
+                "section_packet_count": 2,
+                "units": selected,
+                "character_count": sum(len(unit["text"]) for unit in selected),
+            }
+        )
+    repair_contexts = {
+        packet["packet_id"]: {
+            "semantic_round": 1,
+            "blocking_findings": [
+                {
+                    "dimension": "duplicate_or_near_duplicate_semantics",
+                    "severity": "BLOCKING",
+                    "unit_ids": [packet["units"][0]["unit_id"]],
+                    "detail": "需要局部修复。",
+                }
+            ],
+            "previous_decisions": json.loads(
+                semantic_answer(semantic_packet_payload(source["chapter"], packet))
+            )["decisions"],
+        }
+        for packet in repair_packets
+    }
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    state, _ = fixture["knowledge"].request_prepare(revision_id, chapter_id)
+
+    fixture["knowledge"]._classify_packets(
+        repair_packets,
+        source["chapter"],
+        revision_id,
+        chapter_id,
+        state["attempt_id"],
+        semantic_round=1,
+        repair_contexts=repair_contexts,
+        prior_section_candidates_by_packet={
+            packet["packet_id"]: [] for packet in repair_packets
+        },
+    )
+
+    calls = {
+        call["payload"]["packet"]["packet_id"]: call["payload"]
+        for call in runtime.calls
+        if call["provider"] == "deepseek"
+    }
+    assert "prior_section_candidates" not in calls[f"{first['packet_id']}-a"]
+    assert calls[f"{first['packet_id']}-b"]["prior_section_candidates"][0][
+        "title"
+    ].startswith("修复后")
+
+
 def test_actionable_review_repairs_only_addressed_packet_then_re_reviews_chapter(service):
     target = {}
 
@@ -689,6 +860,125 @@ def test_actionable_review_repairs_only_addressed_packet_then_re_reviews_chapter
         "FAIL",
         "PASS",
     ]
+
+
+def test_later_review_may_repair_only_newly_discovered_untouched_packets(
+    service, monkeypatch
+):
+    def split_each_unit(units):
+        by_section = {}
+        for unit in units:
+            by_section.setdefault(unit["primary_section_id"], []).append(unit)
+        packets = []
+        for section_units in by_section.values():
+            for section_index, unit in enumerate(section_units):
+                packets.append(
+                    {
+                        "packet_id": f"p{len(packets) + 1:03d}",
+                        "packet_order": len(packets),
+                        "section_packet_index": section_index,
+                        "section_packet_count": len(section_units),
+                        "primary_section_id": unit["primary_section_id"],
+                        "primary_section_title": unit["primary_section_title"],
+                        "units": [unit],
+                        "character_count": len(unit["text"]),
+                    }
+                )
+        return packets
+
+    monkeypatch.setattr(
+        "reader_service.knowledge.service.packetize_evidence_units", split_each_unit
+    )
+    targets = []
+
+    def reviewer(payload, count):
+        if count == 1:
+            selected = [payload["packets"][0]]
+        elif count == 2:
+            selected = payload["packets"][1:3]
+        else:
+            return review_answer(summary="新暴露的局部缺陷修复后整章通过。")
+        findings = []
+        for packet in selected:
+            unit_id = packet["decisions"][0]["unit_ids"][0]
+            targets.append((packet["packet_id"], unit_id))
+            findings.append(
+                blocking_finding(
+                    packet["section_id"],
+                    [unit_id],
+                    dimension="duplicate_or_near_duplicate_semantics",
+                )
+            )
+        return review_answer("FAIL", "发现高置信重复学习状态。", findings)
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+
+    ready = claim_and_run(fixture)
+
+    assert ready["status"] == "READY"
+    assert len([call for call in runtime.calls if call["provider"] == "zhipu"]) == 3
+    repaired_packet_ids = {packet_id for packet_id, _unit_id in targets}
+    generation_counts = {
+        key: count
+        for (provider, key), count in runtime.counts.items()
+        if provider == "deepseek"
+    }
+    assert len(repaired_packet_ids) == 3
+    assert all(generation_counts[packet_id] == 2 for packet_id in repaired_packet_ids)
+    assert all(
+        count == 1
+        for packet_id, count in generation_counts.items()
+        if packet_id not in repaired_packet_ids
+    )
+    repair_calls = [
+        call for call in runtime.calls
+        if call["provider"] == "deepseek" and "repair_context" in call["payload"]
+    ]
+    assert repair_calls
+    first_repair = next(
+        call for call in repair_calls
+        if call["payload"]["packet"]["packet_id"] == "p001"
+    )
+    assert first_repair["payload"]["prior_section_candidates"]
+    assert not nested_keys(first_repair["payload"]) & {
+        "source_revision_id", "start_ref", "end_ref", "start_page", "end_page"
+    }
+    inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
+    rounds = inspection["attempts"][-1]["review_rounds"]
+    assert [item["verdict"] for item in rounds] == ["FAIL", "FAIL", "PASS"]
+    assert rounds[0]["findings"][0]["detail"].startswith("这些单元")
+
+
+def test_cumulative_new_packet_repair_scope_is_bounded(service, monkeypatch):
+    monkeypatch.setattr(
+        "reader_service.knowledge.service.MAX_CUMULATIVE_REPAIR_PACKETS", 1
+    )
+
+    def reviewer(payload, count):
+        packet = payload["packets"][count - 1]
+        unit_id = packet["decisions"][0]["unit_ids"][0]
+        return review_answer(
+            "FAIL",
+            "每轮发现另一个阻断缺陷。",
+            [blocking_finding(packet["section_id"], [unit_id])],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+
+    failed = claim_and_run(fixture)
+
+    assert failed["status"] == "FAILED"
+    assert failed["failure_stage"] == "REVIEW"
+    assert failed["failure_code"] == "review_repair_scope_exceeded"
+    assert failed["knowledge_points"] == []
 
 
 def test_review_targets_are_validated_and_over_broad_repair_fails_closed(service):

@@ -16,6 +16,7 @@
 | Outline conceptual correction | Same-day follow-up, 2026-09-03. A second ZCode pass found a new blocking issue (P1-5) in the closure patch's Outline fix; a product-intent clarification then established that logical directory structure and physical range resolution had been conflated. §9 (Product) and §11, §12.2/§12.6, §18.2, §19.1–§19.2b (Implementation) are rewritten accordingly; `OutlineRegion` is removed. See §32.1. |
 | Chapter Knowledge Map first UAT correction | User-approved amendment, 2026-09-07, after real-use `empty_response`/latency failure and external KP research review. It introduced Section-scoped private generation/retry, removed deterministic no-overlap, added structural duplicate/overlap Review, safe per-attempt diagnostics and minimum Section progress. Its LLM-first complete-KP generation and whole-Section semantic repair are superseded by the architecture correction below; its retained shell, overlap rule and observability remain authority. |
 | Chapter Knowledge Map architecture correction | User-approved amendment, 2026-09-07, after repeated invalid/length-limited generation and oversized/rejected Review. §12.2 now requires deterministic evidence units, bounded AI `KEEP`/`MERGE`/`DROP` plus short labels, deterministic KP materialization, compact Chapter Review and unit-addressed repair; §12.4 freezes the model/source-authority boundary; §22 makes diagnostics packet/stage-scoped. Existing Outline/OCR authority, jobs, persistence, Reader UI/navigation and atomic publication remain unchanged. Durable replacement identity and availability/attempt separation are still required before Mastery or first regeneration and are not authorized here. |
+| Chapter Knowledge Map Review convergence correction | User-approved amendment, 2026-09-07, after real Chapter 1/7 Review failures exposed genuine local reducer defects plus non-exhaustive discovery across untouched packets. §12.2 keeps all seven Review dimensions while reserving `BLOCKING` for high-confidence unpublishable defects, moves short-heading/reference-only closure upstream and permits only cumulative-bounded repair of newly implicated untouched packets. Repeated local blockers and budget exhaustion still fail closed; Chapter Review and atomic publication are unchanged. |
 | Authorizes | **Gate D: CLOSED (PASS).** This document is now engineering authority for 408 Guided Reader — where it and `PRODUCT_BLUEPRINT.md` disagree, the Product Blueprint still wins. **Gate E (code porting / implementation) is a separate, still-unopened authorization** — this closure does not itself authorize writing, porting, or installing anything. |
 
 ### 0.1 Why the clean-room, and what happens next
@@ -1057,6 +1058,12 @@ cannot mint IDs or emit Section, page, line, geometry, source range or source-re
 Invented/duplicate/missing IDs, non-adjacent/cross-Section merges, partial output and invalid schema
 fail closed under §13.5.
 
+The deterministic builder attaches a short numbered heading to its following explanation where
+available. A semantic candidate grounded only in a question and/or a `见` / `参见` / `详见`
+cross-reference is invalid. The Section-local classifier must resolve obvious heading/definition
+duplicates and compare against bounded same-Section peer title/meaning summaries; these mechanically
+local defects are not deferred wholesale to the Chapter gate.
+
 Materialization is **deterministic and not a model output**. The server inherits primary ownership,
 order, source revision and continuous range from the selected unit or allowed contiguous unit run;
 only title/meaning come from AI. Section-local packet results remain private and disposable. If any
@@ -1077,11 +1084,22 @@ dump, generator prompt or reasoning. Review checks at least:
 - source faithfulness, range sufficiency and correct primary Section ownership;
 - map-level balance across Sections.
 
+All seven dimensions remain publication checks, but severity is calibrated. `BLOCKING` means the
+ledger establishes a high-confidence defect that would make the Knowledge Map unpublishable:
+duplicated learning state, non-instructional/fabricated KP, major learnable omission, clearly wrong
+Section/source ownership, or a severe split/merge that creates meaningless independent states.
+Alternative wording, optional consolidation, mild imbalance and judgments that bounded excerpts
+cannot support confidently are warnings. The reviewer must scan the complete ledger before its
+verdict; “could be improved” is not equivalent to “cannot be published.”
+
 Every blocking semantic finding identifies an existing Section and the smallest relevant unit-ID
-set. Review judges; it never rewrites. Within the authorized bounded repair budget, only packet(s)
-containing those IDs may be rerun; unaffected semantic decisions remain private and unchanged. The
-server rematerializes the candidate set and resubmits the complete compact Chapter ledger. An
-invalid/unaddressable finding fails closed and never triggers whole-Section regeneration.
+set. Review judges; it never rewrites. Within the authorized cumulative packet/unit/round budget,
+only newly implicated packets containing those IDs may be rerun; unaffected semantic decisions
+remain private and unchanged. Repair receives bounded same-Section peer candidate summaries but no
+source-authority fields. The server rematerializes the candidate set and resubmits the complete
+compact Chapter ledger. A blocker recurring in an already repaired packet, an invalid/unaddressable
+finding, an over-broad scope or exhausted budget fails closed and never triggers whole-Section
+regeneration.
 
 Technical retry is equally local: transient/empty/length-limited/invalid output retries only the
 current semantic packet, while technical Review failure retries only the current compact Review
@@ -1123,6 +1141,7 @@ Validation gates publication:
 
 - every semantic packet references only deterministic unit IDs supplied to it, accounts for each
   supplied unit exactly once, and contains no model-authored source/ownership fields;
+- a kept/merged semantic candidate is not grounded only in questions or cross-reference pointers;
 - every merged candidate is backed by a contiguous adjacent unit run inside one existing primary
   Section; invented, duplicate, missing, non-adjacent or cross-Section unit references are invalid;
 - every candidate's primary Section, source revision, order and continuous range are materialized
@@ -2204,6 +2223,10 @@ unit decisions, title/meaning, Review ledger, reasoning/content bodies and sourc
 observability metadata and must not be retained through this path. A terminal `empty_response` must
 remain diagnosable after the call completes; it cannot collapse to only one Chapter-level failure
 code with no per-attempt facts.
+
+The protected local inspection may additionally retain each Review finding's dimension, severity,
+Section/unit IDs and a bounded actionable detail string. It never retains the compact ledger,
+provider request/response bodies, reasoning, source text/geometry or credentials.
 
 **Minimum Chapter progress:** while deterministic construction, private semantic classification or
 compact Review is running, the Reader may show the current stage and completed/total Section count

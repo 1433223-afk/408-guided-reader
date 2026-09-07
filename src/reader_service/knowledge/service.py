@@ -35,7 +35,10 @@ from .semantic import (
 
 
 MAX_STRUCTURED_ATTEMPTS = 3
-MAX_SEMANTIC_REPAIR_ROUNDS = 1
+MAX_SEMANTIC_REPAIR_ROUNDS = 3
+MAX_CUMULATIVE_REPAIR_PACKETS = 4
+MAX_CUMULATIVE_REPAIR_UNITS = 48
+MAX_SAFE_REVIEW_DETAIL_CHARACTERS = 240
 MAX_SOURCE_CHARACTERS = 180_000
 DEFAULT_GENERATOR_MAX_TOKENS = 4_096
 DEFAULT_REVIEWER_MAX_TOKENS = 8_192
@@ -55,7 +58,7 @@ GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义
 输入只包含同一 Section、同一 packet 中按教材顺序排列的确定性 evidence units。unit_id、Section 身份和来源范围均由服务端确定；你不能创建或改写它们。
 逐个完整核算所有 unit，只允许：KEEP（一个 unit 独立成为 KP）、MERGE（同一 packet 内相邻连续的两个或更多 units 合并为一个 KP）、DROP（相邻连续 units 不形成独立学习单元）。
 KEEP 的 unit_ids 必须恰好 1 个；MERGE 的 unit_ids 必须至少 2 个，单个 unit 绝不能标成 MERGE。
-KP 必须是值得独立记录理解状态、可独立检查、具有学科教学意义的学习单元；不得机械复制每段文字、标题、术语，也不得生成“推理、答题、问题解决”等泛化认知动作。
+KP 必须是值得独立记录理解状态、可独立检查、具有学科教学意义的学习单元；不得机械复制每段文字、标题、术语，也不得生成“推理、答题、问题解决”等泛化认知动作。短编号标题应与紧随的讲解作为一个 evidence unit 理解，不能把标题和定义分别保留成重复 KP；只有问题或“见/参见/详见……”交叉引用而没有实质讲解的 unit 必须 DROP。
 把当前 packet 作为一个候选集合整体判断：同一概念的重复定义、复述、例示或再次列举不得各自保留为同标题/同含义 KP。相邻且共同构成一个学习单元时 MERGE；否则保留最充分的一处并 DROP 冗余处。
 如果输入含 prior_section_candidates，它们只是本 Section 先前 packet 已保留的私有标题/含义摘要，只用于避免再次保留同一独立学习单元；不得改写或重复输出这些先前 candidates。当前 unit 若只是重复其中一个 candidate，应 DROP 当前 unit；绝不能用单-unit MERGE 表示与先前 packet 合并。
 不得跨 packet 或跨 Section 合并，不得生成 Section/page/ref/坐标/来源字段，不得创建、删除、改名、重排或重挂 Outline；不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
@@ -63,8 +66,9 @@ KP 必须是值得独立记录理解状态、可独立检查、具有学科教�
 每个给定 unit_id 必须恰好出现一次，decision 顺序必须与输入一致。不得返回 Markdown 代码围栏、推理过程或其他字段。"""
 
 REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定的完整 Chapter map 是否可以发布。
-输入是服务端生成的 compact ledger：完整 unit/decision accounting、候选标题与含义、截断证据提示和 overlap warnings，不含原始几何。必须整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
+输入是服务端生成的 compact ledger：完整 unit/decision accounting、候选标题与含义、截断证据提示和 overlap warnings，不含原始几何。必须先扫描全部 Sections，再整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
 overlap_warnings 只是审查信号，不是自动失败；来源空隙正常，不要求 no-gaps。你只能定位问题，不能改写候选，不能生成来源字段，也不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
+BLOCKING 仅用于依据 ledger 可高置信判断、若不修复就会让整张图不可发布的缺陷，例如同一学习状态被重复保留、伪造或泛化认知 KP、重大独立学习内容缺失、明显错误的 Section/来源归属，或会形成无意义 mastery 状态的严重拆分/合并。存在优化空间、可选的命名/合并方案、轻微不均衡、例示/回顾是否另列、或因截断证据无法高置信判断的问题只能是 WARNING；不得因为还能改进就阻断发布。
 每个 finding 必须定位到一个现有 section_id，并引用该 Section 中一个或多个给定 unit_id；只定位真正需要改变的最小 units。跨 Section 重复应为需要修复的一侧给出定位明确的 finding，不要把正确对照一并列为修复目标。
 只返回一个 JSON 对象，且只能含三个字段：{"verdict":"PASS 或 FAIL","summary":"不超过 1000 字的简体中文理由","findings":[{"dimension":"review_rubric 中的一个值","severity":"BLOCKING 或 WARNING","section_id":"现有 Section ID","unit_ids":["该 Section 的给定 unit_id"],"detail":"具体、可操作的简体中文问题说明"}]}。
 FAIL 必须至少有一个 BLOCKING finding；PASS 不得含 BLOCKING finding。不得返回 Markdown 代码围栏、修订后的 KP 或其他文字。"""
@@ -271,6 +275,8 @@ class KnowledgeService:
                 attempt_id, semantic_round=0,
             )
             semantic_repair_round = 0
+            repaired_packet_ids: set[str] = set()
+            repaired_unit_ids: set[str] = set()
             while True:
                 inspection["candidate_count"] = sum(
                     decision["action"] != "DROP"
@@ -333,6 +339,33 @@ class KnowledgeService:
                         provider=reviewer_identity[0], model=reviewer_identity[1],
                         summary=verdict.summary,
                     ) from failure
+                selected_packet_id_set = set(selected_packet_ids)
+                if selected_packet_id_set & repaired_packet_ids:
+                    raise KnowledgePipelineError(
+                        "REVIEW", "SEMANTIC_FAILURE", "review_rejected",
+                        "Structural Review repeated a blocker in an already repaired packet",
+                        provider=reviewer_identity[0], model=reviewer_identity[1],
+                        summary=verdict.summary,
+                    )
+                selected_unit_ids = {
+                    unit_id
+                    for finding in verdict.findings
+                    if finding["severity"] == "BLOCKING"
+                    for unit_id in finding["unit_ids"]
+                }
+                if (
+                    len(repaired_packet_ids | selected_packet_id_set)
+                    > MAX_CUMULATIVE_REPAIR_PACKETS
+                    or len(repaired_unit_ids | selected_unit_ids)
+                    > MAX_CUMULATIVE_REPAIR_UNITS
+                ):
+                    raise KnowledgePipelineError(
+                        "REVIEW", "SEMANTIC_FAILURE",
+                        "review_repair_scope_exceeded",
+                        "Cumulative Review repair scope exceeds the bounded Chapter budget",
+                        provider=reviewer_identity[0], model=reviewer_identity[1],
+                        summary=verdict.summary,
+                    )
                 repair_packets = [
                     packet for packet in packets
                     if packet["packet_id"] in selected_packet_ids
@@ -340,6 +373,9 @@ class KnowledgeService:
                 repair_contexts = self._packet_repair_contexts(
                     verdict, repair_packets, decisions_by_packet,
                     semantic_repair_round + 1,
+                )
+                peer_candidates = self._repair_peer_candidates(
+                    repair_packets, packets, decisions_by_packet
                 )
                 repair_section_count = len({
                     packet["primary_section_id"] for packet in repair_packets
@@ -354,6 +390,7 @@ class KnowledgeService:
                     chapter_id, attempt_id,
                     semantic_round=semantic_repair_round + 1,
                     repair_contexts=repair_contexts,
+                    prior_section_candidates_by_packet=peer_candidates,
                 )
                 if repaired_identity != generator_identity:
                     raise KnowledgePipelineError(
@@ -363,6 +400,8 @@ class KnowledgeService:
                         provider=repaired_identity[0], model=repaired_identity[1],
                     )
                 decisions_by_packet.update(repaired_sets)
+                repaired_packet_ids.update(selected_packet_id_set)
+                repaired_unit_ids.update(selected_unit_ids)
                 semantic_repair_round += 1
             self.repository.update_progress(
                 revision_id, chapter_id, attempt_id,
@@ -477,6 +516,9 @@ class KnowledgeService:
                     "severity": finding["severity"],
                     "section_id": finding["section_id"],
                     "unit_ids": list(finding["unit_ids"]),
+                    "detail": re.sub(r"\s+", " ", finding["detail"]).strip()[
+                        :MAX_SAFE_REVIEW_DETAIL_CHARACTERS
+                    ],
                 }
                 for finding in verdict.findings
             ],
@@ -586,10 +628,12 @@ class KnowledgeService:
         *,
         semantic_round: int,
         repair_contexts: dict[str, dict] | None = None,
+        prior_section_candidates_by_packet: dict[str, list[dict]] | None = None,
     ):
         if not packets:
             raise ValueError("Chapter has no semantic packets")
         repair_contexts = repair_contexts or {}
+        prior_section_candidates_by_packet = prior_section_candidates_by_packet or {}
         results: dict[str, list[dict]] = {}
         identities: set[tuple[str | None, str | None]] = set()
         section_packets: dict[str, list[dict]] = {}
@@ -603,6 +647,9 @@ class KnowledgeService:
             prior_section_candidates: list[dict] = []
             for packet in local_packets:
                 repair_context = repair_contexts.get(packet["packet_id"])
+                configured_peers = prior_section_candidates_by_packet.get(
+                    packet["packet_id"], []
+                )
                 decisions, identity = self._classify_packet(
                     packet,
                     chapter,
@@ -614,20 +661,19 @@ class KnowledgeService:
                     prior_section_candidates=(
                         prior_section_candidates
                         if semantic_round == 0 and repair_context is None
-                        else None
+                        else [*configured_peers, *prior_section_candidates]
                     ),
                 )
                 local_results[packet["packet_id"]] = decisions
                 local_identities.add(identity)
-                if semantic_round == 0 and repair_context is None:
-                    prior_section_candidates.extend(
-                        {
-                            "title": decision["title"],
-                            "one_sentence_meaning": decision["one_sentence_meaning"],
-                        }
-                        for decision in decisions
-                        if decision["action"] != "DROP"
-                    )
+                prior_section_candidates.extend(
+                    {
+                        "title": decision["title"],
+                        "one_sentence_meaning": decision["one_sentence_meaning"],
+                    }
+                    for decision in decisions
+                    if decision["action"] != "DROP"
+                )
             return local_results, local_identities
 
         first_failure: Exception | None = None
@@ -737,6 +783,11 @@ class KnowledgeService:
                     )
                 elif validation_code == "not_json":
                     system += "只输出裸 JSON 对象，禁止 Markdown 代码围栏或任何前后文字。"
+                elif validation_code == "nonteaching_evidence":
+                    system += (
+                        "只有问题或‘见/参见/详见’交叉引用、没有实质讲解的 evidence "
+                        "必须 DROP，不能成为 KP。"
+                    )
             observer = lambda event, current_attempt=structured_attempt: (
                 self.repository.record_pipeline_attempt(
                     revision_id,
@@ -838,6 +889,40 @@ class KnowledgeService:
                     decisions_by_packet[packet["packet_id"]]
                 ),
             }
+        return contexts
+
+    @staticmethod
+    def _repair_peer_candidates(
+        repair_packets: list[dict],
+        all_packets: list[dict],
+        decisions_by_packet: dict[str, list[dict]],
+    ) -> dict[str, list[dict]]:
+        packet_section = {
+            packet["packet_id"]: packet["primary_section_id"]
+            for packet in all_packets
+        }
+        repair_packet_ids = {
+            packet["packet_id"] for packet in repair_packets
+        }
+        contexts: dict[str, list[dict]] = {}
+        for repair_packet in repair_packets:
+            peers = []
+            for packet in all_packets:
+                packet_id = packet["packet_id"]
+                if packet_id in repair_packet_ids or (
+                    packet_section[packet_id]
+                    != repair_packet["primary_section_id"]
+                ):
+                    continue
+                peers.extend(
+                    {
+                        "title": decision["title"],
+                        "one_sentence_meaning": decision["one_sentence_meaning"],
+                    }
+                    for decision in decisions_by_packet[packet_id]
+                    if decision["action"] != "DROP"
+                )
+            contexts[repair_packet["packet_id"]] = peers
         return contexts
 
     def _review(
