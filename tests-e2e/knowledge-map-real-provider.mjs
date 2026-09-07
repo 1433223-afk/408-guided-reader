@@ -117,10 +117,10 @@ try {
       && payload.outline[0].outline_node_id === payload.source_section.section_id
   )));
   const runtimeInspection = await json(page, "/api/assistant/inspection");
-  const calls = runtimeInspection.calls.filter((call) => (
-    call.interaction_id?.startsWith("kp-generation:") || call.interaction_id?.startsWith("kp-review:")
+  const calls = runtimeInspection.calls.filter((call) => call.interaction_id?.startsWith("kp-"));
+  const generationCalls = calls.filter((call) => (
+    call.interaction_id.startsWith("kp-generation:") || call.interaction_id.startsWith("kp-repair:")
   ));
-  const generationCalls = calls.filter((call) => call.interaction_id.startsWith("kp-generation:"));
   const reviewCalls = calls.filter((call) => call.interaction_id.startsWith("kp-review:"));
   assert.ok(calls.some((call) => call.provider === generatorProvider && call.request_body.model === providerModels[generatorProvider]));
   assert.ok(calls.some((call) => call.provider === reviewerProvider && call.request_body.model === providerModels[reviewerProvider]));
@@ -128,7 +128,9 @@ try {
   assert.ok(generationCalls.every((call) => call.request_body.max_tokens === 12_288));
   assert.ok(generationCalls.every((call) => {
     const payload = JSON.parse(call.request_body.messages[1].content);
-    return Object.keys(payload).sort().join(",") === "chapter,outline,source_section";
+    const keys = Object.keys(payload).sort().join(",");
+    return keys === "chapter,outline,source_section"
+      || keys === "chapter,outline,repair_context,source_section";
   }));
   assert.ok(reviewCalls.length >= 1);
   assert.ok(reviewCalls.every((call) => call.request_body.max_tokens === 12_288));
