@@ -6,7 +6,7 @@ from uuid import uuid4
 from reader_service.library.database import Database
 
 
-GENERATION_ATTEMPT_RETENTION = 512
+PIPELINE_ATTEMPT_RETENTION = 512
 
 
 def now() -> str:
@@ -103,14 +103,14 @@ class KnowledgeRepository:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
-                UPDATE chapter_generation_attempts
+                UPDATE chapter_pipeline_attempts
                 SET status = 'INTERRUPTED', completed_at = ?,
                     failure_kind = 'INTERRUPTED', failure_code = 'service_restart'
                 WHERE status = 'STARTED'
                   AND EXISTS (
                     SELECT 1 FROM chapter_preparations AS prep
-                    WHERE prep.book_source_revision_id = chapter_generation_attempts.book_source_revision_id
-                      AND prep.chapter_outline_node_id = chapter_generation_attempts.chapter_outline_node_id
+                    WHERE prep.book_source_revision_id = chapter_pipeline_attempts.book_source_revision_id
+                      AND prep.chapter_outline_node_id = chapter_pipeline_attempts.chapter_outline_node_id
                       AND prep.status = 'PREPARING'
                   )
                 """,
@@ -249,13 +249,18 @@ class KnowledgeRepository:
             if cursor.rowcount != 1:
                 raise RuntimeError("Chapter preparation attempt is no longer current")
 
-    def record_generation_attempt(
+    def record_pipeline_attempt(
         self,
         revision_id: str,
         chapter_id: str,
         preparation_attempt_id: str,
-        section_id: str,
+        *,
+        section_id: str | None,
+        packet_or_stage_id: str,
+        semantic_round: int,
         structured_attempt: int,
+        provider_role: str,
+        pipeline_stage: str,
         event: dict,
     ) -> None:
         status = event.get("status")
@@ -265,26 +270,34 @@ class KnowledgeRepository:
         if isinstance(transport_attempt, bool) or not isinstance(transport_attempt, int) \
                 or transport_attempt < 1:
             raise ValueError("Invalid transport attempt")
+        if isinstance(semantic_round, bool) or not isinstance(semantic_round, int) \
+                or semantic_round < 0:
+            raise ValueError("Invalid semantic round")
+        if provider_role not in {"KP_GENERATOR", "KP_STRUCTURAL_REVIEWER"}:
+            raise ValueError("Invalid pipeline provider role")
+        if pipeline_stage not in {"SEMANTIC_CLASSIFICATION", "STRUCTURAL_REVIEW"}:
+            raise ValueError("Invalid pipeline stage")
         timestamp = now()
         completed_at = None if status == "STARTED" else timestamp
         usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
         with self.database.connect() as connection:
             connection.execute(
                 """
-                INSERT INTO chapter_generation_attempts(
+                INSERT INTO chapter_pipeline_attempts(
                     id, book_source_revision_id, chapter_outline_node_id,
                     preparation_attempt_id, primary_section_id,
+                    packet_or_stage_id, semantic_round,
                     structured_attempt, transport_attempt, interaction_id,
                     provider, model, provider_role, pipeline_stage,
                     status, started_at, completed_at,
                     latency_ms, finish_reason, prompt_tokens, completion_tokens,
                     total_tokens, content_present, content_length,
                     reasoning_present, reasoning_length, failure_kind, failure_code
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(
                     book_source_revision_id, chapter_outline_node_id,
-                    preparation_attempt_id, primary_section_id,
-                    structured_attempt, transport_attempt
+                    preparation_attempt_id, pipeline_stage, packet_or_stage_id,
+                    semantic_round, structured_attempt, transport_attempt
                 ) DO UPDATE SET
                     status = excluded.status,
                     completed_at = excluded.completed_at,
@@ -303,11 +316,12 @@ class KnowledgeRepository:
                 (
                     str(uuid4()), revision_id, chapter_id,
                     self._bounded(preparation_attempt_id, 120),
-                    section_id, structured_attempt, transport_attempt,
+                    section_id, self._bounded(packet_or_stage_id, 160),
+                    semantic_round, structured_attempt, transport_attempt,
                     self._bounded(event.get("interaction_id"), 300),
                     self._bounded(event.get("provider"), 40),
                     self._bounded(event.get("model"), 120),
-                    "KP_GENERATOR", "GENERATION", status, timestamp, completed_at,
+                    provider_role, pipeline_stage, status, timestamp, completed_at,
                     self._nonnegative_int(event.get("latency_ms")),
                     self._optional_bounded(event.get("finish_reason"), 120),
                     self._nonnegative_int(usage.get("prompt_tokens")),
@@ -323,28 +337,67 @@ class KnowledgeRepository:
             )
             connection.execute(
                 """
-                DELETE FROM chapter_generation_attempts
+                DELETE FROM chapter_pipeline_attempts
                 WHERE id IN (
-                    SELECT id FROM chapter_generation_attempts
+                    SELECT id FROM chapter_pipeline_attempts
                     WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
                     ORDER BY started_at DESC, id DESC
                     LIMIT -1 OFFSET ?
                 )
                 """,
-                (revision_id, chapter_id, GENERATION_ATTEMPT_RETENTION),
+                (revision_id, chapter_id, PIPELINE_ATTEMPT_RETENTION),
             )
 
-    def generation_attempts(self, revision_id: str, chapter_id: str) -> list[dict]:
+    def pipeline_attempts(self, revision_id: str, chapter_id: str) -> list[dict]:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM chapter_generation_attempts
+                SELECT * FROM chapter_pipeline_attempts
                 WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
-                ORDER BY started_at, structured_attempt, transport_attempt, id
+                ORDER BY started_at, semantic_round, structured_attempt,
+                         transport_attempt, id
                 """,
                 (revision_id, chapter_id),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def record_structured_validation_failure(
+        self,
+        revision_id: str,
+        chapter_id: str,
+        preparation_attempt_id: str,
+        *,
+        packet_or_stage_id: str,
+        semantic_round: int,
+        structured_attempt: int,
+        pipeline_stage: str,
+        failure_code: str,
+    ) -> None:
+        """Mark the successful transport whose body failed safe schema validation."""
+        if pipeline_stage not in {"SEMANTIC_CLASSIFICATION", "STRUCTURAL_REVIEW"}:
+            raise ValueError("Invalid pipeline stage")
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                UPDATE chapter_pipeline_attempts
+                SET status = 'FAILED',
+                    failure_kind = 'INVALID_STRUCTURED_OUTPUT',
+                    failure_code = ?
+                WHERE book_source_revision_id = ?
+                  AND chapter_outline_node_id = ?
+                  AND preparation_attempt_id = ?
+                  AND pipeline_stage = ?
+                  AND packet_or_stage_id = ?
+                  AND semantic_round = ?
+                  AND structured_attempt = ?
+                  AND status = 'SUCCEEDED'
+                """,
+                (
+                    self._bounded(failure_code, 120), revision_id, chapter_id,
+                    preparation_attempt_id, pipeline_stage, packet_or_stage_id,
+                    semantic_round, structured_attempt,
+                ),
+            )
 
     def fail(
         self,

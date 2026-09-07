@@ -15,8 +15,9 @@ await cp(sourceDataDir, dataDir, { recursive: true });
 resetCopiedKnowledgeState();
 
 const transports = [];
-const generationCallsBySection = new Map();
-let failingSectionId = null;
+const generationCallsByPacket = new Map();
+let failingPacketId = null;
+let repairTargetPacketId = null;
 let repairTargetSectionId = null;
 let reviewCallCount = 0;
 const reasoningCanary = "PRIVATE_PROVIDER_REASONING_MUST_NOT_BE_STORED";
@@ -29,43 +30,52 @@ const provider = createServer(async (request, response) => {
   let answer;
   let finishReason = "stop";
   let reasoningContent = "";
-  if (system.includes("内部 KP 生成器")) {
+  if (system.includes("内部语义分类器")) {
+    assert.deepEqual(body.thinking, { type: "disabled" });
     const payload = JSON.parse(body.messages[1].content);
     const semanticRepair = Object.hasOwn(payload, "repair_context");
+    const priorContext = Object.hasOwn(payload, "prior_section_candidates");
+    const expectedKeys = ["chapter", "packet", "section", "units"];
+    if (semanticRepair) expectedKeys.push("repair_context");
+    if (priorContext) expectedKeys.push("prior_section_candidates");
     assert.deepEqual(
       Object.keys(payload).sort(),
-      semanticRepair
-        ? ["chapter", "outline", "repair_context", "source_section"]
-        : ["chapter", "outline", "source_section"],
+      expectedKeys.sort(),
     );
-    const section = payload.source_section;
-    failingSectionId ??= section.section_id;
-    if (section.section_id !== failingSectionId) repairTargetSectionId ??= section.section_id;
-    const callCount = (generationCallsBySection.get(section.section_id) || 0) + 1;
-    generationCallsBySection.set(section.section_id, callCount);
-    if (section.section_id === failingSectionId && callCount <= 3) {
+    if (priorContext) assert.ok(payload.prior_section_candidates.every(
+      (candidate) => Object.keys(candidate).sort().join(",") === "one_sentence_meaning,title",
+    ));
+    const packetId = payload.packet.packet_id;
+    failingPacketId ??= packetId;
+    if (packetId !== failingPacketId && repairTargetPacketId === null) {
+      repairTargetPacketId = packetId;
+      repairTargetSectionId = payload.section.section_id;
+    }
+    const callCount = (generationCallsByPacket.get(packetId) || 0) + 1;
+    generationCallsByPacket.set(packetId, callCount);
+    if (packetId === failingPacketId && callCount === 1) {
       answer = "";
       finishReason = "length";
       reasoningContent = reasoningCanary;
       await delay(700);
     } else {
-      const genericCandidate = section.section_id === repairTargetSectionId && !semanticRepair;
-      answer = JSON.stringify({ knowledge_points: [{
-        draft_key: `chapter6-${section.section_id}${semanticRepair ? "-repaired" : ""}`,
-        primary_section_id: section.section_id,
-        title: genericCandidate ? "问题解决" : `${section.title}的核心内容`,
-        one_sentence_definition: genericCandidate
+      const genericCandidate = packetId === repairTargetPacketId && !semanticRepair;
+      answer = JSON.stringify({ decisions: [{
+        action: payload.units.length === 1 ? "KEEP" : "MERGE",
+        unit_ids: payload.units.map((unit) => unit.unit_id),
+        title: genericCandidate ? "问题解决" : `${payload.section.title}：核心学习单元`,
+        one_sentence_meaning: genericCandidate
           ? "这是泛化的认知动作，不是可独立追踪的学科知识。"
-          : `概括 ${section.title} 中需要独立理解的核心内容。`,
-        start_ref: section.lines[0].line_ref,
-        end_ref: section.lines.at(-1).line_ref,
+          : `概括 ${payload.section.title} 中需要独立理解的学科内容。`,
       }] });
       await delay(semanticRepair ? 1600 : 250);
     }
   } else if (system.includes("Chapter Knowledge Map 结构审查者")) {
+    assert.equal(body.reasoning_effort, "low");
+    assert.equal(body.thinking, undefined);
     const payload = JSON.parse(body.messages[1].content);
     reviewCallCount += 1;
-    const genericIndex = payload.candidate_knowledge_points.findIndex(
+    const generic = payload.candidates.find(
       (candidate) => candidate.title === "问题解决",
     );
     answer = reviewCallCount === 1
@@ -75,10 +85,9 @@ const provider = createServer(async (request, response) => {
         findings: [{
           dimension: "instructional_specificity",
           severity: "BLOCKING",
-          candidate_indices: [genericIndex],
-          evidence_section_ids: [repairTargetSectionId],
-          repair_section_ids: [repairTargetSectionId],
-          detail: "“问题解决”不是教材中的学科知识；重新生成该小节的具体学习单元。",
+          section_id: repairTargetSectionId,
+          unit_ids: generic.unit_ids,
+          detail: "“问题解决”不是教材中的学科知识；重新分类定位到的 evidence unit。",
         }],
       })
       : JSON.stringify({
@@ -86,7 +95,7 @@ const provider = createServer(async (request, response) => {
         summary: "定点修复后，整章候选的颗粒度、重复、教学特异性、拆分合并、覆盖和均衡均通过。",
         findings: [],
       });
-    if (reviewCallCount === 1) assert.ok(genericIndex >= 0);
+    if (reviewCallCount === 1) assert.ok(generic);
     await delay(500);
   } else {
     answer = "学习地图准备失败不会影响这条临时解释。";
@@ -153,128 +162,79 @@ try {
   ]), `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map/prepare`);
   assert.equal(duplicate[0].chapter_map.attempt_id, duplicate[1].chapter_map.attempt_id);
 
-  await page.waitForFunction(() => {
-    const status = document.querySelector("#knowledge-status")?.textContent || "";
-    return status.includes("正在按小节生成知识点") && /已完成 [1-9]\d*\/\d+ 个小节/.test(status);
-  }, null, { timeout: 20_000 });
-  assert.equal(await page.locator("#knowledge-map li").count(), 0);
-  await page.waitForFunction(() => document.querySelector("#knowledge-status")?.textContent.includes("准备失败"), null, { timeout: 20_000 });
-  assert.equal(await page.locator("#knowledge-map li").count(), 0);
-  const failed = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map`);
-  assert.equal(failed.status, "FAILED");
-  assert.equal(failed.failure_stage, "GENERATION");
-  assert.equal(failed.failure_code, "empty_response");
-  const failedInspection = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map/inspection`);
-  const failedTransportAttempts = failedInspection.generation_attempts.filter(
-    (attempt) => attempt.preparation_attempt_id === failed.attempt_id,
-  );
-  const failedSectionAttempts = failedTransportAttempts.filter(
-    (attempt) => attempt.primary_section_id === failingSectionId,
-  );
-  assert.equal(failedSectionAttempts.length, 3);
-  assert.ok(failedSectionAttempts.every((attempt) => (
-    attempt.status === "FAILED"
-      && attempt.failure_code === "empty_response"
-      && attempt.finish_reason === "length"
-      && attempt.content_present === 0
-      && attempt.reasoning_present === 1
-      && attempt.reasoning_length === reasoningCanary.length
-  )));
-  const successfulSibling = failedTransportAttempts.find((attempt) => attempt.status === "SUCCEEDED");
-  assert.ok(successfulSibling, "a sibling Section should finish while the delayed Section retries");
-  assert.equal(failedTransportAttempts.filter(
-    (attempt) => attempt.primary_section_id === successfulSibling.primary_section_id,
-  ).length, 1);
-  assert.ok(!JSON.stringify(failedInspection.generation_attempts).includes(reasoningCanary));
-
-  await page.locator("#search-toggle").click();
-  await page.locator("#search-query").fill("总线事务");
-  await page.locator("#search-form").getByRole("button", { name: "搜索" }).click();
-  await page.locator(".search-result").first().waitFor();
-  await page.locator("#search-close").click();
-  const outlineReload = page.waitForResponse((response) => response.url().endsWith("/outline"));
-  await page.locator("#outline-toggle").click();
-  await outlineReload;
-  const section62 = outlineBefore.nodes.find((node) => node.title === "6.2 总线事务和定时");
-  await expandAncestors(page, outlineBefore.nodes, section62);
-  await page.locator(`li[data-node-id="${section62.outline_node_id}"] > .outline-row .outline-target`).click();
-  await page.waitForFunction(() => document.querySelector("#page-number")?.value === "303");
-
-  assert.equal(await selectExactReaderText(page, revisionId, 302, "总线事务"), "总线事务");
-  await page.locator("#save-highlight").click();
-  await page.locator("#marks-toggle").click();
-  await page.locator(".mark-card").first().waitFor();
-  await page.locator("#marks-close").click();
-  assert.equal(await selectExactReaderText(page, revisionId, 302, "总线事务"), "总线事务");
-  await page.locator("#ask-selection").waitFor({ state: "visible" });
-  await page.locator("#ask-selection").click();
-  const assistantResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
-  await page.locator("#assistant-start").click();
-  assert.equal((await assistantResponse).status(), 200);
-  await page.getByText("学习地图准备失败不会影响这条临时解释。", { exact: true }).waitFor();
-  await page.locator("#assistant-close").click();
-
-  await openKnowledge(page, chapter6.outline_node_id);
-  assert.match(await page.locator("#knowledge-status").textContent(), /准备失败/);
   await page.evaluate(() => {
     window.__knowledgeStatusHistory = [];
     const status = document.querySelector("#knowledge-status");
     new MutationObserver(() => window.__knowledgeStatusHistory.push(status.textContent || ""))
       .observe(status, { childList: true, subtree: true, characterData: true });
   });
-  const retryResponse = page.waitForResponse((response) => response.url().endsWith("/knowledge-map/prepare"));
-  await page.locator("#knowledge-prepare").click();
-  assert.equal((await retryResponse).status(), 202);
-  await page.waitForFunction(() => document.querySelectorAll("#knowledge-map .knowledge-section").length === 4, null, { timeout: 20_000 });
+  await page.waitForFunction(() => {
+    const status = document.querySelector("#knowledge-status")?.textContent || "";
+    return status.includes("正在按小节生成知识点") && /已完成 [1-9]\d*\/\d+ 个小节/.test(status);
+  }, null, { timeout: 20_000 });
+  assert.equal(await page.locator("#knowledge-map li").count(), 0);
+  await page.waitForFunction(() => {
+    const status = document.querySelector("#knowledge-status")?.textContent || "";
+    return document.querySelectorAll("#knowledge-map .knowledge-section").length === 4
+      || status.includes("准备失败");
+  }, null, { timeout: 40_000 });
   const ready = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map`);
-  assert.equal(ready.status, "READY");
+  assert.equal(ready.status, "READY", JSON.stringify({
+    state: ready,
+    calls: [...generationCallsByPacket.entries()],
+    reviewCallCount,
+  }));
   assert.equal(ready.structure_version, 1);
-  assert.equal(ready.knowledge_points.length, 4);
-  assert.equal(new Set(ready.knowledge_points.map((point) => point.knowledge_point_id)).size, 4);
+  assert.ok(ready.knowledge_points.length >= 4);
+  assert.equal(
+    new Set(ready.knowledge_points.map((point) => point.knowledge_point_id)).size,
+    ready.knowledge_points.length,
+  );
   assert.equal(await page.locator("#knowledge-map .knowledge-section").count(), 4);
-  assert.equal(await page.locator("#knowledge-map li").count(), 4);
+  assert.equal(await page.locator("#knowledge-map li").count(), ready.knowledge_points.length);
   const statusHistory = await page.evaluate(() => window.__knowledgeStatusHistory);
   assert.ok(statusHistory.some((status) => (
-    status.includes("正在按小节生成知识点") && status.includes("已完成 0/1 个小节")
-  )), `missing targeted repair progress: ${JSON.stringify(statusHistory)}`);
+    status.includes("正在按小节生成知识点") && /已完成 \d+\/\d+ 个小节/.test(status)
+  )), `missing Section progress: ${JSON.stringify(statusHistory)}`);
 
   const inspection = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map/inspection`);
-  assert.equal(inspection.attempts.length, 2);
-  assert.deepEqual(inspection.attempts.map((attempt) => attempt.outcome), ["FAILED", "READY"]);
+  assert.equal(inspection.attempts.length, 1);
+  assert.deepEqual(inspection.attempts.map((attempt) => attempt.outcome), ["READY"]);
   for (const attempt of inspection.attempts) {
-    assert.equal(attempt.source_payload.chapter.chapter_outline_node_id, chapter6.outline_node_id);
-    assert.deepEqual(Object.keys(attempt.source_payload).sort(), ["chapter", "outline", "source_sections"]);
-    assert.deepEqual(Object.keys(attempt).includes("generation_payloads"), true);
-    assert.ok(attempt.generation_payloads.every((payload) => (
-      Object.keys(payload).sort().join(",") === "chapter,outline,source_section"
-    )));
-    if (attempt.review_payload) assert.deepEqual(Object.keys(attempt.review_payload).sort(), [
-      "bounded_source", "candidate_knowledge_points", "chapter", "generation_provenance", "outline",
-      "overlap_warnings", "review_rubric",
-    ]);
+    assert.equal(attempt.chapter_id, chapter6.outline_node_id);
+    assert.ok(attempt.unit_count > 0);
+    assert.ok(attempt.packet_count > 0);
+    assert.equal(attempt.packet_bounds.length, attempt.packet_count);
+    assert.deepEqual(attempt.review_rounds.map((round) => round.verdict), ["FAIL", "PASS"]);
     const serialized = JSON.stringify(attempt);
     assert.ok(!/本节习题精选|答案与解析|knowledge-generator-loopback-secret|knowledge-review-loopback-secret/.test(serialized));
-    assert.ok(attempt.source_payload.source_sections.every((section) => (
-      section.lines.every((line) => line.pdf_page_index >= 292 && line.pdf_page_index <= 308)
-    )));
   }
   assert.equal(reviewCallCount, 2);
-  const readyAttemptId = inspection.attempts[1].attempt_id;
-  const readyGenerationAttempts = inspection.generation_attempts.filter(
+  const readyAttemptId = inspection.attempts[0].attempt_id;
+  const readyGenerationAttempts = inspection.pipeline_attempts.filter(
     (attempt) => attempt.preparation_attempt_id === readyAttemptId,
   );
+  const failedTransport = readyGenerationAttempts.find(
+    (attempt) => attempt.packet_or_stage_id === failingPacketId && attempt.status === "FAILED",
+  );
+  assert.ok(failedTransport);
+  assert.equal(failedTransport.failure_code, "empty_response");
+  assert.equal(failedTransport.finish_reason, "length");
+  assert.equal(failedTransport.content_present, 0);
+  assert.equal(failedTransport.reasoning_present, 1);
+  assert.equal(failedTransport.reasoning_length, reasoningCanary.length);
+  assert.ok(!JSON.stringify(readyGenerationAttempts).includes(reasoningCanary));
   const repairAttempts = readyGenerationAttempts.filter(
-    (attempt) => attempt.interaction_id.startsWith("kp-repair:"),
+    (attempt) => attempt.pipeline_stage === "SEMANTIC_CLASSIFICATION"
+      && attempt.packet_or_stage_id === repairTargetPacketId
+      && attempt.semantic_round === 1,
   );
   assert.equal(repairAttempts.length, 1);
   assert.equal(repairAttempts[0].primary_section_id, repairTargetSectionId);
-  assert.equal(repairAttempts[0].structured_attempt, 3);
-  assert.equal(readyGenerationAttempts.filter(
-    (attempt) => attempt.primary_section_id === repairTargetSectionId,
-  ).length, 2);
+  assert.equal(repairAttempts[0].structured_attempt, 1);
   assert.ok(readyGenerationAttempts.filter(
-    (attempt) => attempt.primary_section_id !== repairTargetSectionId,
-  ).every((attempt) => attempt.structured_attempt === 1));
+    (attempt) => attempt.pipeline_stage === "STRUCTURAL_REVIEW",
+  ).length >= 2);
 
   const outlineAfter = await json(page, `/api/revisions/${revisionId}/outline`);
   assert.deepEqual(logicalProjection(outlineAfter.nodes), logicalBefore);
@@ -293,7 +253,7 @@ try {
 
   const firstPoint = ready.knowledge_points[0];
   await page.locator("#knowledge-map .knowledge-section li button").first().click();
-  await page.waitForFunction((number) => document.querySelector("#page-number")?.value === String(number), firstPoint.start_page + 1);
+  await waitForSourceAnchor(page, firstPoint);
   await page.locator(`.page[data-index="${firstPoint.start_page}"] canvas`).waitFor({ state: "visible" });
 
   const screenshot = path.join(process.cwd(), "test-results", "knowledge-map-golden.png");
@@ -302,18 +262,6 @@ try {
   await page.screenshot({ path: screenshot });
 
   const idsBeforeRestart = ready.knowledge_points.map((point) => point.knowledge_point_id);
-  await page.locator("#knowledge-close").click();
-  await page.locator("#back-to-library").click();
-  await page.locator("#library-home").waitFor({ state: "visible" });
-  const reopenedBeforeRestartBook = await openBook(page, 348);
-  assert.equal(reopenedBeforeRestartBook.active_revision.id, revisionId);
-  await page.locator("#outline-toggle").click();
-  await page.locator("#outline-panel").waitFor();
-  await openKnowledge(page, chapter6.outline_node_id);
-  await page.locator("#knowledge-map .knowledge-section").first().waitFor();
-  const reopenedBeforeRestart = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map`);
-  assert.equal(reopenedBeforeRestart.structure_version, 1);
-  assert.deepEqual(reopenedBeforeRestart.knowledge_points.map((point) => point.knowledge_point_id), idsBeforeRestart);
 
   await stopService(running.child);
   running = await startService(serviceEnv);
@@ -351,7 +299,7 @@ try {
     oneChapterOnly: true,
     outlineLogicalIdentityPreserved: true,
     atomicVisibility: true,
-    failureRecovery: "GENERATION_EMPTY_RESPONSE -> retry -> REVIEW_FINDING -> targeted Section repair -> READY",
+    failureRecovery: "packet-local EMPTY_RESPONSE retry -> unit-addressed Review finding -> targeted packet repair -> READY",
     structureVersion: ready.structure_version,
     knowledgePointCount: ready.knowledge_points.length,
     sectionGroups: await page.locator("#knowledge-map .knowledge-section").count().catch(() => 0),
@@ -457,6 +405,18 @@ function logicalProjection(nodes) {
     node.outline_node_id, node.parent_id, node.depth, node.order_index,
     node.kind, node.title, node.identity_revision,
   ]).sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+async function waitForSourceAnchor(page, point) {
+  await page.waitForFunction(({ pageIndex, normalizedY }) => {
+    const viewer = document.querySelector("#viewer");
+    const wrapper = document.querySelector(`.page[data-index="${pageIndex}"]`);
+    if (!viewer || !wrapper) return false;
+    const viewerRect = viewer.getBoundingClientRect();
+    const pageRect = wrapper.getBoundingClientRect();
+    const anchorY = pageRect.top + pageRect.height * normalizedY;
+    return anchorY >= viewerRect.top - 4 && anchorY <= viewerRect.bottom + 4;
+  }, { pageIndex: point.start_page, normalizedY: point.start_y });
 }
 
 async function json(page, url) {

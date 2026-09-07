@@ -15,6 +15,10 @@ const providerModels = {
   zhipu: "GLM-5.3-Flash",
   openrouter: "google/gemini-3.8-flash",
 };
+const targetTitles = (process.env.READER_REAL_KP_CHAPTERS || "第1章 计算机系统概述|第6章 总线")
+  .split("|").map((value) => value.trim()).filter(Boolean);
+assert.ok(targetTitles.length >= 2, "real-provider reliability requires at least two Chapters");
+
 const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-knowledge-real-"));
 const dataDir = path.join(acceptanceRoot, "data");
 await cp(sourceDataDir, dataDir, { recursive: true });
@@ -38,128 +42,141 @@ try {
   await page.locator("#outline-toggle").click();
   await page.locator("#outline-panel").waitFor({ state: "visible" });
   const outline = await json(page, `/api/revisions/${revisionId}/outline`);
-  const chapter = outline.nodes.find((node) => node.title === "第6章 总线");
-  assert.ok(chapter);
-  await page.locator(`li[data-node-id="${chapter.outline_node_id}"] > .outline-row .outline-map-action`).click();
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/knowledge-map/prepare"));
-  await page.locator("#knowledge-prepare").click();
-  assert.equal((await responsePromise).status(), 202);
 
-  try {
-    await page.waitForFunction(
-      () => {
-        const text = document.querySelector("#knowledge-status")?.textContent || "";
-        return text.includes("结构版本") || text.includes("准备失败");
-      },
-      null,
-      { timeout: 900_000 },
+  const metrics = [];
+  for (const title of targetTitles) {
+    const chapter = outline.nodes.find((node) => node.title === title);
+    assert.ok(chapter, `missing real Outline Chapter: ${title}`);
+    const pathName = `/api/revisions/${revisionId}/chapters/${chapter.outline_node_id}/knowledge-map`;
+    const requested = await postJson(page, `${pathName}/prepare`, {});
+    assert.equal(requested.chapter_map.status, "PREPARING");
+    const result = await waitForTerminalChapter(page, pathName, 900_000);
+    const inspection = await json(page, `${pathName}/inspection`);
+    if (result.status !== "READY") {
+      throw new Error(`Real provider Chapter preparation did not publish: ${JSON.stringify({
+        title,
+        status: result.status,
+        stage: result.failure_stage,
+        kind: result.failure_kind,
+        code: result.failure_code,
+        summary: result.review_summary,
+        safeInspection: inspection,
+      })}`);
+    }
+
+    assert.ok(result.knowledge_points.length >= 2);
+    assert.equal(result.generator_provider, generatorProvider);
+    assert.equal(result.generator_model, providerModels[generatorProvider]);
+    assert.equal(result.reviewer_provider, reviewerProvider);
+    assert.equal(result.reviewer_model, providerModels[reviewerProvider]);
+    assert.equal(inspection.attempts.length, 1);
+    const observed = inspection.attempts[0];
+    assert.equal(observed.outcome, "READY");
+    assert.equal(observed.chapter_id, chapter.outline_node_id);
+    assert.ok(observed.unit_count > 0);
+    assert.ok(observed.packet_count > 0);
+    assert.equal(observed.packet_bounds.length, observed.packet_count);
+    assert.ok(observed.packet_bounds.every((packet) => (
+      packet.unit_count >= 1
+        && packet.unit_count <= 24
+        && packet.character_count > 0
+        && packet.character_count <= 4_800
+    )));
+    assert.ok(observed.review_rounds.length >= 1 && observed.review_rounds.length <= 2);
+    assert.equal(observed.review_rounds.at(-1).verdict, "PASS");
+    assert.ok(observed.review_rounds.every((round) => (
+      round.payload_character_count > 0
+        && round.payload_character_count < observed.source_payload_character_count
+    )));
+    const serializedObservation = JSON.stringify(observed);
+    assert.ok(!/"(?:source_payload|generation_payloads|review_payload|request_body|response_body|reasoning_content)"\s*:/.test(serializedObservation));
+
+    const attempts = inspection.pipeline_attempts.filter(
+      (attempt) => attempt.preparation_attempt_id === result.attempt_id,
     );
-  } catch (error) {
-    const stalled = await json(page, `/api/revisions/${revisionId}/chapters/${chapter.outline_node_id}/knowledge-map`);
-    const inspected = await json(page, "/api/assistant/inspection");
-    const attempts = inspected.calls.filter((call) => call.interaction_id?.startsWith("kp-"));
-    throw new Error(`Real provider Chapter preparation timed out: ${JSON.stringify({
-      chapter: { status: stalled.status, stage: stalled.failure_stage, code: stalled.failure_code },
-      providerAttempts: attempts.map((call) => ({
-        provider: call.provider,
-        interaction_id: call.interaction_id,
-        attempt: call.attempt,
-        max_tokens: call.request_body.max_tokens,
-      })),
-      cause: error.message,
-    })}`);
+    const semanticAttempts = attempts.filter(
+      (attempt) => attempt.pipeline_stage === "SEMANTIC_CLASSIFICATION",
+    );
+    const reviewAttempts = attempts.filter(
+      (attempt) => attempt.pipeline_stage === "STRUCTURAL_REVIEW",
+    );
+    assert.ok(semanticAttempts.length >= observed.packet_count);
+    assert.ok(reviewAttempts.length >= 1);
+    assert.ok(semanticAttempts.every((attempt) => (
+      attempt.provider === generatorProvider
+        && attempt.model === providerModels[generatorProvider]
+        && attempt.primary_section_id
+        && attempt.packet_or_stage_id.startsWith("p")
+    )));
+    assert.ok(reviewAttempts.every((attempt) => (
+      attempt.provider === reviewerProvider
+        && attempt.model === providerModels[reviewerProvider]
+        && attempt.primary_section_id === null
+        && attempt.packet_or_stage_id === "chapter-structural-review"
+    )));
+    assert.ok(attempts.every((attempt) => (
+      !Object.hasOwn(attempt, "request_body")
+        && !Object.hasOwn(attempt, "response_body")
+        && !Object.hasOwn(attempt, "reasoning_content")
+    )));
+    const sectionGroups = new Set(
+      result.knowledge_points.map((point) => point.primary_section_id),
+    ).size;
+    metrics.push({
+      chapter: title,
+      unitCount: observed.unit_count,
+      packetCount: observed.packet_count,
+      candidateCount: observed.candidate_count,
+      maxPacketCharacters: Math.max(...observed.packet_bounds.map((packet) => packet.character_count)),
+      rawSourceCharacters: observed.source_character_count,
+      rawSourcePayloadCharacters: observed.source_payload_character_count,
+      compactReviewCharacters: observed.review_rounds.at(-1).payload_character_count,
+      generatorRoute: `${result.generator_provider}/${result.generator_model}`,
+      reviewerRoute: `${result.reviewer_provider}/${result.reviewer_model}`,
+      technicalFailures: attempts.filter((attempt) => attempt.status === "FAILED").length,
+      semanticRepairRounds: Math.max(...semanticAttempts.map((attempt) => attempt.semantic_round)),
+      structureVersion: result.structure_version,
+      knowledgePointCount: result.knowledge_points.length,
+      sectionGroups,
+    });
   }
-  const result = await json(page, `/api/revisions/${revisionId}/chapters/${chapter.outline_node_id}/knowledge-map`);
-  if (result.status !== "READY") {
-    const inspected = await json(page, "/api/assistant/inspection");
-    const attempts = inspected.calls.filter((call) => call.interaction_id?.startsWith("kp-"));
-    throw new Error(`Real provider Chapter preparation did not publish: ${JSON.stringify({
-      status: result.status,
-      stage: result.failure_stage,
-      kind: result.failure_kind,
-      code: result.failure_code,
-      generator: [result.generator_provider, result.generator_model],
-      reviewer: [result.reviewer_provider, result.reviewer_model],
-      summary: result.review_summary,
-      providerAttempts: attempts.map((call) => ({
-        provider: call.provider,
-        interaction_id: call.interaction_id,
-        attempt: call.attempt,
-        max_tokens: call.request_body.max_tokens,
-      })),
-    })}`);
-  }
-  assert.ok(result.knowledge_points.length >= 2);
-  assert.equal(result.generator_provider, generatorProvider);
-  assert.equal(result.generator_model, providerModels[generatorProvider]);
-  assert.equal(result.reviewer_provider, reviewerProvider);
-  assert.equal(result.reviewer_model, providerModels[reviewerProvider]);
-  assert.ok(await page.locator("#knowledge-map .knowledge-section").count() >= 1);
 
-  const knowledgeInspection = await json(
-    page,
-    `/api/revisions/${revisionId}/chapters/${chapter.outline_node_id}/knowledge-map/inspection`,
-  );
-  assert.equal(knowledgeInspection.attempts.length, 1);
-  assert.equal(knowledgeInspection.attempts[0].outcome, "READY");
-  assert.deepEqual(Object.keys(knowledgeInspection.attempts[0].source_payload).sort(), [
-    "chapter", "outline", "source_sections",
-  ]);
-  assert.deepEqual(Object.keys(knowledgeInspection.attempts[0].review_payload).sort(), [
-    "bounded_source", "candidate_knowledge_points", "chapter", "generation_provenance", "outline",
-    "overlap_warnings", "review_rubric",
-  ]);
-  const sectionPayloads = knowledgeInspection.attempts[0].generation_payloads;
-  assert.equal(sectionPayloads.length, knowledgeInspection.attempts[0].source_payload.source_sections.length);
-  assert.ok(sectionPayloads.length > 1);
-  assert.ok(sectionPayloads.every((payload) => (
-    Object.keys(payload).sort().join(",") === "chapter,outline,source_section"
-      && payload.outline[0].outline_node_id === payload.source_section.section_id
-  )));
   const runtimeInspection = await json(page, "/api/assistant/inspection");
-  const calls = runtimeInspection.calls.filter((call) => call.interaction_id?.startsWith("kp-"));
-  const generationCalls = calls.filter((call) => (
-    call.interaction_id.startsWith("kp-generation:") || call.interaction_id.startsWith("kp-repair:")
-  ));
-  const reviewCalls = calls.filter((call) => call.interaction_id.startsWith("kp-review:"));
-  assert.ok(calls.some((call) => call.provider === generatorProvider && call.request_body.model === providerModels[generatorProvider]));
-  assert.ok(calls.some((call) => call.provider === reviewerProvider && call.request_body.model === providerModels[reviewerProvider]));
-  assert.ok(generationCalls.length >= sectionPayloads.length);
-  assert.ok(generationCalls.every((call) => call.request_body.max_tokens === 12_288));
-  assert.ok(generationCalls.every((call) => {
-    const payload = JSON.parse(call.request_body.messages[1].content);
-    const keys = Object.keys(payload).sort().join(",");
-    return keys === "chapter,outline,source_section"
-      || keys === "chapter,outline,repair_context,source_section";
-  }));
-  assert.ok(reviewCalls.length >= 1);
-  assert.ok(reviewCalls.every((call) => call.request_body.max_tokens === 12_288));
-  assert.ok(!/Authorization|api[_-]?key|credential/i.test(JSON.stringify(calls)));
-  assert.ok(knowledgeInspection.generation_attempts.length >= sectionPayloads.length);
-  assert.ok(knowledgeInspection.generation_attempts.every((attempt) => (
-    attempt.provider === generatorProvider
-      && attempt.model === providerModels[generatorProvider]
-      && !Object.hasOwn(attempt, "response_body")
-      && !Object.hasOwn(attempt, "reasoning_content")
-  )));
+  assert.equal(
+    runtimeInspection.calls.filter((call) => call.interaction_id?.startsWith("kp-")).length,
+    0,
+    "Knowledge provider request bodies must not be retained by PayloadInspector",
+  );
+
+  const lastChapter = outline.nodes.find((node) => node.title === targetTitles.at(-1));
+  await page.locator(`li[data-node-id="${lastChapter.outline_node_id}"] > .outline-row .outline-map-action`).click();
+  await page.locator("#knowledge-panel").waitFor({ state: "visible" });
+  await page.locator("#knowledge-map .knowledge-section").first().waitFor();
+  const visibleGroups = await page.locator("#knowledge-map .knowledge-section").count();
+  assert.equal(visibleGroups, metrics.at(-1).sectionGroups);
+  const lastResult = await json(
+    page,
+    `/api/revisions/${revisionId}/chapters/${lastChapter.outline_node_id}/knowledge-map`,
+  );
+  const firstPoint = lastResult.knowledge_points[0];
+  await page.locator("#knowledge-map .knowledge-section li button").first().click();
+  await waitForSourceAnchor(page, firstPoint);
+  await page.locator(`.page[data-index="${firstPoint.start_page}"] canvas`).waitFor({ state: "visible" });
 
   const screenshot = path.join(process.cwd(), "test-results", "knowledge-map-real-provider.png");
   await mkdir(path.dirname(screenshot), { recursive: true });
+  await page.locator("#outline-toggle").click();
+  await page.locator("#outline-panel").waitFor({ state: "visible" });
+  await page.locator(`li[data-node-id="${lastChapter.outline_node_id}"] > .outline-row .outline-map-action`).click();
+  await page.locator("#knowledge-panel").waitFor({ state: "visible" });
   await page.screenshot({ path: screenshot });
   console.log(JSON.stringify({
     status: "PASS",
-    realBook: { pages: 348, sha256: expectedHash, chapter: "第6章 总线" },
-    generator: `${result.generator_provider}/${result.generator_model}`,
-    reviewer: `${result.reviewer_provider}/${result.reviewer_model}`,
-    providerCalls: calls.length,
-    sectionGenerationCalls: generationCalls.length,
-    sectionProgress: `${sectionPayloads.length}/${sectionPayloads.length}`,
-    generatorMaxTokens: 12_288,
-    reviewerMaxTokens: 12_288,
-    structureVersion: result.structure_version,
-    knowledgePointCount: result.knowledge_points.length,
-    sectionGroups: await page.locator("#knowledge-map .knowledge-section").count(),
-    finalPayloadsInspected: true,
+    realBook: { pages: 348, sha256: expectedHash },
+    chapterReliability: metrics,
+    requestBodiesRetained: false,
+    sectionGroupedMap: true,
+    kpToTextbookNavigation: true,
     screenshot,
   }));
 } finally {
@@ -167,6 +184,7 @@ try {
   if (running) await stopService(running.child);
   await rm(acceptanceRoot, { recursive: true, force: true });
 }
+
 
 async function json(page, url) {
   return page.evaluate(async (value) => {
@@ -176,12 +194,57 @@ async function json(page, url) {
   }, url);
 }
 
+
+async function postJson(page, url, body) {
+  return page.evaluate(async ({ endpoint, value }) => {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(value),
+    });
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+    return response.json();
+  }, { endpoint: url, value: body });
+}
+
+
+async function waitForTerminalChapter(page, pathName, timeoutMs) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const state = await json(page, pathName);
+    if (state.status === "READY" || state.status === "FAILED") return state;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  const state = await json(page, pathName);
+  throw new Error(`Real provider Chapter preparation timed out: ${JSON.stringify({
+    status: state.status,
+    stage: state.prepare_stage,
+    sections: [state.sections_completed, state.sections_total],
+  })}`);
+}
+
+
+async function waitForSourceAnchor(page, point) {
+  await page.waitForFunction(({ pageIndex, normalizedY }) => {
+    const viewer = document.querySelector("#viewer");
+    const wrapper = document.querySelector(`.page[data-index="${pageIndex}"]`);
+    if (!viewer || !wrapper) return false;
+    const viewerRect = viewer.getBoundingClientRect();
+    const pageRect = wrapper.getBoundingClientRect();
+    const anchorY = pageRect.top + pageRect.height * normalizedY;
+    return anchorY >= viewerRect.top - 4 && anchorY <= viewerRect.bottom + 4;
+  }, { pageIndex: point.start_page, normalizedY: point.start_y });
+}
+
+
 async function startService() {
   const child = spawn(
     process.env.READER_PYTHON || "python",
     ["-m", "reader_service", "--no-open", "--port", "0", "--data-dir", dataDir],
     {
-      cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
       env: {
         ...process.env,
         GUIDED_READER_KP_GENERATOR_PROVIDER: generatorProvider,
@@ -194,11 +257,13 @@ async function startService() {
   return { child, url: await readyUrl(child, () => errors) };
 }
 
+
 async function stopService(child) {
   if (!child || child.exitCode !== null) return;
   child.kill();
   await new Promise((resolve) => child.once("exit", resolve));
 }
+
 
 function readyUrl(child, errors) {
   return new Promise((resolve, reject) => {
@@ -215,6 +280,7 @@ function readyUrl(child, errors) {
   });
 }
 
+
 function chromePath() {
   const candidates = [
     process.env.READER_CHROMIUM,
@@ -227,6 +293,7 @@ function chromePath() {
   return found;
 }
 
+
 function resetCopiedKnowledgeState() {
   const database = path.join(dataDir, "state.sqlite3");
   const script = [
@@ -238,8 +305,12 @@ function resetCopiedKnowledgeState() {
     "connection.commit()",
     "connection.close()",
   ].join("; ");
-  const reset = spawnSync(process.env.READER_PYTHON || "python", ["-c", script, database], {
-    cwd: process.cwd(), windowsHide: true, encoding: "utf8",
-  });
-  if (reset.status !== 0) throw new Error(reset.stderr || "failed to reset copied Knowledge state");
+  const reset = spawnSync(
+    process.env.READER_PYTHON || "python",
+    ["-c", script, database],
+    { cwd: process.cwd(), windowsHide: true, encoding: "utf8" },
+  );
+  if (reset.status !== 0) throw new Error(
+    reset.stderr || "failed to reset copied Knowledge state",
+  );
 }

@@ -590,6 +590,105 @@ MIGRATIONS = (
             );
         """,
     ),
+    (
+        10,
+        """
+        -- The corrected semantic pipeline observes bounded packet and Review
+        -- attempts without retaining source text, private candidates, request
+        -- or response bodies.  Review is Chapter-scoped, so Section ownership
+        -- is intentionally nullable for those rows.
+        CREATE TABLE chapter_pipeline_attempts (
+            id TEXT PRIMARY KEY,
+            book_source_revision_id TEXT NOT NULL,
+            chapter_outline_node_id TEXT NOT NULL,
+            preparation_attempt_id TEXT NOT NULL,
+            primary_section_id TEXT,
+            packet_or_stage_id TEXT NOT NULL
+                CHECK (length(packet_or_stage_id) BETWEEN 1 AND 160),
+            semantic_round INTEGER NOT NULL DEFAULT 0 CHECK (semantic_round >= 0),
+            structured_attempt INTEGER NOT NULL CHECK (structured_attempt >= 1),
+            transport_attempt INTEGER NOT NULL CHECK (transport_attempt >= 1),
+            interaction_id TEXT NOT NULL CHECK (length(interaction_id) BETWEEN 1 AND 300),
+            provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 40),
+            model TEXT NOT NULL CHECK (length(model) BETWEEN 1 AND 120),
+            provider_role TEXT NOT NULL CHECK (
+                provider_role IN ('KP_GENERATOR', 'KP_STRUCTURAL_REVIEWER')
+            ),
+            pipeline_stage TEXT NOT NULL CHECK (
+                pipeline_stage IN (
+                    'LEGACY_GENERATION', 'SEMANTIC_CLASSIFICATION',
+                    'STRUCTURAL_REVIEW'
+                )
+            ),
+            status TEXT NOT NULL CHECK (
+                status IN ('STARTED', 'SUCCEEDED', 'FAILED', 'INTERRUPTED')
+            ),
+            started_at TEXT NOT NULL,
+            completed_at TEXT,
+            latency_ms INTEGER CHECK (latency_ms IS NULL OR latency_ms >= 0),
+            finish_reason TEXT CHECK (
+                finish_reason IS NULL OR length(finish_reason) <= 120
+            ),
+            prompt_tokens INTEGER CHECK (prompt_tokens IS NULL OR prompt_tokens >= 0),
+            completion_tokens INTEGER CHECK (
+                completion_tokens IS NULL OR completion_tokens >= 0
+            ),
+            total_tokens INTEGER CHECK (total_tokens IS NULL OR total_tokens >= 0),
+            content_present INTEGER CHECK (content_present IN (0, 1)),
+            content_length INTEGER CHECK (content_length IS NULL OR content_length >= 0),
+            reasoning_present INTEGER CHECK (reasoning_present IN (0, 1)),
+            reasoning_length INTEGER CHECK (
+                reasoning_length IS NULL OR reasoning_length >= 0
+            ),
+            failure_kind TEXT CHECK (
+                failure_kind IS NULL OR length(failure_kind) <= 80
+            ),
+            failure_code TEXT CHECK (
+                failure_code IS NULL OR length(failure_code) <= 120
+            ),
+            UNIQUE (
+                book_source_revision_id, chapter_outline_node_id,
+                preparation_attempt_id, pipeline_stage, packet_or_stage_id,
+                semantic_round, structured_attempt, transport_attempt
+            ),
+            FOREIGN KEY (book_source_revision_id, chapter_outline_node_id)
+                REFERENCES chapter_preparations(
+                    book_source_revision_id, chapter_outline_node_id
+                ) ON DELETE CASCADE,
+            FOREIGN KEY (book_source_revision_id, primary_section_id)
+                REFERENCES outline_nodes(book_source_revision_id, outline_node_id)
+                ON DELETE CASCADE
+        );
+
+        INSERT INTO chapter_pipeline_attempts(
+            id, book_source_revision_id, chapter_outline_node_id,
+            preparation_attempt_id, primary_section_id, packet_or_stage_id,
+            semantic_round, structured_attempt, transport_attempt,
+            interaction_id, provider, model, provider_role, pipeline_stage,
+            status, started_at, completed_at, latency_ms, finish_reason,
+            prompt_tokens, completion_tokens, total_tokens, content_present,
+            content_length, reasoning_present, reasoning_length,
+            failure_kind, failure_code
+        )
+        SELECT
+            id, book_source_revision_id, chapter_outline_node_id,
+            preparation_attempt_id, primary_section_id, primary_section_id,
+            0, structured_attempt, transport_attempt,
+            interaction_id, provider, model, provider_role, 'LEGACY_GENERATION',
+            status, started_at, completed_at, latency_ms, finish_reason,
+            prompt_tokens, completion_tokens, total_tokens, content_present,
+            content_length, reasoning_present, reasoning_length,
+            failure_kind, failure_code
+        FROM chapter_generation_attempts;
+
+        DROP TABLE chapter_generation_attempts;
+        CREATE INDEX ix_chapter_pipeline_attempts_owner
+            ON chapter_pipeline_attempts(
+                book_source_revision_id, chapter_outline_node_id,
+                preparation_attempt_id, started_at
+            );
+        """,
+    ),
 )
 
 

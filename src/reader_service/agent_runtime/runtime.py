@@ -142,12 +142,35 @@ class ProviderConfig:
         if not 1 <= self.cooling_seconds <= 600:
             raise ValueError("provider cooling period is invalid")
 
-    def effective_config(self, *, max_tokens: int | None = None) -> dict:
+    def effective_config(
+        self,
+        *,
+        max_tokens: int | None = None,
+        thinking_mode: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> dict:
         effective_max_tokens = self.max_tokens if max_tokens is None else max_tokens
         answer_mapping = (
             f"shared Skill controls concise answer; max_tokens={effective_max_tokens} includes provider reasoning"
             if self.provider in ("deepseek", "zhipu")
             else f"max_tokens={effective_max_tokens}"
+        )
+        request_parameters = {
+            "temperature": self.temperature,
+            "max_tokens": effective_max_tokens,
+            "stream": False,
+            "timeout_seconds": self.timeout_seconds,
+        }
+        if thinking_mode is not None:
+            request_parameters["thinking"] = thinking_mode
+        if reasoning_effort is not None:
+            request_parameters["reasoning_effort"] = reasoning_effort
+        reasoning_mapping = (
+            f"provider reasoning_effort {reasoning_effort}"
+            if reasoning_effort is not None
+            else f"provider thinking mode {thinking_mode}"
+            if thinking_mode is not None
+            else "omitted (no portable OpenAI-compatible field)"
         )
         return {
             "provider": self.provider,
@@ -157,15 +180,10 @@ class ProviderConfig:
                 "answer_length": ANSWER_LENGTH_INTENT,
                 "reasoning_strength": REASONING_STRENGTH_INTENT,
             },
-            "request_parameters": {
-                "temperature": self.temperature,
-                "max_tokens": effective_max_tokens,
-                "stream": False,
-                "timeout_seconds": self.timeout_seconds,
-            },
+            "request_parameters": request_parameters,
             "parameter_mapping": {
                 "answer_length": answer_mapping,
-                "reasoning_strength": "omitted (no portable OpenAI-compatible field)",
+                "reasoning_strength": reasoning_mapping,
             },
         }
 
@@ -280,10 +298,26 @@ class AgentRuntime:
         interaction_id: str | None = None,
         max_tokens: int | None = None,
         attempt_observer: Callable[[dict], None] | None = None,
+        retain_request_body: bool = True,
+        thinking_mode: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ProviderCompletion:
         effective_max_tokens = self.config.max_tokens if max_tokens is None else max_tokens
         if isinstance(effective_max_tokens, bool) or not 1 <= effective_max_tokens <= 16384:
             raise ValueError("provider call max_tokens must be between 1 and 16384")
+        allowed_thinking_modes = {
+            "deepseek": {"enabled", "disabled"},
+            "zhipu": {"enabled", "disabled"},
+        }
+        if thinking_mode is not None and thinking_mode not in allowed_thinking_modes.get(
+            self.config.provider, set()
+        ):
+            raise ValueError("thinking mode is invalid for the selected provider")
+        if reasoning_effort is not None and (
+            self.config.provider != "zhipu"
+            or reasoning_effort not in {"low", "high", "max"}
+        ):
+            raise ValueError("reasoning effort is invalid for the selected provider")
         if not self._configuration_valid:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,
@@ -312,18 +346,23 @@ class AgentRuntime:
             "max_tokens": effective_max_tokens,
             "stream": False,
         }
+        if thinking_mode is not None:
+            body["thinking"] = {"type": thinking_mode}
+        if reasoning_effort is not None:
+            body["reasoning_effort"] = reasoning_effort
         call_id = interaction_id or str(uuid4())
         started = time.perf_counter()
         last_failure: ProviderFailure | None = None
         for attempt in range(1, self.config.max_attempts + 1):
             transport_started = time.perf_counter()
-            self.inspector.record(
-                provider=self.config.provider,
-                endpoint=self.config.endpoint,
-                request_body=body,
-                interaction_id=call_id,
-                attempt=attempt,
-            )
+            if retain_request_body:
+                self.inspector.record(
+                    provider=self.config.provider,
+                    endpoint=self.config.endpoint,
+                    request_body=body,
+                    interaction_id=call_id,
+                    attempt=attempt,
+                )
             logger.info(
                 "assistant_provider_call provider=%s model=%s attempt=%d interaction_id=%s",
                 self.config.provider,
@@ -409,7 +448,9 @@ class AgentRuntime:
                     latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
                     usage=copy.deepcopy(normalized.usage),
                     effective_config=self.config.effective_config(
-                        max_tokens=effective_max_tokens
+                        max_tokens=effective_max_tokens,
+                        thinking_mode=thinking_mode,
+                        reasoning_effort=reasoning_effort,
                     ),
                     response_metadata=response_metadata,
                 )
@@ -555,6 +596,9 @@ class ProviderRuntimeSet:
         interaction_id: str | None = None,
         max_tokens: int | None = None,
         attempt_observer: Callable[[dict], None] | None = None,
+        retain_request_body: bool = True,
+        thinking_mode: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> ProviderCompletion:
         runtime = self.runtimes.get(provider)
         if runtime is None:
@@ -568,6 +612,9 @@ class ProviderRuntimeSet:
             interaction_id=interaction_id,
             max_tokens=max_tokens,
             attempt_observer=attempt_observer,
+            retain_request_body=retain_request_body,
+            thinking_mode=thinking_mode,
+            reasoning_effort=reasoning_effort,
         )
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:

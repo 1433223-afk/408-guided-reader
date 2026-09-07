@@ -528,6 +528,29 @@ def test_named_provider_per_call_token_budget_override_keeps_default_unchanged()
         providers.complete_for_with_metadata("deepseek", messages, max_tokens=16_385)
 
 
+def test_named_provider_per_call_thinking_mode_is_explicit_and_provider_scoped():
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    messages = [{"role": "user", "content": "bounded"}]
+
+    deepseek = providers.complete_for_with_metadata(
+        "deepseek", messages, thinking_mode="disabled"
+    )
+    zhipu = providers.complete_for_with_metadata(
+        "zhipu", messages, reasoning_effort="low"
+    )
+
+    assert adapters["deepseek"].calls[-1]["body"]["thinking"] == {
+        "type": "disabled"
+    }
+    assert adapters["zhipu"].calls[-1]["body"]["reasoning_effort"] == "low"
+    assert deepseek.effective_config["request_parameters"]["thinking"] == "disabled"
+    assert zhipu.effective_config["request_parameters"]["reasoning_effort"] == "low"
+    with pytest.raises(ValueError, match="invalid for the selected provider"):
+        providers.complete_for_with_metadata(
+            "openrouter", messages, thinking_mode="disabled"
+        )
+
+
 def test_selected_provider_is_the_only_call_and_follow_up_stays_pinned(assistant_fixture):
     providers, adapters = runtime_set(bakeoff_enabled=False)
     assistant = AssistantService(assistant_fixture["contexts"], providers)

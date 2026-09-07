@@ -21,13 +21,24 @@ from reader_service.library import LibraryService
 from reader_service.outline import ChapterResolutionError, OutlineService
 
 from .repository import KnowledgeRepository
+from .semantic import (
+    SemanticOutputError,
+    build_compact_review_ledger,
+    build_evidence_units,
+    materialize_candidates,
+    packetize_evidence_units,
+    publication_points,
+    repair_packet_ids,
+    semantic_packet_payload,
+    validate_semantic_output,
+)
 
 
-MAX_STRUCTURED_ATTEMPTS = 2
+MAX_STRUCTURED_ATTEMPTS = 3
 MAX_SEMANTIC_REPAIR_ROUNDS = 1
 MAX_SOURCE_CHARACTERS = 180_000
-DEFAULT_GENERATOR_MAX_TOKENS = 12_288
-DEFAULT_REVIEWER_MAX_TOKENS = 12_288
+DEFAULT_GENERATOR_MAX_TOKENS = 4_096
+DEFAULT_REVIEWER_MAX_TOKENS = 8_192
 DEFAULT_SECTION_GENERATION_WORKERS = 2
 
 REVIEW_RUBRIC = (
@@ -40,23 +51,23 @@ REVIEW_RUBRIC = (
     "chapter_map_balance",
 )
 
-GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部 KP 生成器（Section 级），不是用户对话助手。
-只使用给定章节身份、唯一一个 primary Section 的目录子树和该 Section 的 OCR 来源；Original PDF 是教材权威。
-KnowledgePoint 必须是值得独立记录理解状态、可独立检查的学习单元，不得机械复制每个段落、标题、词语或泛化的认知动作。
-每个 KP 必须且只能归属给定的 primary Section，并用给定 line_ref 指明一个连续且足以支撑该 KP 的主要来源范围。
-所有 KP 按教材顺序排列。教材文本不必被 KP 范围完整分割；不同 KP 只有在确有独立学习价值时才可共享来源证据。
-不得创建、删除、改名、重排或重挂 Outline；不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
-只返回一个 JSON 对象：{"knowledge_points":[{"draft_key":"本次草稿内唯一键","primary_section_id":"现有 Section ID","title":"知识点标题","one_sentence_definition":"一句话定义","start_ref":"pN:lN","end_ref":"pN:lN"}]}。
-不得返回坐标、Markdown 代码围栏、推理过程或其他字段。"""
+GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义分类器，不是用户对话助手。
+输入只包含同一 Section、同一 packet 中按教材顺序排列的确定性 evidence units。unit_id、Section 身份和来源范围均由服务端确定；你不能创建或改写它们。
+逐个完整核算所有 unit，只允许：KEEP（一个 unit 独立成为 KP）、MERGE（同一 packet 内相邻连续的两个或更多 units 合并为一个 KP）、DROP（相邻连续 units 不形成独立学习单元）。
+KEEP 的 unit_ids 必须恰好 1 个；MERGE 的 unit_ids 必须至少 2 个，单个 unit 绝不能标成 MERGE。
+KP 必须是值得独立记录理解状态、可独立检查、具有学科教学意义的学习单元；不得机械复制每段文字、标题、术语，也不得生成“推理、答题、问题解决”等泛化认知动作。
+把当前 packet 作为一个候选集合整体判断：同一概念的重复定义、复述、例示或再次列举不得各自保留为同标题/同含义 KP。相邻且共同构成一个学习单元时 MERGE；否则保留最充分的一处并 DROP 冗余处。
+如果输入含 prior_section_candidates，它们只是本 Section 先前 packet 已保留的私有标题/含义摘要，只用于避免再次保留同一独立学习单元；不得改写或重复输出这些先前 candidates。当前 unit 若只是重复其中一个 candidate，应 DROP 当前 unit；绝不能用单-unit MERGE 表示与先前 packet 合并。
+不得跨 packet 或跨 Section 合并，不得生成 Section/page/ref/坐标/来源字段，不得创建、删除、改名、重排或重挂 Outline；不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
+只返回一个 JSON 对象：{"decisions":[{"action":"KEEP","unit_ids":["给定 unit_id"],"title":"知识点标题","one_sentence_meaning":"一句话含义"},{"action":"MERGE","unit_ids":["相邻 unit_id","相邻 unit_id"],"title":"知识点标题","one_sentence_meaning":"一句话含义"},{"action":"DROP","unit_ids":["给定 unit_id"]}]}。
+每个给定 unit_id 必须恰好出现一次，decision 顺序必须与输入一致。不得返回 Markdown 代码围栏、推理过程或其他字段。"""
 
-REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定候选是否可以发布。
-必须整体审查完整 Chapter map，并逐项检查：KP 是否是可独立追踪/检查的学习单元；是否存在语义重复或近重复；是否误把“推理、答题、问题解决”等泛化能力当成学科知识；拆分/合并是否合理；是否覆盖主要可学习内容；primary Section 与来源是否忠实且充分；各 Section 的颗粒度与数量是否明显失衡。
-overlap_warnings 只是共享来源证据的审查信号，不是自动失败：判断它代表合理共享证据，还是重复、近重复或不当拆分。来源空隙是正常的，不要求每行教材都有 KP。
-Original PDF 是教材权威。你只能审查，不能改写候选，不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
-只返回一个 JSON 对象，且只能含三个字段：{"verdict":"PASS 或 FAIL","summary":"不超过 1000 字的简体中文理由","findings":[{"dimension":"review_rubric 中的一个值","severity":"BLOCKING 或 WARNING","candidate_indices":[0],"evidence_section_ids":["现有 Section ID"],"repair_section_ids":["必须重生成候选的最小 Section 集合"],"detail":"具体、可操作的简体中文问题说明"}]}。
-candidate_indices 必须引用输入 candidate_knowledge_points 的零基索引。跨 Section 重复应在 evidence_section_ids 和 candidate_indices 中列出双方，但 repair_section_ids 只列需要改变的最小 Section，不要仅因作为正确对照就列入。覆盖遗漏可使用空 candidate_indices，但仍须指出受影响 Section。
-FAIL 必须至少有一个 BLOCKING finding，且每个 BLOCKING finding 必须有非空 repair_section_ids；PASS 不得含 BLOCKING finding。WARNING 的 repair_section_ids 必须为空。
-不得返回 Markdown 代码围栏、修订后的 KP 或其他文字。"""
+REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定的完整 Chapter map 是否可以发布。
+输入是服务端生成的 compact ledger：完整 unit/decision accounting、候选标题与含义、截断证据提示和 overlap warnings，不含原始几何。必须整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
+overlap_warnings 只是审查信号，不是自动失败；来源空隙正常，不要求 no-gaps。你只能定位问题，不能改写候选，不能生成来源字段，也不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
+每个 finding 必须定位到一个现有 section_id，并引用该 Section 中一个或多个给定 unit_id；只定位真正需要改变的最小 units。跨 Section 重复应为需要修复的一侧给出定位明确的 finding，不要把正确对照一并列为修复目标。
+只返回一个 JSON 对象，且只能含三个字段：{"verdict":"PASS 或 FAIL","summary":"不超过 1000 字的简体中文理由","findings":[{"dimension":"review_rubric 中的一个值","severity":"BLOCKING 或 WARNING","section_id":"现有 Section ID","unit_ids":["该 Section 的给定 unit_id"],"detail":"具体、可操作的简体中文问题说明"}]}。
+FAIL 必须至少有一个 BLOCKING finding；PASS 不得含 BLOCKING finding。不得返回 Markdown 代码围栏、修订后的 KP 或其他文字。"""
 
 
 class KnowledgePipelineError(RuntimeError):
@@ -201,9 +212,14 @@ class KnowledgeService:
             "attempt_id": attempt_id,
             "generator_provider": self.generator_provider,
             "reviewer_provider": self.reviewer_provider,
-            "source_payload": None,
-            "generation_payloads": [],
-            "review_payload": None,
+            "source_payload_sha256": None,
+            "source_character_count": 0,
+            "source_payload_character_count": 0,
+            "unit_count": 0,
+            "packet_count": 0,
+            "candidate_count": 0,
+            "packet_bounds": [],
+            "review_rounds": [],
             "outcome": "PREPARING",
         }
         try:
@@ -220,42 +236,82 @@ class KnowledgeService:
                 identity_revision=int(chapter["identity_revision"]),
                 physical_revision=int(chapter["physical_revision"]),
             )
-            source_payload, ref_index, section_bounds = self._source_projection(
+            source_payload, _ref_index, section_bounds = self._source_projection(
                 revision, resolved
             )
-            inspection["source_payload"] = copy.deepcopy(source_payload)
             source_hash = self._digest(source_payload)
-            section_payloads = self._section_generation_payloads(source_payload)
-            inspection["generation_payloads"] = copy.deepcopy(section_payloads)
+            inspection["source_payload_sha256"] = source_hash
+            inspection["source_payload_character_count"] = len(
+                self._canonical(source_payload)
+            )
+            units = build_evidence_units(source_payload)
+            packets = packetize_evidence_units(units)
+            section_count = len({unit["primary_section_id"] for unit in units})
+            inspection["unit_count"] = len(units)
+            inspection["source_character_count"] = sum(
+                len(unit["text"]) for unit in units
+            )
+            inspection["packet_count"] = len(packets)
+            inspection["packet_bounds"] = [
+                {
+                    "packet_id": packet["packet_id"],
+                    "section_id": packet["primary_section_id"],
+                    "unit_count": len(packet["units"]),
+                    "character_count": packet["character_count"],
+                }
+                for packet in packets
+            ]
             self.repository.update_progress(
                 revision_id, chapter_id, attempt_id,
                 stage="GENERATING", sections_completed=0,
-                sections_total=len(section_payloads),
+                sections_total=section_count,
             )
-            candidate_sets, generator_identity = self._generate_sections(
-                section_payloads, ref_index, section_bounds,
-                revision_id, chapter_id, attempt_id,
+            decisions_by_packet, generator_identity = self._classify_packets(
+                packets, source_payload["chapter"], revision_id, chapter_id,
+                attempt_id, semantic_round=0,
             )
             semantic_repair_round = 0
             while True:
-                draft = self._assemble_candidate_sets(section_payloads, candidate_sets)
-                points = self._resolve_ranges(draft, ref_index, section_bounds)
-                self._validate_points(points, section_bounds)
-                review_payload = self._review_payload(
-                    source_payload, points, generator_identity,
-                    len(section_payloads), semantic_repair_round,
+                inspection["candidate_count"] = sum(
+                    decision["action"] != "DROP"
+                    for decisions in decisions_by_packet.values()
+                    for decision in decisions
                 )
-                inspection["review_payload"] = copy.deepcopy(review_payload)
+                candidates = materialize_candidates(packets, decisions_by_packet)
+                points = publication_points(candidates)
+                self._validate_points(points, section_bounds)
+                review_payload = build_compact_review_ledger(
+                    source_payload["chapter"], units, packets,
+                    decisions_by_packet, candidates,
+                    semantic_provider=self._required_identity(
+                        generator_identity, "generator"
+                    )[0],
+                    semantic_model=self._required_identity(
+                        generator_identity, "generator"
+                    )[1],
+                    semantic_repair_round=semantic_repair_round,
+                    review_rubric=REVIEW_RUBRIC,
+                    overlap_warnings=self._overlap_warnings(points),
+                )
                 review_hash = self._digest(review_payload)
                 self.repository.update_progress(
                     revision_id, chapter_id, attempt_id,
-                    stage="REVIEWING", sections_completed=len(section_payloads),
-                    sections_total=len(section_payloads),
+                    stage="REVIEWING", sections_completed=section_count,
+                    sections_total=section_count,
                 )
                 verdict, reviewer_identity = self._review(
-                    review_payload, attempt_id, semantic_repair_round
+                    review_payload, revision_id, chapter_id, attempt_id,
+                    semantic_repair_round,
                 )
                 review_summary = verdict.summary
+                inspection["review_rounds"].append(
+                    self._safe_review_observation(
+                        verdict,
+                        semantic_repair_round,
+                        review_hash,
+                        len(self._canonical(review_payload)),
+                    )
+                )
                 if verdict.verdict == "PASS":
                     break
                 if semantic_repair_round >= MAX_SEMANTIC_REPAIR_ROUNDS:
@@ -266,29 +322,38 @@ class KnowledgeService:
                         summary=verdict.summary,
                     )
 
-                repair_section_ids = self._repair_section_ids(
-                    verdict, section_payloads
-                )
-                repair_payloads = [
-                    payload for payload in section_payloads
-                    if payload["source_section"]["section_id"] in repair_section_ids
+                try:
+                    selected_packet_ids = repair_packet_ids(
+                        verdict.findings, units, packets
+                    )
+                except ValueError as failure:
+                    raise KnowledgePipelineError(
+                        "REVIEW", "SEMANTIC_FAILURE",
+                        "review_repair_scope_exceeded", str(failure),
+                        provider=reviewer_identity[0], model=reviewer_identity[1],
+                        summary=verdict.summary,
+                    ) from failure
+                repair_packets = [
+                    packet for packet in packets
+                    if packet["packet_id"] in selected_packet_ids
                 ]
-                repair_contexts = self._repair_contexts(
-                    verdict, repair_section_ids, candidate_sets, points,
+                repair_contexts = self._packet_repair_contexts(
+                    verdict, repair_packets, decisions_by_packet,
                     semantic_repair_round + 1,
                 )
+                repair_section_count = len({
+                    packet["primary_section_id"] for packet in repair_packets
+                })
                 self.repository.update_progress(
                     revision_id, chapter_id, attempt_id,
                     stage="GENERATING", sections_completed=0,
-                    sections_total=len(repair_payloads),
+                    sections_total=repair_section_count,
                 )
-                repaired_sets, repaired_identity = self._generate_sections(
-                    repair_payloads, ref_index, section_bounds,
-                    revision_id, chapter_id, attempt_id,
+                repaired_sets, repaired_identity = self._classify_packets(
+                    repair_packets, source_payload["chapter"], revision_id,
+                    chapter_id, attempt_id,
+                    semantic_round=semantic_repair_round + 1,
                     repair_contexts=repair_contexts,
-                    structured_attempt_offset=(
-                        (semantic_repair_round + 1) * MAX_STRUCTURED_ATTEMPTS
-                    ),
                 )
                 if repaired_identity != generator_identity:
                     raise KnowledgePipelineError(
@@ -297,12 +362,12 @@ class KnowledgeService:
                         "Semantic repair changed the actual generator route",
                         provider=repaired_identity[0], model=repaired_identity[1],
                     )
-                candidate_sets.update(repaired_sets)
+                decisions_by_packet.update(repaired_sets)
                 semantic_repair_round += 1
             self.repository.update_progress(
                 revision_id, chapter_id, attempt_id,
-                stage="VALIDATING", sections_completed=len(section_payloads),
-                sections_total=len(section_payloads),
+                stage="VALIDATING", sections_completed=section_count,
+                sections_total=section_count,
             )
             self._validate_points(points, section_bounds)
             if self.post_review_validator is not None:
@@ -315,8 +380,8 @@ class KnowledgeService:
                     ) from failure
             self.repository.update_progress(
                 revision_id, chapter_id, attempt_id,
-                stage="PUBLISHING", sections_completed=len(section_payloads),
-                sections_total=len(section_payloads),
+                stage="PUBLISHING", sections_completed=section_count,
+                sections_total=section_count,
             )
             published = self.repository.publish(
                 revision_id, chapter_id, attempt_id,
@@ -389,9 +454,32 @@ class KnowledgeService:
             ]
         return {
             "attempts": items,
-            "generation_attempts": self.repository.generation_attempts(
+            "pipeline_attempts": self.repository.pipeline_attempts(
                 revision_id, chapter_id
             ),
+        }
+
+    @staticmethod
+    def _safe_review_observation(
+        verdict: ReviewVerdict,
+        semantic_round: int,
+        review_hash: str,
+        payload_character_count: int,
+    ) -> dict:
+        return {
+            "semantic_round": semantic_round,
+            "review_payload_sha256": review_hash,
+            "payload_character_count": payload_character_count,
+            "verdict": verdict.verdict,
+            "findings": [
+                {
+                    "dimension": finding["dimension"],
+                    "severity": finding["severity"],
+                    "section_id": finding["section_id"],
+                    "unit_ids": list(finding["unit_ids"]),
+                }
+                for finding in verdict.findings
+            ],
         }
 
     def _record_inspection(self, inspection: dict) -> None:
@@ -488,224 +576,74 @@ class KnowledgeService:
         }
         return payload, ref_index, section_bounds
 
-    @staticmethod
-    def _section_generation_payloads(source_payload: dict) -> list[dict]:
-        outline = source_payload["outline"]
-        children: dict[str | None, list[dict]] = {}
-        for node in outline:
-            children.setdefault(node["parent_id"], []).append(node)
-
-        payloads = []
-        for source_section in source_payload["source_sections"]:
-            section_id = source_section["section_id"]
-            subtree = []
-            pending = [section_id]
-            included = set()
-            while pending:
-                node_id = pending.pop()
-                if node_id in included:
-                    continue
-                included.add(node_id)
-                pending.extend(
-                    child["outline_node_id"] for child in children.get(node_id, [])
-                )
-            for node in outline:
-                if node["outline_node_id"] in included:
-                    subtree.append(copy.deepcopy(node))
-            if not subtree or subtree[0]["outline_node_id"] != section_id:
-                raise ValueError("Section generation payload lacks its Outline root")
-            payloads.append(
-                {
-                    "chapter": {
-                        key: source_payload["chapter"][key]
-                        for key in (
-                            "book_source_revision_id",
-                            "chapter_outline_node_id",
-                            "title",
-                        )
-                    },
-                    "outline": [
-                        {
-                            key: node[key]
-                            for key in (
-                                "outline_node_id", "parent_id", "kind", "title",
-                                "order_index",
-                            )
-                        }
-                        for node in subtree
-                    ],
-                    "source_section": {
-                        "section_id": section_id,
-                        "title": source_section["title"],
-                        "lines": [
-                            {"line_ref": line["line_ref"], "text": line["text"]}
-                            for line in source_section["lines"]
-                        ],
-                    },
-                }
-            )
-        return payloads
-
-    @staticmethod
-    def _assemble_candidate_sets(
-        payloads: list[dict], candidate_sets: dict[str, list[dict]]
-    ) -> list[dict]:
-        expected = [payload["source_section"]["section_id"] for payload in payloads]
-        if set(candidate_sets) != set(expected):
-            raise KnowledgePipelineError(
-                "GENERATION", "TECHNICAL_FAILURE", "incomplete_section_generation",
-                "Private candidate sets do not match the requested Sections",
-            )
-        points = []
-        for section_id in expected:
-            for point in candidate_sets[section_id]:
-                if point["primary_section_id"] != section_id:
-                    raise KnowledgePipelineError(
-                        "GENERATION", "INVALID_STRUCTURED_OUTPUT",
-                        "invalid_generation_output",
-                        "Section candidate escaped its generation ownership",
-                    )
-                points.append(copy.deepcopy(point))
-        return points
-
-    @staticmethod
-    def _review_payload(
-        source_payload: dict,
-        points: list[dict],
-        generator_identity: tuple[str | None, str | None],
-        section_count: int,
-        semantic_repair_round: int,
-    ) -> dict:
-        return {
-            "chapter": copy.deepcopy(source_payload["chapter"]),
-            "outline": copy.deepcopy(source_payload["outline"]),
-            "bounded_source": copy.deepcopy(source_payload["source_sections"]),
-            "candidate_knowledge_points": copy.deepcopy(points),
-            "generation_provenance": {
-                "provider": generator_identity[0], "model": generator_identity[1],
-                "section_count": section_count,
-                "semantic_repair_round": semantic_repair_round,
-            },
-            "review_rubric": list(REVIEW_RUBRIC),
-            "overlap_warnings": KnowledgeService._overlap_warnings(points),
-        }
-
-    @staticmethod
-    def _repair_section_ids(
-        verdict: ReviewVerdict, section_payloads: list[dict]
-    ) -> list[str]:
-        requested = {
-            section_id
-            for finding in verdict.findings
-            if finding["severity"] == "BLOCKING"
-            for section_id in finding["repair_section_ids"]
-        }
-        ordered = [
-            payload["source_section"]["section_id"]
-            for payload in section_payloads
-            if payload["source_section"]["section_id"] in requested
-        ]
-        if not ordered:
-            raise KnowledgePipelineError(
-                "REVIEW", "INVALID_STRUCTURED_OUTPUT", "invalid_review_output",
-                "Review FAIL did not identify an actionable repair Section",
-            )
-        return ordered
-
-    @staticmethod
-    def _repair_contexts(
-        verdict: ReviewVerdict,
-        repair_section_ids: list[str],
-        candidate_sets: dict[str, list[dict]],
-        points: list[dict],
-        semantic_repair_round: int,
-    ) -> dict[str, dict]:
-        contexts = {}
-        for section_id in repair_section_ids:
-            findings = [
-                copy.deepcopy(finding) for finding in verdict.findings
-                if finding["severity"] == "BLOCKING"
-                and section_id in finding["repair_section_ids"]
-            ]
-            candidate_indices = sorted({
-                index
-                for finding in findings
-                for index in finding["candidate_indices"]
-            })
-            contexts[section_id] = {
-                "semantic_repair_round": semantic_repair_round,
-                "review_summary": verdict.summary,
-                "blocking_findings": findings,
-                "prior_section_candidates": copy.deepcopy(candidate_sets[section_id]),
-                "referenced_candidates": [
-                    {
-                        "candidate_index": index,
-                        "primary_section_id": points[index]["primary_section_id"],
-                        "title": points[index]["title"],
-                        "one_sentence_definition": points[index]["one_sentence_definition"],
-                    }
-                    for index in candidate_indices
-                ],
-            }
-        return contexts
-
-    def _generate_sections(
+    def _classify_packets(
         self,
-        payloads: list[dict],
-        ref_index: dict,
-        section_bounds: dict,
+        packets: list[dict],
+        chapter: dict,
         revision_id: str,
         chapter_id: str,
         attempt_id: str,
         *,
+        semantic_round: int,
         repair_contexts: dict[str, dict] | None = None,
-        structured_attempt_offset: int = 0,
     ):
-        if not payloads:
-            raise ValueError("Chapter has no Section generation payloads")
+        if not packets:
+            raise ValueError("Chapter has no semantic packets")
+        repair_contexts = repair_contexts or {}
         results: dict[str, list[dict]] = {}
         identities: set[tuple[str | None, str | None]] = set()
-        completed = 0
-        first_failure: Exception | None = None
-        workers = min(self.section_generation_workers, len(payloads))
-        executor = ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="kp-section-generate"
-        )
-        repair_contexts = repair_contexts or {}
-        call_payloads = []
-        for payload in payloads:
-            section_id = payload["source_section"]["section_id"]
-            call_payload = copy.deepcopy(payload)
-            if section_id in repair_contexts:
-                call_payload["repair_context"] = copy.deepcopy(
-                    repair_contexts[section_id]
+        section_packets: dict[str, list[dict]] = {}
+        for packet in packets:
+            section_id = packet["primary_section_id"]
+            section_packets.setdefault(section_id, []).append(packet)
+
+        def classify_section(local_packets: list[dict]):
+            local_results = {}
+            local_identities = set()
+            prior_section_candidates: list[dict] = []
+            for packet in local_packets:
+                repair_context = repair_contexts.get(packet["packet_id"])
+                decisions, identity = self._classify_packet(
+                    packet,
+                    chapter,
+                    revision_id,
+                    chapter_id,
+                    attempt_id,
+                    semantic_round=semantic_round,
+                    repair_context=repair_context,
+                    prior_section_candidates=(
+                        prior_section_candidates
+                        if semantic_round == 0 and repair_context is None
+                        else None
+                    ),
                 )
-            call_payloads.append(call_payload)
+                local_results[packet["packet_id"]] = decisions
+                local_identities.add(identity)
+                if semantic_round == 0 and repair_context is None:
+                    prior_section_candidates.extend(
+                        {
+                            "title": decision["title"],
+                            "one_sentence_meaning": decision["one_sentence_meaning"],
+                        }
+                        for decision in decisions
+                        if decision["action"] != "DROP"
+                    )
+            return local_results, local_identities
+
+        first_failure: Exception | None = None
+        completed_sections = 0
+        workers = min(self.section_generation_workers, len(section_packets))
+        executor = ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="kp-semantic-section"
+        )
         futures = {
-            executor.submit(
-                self._generate_section,
-                payload,
-                {
-                    ref: item for ref, item in ref_index.items()
-                    if item["section_id"] == payload["source_section"]["section_id"]
-                },
-                {
-                    payload["source_section"]["section_id"]:
-                        section_bounds[payload["source_section"]["section_id"]]
-                },
-                revision_id,
-                chapter_id,
-                attempt_id,
-                structured_attempt_offset=structured_attempt_offset,
-                semantic_repair=bool(repair_contexts),
-            ): payload["source_section"]["section_id"]
-            for payload in call_payloads
+            executor.submit(classify_section, local_packets): section_id
+            for section_id, local_packets in section_packets.items()
         }
         try:
             for future in as_completed(futures):
-                section_id = futures[future]
                 try:
-                    points, identity = future.result()
+                    section_results, section_identities = future.result()
                 except CancelledError:
                     continue
                 except Exception as failure:
@@ -715,64 +653,102 @@ class KnowledgeService:
                             if sibling is not future:
                                 sibling.cancel()
                 else:
-                    results[section_id] = points
-                    identities.add(identity)
-                    completed += 1
+                    results.update(section_results)
+                    identities.update(section_identities)
+                    completed_sections += 1
                     self.repository.update_progress(
                         revision_id, chapter_id, attempt_id,
-                        stage="GENERATING", sections_completed=completed,
-                        sections_total=len(payloads),
+                        stage="GENERATING",
+                        sections_completed=completed_sections,
+                        sections_total=len(section_packets),
                     )
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
         if first_failure is not None:
             raise first_failure
-        if len(results) != len(payloads):
+        if set(results) != {packet["packet_id"] for packet in packets}:
             raise KnowledgePipelineError(
-                "GENERATION", "TECHNICAL_FAILURE", "incomplete_section_generation",
-                "Not every required Section produced private candidates",
+                "GENERATION", "TECHNICAL_FAILURE",
+                "incomplete_packet_classification",
+                "Not every required semantic packet produced private decisions",
             )
         if len(identities) != 1:
             raise KnowledgePipelineError(
-                "GENERATION", "TECHNICAL_FAILURE", "inconsistent_generator_route",
-                "Section generation did not retain one actual provider/model route",
-            )
-        points = self._assemble_candidate_sets(payloads, results)
-        if not 1 <= len(points) <= 120:
-            raise KnowledgePipelineError(
-                "GENERATION", "INVALID_STRUCTURED_OUTPUT",
-                "invalid_generation_output", "Chapter KP count is implausible",
-                provider=next(iter(identities))[0], model=next(iter(identities))[1],
+                "GENERATION", "TECHNICAL_FAILURE",
+                "inconsistent_generator_route",
+                "Semantic packets did not retain one actual provider/model route",
             )
         return results, next(iter(identities))
 
-    def _generate_section(
+    def _classify_packet(
         self,
-        payload: dict,
-        ref_index: dict,
-        section_bounds: dict,
+        packet: dict,
+        chapter: dict,
         revision_id: str,
         chapter_id: str,
         attempt_id: str,
         *,
-        structured_attempt_offset: int = 0,
-        semantic_repair: bool = False,
+        semantic_round: int,
+        repair_context: dict | None,
+        prior_section_candidates: list[dict] | None,
     ):
         identity = self._configured_identity(self.generator_provider, "GENERATION")
-        section_id = payload["source_section"]["section_id"]
-        for attempt in range(1, MAX_STRUCTURED_ATTEMPTS + 1):
+        payload = semantic_packet_payload(
+            chapter,
+            packet,
+            repair_context=repair_context,
+            prior_section_candidates=prior_section_candidates,
+        )
+        validation_error = None
+        validation_code = None
+        for structured_attempt in range(1, MAX_STRUCTURED_ATTEMPTS + 1):
             system = GENERATOR_SYSTEM_MESSAGE
-            if semantic_repair:
-                system += """
-这是结构 Review 后的有界 Section 修复调用。repair_context 只提供审查裁决、当前 Section 的旧候选和与 finding 直接相关的候选对照；它们不是新的教材来源。
-根据 BLOCKING findings 重新生成本 Section 的完整替换候选集（不是增量 patch），同时保留本 Section 中无问题且仍有独立学习价值的候选。只能用 source_section 的教材行作为新候选来源，不得改动或重发其他 Section。"""
-            if attempt > 1:
-                system += "\n上一次输出未通过 JSON/schema 校验；请严格按同一 schema 重试。"
-            recorded_attempt = structured_attempt_offset + attempt
-            observer = lambda event, structured_attempt=recorded_attempt: (
-                self.repository.record_generation_attempt(
-                    revision_id, chapter_id, attempt_id, section_id,
-                    structured_attempt, event,
+            if repair_context is not None:
+                system += (
+                    "\n这是结构 Review 后的一次有界 packet 修复。只修复 "
+                    "repair_context 指出的 units；仍须为本 packet 返回完整 replacement "
+                    "decision ledger，不能触及其他 packet。"
+                )
+            if validation_error is not None:
+                system += (
+                    "\n上一次输出未通过确定性校验："
+                    f"{validation_error}。请严格按 schema 完整重试。"
+                )
+                if validation_code == "merge_arity":
+                    system += (
+                        "逐项检查：任何只有一个 unit_id 的 decision 只能是 KEEP "
+                        "或 DROP；MERGE 必须含当前 packet 内至少两个相邻 unit_id。"
+                    )
+                elif validation_code == "noncontiguous_units":
+                    system += (
+                        "逐项检查：同一个 decision 的 unit_ids 必须按输入原顺序连续，"
+                        "不能跳过中间 unit；不相邻的 DROP 也必须拆成各自按顺序的 "
+                        "decision，不能组合成一个 decision。"
+                    )
+                elif validation_code == "incomplete_accounting":
+                    system += (
+                        "逐项对照输入 units：每个 unit_id 必须恰好出现一次，"
+                        "不得遗漏、重复或新增。"
+                    )
+                elif validation_code == "reordered_or_reused_units":
+                    system += (
+                        "把所有 decisions 的 unit_ids 依次展开后，必须与输入 unit_id "
+                        "序列完全相同；每个 ID 只出现一次，不能按 action 或主题重排。"
+                    )
+                elif validation_code == "not_json":
+                    system += "只输出裸 JSON 对象，禁止 Markdown 代码围栏或任何前后文字。"
+            observer = lambda event, current_attempt=structured_attempt: (
+                self.repository.record_pipeline_attempt(
+                    revision_id,
+                    chapter_id,
+                    attempt_id,
+                    section_id=packet["primary_section_id"],
+                    packet_or_stage_id=packet["packet_id"],
+                    semantic_round=semantic_round,
+                    structured_attempt=current_attempt,
+                    provider_role="KP_GENERATOR",
+                    pipeline_stage="SEMANTIC_CLASSIFICATION",
+                    event=event,
                 )
             )
             try:
@@ -783,11 +759,18 @@ class KnowledgeService:
                         {"role": "user", "content": self._canonical(payload)},
                     ],
                     interaction_id=(
-                        f"{'kp-repair' if semantic_repair else 'kp-generation'}:"
-                        f"{attempt_id}:{section_id}:structured-{recorded_attempt}"
+                        f"kp-semantic:{attempt_id}:{packet['packet_id']}:"
+                        f"round-{semantic_round}:structured-{structured_attempt}"
                     ),
                     max_tokens=self.generator_max_tokens,
                     attempt_observer=observer,
+                    retain_request_body=False,
+                    thinking_mode=(
+                        "disabled" if self.generator_provider == "deepseek" else None
+                    ),
+                    reasoning_effort=(
+                        "low" if self.generator_provider == "zhipu" else None
+                    ),
                 )
             except ProviderFailure as failure:
                 raise KnowledgePipelineError(
@@ -796,24 +779,98 @@ class KnowledgeService:
                 ) from failure
             identity = self._completion_identity(completion)
             try:
-                return self._validate_generation(
-                    completion.answer, ref_index, section_bounds
-                ), identity
-            except ValueError as failure:
-                if attempt == MAX_STRUCTURED_ATTEMPTS:
+                return validate_semantic_output(completion.answer, packet), identity
+            except SemanticOutputError as failure:
+                validation_error = str(failure)
+                validation_code = failure.code
+                safe_failure_code = f"invalid_semantic_output.{failure.code}"
+                self.repository.record_structured_validation_failure(
+                    revision_id,
+                    chapter_id,
+                    attempt_id,
+                    packet_or_stage_id=packet["packet_id"],
+                    semantic_round=semantic_round,
+                    structured_attempt=structured_attempt,
+                    pipeline_stage="SEMANTIC_CLASSIFICATION",
+                    failure_code=safe_failure_code,
+                )
+                if structured_attempt == MAX_STRUCTURED_ATTEMPTS:
                     raise KnowledgePipelineError(
                         "GENERATION", "INVALID_STRUCTURED_OUTPUT",
-                        "invalid_generation_output", str(failure),
+                        safe_failure_code, validation_error,
                         provider=identity[0], model=identity[1],
                     ) from failure
-        raise AssertionError("bounded generation loop exhausted without outcome")
+        raise AssertionError("bounded semantic classification loop exhausted")
 
-    def _review(self, payload: dict, attempt_id: str, semantic_repair_round: int):
+    @staticmethod
+    def _packet_repair_contexts(
+        verdict: ReviewVerdict,
+        packets: list[dict],
+        decisions_by_packet: dict[str, list[dict]],
+        semantic_round: int,
+    ) -> dict[str, dict]:
+        contexts = {}
+        for packet in packets:
+            packet_unit_ids = {
+                unit["unit_id"] for unit in packet["units"]
+            }
+            findings = []
+            for finding in verdict.findings:
+                local_unit_ids = [
+                    unit_id for unit_id in finding["unit_ids"]
+                    if unit_id in packet_unit_ids
+                ]
+                if finding["severity"] == "BLOCKING" and local_unit_ids:
+                    findings.append(
+                        {
+                            "dimension": finding["dimension"],
+                            "severity": "BLOCKING",
+                            "unit_ids": local_unit_ids,
+                            "detail": finding["detail"],
+                        }
+                    )
+            if not findings:
+                raise ValueError("Repair packet lacks an addressed blocking finding")
+            contexts[packet["packet_id"]] = {
+                "semantic_round": semantic_round,
+                "blocking_findings": findings,
+                "previous_decisions": copy.deepcopy(
+                    decisions_by_packet[packet["packet_id"]]
+                ),
+            }
+        return contexts
+
+    def _review(
+        self,
+        payload: dict,
+        revision_id: str,
+        chapter_id: str,
+        attempt_id: str,
+        semantic_repair_round: int,
+    ):
         identity = self._configured_identity(self.reviewer_provider, "REVIEW")
-        for attempt in range(1, MAX_STRUCTURED_ATTEMPTS + 1):
+        validation_error = None
+        for structured_attempt in range(1, MAX_STRUCTURED_ATTEMPTS + 1):
             system = REVIEW_SYSTEM_MESSAGE
-            if attempt > 1:
-                system += "\n上一次输出未通过 JSON/schema 校验；请严格按同一 schema 重试。"
+            if validation_error is not None:
+                system += (
+                    "\n上一次输出未通过确定性校验："
+                    f"{validation_error}。请严格按同一 schema 重试。"
+                )
+            observer = lambda event, current_attempt=structured_attempt: (
+                self.repository.record_pipeline_attempt(
+                    revision_id,
+                    chapter_id,
+                    attempt_id,
+                    section_id=None,
+                    packet_or_stage_id="chapter-structural-review",
+                    semantic_round=semantic_repair_round,
+                    structured_attempt=current_attempt,
+                    provider_role="KP_STRUCTURAL_REVIEWER",
+                    pipeline_stage="STRUCTURAL_REVIEW",
+                    event=event,
+                )
+            )
             try:
                 completion = self.runtime.complete_for_with_metadata(
                     self.reviewer_provider,
@@ -823,9 +880,17 @@ class KnowledgeService:
                     ],
                     interaction_id=(
                         f"kp-review:{attempt_id}:round-{semantic_repair_round}:"
-                        f"structured-{attempt}"
+                        f"structured-{structured_attempt}"
                     ),
                     max_tokens=self.reviewer_max_tokens,
+                    attempt_observer=observer,
+                    retain_request_body=False,
+                    thinking_mode=(
+                        "disabled" if self.reviewer_provider == "deepseek" else None
+                    ),
+                    reasoning_effort=(
+                        "low" if self.reviewer_provider == "zhipu" else None
+                    ),
                 )
             except ProviderFailure as failure:
                 raise KnowledgePipelineError(
@@ -836,85 +901,24 @@ class KnowledgeService:
             try:
                 return self._validate_review(completion.answer, payload), identity
             except ValueError as failure:
-                if attempt == MAX_STRUCTURED_ATTEMPTS:
+                validation_error = str(failure)
+                self.repository.record_structured_validation_failure(
+                    revision_id,
+                    chapter_id,
+                    attempt_id,
+                    packet_or_stage_id="chapter-structural-review",
+                    semantic_round=semantic_repair_round,
+                    structured_attempt=structured_attempt,
+                    pipeline_stage="STRUCTURAL_REVIEW",
+                    failure_code="invalid_review_output",
+                )
+                if structured_attempt == MAX_STRUCTURED_ATTEMPTS:
                     raise KnowledgePipelineError(
                         "REVIEW", "INVALID_STRUCTURED_OUTPUT",
-                        "invalid_review_output", str(failure),
+                        "invalid_review_output", validation_error,
                         provider=identity[0], model=identity[1],
                     ) from failure
-        raise AssertionError("bounded Review loop exhausted without outcome")
-
-    @staticmethod
-    def _validate_generation(answer: str, ref_index: dict, section_bounds: dict) -> list[dict]:
-        try:
-            value = json.loads(answer)
-        except (TypeError, ValueError):
-            raise ValueError("Generator output is not JSON") from None
-        if not isinstance(value, dict) or set(value) != {"knowledge_points"}:
-            raise ValueError("Generator output fields are invalid")
-        points = value["knowledge_points"]
-        if not isinstance(points, list) or not 1 <= len(points) <= 120:
-            raise ValueError("Generator output has an implausible KP count")
-        keys = set()
-        expected = {
-            "draft_key", "primary_section_id", "title",
-            "one_sentence_definition", "start_ref", "end_ref",
-        }
-        for point in points:
-            if not isinstance(point, dict) or set(point) != expected:
-                raise ValueError("Generated KP fields are invalid")
-            if not isinstance(point["draft_key"], str) or not 1 <= len(point["draft_key"]) <= 80:
-                raise ValueError("Draft key is invalid")
-            if point["draft_key"] in keys:
-                raise ValueError("Draft keys must be unique")
-            keys.add(point["draft_key"])
-            if point["primary_section_id"] not in section_bounds:
-                raise ValueError("KP primary Section is not in the requested Chapter")
-            if not isinstance(point["title"], str) or not 1 <= len(point["title"].strip()) <= 200:
-                raise ValueError("KP title is invalid")
-            definition = point["one_sentence_definition"]
-            if not isinstance(definition, str) or not 1 <= len(definition.strip()) <= 1000:
-                raise ValueError("KP definition is invalid")
-            if point["start_ref"] not in ref_index or point["end_ref"] not in ref_index:
-                raise ValueError("KP source ref is outside the allowlisted Chapter source")
-        return points
-
-    @staticmethod
-    def _resolve_ranges(points: list[dict], ref_index: dict, section_bounds: dict) -> list[dict]:
-        resolved = []
-        for point in points:
-            start = ref_index[point["start_ref"]]
-            end = ref_index[point["end_ref"]]
-            section_id = point["primary_section_id"]
-            if start["section_id"] != section_id or end["section_id"] != section_id:
-                raise KnowledgePipelineError(
-                    "RANGE_RESOLUTION", "DETERMINISTIC", "source_section_mismatch",
-                    "KP refs do not belong to the declared primary Section",
-                )
-            start_pos = (start["pdf_page_index"], start["y_start"])
-            end_pos = (end["pdf_page_index"], end["y_end"])
-            if end_pos <= start_pos:
-                raise KnowledgePipelineError(
-                    "RANGE_RESOLUTION", "DETERMINISTIC", "invalid_source_range",
-                    "KP source range is empty or reversed",
-                )
-            bounds = section_bounds[section_id]
-            if start_pos < bounds[0] or end_pos > bounds[1]:
-                raise KnowledgePipelineError(
-                    "RANGE_RESOLUTION", "DETERMINISTIC", "source_range_outside_section",
-                    "KP range is outside its primary Section",
-                )
-            resolved.append(
-                {
-                    "primary_section_id": section_id,
-                    "title": point["title"].strip(),
-                    "one_sentence_definition": point["one_sentence_definition"].strip(),
-                    "start_page": start_pos[0], "start_y": start_pos[1],
-                    "end_page": end_pos[0], "end_y": end_pos[1],
-                }
-            )
-        resolved.sort(key=lambda item: (item["start_page"], item["start_y"], item["end_page"], item["end_y"]))
-        return resolved
+        raise AssertionError("bounded Review loop exhausted")
 
     @staticmethod
     def _validate_points(points: list[dict], section_bounds: dict) -> None:
@@ -976,14 +980,15 @@ class KnowledgeService:
         if not isinstance(findings, list) or len(findings) > 24:
             raise ValueError("Review findings are invalid")
 
-        section_ids = {
-            section["section_id"] for section in payload["bounded_source"]
+        section_units = {
+            section["section_id"]: {
+                unit["unit_id"] for unit in section["units"]
+            }
+            for section in payload["sections"]
         }
         rubric = set(payload["review_rubric"])
-        points = payload["candidate_knowledge_points"]
         expected = {
-            "dimension", "severity", "candidate_indices",
-            "evidence_section_ids", "repair_section_ids", "detail",
+            "dimension", "severity", "section_id", "unit_ids", "detail",
         }
         normalized = []
         for finding in findings:
@@ -994,37 +999,16 @@ class KnowledgeService:
             severity = finding["severity"]
             if severity not in {"BLOCKING", "WARNING"}:
                 raise ValueError("Review finding severity is invalid")
-            candidate_indices = finding["candidate_indices"]
-            if not isinstance(candidate_indices, list) or any(
-                isinstance(index, bool) or not isinstance(index, int)
-                or not 0 <= index < len(points)
-                for index in candidate_indices
-            ) or len(candidate_indices) != len(set(candidate_indices)):
-                raise ValueError("Review finding candidate indices are invalid")
-            evidence_section_ids = finding["evidence_section_ids"]
-            repair_section_ids = finding["repair_section_ids"]
-            for label, values in (
-                ("evidence", evidence_section_ids),
-                ("repair", repair_section_ids),
-            ):
-                if not isinstance(values, list) or any(
-                    not isinstance(section_id, str) or section_id not in section_ids
-                    for section_id in values
-                ) or len(values) != len(set(values)):
-                    raise ValueError(f"Review finding {label} Sections are invalid")
-            if not evidence_section_ids:
-                raise ValueError("Review finding lacks an evidence Section")
-            if not set(repair_section_ids).issubset(evidence_section_ids):
-                raise ValueError("Review repair Sections lack matching evidence")
-            if severity == "BLOCKING" and not repair_section_ids:
-                raise ValueError("Blocking Review finding lacks a repair Section")
-            if severity == "WARNING" and repair_section_ids:
-                raise ValueError("Review warning cannot request repair")
-            if any(
-                points[index]["primary_section_id"] not in evidence_section_ids
-                for index in candidate_indices
-            ):
-                raise ValueError("Review candidate index is outside its evidence Sections")
+            section_id = finding["section_id"]
+            if not isinstance(section_id, str) or section_id not in section_units:
+                raise ValueError("Review finding Section is invalid")
+            unit_ids = finding["unit_ids"]
+            if not isinstance(unit_ids, list) or not unit_ids or any(
+                not isinstance(unit_id, str)
+                or unit_id not in section_units[section_id]
+                for unit_id in unit_ids
+            ) or len(unit_ids) != len(set(unit_ids)):
+                raise ValueError("Review finding unit IDs are invalid")
             detail = finding["detail"]
             if not isinstance(detail, str) or not detail.strip() \
                     or len(detail.strip()) > 600:
@@ -1032,9 +1016,8 @@ class KnowledgeService:
             normalized.append({
                 "dimension": finding["dimension"],
                 "severity": severity,
-                "candidate_indices": list(candidate_indices),
-                "evidence_section_ids": list(evidence_section_ids),
-                "repair_section_ids": list(repair_section_ids),
+                "section_id": section_id,
+                "unit_ids": list(unit_ids),
                 "detail": detail.strip(),
             })
 
