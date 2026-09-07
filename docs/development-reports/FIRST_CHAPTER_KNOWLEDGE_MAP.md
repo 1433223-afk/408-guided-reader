@@ -12,13 +12,15 @@
 
 `USER_ACCEPTANCE: PENDING RETEST`
 
-The user-approved UAT authority correction is implemented. A requested Chapter now generates
-private candidates one existing primary Section at a time, retains successful sibling results
-inside the current in-process attempt, and exposes no KP until one complete Chapter candidate set
-passes structural Review, deterministic validation and one atomic publication. The Reader shows
-the current stage and completed/total Section count while preparation is private.
+The user-approved UAT authority correction and the subsequent `review_rejected` UAT rework are
+implemented. A requested Chapter generates private candidates one existing primary Section at a
+time. A valid blocking Review now returns typed, candidate/Section-addressed findings; one bounded
+semantic repair round regenerates only the smallest affected Section set, retains successful
+sibling candidates, and sends the reassembled complete Chapter through Review again. No KP is
+exposed until one complete candidate set passes structural Review, deterministic validation and one
+atomic publication. The Reader continues to show only stage and completed/total Section progress.
 
-The real 348-page Chapter 6 production-default path now completes through
+Before the second UAT failure, the real 348-page Chapter 6 production-default path completed through
 `deepseek / deepseek-v4-pro → zhipu / GLM-5.3-Flash`: four Section generation calls, one Chapter
 Review, 32 published KPs and four visible Section groups. The Phase remains open pending user retest
 and the required narrow independent review. Nothing here claims `USER_ACCEPTANCE: PASS` or closes
@@ -37,6 +39,15 @@ the Phase.
   instructional specificity, split/merge quality, major learning coverage, Section/source
   faithfulness and map-level balance. Review receives deterministic overlap-warning pairs and may
   distinguish legitimate shared evidence from duplication or unjustified splitting.
+- Replaced the non-actionable `verdict + summary` KP Review result with a strict typed finding
+  contract: rubric dimension, blocking/warning severity, candidate indices, evidence Sections,
+  smallest repair Section set and an actionable detail. Invalid/missing targets fail closed as
+  `invalid_review_output`; Review still judges and never rewrites candidates.
+- Added one bounded private semantic-repair round. Only Sections named by blocking findings are
+  regenerated as complete Section candidate sets; unaffected candidates remain in memory. The
+  reassembled Chapter receives fresh range resolution, whole-Chapter Review and deterministic
+  validation before the unchanged atomic publication transaction. A second blocking Review remains
+  terminal `review_rejected` and publishes nothing.
 - Removed the deterministic no-overlap rejection. Continuous Section-contained ranges remain hard
   requirements; gaps remain allowed.
 - Added Migration 9 with Chapter stage/Section progress and bounded durable generation-attempt
@@ -65,6 +76,8 @@ the Phase.
   and other owning-state races therefore still converge safely.
 - A READY prepare remains a no-op. No replacement publication, ID reconciliation, availability/
   replacement-attempt split, Learning, Mastery, Master, Teaching or ExamEvidence path was added.
+- The repair budget is deliberately one round. This bounds latency/cost and prevents Review from
+  turning into an unbounded generator loop while still making a precise first rejection useful.
 
 ## Deviations from Spec
 
@@ -75,44 +88,39 @@ None from the corrected accepted Phase brief. No external code, dependency or fr
 Evidence was executed in the required order: TARGETED → AGENT REAL-USE GOLDEN PATH → AFFECTED
 REGRESSION → CLOSURE / BROAD.
 
-- TARGETED: `python -m pytest tests/test_knowledge_map.py
-  tests/test_ask_about_this.py::test_empty_response_attempt_observer_retains_only_safe_finish_usage_and_lengths
-  -q` — **22 passed**. It covers Section-only payloads/retry, sibling non-replay, Chapter-atomic
-  failure, overlap warnings, the seven Review dimensions, migration preservation, restart
-  interruption, bounded safe diagnostics, READY no-op, identity/ownership/cascade and zero forbidden
-  learning/teaching tables.
+- TARGETED: `python -m pytest tests/test_knowledge_map.py -q` — **23 passed**. In addition to the
+  original Section/atomicity invariants, it proves typed finding validation, one-Section repair,
+  unaffected sibling non-replay, complete-Chapter re-review, repair-attempt observability, bounded
+  second rejection, and fail-closed behavior when Review supplies no actionable target.
 - AGENT REAL-USE GOLDEN PATH: `npm run test:e2e:knowledge` — **PASS** through the served Reader on
   the 348-page textbook (SHA-256
   `6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`), Chapter 6. A delayed Section
   returned three bounded blank responses with `finish_reason=length`; the UI showed Section progress
   and zero KP rows, a successful sibling was called once while the failing Section retried, and the
-  Chapter honestly ended `GENERATION / empty_response`. UI retry converged to one atomic READY map
-  with four Section groups, KP → rendered-PDF navigation, unchanged logical Outline identity,
+  Chapter honestly ended `GENERATION / empty_response`. UI retry then exercised a blocking
+  `instructional_specificity` finding, displayed private repair progress as `0/1 个小节`, regenerated
+  only that Section, re-reviewed the complete Chapter, and converged to one atomic READY map with
+  four Section groups. KP → rendered-PDF navigation, unchanged logical Outline identity,
   Reader/Find/selection/Marks/Assistant availability during failure, stable IDs after restart and
-  correct book cascade.
-- REAL PROVIDER: `npm run test:e2e:knowledge:real` with no generator/reviewer override — **PASS** on
-  the same real Chapter through production-default
+  correct book cascade also passed.
+- PRIOR REAL-PROVIDER EVIDENCE: `npm run test:e2e:knowledge:real` with no generator/reviewer
+  override passed before this narrower Review-contract rework on the same real Chapter through
+  production-default
   `deepseek-v4-pro → GLM-5.3-Flash`. All four Sections succeeded on their first transport attempt,
   followed by one Chapter Review and atomic publication of 32 KPs in four groups. The largest two
   generation calls completed in 118,921 ms and 117,691 ms; the former recorded 5,644 prompt tokens,
   `finish_reason=stop`, non-empty content and bounded reasoning metadata. Five final provider calls
   were inspected; no Authorization or credential value was retained. Visual evidence:
   `test-results/knowledge-map-golden.png` and
-  `test-results/knowledge-map-real-provider.png`.
-- AFFECTED REGRESSION: the Map/Foundation/jobs/provider/Assistant/AI_SAVED/Annotations/API Python
-  subset — **PASS**; `npm test` — **30 passed**; `npm run test:e2e:map` — **PASS** on the real 29- and
-  348-page books; `npm run test:e2e:ask` — **PASS**; `npm run test:e2e:save` — **PASS**; and
-  `npm run test:e2e:recovery` — **PASS** on the hash-named 29-page scan with 29/29 pages READY after
-  process interruption (`readyBeforeKill=2`, `maximumAttempts=2`). The first Map invocation exposed
-  two stale test assumptions that all persisted targets remain `PARTIAL` with physical revision 1;
-  the runner was corrected to accept already-RESOLVED evidence while still comparing logical
-  identity and physical revision across restart. The first recovery invocation omitted its required
-  `READER_REAL_PDF` precondition and was rerun with the exact local blob path; neither failed
-  invocation is counted as PASS.
+  `test-results/knowledge-map-real-provider.png`. It was deliberately not rerun for this UAT repair:
+  the user requested diagnosis and a bounded repair implementation rather than another brute-force
+  whole-Chapter provider run; current real-provider confirmation is the user retest.
+- AFFECTED REGRESSION: API/jobs/Map/Assistant/AI_SAVED/Annotations Python suites — **PASS**;
+  `npm test` — **30 passed**.
 - CLOSURE / BROAD: `python -m pytest -o addopts= -q -ra
-  --basetemp=test-results/pytest-first-chapter-knowledge-uat-rework-final-2` — **140 passed, 2
+  --basetemp=test-results/pytest-first-chapter-review-repair-closure` — **142 passed, 2
   skipped**. The unchanged skips are optional `READER_REAL_DMA` / `READER_REAL_PRIMARY` entrypoints;
-  the required 29- and 348-page material was exercised above. `npm test` — **30 passed**;
+  the required 348-page material was exercised above. `npm test` — **30 passed**;
   `python -m compileall -q src`, Node syntax checks for the Reader and affected E2E runners, and
   `git diff --check` passed.
 - `INTENTIONALLY_NOT_RUN`: standalone `reader`, `selectable-reader`, `annotations` and `find-in-book`
@@ -133,6 +141,24 @@ REGRESSION → CLOSURE / BROAD.
   characters on its first call. The Chapter reached READY rather than repeating three full-Chapter
   calls.
 
+### Second UAT `review_rejected` root cause and correction evidence
+
+- The failed Chapter 1 attempt `fb1a46b5-b5e7-4a1a-b2d6-a8c4cb5e6872` ran from
+  `2026-09-07T00:23:09Z` to `00:30:37Z`. All five Sections generated 46 private candidates. Section
+  generation completed near `00:27:18Z`; Review then took about 199 seconds after one logged network
+  retry and returned a valid semantic FAIL, not invalid structured output.
+- Review accepted Sections 1.1–1.3 and the sole overlap warning. It identified real repetition in
+  summary/FAQ Sections: 1.4 language direct-execution versus 1.2 language levels; 1.5 benchmark
+  limitations versus 1.3 benchmarks; 1.5 translation-program distinctions versus 1.2 translator
+  types; and the five-part hardware clause of 1.4 hardware/evolution versus 1.2 von Neumann
+  components. Source inspection confirmed that the first three are recap/FAQ restatements; the last
+  candidate also contains a distinct architecture-evolution idea that should be narrowed rather
+  than discarded.
+- The previous contract retained only `verdict + summary`; the service therefore had no validated
+  machine-addressable repair targets. On FAIL, all 46 disposable candidates left scope and a later
+  retry would regenerate all five Sections. The new path keeps candidates private inside the live
+  attempt, repairs only typed targets, and re-reviews the full Chapter once.
+
 ## Known limitations / deferred debt
 
 - `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: same-concept durable-ID reuse/new-concept mint,
@@ -142,18 +168,22 @@ REGRESSION → CLOSURE / BROAD.
 - External provider latency/availability remains variable. Per-attempt evidence now makes blank
   content and reasoning-budget exhaustion diagnosable, while any failed required Section still
   fails the whole private Chapter attempt without weakening Review/publication authority.
+- The already-failed Chapter 1 candidates cannot be resumed: they predate the repair contract and
+  were intentionally disposable/non-durable. Its next user retry must perform one fresh initial
+  Section generation pass; any actionable Review rejection inside that new attempt can use targeted
+  repair without replaying unaffected Sections.
 - User retest and narrow independent review remain required before Phase closure.
 
 ## Reproducible entry points
 
 ```powershell
-python -m pytest tests/test_knowledge_map.py tests/test_ask_about_this.py::test_empty_response_attempt_observer_retains_only_safe_finish_usage_and_lengths -q
+python -m pytest tests/test_knowledge_map.py -q
 $env:READER_DATA_DIR='D:\codex\408-guided-reader\var\manual-browser'
 npm run test:e2e:knowledge
 npm run test:e2e:knowledge:real
 $env:READER_REAL_PDF='D:\codex\408-guided-reader\var\manual-browser\blobs\32\327da74eef4c0ee7ad0fb3bf4752907f71dff9c2d9877faf49d1b3201c7e0aa1.pdf'
 npm run test:e2e:recovery
-python -m pytest -o addopts= -q -ra --basetemp=test-results/pytest-first-chapter-knowledge-uat-rework-final-2
+python -m pytest -o addopts= -q -ra --basetemp=test-results/pytest-first-chapter-review-repair-closure
 npm test
 ```
 
@@ -181,6 +211,8 @@ map appears at once and use 回到教材 on representative KPs.
 ## Git checkpoint
 
 Implementation checkpoint: `900742367e393d51f3f2c025ac725f360dc43296`.
+
+Review-repair UAT checkpoint: `aac3658c799c1af7ef2256f0c67f7b4e06ba4cb4`.
 
 Development-report checkpoint: the docs-only commit containing this report; its exact hash is
 recorded in the handoff.
