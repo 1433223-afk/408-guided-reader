@@ -58,7 +58,8 @@ GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义
 输入只包含同一 Section、同一 packet 中按教材顺序排列的确定性 evidence units。unit_id、Section 身份和来源范围均由服务端确定；你不能创建或改写它们。
 逐个完整核算所有 unit，只允许：KEEP（一个 unit 独立成为 KP）、MERGE（同一 packet 内相邻连续的两个或更多 units 合并为一个 KP）、DROP（相邻连续 units 不形成独立学习单元）。
 KEEP 的 unit_ids 必须恰好 1 个；MERGE 的 unit_ids 必须至少 2 个，单个 unit 绝不能标成 MERGE。
-KP 必须是值得独立记录理解状态、可独立检查、具有学科教学意义的学习单元；不得机械复制每段文字、标题、术语，也不得生成“推理、答题、问题解决”等泛化认知动作。短编号标题应与紧随的讲解作为一个 evidence unit 理解，不能把标题和定义分别保留成重复 KP；只有问题或“见/参见/详见……”交叉引用而没有实质讲解的 unit 必须 DROP。
+KP 必须同时满足五个门槛：值得单独学习；可以聚焦判断“会不会”且可能会 A 不会相邻 B；自身表达一个完整原理、机制、方法、关系、分类框架或概念；当前教材证据确实充分教学而非仅提到一次；未来单独记录 UNDERSTOOD/NOT_UNDERSTOOD 有实际意义。不得机械复制每段文字、标题、术语，也不得生成“推理、答题、问题解决”等泛化认知动作。短编号标题应与紧随的讲解作为一个 evidence unit 理解，不能把标题和定义分别保留成重复 KP；只有问题或“见/参见/详见……”交叉引用而没有实质讲解的 unit 必须 DROP。
+连续 units 若共同构成一个分类、组成、步骤或并列枚举，而各 item 在当前证据中只有简短定义、没有足够独立教学展开，默认且必须 MERGE 为一个可独立追踪的框架型 KP，不能把每个名词或枚举项分别 KEEP。只有 item 自身包含充分的机制、方法、关系或可考查教学证据，足以支持“会 A 但不会 B”的独立判断时才可拆开。输入 granularity_hints.brief_enumeration_runs 是服务端识别出的高置信短枚举；每个 run 的全部 unit_ids 必须由同一个 MERGE decision 覆盖。
 把当前 packet 作为一个候选集合整体判断：同一概念的重复定义、复述、例示或再次列举不得各自保留为同标题/同含义 KP。相邻且共同构成一个学习单元时 MERGE；否则保留最充分的一处并 DROP 冗余处。
 如果输入含 prior_section_candidates，它们只是本 Section 先前 packet 已保留的私有标题/含义摘要，只用于避免再次保留同一独立学习单元；不得改写或重复输出这些先前 candidates。当前 unit 若只是重复其中一个 candidate，应 DROP 当前 unit；绝不能用单-unit MERGE 表示与先前 packet 合并。
 不得跨 packet 或跨 Section 合并，不得生成 Section/page/ref/坐标/来源字段，不得创建、删除、改名、重排或重挂 Outline；不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
@@ -787,6 +788,12 @@ class KnowledgeService:
                     system += (
                         "只有问题或‘见/参见/详见’交叉引用、没有实质讲解的 evidence "
                         "必须 DROP，不能成为 KP。"
+                    )
+                elif validation_code == "fragmented_brief_enumeration":
+                    system += (
+                        "逐项检查 granularity_hints.brief_enumeration_runs：每个短分类、"
+                        "组成、步骤或并列枚举 run 的全部 unit_ids 必须由同一个 MERGE "
+                        "decision 覆盖，不能分别 KEEP。"
                     )
             observer = lambda event, current_attempt=structured_attempt: (
                 self.repository.record_pipeline_attempt(

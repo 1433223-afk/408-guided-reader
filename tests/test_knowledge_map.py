@@ -28,6 +28,7 @@ from reader_service.knowledge import KnowledgeRepository, KnowledgeService
 from reader_service.knowledge.semantic import (
     MAX_SEMANTIC_PACKET_CHARACTERS,
     MAX_SEMANTIC_PACKET_UNITS,
+    brief_enumeration_runs,
     build_compact_review_ledger,
     build_evidence_units,
     materialize_candidates,
@@ -389,7 +390,10 @@ def test_deterministic_units_and_section_local_bounded_packets(service):
             packet["primary_section_id"]
         }
         payload = semantic_packet_payload(source["chapter"], packet)
-        assert set(payload) == {"chapter", "section", "packet", "units"}
+        assert set(payload) == {
+            "chapter", "section", "packet", "units", "granularity_hints"
+        }
+        assert set(payload["granularity_hints"]) == {"brief_enumeration_runs"}
         assert set(payload["units"][0]) == {"unit_id", "text"}
         assert not nested_keys(payload) & {
             "source_revision_id",
@@ -436,6 +440,132 @@ def test_deterministic_short_heading_is_attached_to_following_explanation():
     assert units[0]["end_ref"] == "l2"
     assert "I/O 接口的功能" in units[0]["text"]
     assert "协调主机与外设" in units[0]["text"]
+
+
+def test_incomplete_numbered_item_continues_across_page_without_running_header():
+    source = {
+        "chapter": {"book_source_revision_id": "revision"},
+        "source_sections": [
+            {
+                "section_id": "section",
+                "title": "7.1 外部设备",
+                "lines": [
+                    {
+                        "text": "2）喷墨式打印机。彩色喷墨打印机分别喷射三种颜色的墨滴，按一定",
+                        "pdf_page_index": 10,
+                        "line_ordinal": 40,
+                        "line_ref": "p10:l40",
+                        "y_start": 0.88,
+                        "y_end": 0.90,
+                    },
+                    {
+                        "text": "300",
+                        "pdf_page_index": 11,
+                        "line_ordinal": 0,
+                        "line_ref": "p11:l0",
+                        "y_start": 0.06,
+                        "y_end": 0.08,
+                    },
+                    {
+                        "text": "2026年计算机组成原理考研复习指导",
+                        "pdf_page_index": 11,
+                        "line_ordinal": 1,
+                        "line_ref": "p11:l1",
+                        "y_start": 0.06,
+                        "y_end": 0.08,
+                    },
+                    {
+                        "text": "的比例混合出所要求的颜色。喷墨式打印机可实现高质量彩色打印。",
+                        "pdf_page_index": 11,
+                        "line_ordinal": 2,
+                        "line_ref": "p11:l2",
+                        "y_start": 0.10,
+                        "y_end": 0.12,
+                    },
+                    {
+                        "text": "3）激光打印机。激光打印机使用激光技术形成字符或图像。",
+                        "pdf_page_index": 11,
+                        "line_ordinal": 3,
+                        "line_ref": "p11:l3",
+                        "y_start": 0.13,
+                        "y_end": 0.15,
+                    },
+                ],
+            }
+        ],
+    }
+
+    units = build_evidence_units(source)
+
+    assert len(units) == 2
+    assert units[0]["start_ref"] == "p10:l40"
+    assert units[0]["end_ref"] == "p11:l2"
+    assert units[0]["start_page"] == 10
+    assert units[0]["end_page"] == 11
+    assert "喷墨式打印机可实现高质量彩色打印" in units[0]["text"]
+    assert "300" not in units[0]["text"]
+    assert "考研复习指导" not in units[0]["text"]
+    assert units[1]["start_ref"] == "p11:l3"
+
+    packets = packetize_evidence_units(units)
+    decisions = {
+        packets[0]["packet_id"]: [
+            {
+                "action": "KEEP",
+                "unit_ids": [units[0]["unit_id"]],
+                "title": "喷墨打印机",
+                "one_sentence_meaning": "喷墨打印机按比例混合墨滴形成彩色输出。",
+            },
+            {
+                "action": "KEEP",
+                "unit_ids": [units[1]["unit_id"]],
+                "title": "激光打印机",
+                "one_sentence_meaning": "激光打印机使用激光技术形成字符或图像。",
+            },
+        ]
+    }
+    materialized = materialize_candidates(packets, decisions)
+    assert [candidate["title"] for candidate in materialized] == [
+        "喷墨打印机", "激光打印机"
+    ]
+    assert materialized[0]["start_page"] == 10
+    assert materialized[0]["end_page"] == 11
+
+
+def test_completed_sentence_at_page_boundary_stays_in_separate_evidence_unit():
+    source = {
+        "chapter": {"book_source_revision_id": "revision"},
+        "source_sections": [
+            {
+                "section_id": "section",
+                "title": "7.1 外部设备",
+                "lines": [
+                    {
+                        "text": "本页的教学说明已经完整结束。",
+                        "pdf_page_index": 10,
+                        "line_ordinal": 40,
+                        "line_ref": "p10:l40",
+                        "y_start": 0.88,
+                        "y_end": 0.90,
+                    },
+                    {
+                        "text": "下一页开始另一段完整的教学说明。",
+                        "pdf_page_index": 11,
+                        "line_ordinal": 2,
+                        "line_ref": "p11:l2",
+                        "y_start": 0.10,
+                        "y_end": 0.12,
+                    },
+                ],
+            }
+        ],
+    }
+
+    units = build_evidence_units(source)
+
+    assert len(units) == 2
+    assert units[0]["end_ref"] == "p10:l40"
+    assert units[1]["start_ref"] == "p11:l2"
 
 
 @pytest.mark.parametrize(
@@ -499,10 +629,187 @@ def test_semantic_and_review_prompts_define_upstream_rules_and_blocking_threshol
     assert "短编号标题" in GENERATOR_SYSTEM_MESSAGE
     assert "交叉引用" in GENERATOR_SYSTEM_MESSAGE
     assert "必须 DROP" in GENERATOR_SYSTEM_MESSAGE
+    assert "分类、组成、步骤或并列枚举" in GENERATOR_SYSTEM_MESSAGE
+    assert "brief_enumeration_runs" in GENERATOR_SYSTEM_MESSAGE
     assert "BLOCKING 仅用于" in REVIEW_SYSTEM_MESSAGE
     assert "存在优化空间" in REVIEW_SYSTEM_MESSAGE
     assert "只能是 WARNING" in REVIEW_SYSTEM_MESSAGE
     assert "扫描全部 Sections" in REVIEW_SYSTEM_MESSAGE
+
+
+def test_brief_enumeration_is_one_upstream_merged_learning_unit():
+    packet = {
+        "packet_id": "p002",
+        "section_packet_index": 1,
+        "section_packet_count": 2,
+        "primary_section_id": "section-7-1",
+        "primary_section_title": "7.1 I/O系统基本概念",
+        "units": [
+            {"unit_id": "u0031", "text": "1）程序查询方式。由CPU不断查询设备是否就绪。"},
+            {"unit_id": "u0032", "text": "2）程序中断方式。设备就绪后向CPU提出中断请求。"},
+            {"unit_id": "u0033", "text": "3）DMA方式。主存与设备之间建立直接数据通路。"},
+            {"unit_id": "u0034", "text": "4）通道方式。通道执行通道程序完成I/O操作。"},
+        ],
+    }
+    run = ["u0031", "u0032", "u0033", "u0034"]
+    assert brief_enumeration_runs(packet) == [run]
+    payload = semantic_packet_payload(
+        {"chapter_outline_node_id": "chapter-7", "title": "第7章"}, packet
+    )
+    assert payload["granularity_hints"]["brief_enumeration_runs"] == [run]
+
+    fragmented = {
+        "decisions": [
+            {
+                "action": "KEEP",
+                "unit_ids": [unit["unit_id"]],
+                "title": unit["text"].split("。", 1)[0],
+                "one_sentence_meaning": "只有概览性的简短介绍。",
+            }
+            for unit in packet["units"]
+        ]
+    }
+    with pytest.raises(ValueError, match="one merged learning unit"):
+        validate_semantic_output(
+            json.dumps(fragmented, ensure_ascii=False), packet
+        )
+
+    merged = {
+        "decisions": [
+            {
+                "action": "MERGE",
+                "unit_ids": run,
+                "title": "I/O控制方式分类",
+                "one_sentence_meaning": (
+                    "I/O控制方式包括程序查询、程序中断、DMA和通道四类。"
+                ),
+            }
+        ]
+    }
+    assert validate_semantic_output(
+        json.dumps(merged, ensure_ascii=False), packet
+    )[0]["unit_ids"] == run
+
+
+def test_enumerated_items_with_substantial_independent_evidence_may_remain_split():
+    detailed = "该方法具有独立机制、执行过程、适用条件与优缺点。" * 9
+    packet = {
+        "units": [
+            {"unit_id": f"u{index:04d}", "text": f"{index}）方法{index}。{detailed}"}
+            for index in range(1, 4)
+        ]
+    }
+    assert brief_enumeration_runs(packet) == []
+    answer = {
+        "decisions": [
+            {
+                "action": "KEEP",
+                "unit_ids": [unit["unit_id"]],
+                "title": f"独立方法 {index}",
+                "one_sentence_meaning": "教材提供了足够的独立机制和方法证据。",
+            }
+            for index, unit in enumerate(packet["units"], start=1)
+        ]
+    }
+    assert len(validate_semantic_output(json.dumps(answer, ensure_ascii=False), packet)) == 3
+
+
+def test_one_substantial_item_disables_brief_hint_for_the_whole_enumeration():
+    detailed = "该方式具有独立机制、执行过程、适用条件与优缺点。" * 9
+    packet = {
+        "units": [
+            {"unit_id": "u0001", "text": "1）方式一。简短介绍。"},
+            {"unit_id": "u0002", "text": "2）方式二。简短介绍。"},
+            {"unit_id": "u0003", "text": "3）方式三。简短介绍。"},
+            {"unit_id": "u0004", "text": f"4）方式四。{detailed}"},
+        ]
+    }
+
+    assert brief_enumeration_runs(packet) == []
+
+
+def test_fragmented_brief_enumeration_retries_only_current_semantic_packet(service):
+    packet_id = "p-enumeration"
+
+    def generation(payload, count):
+        unit_ids = [unit["unit_id"] for unit in payload["units"]]
+        if count == 1:
+            return json.dumps(
+                {
+                    "decisions": [
+                        {
+                            "action": "KEEP",
+                            "unit_ids": [unit_id],
+                            "title": f"枚举项 {index}",
+                            "one_sentence_meaning": "当前只有简短的概览介绍。",
+                        }
+                        for index, unit_id in enumerate(unit_ids, start=1)
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "decisions": [
+                    {
+                        "action": "MERGE",
+                        "unit_ids": unit_ids,
+                        "title": "I/O控制方式分类",
+                        "one_sentence_meaning": "四种方式构成同一个分类框架。",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    runtime = ScriptedRuntime(generation=generation)
+    fixture = build_fixture(service, runtime=runtime)
+    source, _, _, _ = semantic_inputs(fixture)
+    section = fixture["sections"][0]
+    packet = {
+        "packet_id": packet_id,
+        "section_packet_index": 0,
+        "section_packet_count": 1,
+        "primary_section_id": section["outline_node_id"],
+        "primary_section_title": section["title"],
+        "units": [
+            {"unit_id": f"u{index:04d}", "text": f"{index}）方式{index}。简短介绍。"}
+            for index in range(1, 5)
+        ],
+    }
+    state, _ = fixture["knowledge"].request_prepare(
+        fixture["revision"]["id"], fixture["chapter"]["outline_node_id"]
+    )
+
+    decisions, _identity = fixture["knowledge"]._classify_packet(
+        packet,
+        source["chapter"],
+        fixture["revision"]["id"],
+        fixture["chapter"]["outline_node_id"],
+        state["attempt_id"],
+        semantic_round=0,
+        repair_context=None,
+        prior_section_candidates=None,
+    )
+
+    assert runtime.counts[("deepseek", packet_id)] == 2
+    assert decisions == [
+        {
+            "action": "MERGE",
+            "unit_ids": [f"u{index:04d}" for index in range(1, 5)],
+            "title": "I/O控制方式分类",
+            "one_sentence_meaning": "四种方式构成同一个分类框架。",
+        }
+    ]
+    attempts = fixture["repository"].pipeline_attempts(
+        fixture["revision"]["id"], fixture["chapter"]["outline_node_id"]
+    )
+    assert any(
+        attempt["packet_or_stage_id"] == packet_id
+        and attempt["failure_code"]
+        == "invalid_semantic_output.fragmented_brief_enumeration"
+        for attempt in attempts
+    )
 
 
 def test_semantic_output_requires_complete_ordered_server_ids(service):

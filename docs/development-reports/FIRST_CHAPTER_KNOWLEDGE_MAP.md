@@ -10,14 +10,14 @@
 
 `USER_ACCEPTANCE: PENDING RETEST`
 
-The user-approved architecture correction and the subsequent `review_rejected` UAT rework are
-implemented. The Phase remains open. Nothing in this report claims `USER_ACCEPTANCE: PASS` or adds
-Learning, Mastery, Master, Teaching or Guide behavior.
+The user-approved architecture correction, `review_rejected` UAT rework and taxonomy-granularity
+UAT correction are implemented. The Phase remains open. Nothing in this report claims
+`USER_ACCEPTANCE: PASS` or adds Learning, Mastery, Master, Teaching or Guide behavior.
 
 The production path is now:
 
 ```text
-deterministic Chapter evidence units
+deterministic Chapter evidence units and brief-enumeration hints
 → bounded Section-local semantic packets
 → deterministic private KP materialization
 → one compact whole-Chapter structural Review
@@ -31,6 +31,24 @@ Before publication, the Reader exposes only stage and completed/total Section pr
 unit, candidate title, definition or source range is user-visible.
 
 ## UAT root cause
+
+- Chapter 7.1.3 briefly enumerates program polling, interrupts, DMA and channels as four I/O control
+  modes. The prior Section reducer prompt described independent assessability but did not make a
+  brief taxonomy/composition/step run default to one learning unit. Its deterministic contract also
+  accepted four `KEEP` decisions, so four overview labels reached atomic publication as durable KPs
+  even though the current source taught only one classification framework.
+- This was not caused by packet boundaries or final Review. Real source reconstruction placed all
+  four units in one Section packet. The missing upstream rule and validator guard allowed the
+  reducer to confuse editorial enumeration items with independently trackable learning units.
+- The first real-provider verification of the taxonomy fix then exposed a separate genuine
+  upstream evidence defect. An inkjet-printer paragraph crossed PDF pages 310/311, but the evidence
+  builder unconditionally flushed on page change. Page-number/running-header lines and the sentence
+  continuation became a second candidate, so Review correctly reported a duplicate spanning two
+  packets and the accepted complete-Section repair guard rejected the over-broad repair request.
+- The minimal correction keeps both defects upstream: a declared high-confidence brief enumeration
+  must be one `MERGE`, while a high-confidence unfinished sentence at the physical page bottom is
+  joined to its next-page body continuation without adding page furniture to semantic text. Neither
+  change weakens Chapter Review, broadens repair authority or changes atomic publication.
 
 - The latest persistent-library Chapter 7 failure was attempt
   `bac0dff8-ebe1-445d-8f11-e44c653629a2`: 223 units, 12 packets and 87 private candidates reached
@@ -79,6 +97,17 @@ unit, candidate title, definition or source range is user-visible.
   pipeline-local ID and server-owned Section, order, source revision and continuous physical range.
   AI receives only the current bounded packet's unit IDs/text and may return only
   `KEEP`/`MERGE`/`DROP`, title and one-sentence meaning.
+- The Section reducer now applies all five KP gates: worthwhile independent learning, focused
+  assessability, one coherent meaning, sufficient current textbook teaching, and a meaningful future
+  learning-state interpretation. A high-confidence consecutive numbered run of at least three brief
+  items is supplied as a server-owned granularity hint and must be covered by one `MERGE`; a run with
+  substantial item-level evidence is not deterministically forced. Fragmentation retries only the
+  current private packet and never reaches materialization.
+- Page changes are no longer unconditional evidence boundaries. Only a high-confidence unfinished
+  sentence at the physical page bottom may continue into the next page's top body line; intervening
+  top-margin page-number/running-header lines are excluded from semantic text. Completed sentences,
+  new numbered items, Section boundaries and all size limits remain hard boundaries. The resulting
+  source range remains one continuous multi-page server-owned range.
 - Short numbered headings now remain attached to their following explanation instead of becoming a
   sibling unit. A validated `KEEP`/`MERGE` grounded only in questions and/or `见` / `参见` / `详见`
   references is rejected as `invalid_semantic_output.nonteaching_evidence`; substantive teaching
@@ -132,10 +161,11 @@ unit, candidate title, definition or source range is user-visible.
 Evidence was executed in the required order: TARGETED → AGENT REAL-USE GOLDEN PATH → AFFECTED
 REGRESSION → CLOSURE / BROAD.
 
-- TARGETED: `pytest -q tests/test_knowledge_map.py` — **35 passed**. This covers deterministic unit
+- TARGETED: `pytest -q tests/test_knowledge_map.py` — **41 passed**. This covers deterministic unit
   accounting and ranges, Section-local bounded packets, strict semantic contracts, same-Section
   sequential context with no cross-Section leakage, heading/definition joining, question/reference-
-  only rejection, packet-local technical retry, new-packet-only bounded convergence, recurring-
+  only rejection, brief-enumeration merge enforcement, substantial-item escape, high-confidence
+  cross-page continuation and header exclusion, packet-local technical retry, new-packet-only bounded convergence, recurring-
   blocker and cumulative-budget fail-closed behavior, peer repair context, actionable safe telemetry,
   all seven Review dimensions, overlap-as-warning, atomic rollback, restart/idempotency/cascade and
   UI/API projections.
@@ -154,19 +184,20 @@ REGRESSION → CLOSURE / BROAD.
   packet-local length/empty response and retry, a unit-addressed `instructional_specificity` FAIL,
   targeted repair, whole-Chapter re-review, atomic READY, four Section groups, source-anchor
   navigation, unchanged logical Outline identity, restart-stable IDs and book cascade.
-- REAL PROVIDER GOLDEN PATH: `npm run test:e2e:knowledge:real` — **PASS** through the production
+- REAL PROVIDER GOLDEN PATH: `npm run test:e2e:knowledge:real` — **PASS** twice through the production
   `deepseek / deepseek-v4-pro → zhipu / GLM-5.3-Flash` route on two real Chapters:
-  - Chapter 1: 13,285 source characters → 166 units / 9 packets → 67 published KPs in 5 Section
-    groups; one packet-local technical failure recovered, one semantic repair round ran, and the
-    rebuilt whole Chapter passed re-review.
-  - Chapter 6: 7,704 source characters → 125 units / 8 packets → 54 published KPs in 4 Section
-    groups; two packet-local technical failures recovered and the first whole-Chapter Review passed.
-  - The final compact Review payloads were 40,034 and 30,978 characters respectively, both smaller
+  - Chapter 7: 16,045 source characters → 146 units / 9 packets → 60 published KPs in 5 Section
+    groups. The real 7.1.3 source band containing all four overview modes was covered by exactly one
+    published framework KP (`briefIoControlFrameworkCount=1`), and the former cross-page inkjet
+    duplicate no longer appeared. The whole-Chapter Review passed without semantic repair.
+  - Chapter 6: 7,662 source characters → 89 units / 6 packets → 48 published KPs in 4 Section groups;
+    bounded packet transport retries recovered and the whole-Chapter Review passed.
+  - The final compact Review payloads were 37,337 and 25,210 characters respectively, both smaller
     than their raw Chapter source projections. No request body was retained. Both maps appeared only
     at READY, and Section-grouped rendering plus published source-anchor navigation passed.
 - AFFECTED REGRESSION: API, jobs, Map the Book, Ask Deeper, AI_SAVED, annotations, Library and
   Foundation Python suites — **PASS**.
-- CLOSURE / BROAD: full `pytest -q` — **155 passed, 2 skipped**; the unchanged skips are the optional
+- CLOSURE / BROAD: full `pytest -q` — **161 passed, 2 skipped**; the unchanged skips are the optional
   external real-OCR entrypoints. `npm test` — **30 passed**. `python -m compileall -q src`, Node syntax
   checks for both Knowledge E2E runners and `git diff --check` also passed.
 - `INTENTIONALLY_NOT_RUN`: standalone Reader/selectable-reader/annotations/find E2E runners were not

@@ -82,7 +82,7 @@ try {
         && packet.character_count > 0
         && packet.character_count <= 4_800
     )));
-    assert.ok(observed.review_rounds.length >= 1 && observed.review_rounds.length <= 2);
+    assert.ok(observed.review_rounds.length >= 1 && observed.review_rounds.length <= 4);
     assert.equal(observed.review_rounds.at(-1).verdict, "PASS");
     assert.ok(observed.review_rounds.every((round) => (
       round.payload_character_count > 0
@@ -119,6 +119,20 @@ try {
         && !Object.hasOwn(attempt, "response_body")
         && !Object.hasOwn(attempt, "reasoning_content")
     )));
+    let briefIoControlFrameworkCount = null;
+    if (title === "第7章 输入/输出系统") {
+      const ioControlBand = result.knowledge_points.filter((point) => (
+        rangeOverlapsPageBand(point, 311, 0.467, 0.601)
+      ));
+      assert.equal(
+        ioControlBand.length,
+        1,
+        "7.1.3 overview enumeration must publish as one framework KP",
+      );
+      assert.ok(ioControlBand[0].start_page < 311 || ioControlBand[0].start_y <= 0.468);
+      assert.ok(ioControlBand[0].end_page > 311 || ioControlBand[0].end_y >= 0.600);
+      briefIoControlFrameworkCount = ioControlBand.length;
+    }
     const sectionGroups = new Set(
       result.knowledge_points.map((point) => point.primary_section_id),
     ).size;
@@ -138,6 +152,7 @@ try {
       structureVersion: result.structure_version,
       knowledgePointCount: result.knowledge_points.length,
       sectionGroups,
+      briefIoControlFrameworkCount,
     });
   }
 
@@ -183,6 +198,15 @@ try {
   if (browser) await browser.close();
   if (running) await stopService(running.child);
   await rm(acceptanceRoot, { recursive: true, force: true });
+}
+
+
+function rangeOverlapsPageBand(point, pageIndex, startY, endY) {
+  const startsBeforeEnd = point.start_page < pageIndex
+    || (point.start_page === pageIndex && point.start_y <= endY);
+  const endsAfterStart = point.end_page > pageIndex
+    || (point.end_page === pageIndex && point.end_y >= startY);
+  return startsBeforeEnd && endsAfterStart;
 }
 
 

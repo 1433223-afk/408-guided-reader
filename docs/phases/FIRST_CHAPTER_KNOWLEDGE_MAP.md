@@ -22,6 +22,15 @@ and permits bounded re-review convergence only across newly implicated, previous
 packets. A recurring blocker in an already repaired packet, an over-broad repair scope or an
 exhausted budget still fails closed.
 
+The user then tightened KP granularity after inspecting the published Chapter 7.1.3 map. A KP is now
+explicitly “the smallest learning unit for which it is worth recording whether the learner knows
+it,” not the smallest noun, paragraph or enumerated item. Consecutive short items that only introduce
+one taxonomy, composition, procedure or peer enumeration default to one merged framework KP. They
+may remain separate only when the current source evidence independently teaches a mechanism, method,
+relationship or assessable distinction strongly enough to support a meaningful separate learning
+state. This is an upstream Section semantic-reducer rule, not a defect delegated to final Chapter
+Review.
+
 **KEEP — the product and publication shell:** existing Outline/OCR/source authority; target-Chapter
 physical resolution; `CHAPTER_PREPARE` jobs and durable lifecycle; persistence, ownership and
 cascade; Reader state/progress and Section-grouped map; KP → source navigation; stable IDs at publish;
@@ -145,6 +154,11 @@ one necessary, stop and report under `AGENTS.md` §5.
 - **KP semantics are load-bearing.** A KP is an independently worthwhile learning-state unit, not a
   paragraph or heading mechanically copied into a list. Every KP has exactly one existing primary
   Section and one continuous source range in the first version (Product §§11–13).
+- **An enumerated item is not automatically a KP.** For a consecutive classification, composition,
+  step sequence or peer enumeration whose items have only brief introductory definitions, the
+  Section reducer must emit one `MERGE` covering the run. Separate KPs require sufficient current
+  textbook evidence for independently assessable mechanisms, methods, relationships or examination
+  value; merely being named in the textbook is insufficient.
 - **Evidence-unit authority is deterministic.** A minimal Phase-local builder derives ordered,
   bounded evidence units from the requested Chapter's existing Outline and OCR/layout evidence. The
   server assigns every unit its existing primary Section, deterministic order, continuous source
@@ -158,7 +172,9 @@ one necessary, stop and report under `AGENTS.md` §5.
   attached to its following explanation where available, rather than offered as a separate sibling
   KP. Evidence made only of a question and/or a `见` / `参见` / `详见` pointer cannot be kept or
   merged into a candidate. The Section reducer must treat heading/definition duplicates,
-  reference-only pointers and same-Section peer candidates before the Chapter gate.
+  reference-only pointers, short taxonomy/enumeration runs and same-Section peer candidates before
+  the Chapter gate. High-confidence short runs are declared in the semantic input; one `MERGE`
+  decision must cover every supplied run ID. A fragmented response retries only that packet.
 - **Merge authority is narrow.** `MERGE` may cover only a contiguous run of adjacent units in the
   same existing primary Section and current packet. Cross-Section, non-adjacent, invented, repeated
   or missing unit IDs fail deterministic contract validation; they are never coerced into a result.
@@ -319,6 +335,8 @@ is under test:
 5. Contract validation rejects invented, duplicate, missing or multiply-consumed unit IDs, cross-
    Section merges and non-contiguous merges. It never silently repairs, truncates or partially
    accepts a length-limited/invalid semantic response.
+   It also rejects multiple durable candidates made from one declared brief enumeration run; the
+   structured retry remains local to that semantic packet.
 6. Deterministic materialization derives candidate primary Section, order, source revision and
    continuous range exactly from one kept unit or one allowed contiguous merge. AI title/meaning
    cannot change source authority. Every published KP satisfies the corresponding Chapter/Section

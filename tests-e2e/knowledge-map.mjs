@@ -35,13 +35,18 @@ const provider = createServer(async (request, response) => {
     const payload = JSON.parse(body.messages[1].content);
     const semanticRepair = Object.hasOwn(payload, "repair_context");
     const priorContext = Object.hasOwn(payload, "prior_section_candidates");
-    const expectedKeys = ["chapter", "packet", "section", "units"];
+    const expectedKeys = ["chapter", "granularity_hints", "packet", "section", "units"];
     if (semanticRepair) expectedKeys.push("repair_context");
     if (priorContext) expectedKeys.push("prior_section_candidates");
     assert.deepEqual(
       Object.keys(payload).sort(),
       expectedKeys.sort(),
     );
+    assert.deepEqual(Object.keys(payload.granularity_hints), ["brief_enumeration_runs"]);
+    const suppliedUnitIds = new Set(payload.units.map((unit) => unit.unit_id));
+    assert.ok(payload.granularity_hints.brief_enumeration_runs.every(
+      (run) => run.length >= 3 && run.every((unitId) => suppliedUnitIds.has(unitId)),
+    ));
     if (priorContext) assert.ok(payload.prior_section_candidates.every(
       (candidate) => Object.keys(candidate).sort().join(",") === "one_sentence_meaning,title",
     ));

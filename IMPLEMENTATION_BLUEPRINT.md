@@ -17,6 +17,7 @@
 | Chapter Knowledge Map first UAT correction | User-approved amendment, 2026-09-07, after real-use `empty_response`/latency failure and external KP research review. It introduced Section-scoped private generation/retry, removed deterministic no-overlap, added structural duplicate/overlap Review, safe per-attempt diagnostics and minimum Section progress. Its LLM-first complete-KP generation and whole-Section semantic repair are superseded by the architecture correction below; its retained shell, overlap rule and observability remain authority. |
 | Chapter Knowledge Map architecture correction | User-approved amendment, 2026-09-07, after repeated invalid/length-limited generation and oversized/rejected Review. §12.2 now requires deterministic evidence units, bounded AI `KEEP`/`MERGE`/`DROP` plus short labels, deterministic KP materialization, compact Chapter Review and unit-addressed repair; §12.4 freezes the model/source-authority boundary; §22 makes diagnostics packet/stage-scoped. Existing Outline/OCR authority, jobs, persistence, Reader UI/navigation and atomic publication remain unchanged. Durable replacement identity and availability/attempt separation are still required before Mastery or first regeneration and are not authorized here. |
 | Chapter Knowledge Map Review convergence correction | User-approved amendment, 2026-09-07, after real Chapter 1/7 Review failures exposed genuine local reducer defects plus non-exhaustive discovery across untouched packets. §12.2 keeps all seven Review dimensions while reserving `BLOCKING` for high-confidence unpublishable defects, moves short-heading/reference-only closure upstream and permits only cumulative-bounded repair of newly implicated untouched packets. Repeated local blockers and budget exhaustion still fail closed; Chapter Review and atomic publication are unchanged. |
+| Chapter Knowledge Map taxonomy-granularity correction | User-approved amendment, 2026-09-08, after Chapter 7.1.3 incorrectly published four overview enumeration items as four durable KPs. §12.2 now makes consecutive brief taxonomy/composition/step/peer runs one upstream Section-level `MERGE`; separate KPs require sufficient current source evidence for independently assessable mechanisms, methods or relationships. Packet-local validation/retry enforces the rule before materialization; final Chapter Review is not its primary repair layer. |
 | Authorizes | **Gate D: CLOSED (PASS).** This document is now engineering authority for 408 Guided Reader — where it and `PRODUCT_BLUEPRINT.md` disagree, the Product Blueprint still wins. **Gate E (code porting / implementation) is a separate, still-unopened authorization** — this closure does not itself authorize writing, porting, or installing anything. |
 
 ### 0.1 Why the clean-room, and what happens next
@@ -1064,6 +1065,16 @@ cross-reference is invalid. The Section-local classifier must resolve obvious he
 duplicates and compare against bounded same-Section peer title/meaning summaries; these mechanically
 local defects are not deferred wholesale to the Chapter gate.
 
+An editorial enumeration item is not a learning unit by default. The server identifies high-
+confidence consecutive numbered runs that start at one, contain at least three items and keep every
+item below the bounded brief-evidence threshold. The semantic payload declares only the run's unit
+IDs as a granularity hint. One `MERGE` decision must cover the complete run, optionally together with
+an adjacent introduction; multiple `KEEP`s or partial retention fail the current packet's structured
+contract and retry only that packet. A run containing substantial item-level source evidence is not
+forced by this deterministic hint: the semantic reducer may keep items separate only when their
+mechanisms, methods, relationships or assessable content support meaningful independent learning
+states. This is Section-local semantic reconciliation, not Chapter Review repair.
+
 Materialization is **deterministic and not a model output**. The server inherits primary ownership,
 order, source revision and continuous range from the selected unit or allowed contiguous unit run;
 only title/meaning come from AI. Section-local packet results remain private and disposable. If any
@@ -1142,6 +1153,8 @@ Validation gates publication:
 - every semantic packet references only deterministic unit IDs supplied to it, accounts for each
   supplied unit exactly once, and contains no model-authored source/ownership fields;
 - a kept/merged semantic candidate is not grounded only in questions or cross-reference pointers;
+- every declared brief enumeration run is covered by one merged candidate rather than fragmented
+  into item-level candidates;
 - every merged candidate is backed by a contiguous adjacent unit run inside one existing primary
   Section; invented, duplicate, missing, non-adjacent or cross-Section unit references are invalid;
 - every candidate's primary Section, source revision, order and continuous range are materialized

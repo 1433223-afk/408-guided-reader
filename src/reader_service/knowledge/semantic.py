@@ -8,6 +8,8 @@ import re
 MAX_EVIDENCE_UNIT_CHARACTERS = 900
 SOFT_EVIDENCE_UNIT_CHARACTERS = 160
 MAX_SHORT_HEADING_CHARACTERS = 48
+MAX_BRIEF_ENUMERATION_ITEM_CHARACTERS = 180
+MIN_BRIEF_ENUMERATION_ITEMS = 3
 MAX_SEMANTIC_PACKET_CHARACTERS = 4_800
 MAX_SEMANTIC_PACKET_UNITS = 24
 MAX_REVIEW_EXCERPT_CHARACTERS = 60
@@ -15,6 +17,9 @@ MAX_REPAIR_PACKETS = 4
 MAX_REPAIR_UNITS = 24
 MAX_PRIOR_SECTION_CANDIDATES = 40
 MAX_PRIOR_SECTION_MEANING_CHARACTERS = 80
+MAX_PAGE_TOP_FURNITURE_Y = 0.10
+MIN_PAGE_BOTTOM_CONTINUATION_Y = 0.84
+MAX_PAGE_TOP_CONTINUATION_Y = 0.20
 
 _TERMINAL_PUNCTUATION = re.compile(r"[。！？!?；;]$\Z")
 _HEADING_OR_ITEM = re.compile(
@@ -30,6 +35,10 @@ _REFERENCE_ONLY = re.compile(
 _HEADING_PLUS_REFERENCE_ONLY = re.compile(
     r"^[^。！？!?；;]{1,48}(?:见|参见|详见|请参阅)"
     r"[^。！？!?；;]{0,80}[。！？!?；;]?$"
+)
+_ENUMERATED_ITEM = re.compile(
+    r"^(?:[（(](?P<parenthesized>\d{1,2})[）)]|"
+    r"(?P<plain>\d{1,2})[、）.)．](?!\d))\s*"
 )
 
 
@@ -55,18 +64,28 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
             text = _normalize_text(line.get("text"))
             if not text:
                 continue
+            if _is_page_top_furniture_during_continuation(current, line):
+                continue
             is_heading_or_item = bool(_HEADING_OR_ITEM.match(text))
             is_short_heading = _is_short_heading(text)
             page_changed = bool(
                 current
                 and current[-1]["pdf_page_index"] != line["pdf_page_index"]
             )
+            continues_across_page = bool(
+                page_changed
+                and _is_high_confidence_page_continuation(current, line, text)
+            )
             starts_new_item = bool(current and is_heading_or_item)
             exceeds_hard_limit = bool(
                 current
                 and current_characters + len(text) > MAX_EVIDENCE_UNIT_CHARACTERS
             )
-            if page_changed or starts_new_item or exceeds_hard_limit:
+            if (
+                (page_changed and not continues_across_page)
+                or starts_new_item
+                or exceeds_hard_limit
+            ):
                 section_units.append(current)
                 current = []
                 current_characters = 0
@@ -197,6 +216,9 @@ def semantic_packet_payload(
             {"unit_id": unit["unit_id"], "text": unit["text"]}
             for unit in packet["units"]
         ],
+        "granularity_hints": {
+            "brief_enumeration_runs": brief_enumeration_runs(packet),
+        },
     }
     if prior_section_candidates:
         payload["prior_section_candidates"] = [
@@ -287,7 +309,53 @@ def validate_semantic_output(answer: str, packet: dict) -> list[dict]:
             "incomplete_accounting",
             "Semantic output does not account for every supplied unit exactly once",
         )
+    for run in brief_enumeration_runs(packet):
+        run_ids = set(run)
+        if not any(
+            decision["action"] == "MERGE"
+            and run_ids.issubset(decision["unit_ids"])
+            for decision in normalized
+        ):
+            raise _semantic_error(
+                "fragmented_brief_enumeration",
+                "A brief enumeration run must be materialized as one merged learning unit",
+            )
     return normalized
+
+
+def brief_enumeration_runs(packet: dict) -> list[list[str]]:
+    """Return high-confidence short numbered runs that lack item-level teaching depth."""
+    runs: list[list[str]] = []
+    current: list[str] = []
+    expected_number = 1
+    contains_substantial_item = False
+
+    def flush() -> None:
+        nonlocal current, expected_number, contains_substantial_item
+        if (
+            not contains_substantial_item
+            and len(current) >= MIN_BRIEF_ENUMERATION_ITEMS
+        ):
+            runs.append(current)
+        current = []
+        expected_number = 1
+        contains_substantial_item = False
+
+    for unit in packet["units"]:
+        text = _normalize_text(unit.get("text"))
+        match = _ENUMERATED_ITEM.match(text)
+        number = int(match.group("parenthesized") or match.group("plain")) if match else None
+        if number is None or number != expected_number:
+            flush()
+            if number != 1:
+                continue
+        if len(text) > MAX_BRIEF_ENUMERATION_ITEM_CHARACTERS:
+            contains_substantial_item = True
+        else:
+            current.append(unit["unit_id"])
+        expected_number = number + 1
+    flush()
+    return runs
 
 
 def materialize_candidates(
@@ -535,6 +603,34 @@ def _is_short_heading(text: str) -> bool:
         len(text) <= MAX_SHORT_HEADING_CHARACTERS
         and _HEADING_OR_ITEM.match(text)
         and not _TERMINAL_PUNCTUATION.search(text)
+    )
+
+
+def _is_page_top_furniture_during_continuation(
+    current: list[dict], line: dict
+) -> bool:
+    """Ignore page number/running-header lines between two halves of one sentence."""
+    if not current or line["pdf_page_index"] != current[-1]["pdf_page_index"] + 1:
+        return False
+    previous = current[-1]
+    return bool(
+        previous["y_end"] >= MIN_PAGE_BOTTOM_CONTINUATION_Y
+        and not _TERMINAL_PUNCTUATION.search(previous["text"])
+        and int(line.get("line_ordinal", 99)) <= 2
+        and float(line["y_end"]) <= MAX_PAGE_TOP_FURNITURE_Y
+    )
+
+
+def _is_high_confidence_page_continuation(
+    current: list[dict], line: dict, text: str
+) -> bool:
+    previous = current[-1]
+    return bool(
+        line["pdf_page_index"] == previous["pdf_page_index"] + 1
+        and previous["y_end"] >= MIN_PAGE_BOTTOM_CONTINUATION_Y
+        and float(line["y_start"]) <= MAX_PAGE_TOP_CONTINUATION_Y
+        and not _TERMINAL_PUNCTUATION.search(previous["text"])
+        and not _HEADING_OR_ITEM.match(text)
     )
 
 
