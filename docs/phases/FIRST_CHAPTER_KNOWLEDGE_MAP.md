@@ -1,6 +1,6 @@
 # Phase / First Chapter Knowledge Map
 
-> **Status: ACCEPTED — ARCHITECTURE CORRECTION READY FOR IMPLEMENTATION (2026-09-07); user retest
+> **Status: ACCEPTED — SEMANTIC SIMPLIFICATION READY FOR IMPLEMENTATION (2026-09-08); user retest
 > and independent narrow review pending.** The product shell remains accepted. Repeated real-use failures
 > showed that the LLM-first semantic middle was not a stable implementation of that product. The user
 > accepted the bounded deterministic-first replacement below after external Prior-art Research. This
@@ -9,27 +9,24 @@
 
 ## User-approved architecture correction
 
-This correction supersedes the earlier generation, Review and whole-Section semantic-repair contract
+This correction supersedes the earlier generation and whole-Section semantic-repair contract
 wherever this brief, the current implementation or its development report still describes it.
 External research remains evidence; the decisions below are authority because the user accepted them.
 
-The user subsequently authorized one minimal Review-gate convergence correction after real Chapter
-1 and Chapter 7 runs showed the same failure pattern: a valid first Review repaired real local
-defects, then a later Review discovered different blockers in previously untouched packets. This
-does not relax the seven Review dimensions or Chapter-atomic publication. It moves mechanically
-detectable local defects upstream, defines `BLOCKING` as a high-confidence unpublishable defect,
-and permits bounded re-review convergence only across newly implicated, previously untouched
-packets. A recurring blocker in an already repaired packet, an over-broad repair scope or an
-exhausted budget still fails closed.
+On 2026-09-08 the user approved a final simplification of the semantic middle. Each real existing
+Outline subsection is one bounded semantic window and receives one final, group-first semantic
+partition. There is no result-driven absorption, audit, cleanup, re-partition, repair or re-review
+loop. Bounded technical retries may repeat only the same window input and same contract; they may not
+feed a prior semantic result back into another judgment. Chapter Review remains a strict final gate,
+but a valid Review FAIL ends the preparation attempt and never triggers semantic regeneration.
 
-The user then tightened KP granularity after inspecting the published Chapter 7.1.3 map. A KP is now
-explicitly “the smallest learning unit for which it is worth recording whether the learner knows
-it,” not the smallest noun, paragraph or enumerated item. Consecutive short items that only introduce
-one taxonomy, composition, procedure or peer enumeration default to one merged framework KP. They
-may remain separate only when the current source evidence independently teaches a mechanism, method,
-relationship or assessable distinction strongly enough to support a meaningful separate learning
-state. This is an upstream Section semantic-reducer rule, not a defect delegated to final Chapter
-Review.
+The tightened KP definition remains: a KP is “the smallest learning unit for which it is worth
+recording whether the learner knows it,” not the smallest noun, paragraph or enumerated item. A new
+durable KP requires positive reason to preserve an independent teaching, assessment, diagnosis and
+remediation path. Definition, property, ordinary step and example evidence defaults to absorption
+into that learning target. Distinct mechanisms, error modes or remediation paths may justify
+separate targets. Summary repetition, FAQ and misconception material defaults to non-KP evidence or
+absorption into an existing target rather than minting another learning identity.
 
 **KEEP — the product and publication shell:** existing Outline/OCR/source authority; target-Chapter
 physical resolution; `CHAPTER_PREPARE` jobs and durable lifecycle; persistence, ownership and
@@ -40,15 +37,18 @@ independent structural Review; deterministic final validation; and one Chapter-a
 
 ```text
 deterministic candidate/evidence units
-→ bounded AI KEEP / MERGE / DROP + short title / one-sentence meaning
+→ one group-first AI partition per real Outline-subsection window
+  (learning_targets with unit IDs + non_kp_units)
 → deterministic KP materialization
 → complete compact Chapter structural Review
 → existing deterministic validation and atomic publication
 ```
 
 **SUPERSEDED:** LLM-first complete-KP generation; model-authored Section/page/line/geometry/source
-references; Review payloads that resend the whole Chapter OCR/layout body; and semantic repair that
-regenerates a complete Section. No partial KP becomes visible during the replacement pipeline.
+references; packet-level `KEEP`/`MERGE`/`DROP`; deterministic character/count/numbering heuristics
+that force semantic boundaries; multi-pass absorption/audit/cleanup/re-partition; Review-driven
+repair/re-review; Review payloads that resend the whole Chapter OCR/layout body; and semantic repair
+that regenerates a complete Section. No partial KP becomes visible during the replacement pipeline.
 
 `IMPLEMENTATION_BLUEPRINT.md` §12.2, §12.4 and §22 carry the corresponding minimum Frozen amendment.
 Two earlier research conclusions remain explicitly outside this correction. They are
@@ -131,8 +131,8 @@ was consistent:
   structure;
 - Docling, GROBID, Unstructured and MinerU's normalized intermediate structures keep geometry and
   document identity outside generative output;
-- bounded packets, strict typed contracts, deterministic validation and localized retry/repair avoid
-  making one malformed or length-limited response invalidate a whole long document.
+- bounded windows, strict typed contracts, deterministic validation and same-input technical retry
+  avoid making one malformed or length-limited response invalidate a whole long document.
 
 The accepted borrowing is the architecture pattern only. No external code, dependency, model,
 framework, document parser or storage technology is approved for adoption. If implementation finds
@@ -154,34 +154,34 @@ one necessary, stop and report under `AGENTS.md` §5.
 - **KP semantics are load-bearing.** A KP is an independently worthwhile learning-state unit, not a
   paragraph or heading mechanically copied into a list. Every KP has exactly one existing primary
   Section and one continuous source range in the first version (Product §§11–13).
-- **An enumerated item is not automatically a KP.** For a consecutive classification, composition,
-  step sequence or peer enumeration whose items have only brief introductory definitions, the
-  Section reducer must emit one `MERGE` covering the run. Separate KPs require sufficient current
-  textbook evidence for independently assessable mechanisms, methods, relationships or examination
-  value; merely being named in the textbook is insufficient.
+- **Granularity is absorption-first.** A candidate becomes a separate learning target only when the
+  current evidence supports an independently useful teaching, assessment, diagnosis and remediation
+  path. Definitions, properties, ordinary steps, examples, different terminology, and brief items in
+  one classification/composition/procedure/peer enumeration default to the same target. A heading or
+  example alone never becomes a KP. Summary repetition does not mint a KP; FAQ and misconception
+  material defaults to `non_kp_units` or absorption into a target. Distinct mechanisms, error modes
+  or remediation paths may justify separation; merely being named or separately testable does not.
 - **Evidence-unit authority is deterministic.** A minimal Phase-local builder derives ordered,
   bounded evidence units from the requested Chapter's existing Outline and OCR/layout evidence. The
   server assigns every unit its existing primary Section, deterministic order, continuous source
   evidence and pipeline-local unit ID. A model may neither mint a unit nor decide or alter its
   Section, page, line, geometry, source range or source revision (Implementation §12.2, §12.4).
-- **AI has one bounded semantic job.** For each bounded Section-local packet, AI may only classify
-  supplied unit IDs as `KEEP`, `MERGE` or `DROP`, and provide a short title plus one-sentence meaning
-  for each kept/merged candidate. Its output must account for each packet unit exactly once. It may
-  not emit complete KP records or source references (Implementation §12.2).
-- **Obvious local non-KPs are closed upstream.** A short numbered heading is deterministically
-  attached to its following explanation where available, rather than offered as a separate sibling
-  KP. Evidence made only of a question and/or a `见` / `参见` / `详见` pointer cannot be kept or
-  merged into a candidate. The Section reducer must treat heading/definition duplicates,
-  reference-only pointers, short taxonomy/enumeration runs and same-Section peer candidates before
-  the Chapter gate. High-confidence short runs are declared in the semantic input; one `MERGE`
-  decision must cover every supplied run ID. A fragmented response retries only that packet.
-- **Merge authority is narrow.** `MERGE` may cover only a contiguous run of adjacent units in the
-  same existing primary Section and current packet. Cross-Section, non-adjacent, invented, repeated
-  or missing unit IDs fail deterministic contract validation; they are never coerced into a result.
+- **AI makes one final group-first partition per real Outline subsection.** Each real subsection is
+  one bounded semantic window. A Section lead-in outside its child subsections, or a Section with no
+  child subsection, may form one separate deterministic fallback window. The AI output is only
+  `learning_targets = [{unit_ids, title, one_sentence_meaning}]` plus `non_kp_units`; together they
+  account for every supplied unit exactly once. AI may not emit complete KP records or any Section,
+  page, line, geometry, range or source-revision field (Implementation §12.2).
+- **The partition contract is strict.** Every learning target uses a non-empty contiguous run of
+  supplied unit IDs inside one semantic window; every other supplied ID is a `non_kp_unit`.
+  Invented, duplicate, missing, multiply consumed, non-adjacent or cross-Section references and
+  invalid schema fail closed. The server never coerces them into a result. Facet/property/step/example
+  evidence may remain inside a target's continuous evidence span without becoming a separate durable
+  attachment or KP.
 - **KP materialization is deterministic.** The server creates private candidate KPs from validated
-  decisions and its unit ledger. Primary Section, order, source revision and the continuous range
+  partitions and its unit ledger. Primary Section, order, source revision and the continuous range
   come only from the underlying unit mapping; AI supplies only learning semantics. One required
-  packet failing fails the private Chapter attempt, but no successful unrelated packet is
+  window failing fails the private Chapter attempt, but no successful unrelated window is
   semantically regenerated as a side effect (Implementation §12.2–§12.4).
 - **Ranges are evidence, not a text partition.** A published KP still has one continuous range
   inside its primary Section, but distinct KPs may share evidence when Review confirms independent
@@ -204,7 +204,7 @@ one necessary, stop and report under `AGENTS.md` §5.
 - **Structural Review judges one complete but compact Chapter ledger.** It must check independently
   trackable granularity, coverage, duplicate semantics, instructional specificity, split/merge
   quality, source/Section faithfulness and map-level balance. Its ledger contains only the Chapter's
-  real Section/unit order, complete KEEP/MERGE/DROP accounting, candidate-to-unit membership,
+  real Section/unit order, complete partition accounting, candidate-to-unit membership,
   title/meaning, bounded deterministic evidence excerpts/fingerprints, overlap/warning metadata and
   required provenance. It does **not** resend the raw whole-Chapter OCR line stream, geometry dump or
   generator reasoning (Implementation §12.2, §12.4).
@@ -215,21 +215,17 @@ one necessary, stop and report under `AGENTS.md` §5.
   independent states. Alternative naming, optional consolidation, mild imbalance and cases that the
   bounded excerpt cannot establish confidently are `WARNING`; remaining room for improvement alone
   is not a Chapter rejection.
-- **Review judges; repair is localized.** Review may return a verdict and typed findings only; it
-  never authors or rewrites candidates. Every blocking semantic finding must identify an existing
-  Section and the smallest relevant unit-ID set. Bounded convergence may rerun only newly implicated
-  packet(s) that no prior semantic-repair round touched, after which deterministic materialization
-  rebuilds the compact Chapter ledger and the whole map is reviewed again. Repair receives bounded
-  same-Section peer title/meaning summaries so it can close local duplicates without source-range
-  authority. A blocker recurring in an already repaired packet is terminal. Invalid/unaddressable,
-  cumulative over-budget or round-exhausted findings fail closed; a semantic finding never
-  authorizes complete-Section regeneration.
-- **Technical retry is packet/stage-local.** A provider, timeout, empty/length-limited response or
-  invalid structured output retries only the current semantic packet; a technical Review failure
-  retries only the current compact Review stage. Successful unrelated packet decisions are not
-  resent or regenerated. Technical failure never consumes the semantic-repair round and never
-  becomes PASS. Existing durable-job recovery and disposable-draft semantics remain; this Phase does
-  not add a generic checkpoint/workflow framework (Implementation §12.2, §13.5, §13.8, §18.4–§18.5).
+- **Review judges once; it never repairs.** Review may return a verdict and typed findings only; it
+  never authors or rewrites candidates. A valid FAIL ends the current preparation attempt, publishes
+  nothing and triggers no semantic repair, regeneration or re-review. Findings should identify the
+  implicated existing Section and smallest relevant unit-ID set so the failure remains actionable.
+- **Technical retry is window/stage-local and semantics-neutral.** A provider, timeout, empty/
+  length-limited response or invalid structured output may retry only the same semantic-window input
+  under the same contract; it may not use the prior output as repair context. A technical Review
+  failure may retry only the identical compact Review stage. Successful unrelated window partitions
+  are not resent or regenerated. Technical failure never becomes PASS. Existing durable-job recovery
+  and disposable-draft semantics remain; this Phase adds no generic checkpoint/workflow framework
+  (Implementation §12.2, §13.5, §13.8, §18.4–§18.5).
 - **Review context is fresh and allowlisted.** It may contain only the compact Chapter ledger just
   defined. It must not contain raw whole-Chapter OCR/layout payloads, other Chapters, Assistant trees
   or saved explanations, notes/highlights, Learning/Mastery/Progress, Master threads, Teaching
@@ -258,7 +254,7 @@ one necessary, stop and report under `AGENTS.md` §5.
   Mastery, ExamEvidence, or Teaching asset. Chapter publication may make future KP-dependent
   capabilities eligible; it must not infer or write their state.
 - **No generic platform expansion.** Use the existing storage, AgentRuntime, provider boundary, and
-  durable job substrate. The V1 evidence-unit builder and packetizer are local to this Chapter-map
+  durable job substrate. The V1 evidence-unit and semantic-window builder is local to this Chapter-map
   pipeline; they must not become a generic document framework. Do not introduce a generic workflow/
   state-machine system, RAG layer, vector store, knowledge graph, new storage technology, or second
   job framework.
@@ -271,12 +267,11 @@ one necessary, stop and report under `AGENTS.md` §5.
 - Target-Chapter-only physical matching/resolution sufficient to validate the Chapter and its child
   Section/Subsection source ranges, without changing their logical identities.
 - The corrected one-Chapter pipeline: deterministic source projection/evidence-unit construction →
-  bounded Section-local semantic packets → AI `KEEP`/`MERGE`/`DROP` plus short title/meaning →
-  deterministic private KP materialization → complete compact Chapter ledger → deterministic
-  prechecks → independent Chapter structural Review → targeted unit-addressed semantic repair when
-  required → final deterministic validation → existing atomic publication.
+  one bounded group-first semantic partition per real Outline subsection → deterministic private KP
+  materialization → complete compact Chapter ledger → deterministic prechecks → one independent
+  Chapter structural Review gate → final deterministic validation → existing atomic publication.
 - The smallest real-book evidence-unit builder needed by this Chapter: deterministic unit IDs,
-  Section ownership/order, source evidence mapping and bounded packetization, without a new generic
+  Section ownership/order, source evidence mapping and bounded semantic windows, without a new generic
   parser, document model or framework.
 - Durable Chapter preparation state, published structure version, stable KnowledgePoint identity,
   source-revision ownership, ranges, semantic/reviewer provenance, and correct book-delete cascade.
@@ -328,47 +323,40 @@ is under test:
    Sections. Every unit ID resolves server-side to exactly one existing primary Section, source
    revision, continuous source span and deterministic order; repeated construction from unchanged
    authority is equivalent.
-4. The semantic transport contains only the current bounded Section-local packet and declared
-   context. Its accepted output vocabulary is only supplied unit IDs, `KEEP`/`MERGE`/`DROP`, short
-   title and one-sentence meaning; it contains no model-authored Section/page/line/geometry/range or
-   source-revision fields.
-5. Contract validation rejects invented, duplicate, missing or multiply-consumed unit IDs, cross-
-   Section merges and non-contiguous merges. It never silently repairs, truncates or partially
-   accepts a length-limited/invalid semantic response.
-   It also rejects multiple durable candidates made from one declared brief enumeration run; the
-   structured retry remains local to that semantic packet.
-6. Deterministic materialization derives candidate primary Section, order, source revision and
-   continuous range exactly from one kept unit or one allowed contiguous merge. AI title/meaning
-   cannot change source authority. Every published KP satisfies the corresponding Chapter/Section
-   boundaries.
+4. The semantic transport contains only one real Outline-subsection window (or one explicitly
+   defined Section fallback window) and declared context. Its accepted output is only
+   `learning_targets = [{unit_ids, title, one_sentence_meaning}]` and `non_kp_units`; it contains no
+   model-authored Section/page/line/geometry/range or source-revision fields.
+5. Contract validation rejects invented, duplicate, missing or multiply-consumed unit IDs,
+   non-contiguous targets, cross-window/Section references and invalid schema. It never silently
+   repairs, truncates or partially accepts a length-limited/invalid semantic response.
+6. Deterministic materialization derives each candidate's primary Section, order, source revision
+   and continuous range from its validated contiguous target units. AI title/meaning cannot change
+   source authority. Every published KP satisfies the corresponding Chapter/Section boundaries.
 7. Draft unit/candidate IDs are never durable or user-visible. Stable KP IDs and one structure
    version appear only inside the existing atomic publication transaction.
 8. The Review transport is one complete compact Chapter ledger with candidate-to-unit membership,
-   full decision accounting, bounded deterministic evidence excerpts/fingerprints and warnings. It
+   full partition accounting, bounded deterministic evidence excerpts/fingerprints and warnings. It
    excludes the raw whole-Chapter OCR line stream, geometry dump, generator context/reasoning and all
    undeclared state; canaries prove both semantic and Review allowlists and secret hygiene.
 9. Adversarial ledgers prove structural Review rejects high-confidence semantic duplicates, generic reasoning/test-
    taking labels, unjustified splitting/merging, major learning-coverage omissions and materially
    unbalanced Section granularity. Borderline optimization remains a warning. Review judges the
    complete Chapter but cannot rewrite content.
-10. Every blocking semantic finding names a valid existing Section and relevant unit IDs. Invalid,
-    absent or over-broad repair targets fail closed; they never trigger complete-Section or complete-
-    Chapter regeneration.
-11. Bounded semantic repair reruns only packet(s) containing newly targeted unit IDs, retains
-    unrelated successful packet decisions, supplies bounded same-Section peer summaries,
-    deterministically rematerializes candidates and sends the rebuilt compact complete-Chapter
-    ledger through Review again. A later finding may continue only when every implicated packet is
-    newly discovered and the cumulative packet/unit/round budget remains valid. A recurring blocker
-    in an already repaired packet, exhausted budget or over-broad request is terminal and publishes
-    nothing.
+10. A valid Review FAIL is terminal for the preparation attempt, publishes nothing and invokes no
+    semantic repair, regeneration or re-review. Actionable findings name the implicated valid Section
+    and smallest relevant unit-ID set but grant no authoring authority.
+11. Every real Outline-subsection window receives one logical semantic partition. A bounded technical
+    retry uses the exact same evidence and contract, receives no prior semantic result or Review
+    finding as input, and cannot become absorption, cleanup, audit, repair or re-partition.
 12. A transient provider error, timeout, `empty_response`, `finish_reason=length` or invalid structured
-    output retries only the current semantic packet; a technical Review failure retries only the
-    current compact Review stage. Already-successful unrelated packets are not resent, and technical
-    failure neither consumes semantic-repair authority nor becomes PASS.
+    output retries only the same current semantic window; a technical Review failure retries only the
+    identical compact Review stage. Already-successful unrelated windows are not resent, and
+    technical failure never becomes PASS.
 13. Generation, materialization, semantic Review, technical Review, deterministic validation and
     publication failures each remain non-READY and expose no partial KP set. A failed candidate cannot
     overwrite an existing published version.
-14. The actual semantic/reviewer provider/model route, packet/stage and typed failure are recorded
+14. The actual semantic/reviewer provider/model route, window/stage and typed failure are recorded
     honestly, together with bounded actionable Review finding detail; silent fallback and
     invocation-failure-as-PASS are impossible.
 15. Duplicate click, HTTP retry, response-loss replay, concurrent prepare calls, worker interruption,
@@ -390,7 +378,7 @@ is under test:
     duplicate using that overlap fails Review. Unmapped source gaps pass deterministic validation.
 23. During a delayed multi-Section run, the served Reader shows the existing honest stage and
     completed/total Section count without titles/meanings/ranges. Every semantic/Review attempt
-    records bounded provider/model, Section/packet or stage, attempt, timing, finish reason where
+    records bounded provider/model, Section/window or stage, attempt, timing, finish reason where
     supplied, usage, content/reasoning presence and lengths, and typed outcome; credentials and
     response/reasoning bodies are absent.
 24. A `READY` prepare request remains a no-op: no first regeneration or Learning/Mastery write is
@@ -407,20 +395,21 @@ Prefer an unprepared Chapter 6 and:
    child ranges are processed, with Section ownership/ranges coming from Outline/OCR rather than AI;
 4. complete one real bounded semantic + reviewer path through the same production-default route a
    normal user action selects when that authorized configured route is available; a test-only
-   provider override does not substitute. Record actual providers/models, packet count/size,
+   provider override does not substitute. Record actual providers/models, window count/size,
    timing/token evidence, Section progress and final allowlisted payload shapes;
-5. inspect model results and prove they contain only unit decisions plus short title/meaning; inspect
-   the compact Review ledger and prove it does not resend the raw whole-Chapter OCR/geometry body;
+5. inspect model results and prove they contain only the final group-first learning-target/non-KP
+   partition plus short title/meaning; inspect the compact Review ledger and prove it does not resend
+   the raw whole-Chapter OCR/geometry body;
 6. exercise one bounded `empty_response`, `finish_reason=length` or invalid-output failure on one
-   semantic packet; verify only that packet retries, successful unrelated packets are not resent,
-   per-attempt safe diagnostics remain, no draft content appears, and the Reader remains usable;
-7. exercise one blocking semantic finding addressed to a real Section/unit-ID set; verify only the
-   affected packet is repaired, the complete compact ledger is re-reviewed, and no whole Section is
-   regenerated;
+   semantic window; verify only the identical window input/contract retries, successful unrelated
+   windows are not resent, per-attempt safe diagnostics remain, no prior semantic output becomes
+   repair context, no draft content appears, and the Reader remains usable;
+7. exercise one valid blocking Review finding addressed to a real Section/unit-ID set; verify the
+   attempt ends as failed, publishes nothing and performs no semantic regeneration or re-review;
 8. observe the map appear atomically only after Review and validation PASS, grouped by primary
    Section with no partial KP set visible beforehand;
-9. inspect representative kept and merged KPs and use KP → textbook navigation to return to the
-   exact deterministic source positions/ranges;
+9. inspect representative materialized KPs and absorbed facet/example evidence, then use KP →
+   textbook navigation to return to the exact deterministic source positions/ranges;
 10. close and reopen the Reader, restart the service, and recover the same published structure
     version and stable KP identities;
 11. retry/replay one user action and prove convergence to one map with no duplicate KPs/version;
@@ -438,8 +427,8 @@ Run suites and served smoke paths that share the changed risk surface:
 - Map the Book logical identity, hierarchy, target navigation, per-node physical resolution, restart,
   and book cascade;
 - progressive OCR/layout preparation and source geometry consumed by target-Chapter resolution;
-- deterministic evidence-unit construction, bounded semantic packet contracts, deterministic KP
-  materialization, compact Chapter Review, localized repair and atomic publication;
+- deterministic evidence-unit construction, one-pass semantic-window contracts, deterministic KP
+  materialization, compact Chapter Review, terminal Review failure and atomic publication;
 - Reader open/navigation, selection/copy, Find in Book, Notes/Highlights, and Marks presentation;
 - Assistant source scope and existing AI_SAVED Annotation persistence/cascade;
 - existing job claim/recovery/idempotency, provider routing, structured output, final-payload
@@ -461,7 +450,7 @@ targeted → agent real-use golden path → affected regression → closure broa
 ## Autonomy
 
 Ordinary implementation details are delegated under `AGENTS.md` §5: naming, file/component layout,
-helpers, the local deterministic unit-building/packet-sizing algorithm, use of the existing job/
+helpers, the local deterministic unit/window-building algorithm, use of the existing job/
 provider/storage abstractions, exact Simplified Chinese wording and control placement, ordinary error
 handling and CSS, test organization, and small local refactors need no approval when they preserve
 this brief's authority and boundaries.
@@ -474,7 +463,7 @@ Stop and report if:
   requested Chapter;
 - trustworthy deterministic evidence units or KP source ranges cannot be established from the
   available real-book evidence without giving source authority back to AI;
-- a bounded semantic packet cannot retain enough learning meaning without a generic document
+- a bounded semantic window cannot retain enough learning meaning without a generic document
   framework, a new parser/runtime or whole-Chapter generative context;
 - a Frozen rule conflicts with this brief or Acceptance requires Learning, Master, Guide, Teaching,
   whole-book Pass 2, whole-book KP preparation, or another excluded capability;
@@ -494,9 +483,10 @@ turn missing Review evidence into PASS.
   CLOSURE / BROAD suite in that order.
 - Obtain an **independent narrow review** before closure. It must attack migration/data preservation,
   KP durable identity and ownership, evidence-unit/source-range authority, Outline logical-identity
-  preservation, the AI output allowlist, same-Section/adjacent-only merge enforcement, deterministic
-  materialization, compact Review-ledger allowlist, unit-addressed semantic repair, packet/stage-local
-  technical retry, draft/stable identity, atomic publication, idempotency/recovery, cascade,
+  preservation, the group-first AI output allowlist, same-window/contiguous target enforcement,
+  deterministic materialization, compact Review-ledger allowlist, terminal Review-failure behavior,
+  same-input window/stage-local technical retry, draft/stable identity, atomic publication,
+  idempotency/recovery, cascade,
   credential/egress isolation, failure-never-PASS, zero Learning/Mastery/Master/Teaching writes, and
   compatibility with future structure-lock authority.
 - Complete user real-use acceptance, write the concise development report in
