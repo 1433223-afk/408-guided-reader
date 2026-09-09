@@ -4,6 +4,8 @@
 > acceptance PASS; independent narrow review PASS (`P0=0`, `P1=0`, `P2=0`) with
 > `CLOSURE_RECOMMENDATION: CLOSE`. The user approved Phase closure on 2026-09-09. The accepted
 > implementation and deferred boundaries below remain authoritative history for this completed Phase.
+> Its former READY-regeneration prerequisite was superseded later on 2026-09-09 by Product decision
+> 69 and [`REGENERATE_READY_CHAPTER_KNOWLEDGE_MAP.md`](./REGENERATE_READY_CHAPTER_KNOWLEDGE_MAP.md).
 
 ## User-approved architecture correction
 
@@ -49,14 +51,13 @@ repair/re-review; Review payloads that resend the whole Chapter OCR/layout body;
 that regenerates a complete Section. No partial KP becomes visible during the replacement pipeline.
 
 `IMPLEMENTATION_BLUEPRINT.md` §12.2, §12.4 and §22 carry the corresponding minimum Frozen amendment.
-Two earlier research conclusions remain explicitly outside this correction. They are
-`REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`:
+Two earlier research conclusions were outside this completed Phase and were later superseded by the
+user-approved Product decision 69:
 
 - same-concept durable-ID reconciliation, new-concept minting and ambiguous split/merge blocking;
 - separation of published availability from replacement prepare-attempt lifecycle.
 
-Until both are separately authorized and implemented, a `READY` Chapter is not regenerable and this
-Phase still writes no Learning/Mastery state.
+This completed Phase itself still wrote no Learning/Mastery state and exposed no READY regeneration.
 
 ## Goal
 
@@ -243,10 +244,8 @@ one necessary, stop and report under `AGENTS.md` §5.
   Chapter stage and minimum completed/total Section progress. Local bounded observability retains
   secret-free per-attempt route, timing, finish/usage/length metadata and typed failure, but never
   credentials, response bodies, reasoning text or partial KP content (Implementation §22).
-- **Replacement is explicitly blocked at this boundary.** Opaque IDs minted by the first atomic
-  publication remain valid, but no `READY` map may regenerate and no Mastery/Learning state may be
-  introduced until `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION` identity reconciliation and
-  availability/attempt separation are separately implemented (Implementation §12.4a).
+- **Replacement was explicitly blocked in this completed Phase.** Product decision 69 and the later
+  READY-regeneration Phase supersede that historical boundary without changing this Phase's result.
 - **No learning or teaching writes.** This Phase writes no `KPStatus`, `SectionLearningState`,
   `LearningEvent`, Master thread/topic/message, Reading Guide, Inline Guidance, Recall, Progress,
   Mastery, ExamEvidence, or Teaching asset. Chapter publication may make future KP-dependent

@@ -15,7 +15,8 @@
 | Semantic closure | Completed 2026-09-03, following `LEGACY_PRODUCT_SEMANTICS_DELTA_AUDIT.md` and independent ZCode review. Assistant recursion (§14.3–§14.11), Master Topic/mastery authority (§15.5–§15.7), Review rework/terminal-failure (§13.7a–§13.7b), Section/Chapter isolation (§17.5–§17.6), and foundation-version staleness scoping (§19.2a) realize the corresponding `PRODUCT_BLUEPRINT.md` freezes. §32 records disposition of every P0/P1 audit finding — none remains unresolved. |
 | Outline conceptual correction | Same-day follow-up, 2026-09-03. A second ZCode pass found a new blocking issue (P1-5) in the closure patch's Outline fix; a product-intent clarification then established that logical directory structure and physical range resolution had been conflated. §9 (Product) and §11, §12.2/§12.6, §18.2, §19.1–§19.2b (Implementation) are rewritten accordingly; `OutlineRegion` is removed. See §32.1. |
 | Chapter Knowledge Map first UAT correction | User-approved amendment, 2026-09-07, after real-use `empty_response`/latency failure and external KP research review. It introduced Section-scoped private generation/retry, removed deterministic no-overlap, added structural duplicate/overlap Review, safe per-attempt diagnostics and minimum Section progress. Its LLM-first complete-KP generation and whole-Section semantic repair are superseded by the architecture correction below; its retained shell, overlap rule and observability remain authority. |
-| Chapter Knowledge Map architecture correction | User-approved amendment, 2026-09-07, after repeated invalid/length-limited generation and oversized/rejected Review. §12.2 now requires deterministic evidence units, bounded AI `KEEP`/`MERGE`/`DROP` plus short labels, deterministic KP materialization, compact Chapter Review and unit-addressed repair; §12.4 freezes the model/source-authority boundary; §22 makes diagnostics packet/stage-scoped. Existing Outline/OCR authority, jobs, persistence, Reader UI/navigation and atomic publication remain unchanged. Durable replacement identity and availability/attempt separation are still required before Mastery or first regeneration and are not authorized here. |
+| Chapter Knowledge Map architecture correction | User-approved amendment, 2026-09-07, after repeated invalid/length-limited generation and oversized/rejected Review. §12.2 now requires deterministic evidence units, bounded AI `KEEP`/`MERGE`/`DROP` plus short labels, deterministic KP materialization, compact Chapter Review and unit-addressed repair; §12.4 freezes the model/source-authority boundary; §22 makes diagnostics packet/stage-scoped. Existing Outline/OCR authority, jobs, persistence, Reader UI/navigation and atomic publication remain unchanged. Its former replacement prerequisite is superseded by the 2026-09-09 amendment below. |
+| READY Chapter regeneration / permanent learning lock | User-approved Frozen amendment, 2026-09-09. §12.1 and §12.4a allow explicit whole-Chapter replacement only before any persistent learning state has ever existed and while no other durable user asset references an old KP. Replacement keeps the published READY Map available, mints all-fresh KP IDs, and rechecks eligibility inside atomic publication. §12.5 makes the first learning-state write an irreversible Chapter lock; deletion/reset cannot unlock it, and no migration, remap, manual unlock or single-KP edit exists. |
 | Chapter Knowledge Map Review convergence correction | User-approved amendment, 2026-09-07, after real Chapter 1/7 Review failures exposed genuine local reducer defects plus non-exhaustive discovery across untouched packets. §12.2 keeps all seven Review dimensions while reserving `BLOCKING` for high-confidence unpublishable defects, moves short-heading/reference-only closure upstream and permits only cumulative-bounded repair of newly implicated untouched packets. Repeated local blockers and budget exhaustion still fail closed; Chapter Review and atomic publication are unchanged. |
 | Chapter Knowledge Map taxonomy-granularity correction | User-approved amendment, 2026-09-08, after Chapter 7.1.3 incorrectly published four overview enumeration items as four durable KPs. §12.2 now makes consecutive brief taxonomy/composition/step/peer runs one upstream Section-level `MERGE`; separate KPs require sufficient current source evidence for independently assessable mechanisms, methods or relationships. Packet-local validation/retry enforces the rule before materialization; final Chapter Review is not its primary repair layer. |
 | Chapter Knowledge Map semantic-reducer simplification | User-approved amendment, 2026-09-08, after controlled Chapter 2 calibration showed multi-pass absorption/audit could oscillate between over-split and over-merge. §12.2 now requires exactly one group-first final partition per real Outline-subsection semantic window, with bounded same-input technical retry only. It supersedes packet `KEEP`/`MERGE`/`DROP`, forced enumeration/character/count heuristics, semantic cleanup/re-partition and Review-driven repair/re-review. Chapter Review remains a strict final gate whose valid FAIL ends the attempt. Existing Outline/OCR/source authority, private drafts, deterministic materialization/validation, persistence and atomic publication are unchanged. |
@@ -1022,6 +1023,17 @@ Per `(book_source_revision, chapter OutlineNode)`. **Chapter-scoped and lazy: ne
 eager.** A FAILED chapter is isolated — reading, selection, notes, highlights and Assistant remain
 fully available for it (§14, §20).
 
+A published Map's availability is independent from a replacement attempt:
+
+```
+READY(vN) + IDLE/FAILED ──explicit regenerate──► READY(vN) + RUNNING
+READY(vN) + RUNNING ──atomic publish──► READY(vN+1) + IDLE
+READY(vN) + RUNNING ──fail/block──► READY(vN) + FAILED
+```
+
+No replacement state hides or mutates `READY(vN)`. The replacement attempt stores only operational
+progress/failure until the publish transaction succeeds.
+
 ### 12.2 Pipeline
 
 ```
@@ -1140,10 +1152,9 @@ transaction.** Nothing outside the pipeline can reference a draft. This makes a 
 preparation garbage rather than debris, and makes "partial draft masquerading as READY" (§14)
 structurally impossible.
 
-For the first publication, every published KP is a new concept and receives a new opaque ID. For a
-future replacement publication, §12.4a supersedes "minted" where continuity is established: the
-publish transaction reuses a reconciled prior ID and mints only genuinely new concepts. That future
-path remains unavailable until all §12.4a prerequisites are implemented.
+For the first publication, every published KP is a new concept and receives a new opaque ID. An
+eligible explicit replacement under §12.4a also mints a fresh opaque ID for every replacement KP;
+old identities are never reconciled, reused, remapped or exposed as editable records.
 
 ### 12.4 Entity and deterministic validation
 
@@ -1190,45 +1201,42 @@ repair call or another semantic partition.
 **Cross-section relations** (prerequisite, bridge, related) are a separate association table. They
 never affect primary ownership, which is what mastery depends on (§12).
 
-### 12.4a Replacement boundary — `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`
+### 12.4a READY replacement boundary — `FROZEN_FROM_PRODUCT` (§15, decision 69)
 
-The first published map may use §12.3's opaque IDs exactly as specified. Before any `READY` map can
-be regenerated, or before Mastery/Learning state may reference its KPs, authority and implementation
-must additionally provide both of the following:
+Regeneration is an explicit whole-Chapter action and is allowed only when:
 
-1. replacement identity reconciliation: an equivalent concept reuses its durable opaque
-   `knowledge_point_id`, a genuinely new concept receives a new ID only in the publication
-   transaction, and an ambiguous match/split/merge blocks V1 publication rather than guessing;
-2. published availability independent of prepare-attempt lifecycle, so `READY(vN)` remains visible
-   while replacement `vN+1` is running or failed and changes only by an atomic current-version
-   pointer switch.
+1. the Chapter has a current complete `READY` Map;
+2. its irreversible `learning_state_ever` lock is absent; and
+3. no other durable user asset references any current Chapter `knowledge_point_id`.
 
-This amendment records a required boundary; it does **not** authorize either capability in the
-current Chapter-first-publication UAT rework. Until both exist, a `READY` Chapter is not regenerable
-and no Learning/Mastery state may be introduced for it.
+The same predicate is evaluated under a write transaction before the attempt starts and again in
+the final publication transaction. The second check closes the race with the first learning-state or
+other asset write. Failure of either check refuses replacement; a late failure records an attempt
+failure while keeping the old Map current.
+
+The normal §12.2 pipeline builds a complete private candidate. On success §17.6 inserts all new KPs
+with fresh IDs, removes the dependency-free old set and switches the Chapter structure version in
+one transaction. There is no same-concept reconciliation, ID reuse, migration, remap, compatibility
+layer, history UI, single-KP edit or manual unlock.
 
 ### 12.5 Structural protection — `FROZEN_FROM_PRODUCT` (§15)
 
 ```
-chapter_structure_locked := EXISTS(durable user asset referencing any KP in this chapter)
+chapter_structure_permanently_locked := learning_state_ever_at IS NOT NULL
+chapter_structure_temporarily_blocked := EXISTS(other durable user asset referencing a current KP)
 ```
 
-where durable assets are KP progress, KP-linked Master threads, and KP-linked annotations —
-`Annotation.knowledge_point_id` (§16.1a) is exactly the bookkeeping field this predicate scans; it is
-never re-derived from geometry, and its absence on an otherwise-unrelated annotation simply means that
-annotation doesn't count toward the lock.
+The first persistent learning-state write must set `learning_state_ever_at` in the same transaction
+as the learning write. The marker is monotonic and cannot be cleared or rewritten; resetting,
+deleting or changing current state/history never unlocks the Chapter. `Annotation.knowledge_point_id`
+(§16.1a) remains the direct bookkeeping reference for KP-linked annotations, and every future
+KP-linked user-asset write must either participate in the permanent learning lock or remain visible
+to the §12.4a dependency check.
 
-- **Unlocked** → before first publication, retry/regenerate disposable private candidates freely.
-  After a map is `READY`, regeneration remains unavailable until §12.4a's identity-reconciliation
-  and availability/attempt prerequisites exist; once they do, an unlocked Chapter may use that
-  guarded replacement path.
-- **Locked** → destructive republication is **refused**. No silent merge, split or re-ID.
-
-Post-progress structure upgrade is `DEFERRED_WITH_BOUNDARY`. The boundary that future migration will
-use is already in place: stable KP IDs, an explicit `chapter_structure_version`, an append-only
-learning history that records *what the user did* independently of *which KP row exists*, and the
-lock predicate itself. A future migration writes an old-KP → new-KP mapping and replays; nothing in
-V1 forecloses that.
+- **Eligible** → only an explicit complete READY replacement may run; private candidates remain
+  disposable and all published replacement IDs are new.
+- **Permanently locked** or **currently dependency-blocked** → replacement is refused. No migration,
+  remap, compatibility path, single-KP edit or manual unlock is available.
 
 ### 12.6 Concurrency and idempotency
 
@@ -1237,8 +1245,9 @@ chapter_node.identity_revision, chapter_node.physical_revision)` — the Chapter
 revision counters (§11.1), not a book-wide Outline version. A correction to a *different* Chapter
 never changes this key, so it never invalidates or duplicates an in-flight or completed preparation
 for this one. A second request for a chapter already `PREPARING` joins the existing job rather than
-starting a second. Publication is a single transaction guarded by a state check, so two racing workers
-cannot both publish.
+starting a second. An explicit replacement request likewise joins the current replacement attempt;
+ordinary Prepare remains a READY no-op. Publication is a single transaction guarded by the current
+attempt and §12.4a eligibility checks, so two racing workers cannot both publish.
 
 ---
 
@@ -1688,8 +1697,8 @@ alongside event insertion.
 
 Both are stored rather than derived on read: the projection is queried on every page turn, and event
 replay for a long history would be wasteful. But the event log remains the arbiter — a projection
-inconsistency is repairable by replay, which is the property that makes a future chapter-structure
-migration (§12.5) tractable.
+inconsistency is repairable by replay. The first such write also permanently freezes its Chapter
+structure under §12.5; replay, reset or deletion never authorizes replacement.
 
 This is also what lets a learner become unclear again later without erasing the earlier resolution
 (§29): status changes; history accretes.
@@ -1791,11 +1800,9 @@ single user annotation.
 `knowledge_point_id` is set, when applicable, purely so Chapter-structure protection (§12.5) can
 answer "does this Chapter have a durable KP-linked asset" without scanning annotation *content*.
 Nothing reads it to render, re-anchor, or validate an annotation — `quads` + `quote` +
-`context_before`/`context_after` remain fully sufficient on their own (§16.3). If the referenced KP is
-later replaced under an explicit structure migration (§12.5, still `DEFERRED_WITH_BOUNDARY`), or the
-field is simply absent, the annotation renders exactly as it would with the field populated. This
-field may be `NULL`, may go stale, and may be dropped and recomputed at any time without any user-
-visible effect on the annotation itself.
+`context_before`/`context_after` remain fully sufficient on their own (§16.3). While populated, the
+field blocks READY Chapter replacement. If absent, the annotation renders exactly as it would with
+the field populated; no migration or remap is inferred from this bookkeeping field.
 
 ### 16.2 Region notes
 
@@ -2486,7 +2493,6 @@ Each carries the seam that future work will use — deferral is not abandonment.
 
 | Deferred | Seam already in place |
 |---|---|
-| Post-progress chapter structure migration (§12.5) | Stable KP IDs, `chapter_structure_version`, append-only history, lock predicate |
 | Cross-revision user-asset migration (§6.2) | All durable assets carry `book_source_revision_id`; old revisions retained as SUPERSEDED |
 | Persistent formula regions (§9.3) | Another `VisualRegion.kind` |
 | Independent ExamTopic progress (§17 of Product) | Evidence entity + KP links exist; no progress tree attached |

@@ -428,8 +428,8 @@ An annotation's authority remains geometry + quote/context (above) — this neve
 annotation **may additionally record**, as bookkeeping rather than authority, which KP (if any) it is
 associated with, so Chapter-structure protection (§15.2) can correctly detect "this Chapter has a
 durable KP-linked asset." This association is derived/optional metadata: if it is missing, stale, or
-the Chapter structure it referenced is later replaced under an explicit migration (§15.2), the
-annotation still renders correctly from its geometry and quote alone. The KP association is never
+the linked annotation is later deleted, the annotation's geometry contract remains independent of
+KP identity. While the association exists it blocks READY Chapter-map regeneration; it is never
 required for the annotation to remain valid or visible.
 
 ---
@@ -722,24 +722,30 @@ Chapter KP structure is **stable after user assets depend on it**.
 
 ## 15.1 Before user learning assets exist
 
-If a Chapter has no KP-linked user assets, its draft/map may be regenerated or corrected relatively freely before becoming relied upon.
+An explicit READY-map regeneration is allowed only while both conditions remain true:
+
+- no KP in the Chapter has ever produced any persistent learning state; and
+- no other durable user asset currently references any KP in the Chapter.
+
+Regeneration always rebuilds the complete Chapter Map. A successful replacement publishes
+atomically and every replacement KP receives a fresh opaque ID; a failed or in-progress replacement
+leaves the existing READY Map visible and unchanged. Eligibility is checked once before work starts
+and again inside the final replacement transaction.
 
 ## 15.2 After user learning assets exist
 
-Once any of these exist:
+Once any KP in the Chapter has produced any persistent learning state — current status, learning
+event/history, Section confirmation, Master state or another learning-state projection — the entire
+Chapter Map is **permanently frozen**. Resetting, deleting or changing that state never unlocks the
+Chapter. Master and every later capability must preserve this rule.
 
-- KP Progress;
-- Master history/thread linked to KP;
-- KP-linked Note/Highlight;
-- other durable learning assets;
+Other durable user assets that reference a Chapter KP, including a KP-linked Note/Highlight, also
+block regeneration while that dependency exists.
 
-the first product version **forbids destructive Chapter structure changes** unless an explicit migration/remap mechanism exists.
-
-No silent merge/split/re-ID.
-
-Post-progress Structure Upgrade is deferred until formal migration support exists.
-
-A Chapter structure version is therefore required conceptually.
+Therefore the first product version provides no single-KP edit, merge, split, deletion, in-place
+replacement, migration, remap, manual/artificial unlock, or compatibility path that rewrites old
+learning state onto new IDs. The Chapter structure version remains required for atomic publication
+and observability, not as an authorization to mutate a frozen Map.
 
 ---
 
@@ -1906,6 +1912,7 @@ Unless explicitly reopened, the following are current product baseline decisions
 66. User Style affects only Master/Assistant expression; it can never change recursion/authority/persistence/trust/Review structural rules, and System/Review never accept style input at all.
 67. Outline correction has three risk tiers — logical/cosmetic, physical boundary, and true structural identity — with protection scoped to the specific node whose boundary or identity would change, never globally triggered by the existence of any Book asset.
 68. An artifact that used a specific Outline node's physical range depends on that node's own identity and resolution state, never on a book-wide Outline version; another Chapter's range resolving, or unrelated node metadata correcting, never makes such an artifact stale.
+69. A READY Chapter Map may be regenerated only when no Chapter KP has ever produced persistent learning state and no other durable user asset references an old KP. Regeneration is whole-Chapter, mints all-fresh KP IDs, keeps the old READY Map on failure/in progress, and rechecks eligibility inside atomic replacement. The first learning-state write permanently freezes the Chapter even if that state is later reset, deleted or changed; there is no migration, remap, manual unlock or single-KP edit, and Master may not weaken this rule.
 
 ---
 
@@ -1918,7 +1925,6 @@ These are intentionally deferred rather than unresolved blockers for the product
 - attributed teacher-video knowledge layer;
 - individual exercise → KP mapping;
 - adaptive practice / scoring / wrong-question system;
-- formal post-progress Chapter KP remap/migration;
 - formula-specific persistent object model;
 - exact AI intrusion-level enum;
 - exact UI wording and routing thresholds for Master/Assistant Review modes;
