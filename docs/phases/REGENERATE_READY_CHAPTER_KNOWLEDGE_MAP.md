@@ -1,7 +1,9 @@
 # Phase / Regenerate READY Chapter Knowledge Map
 
-> **Status: ACCEPTED / IN IMPLEMENTATION (2026-09-09).** The user explicitly approved the Frozen
-> invariants and authorized authority sync plus implementation in the same conversation.
+> **Status: IMPLEMENTATION_READY / USER ACCEPTANCE PENDING (2026-09-09).** The user explicitly
+> approved the Frozen invariants and authorized authority sync plus implementation in the same
+> conversation. Targeted, real-use, affected and broad machine acceptance pass; closure is not yet
+> claimed.
 
 ## Goal
 
@@ -78,4 +80,6 @@ migrating an existing user learning asset, adding a dependency, or weakening the
 
 Run targeted invariant tests, the isolated real-use replacement path, affected regression and a broad
 closure suite. Record honest evidence in a concise Development Report and create a clean checkpoint.
-Stop at `IMPLEMENTATION_READY`; user acceptance and the next Master Phase remain separate.
+Because this Phase changes durable identity and destructive replacement authority, a narrow
+independent review is required before closure. Stop at `IMPLEMENTATION_READY`; user acceptance,
+independent acceptance and the next Master Phase remain separate.

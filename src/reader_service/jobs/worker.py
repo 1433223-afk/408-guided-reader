@@ -112,6 +112,24 @@ class PreparationCoordinator:
         self._wake.set()
         return result
 
+    def schedule_chapter_regeneration(
+        self, revision_id: str, chapter_id: str
+    ) -> tuple[dict, bool]:
+        if self.knowledge is None:
+            raise RuntimeError("Chapter Knowledge preparation is unavailable")
+        revision = self.foundation.ensure_revision(revision_id)
+        page_start, page_end = self.knowledge.required_page_range(revision_id, chapter_id)
+        with self._dispatch_lock:
+            result = self.knowledge.request_regenerate(revision_id, chapter_id)
+            if result[1]:
+                self.jobs.enqueue_page_range(
+                    revision_id, page_start, page_end, revision["foundation_version"]
+                )
+                self.jobs.complete_already_ready_pages(revision_id, page_start, page_end)
+                self.jobs.prioritize_range(revision_id, page_start, page_end)
+        self._wake.set()
+        return result
+
     def _run(self) -> None:
         while not self._stop.is_set():
             with self._dispatch_lock:

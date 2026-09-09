@@ -20,7 +20,7 @@ from reader_service.foundation import FoundationService
 from reader_service.library import LibraryService
 from reader_service.outline import ChapterResolutionError, OutlineService
 
-from .repository import KnowledgeRepository
+from .repository import ChapterRegenerationBlocked, KnowledgeRepository
 from .semantic import (
     SemanticOutputError,
     build_compact_review_ledger,
@@ -170,6 +170,10 @@ class KnowledgeService:
         self.library.revision(revision_id)
         return self.repository.request_prepare(revision_id, chapter_id)
 
+    def request_regenerate(self, revision_id: str, chapter_id: str) -> tuple[dict, bool]:
+        self.library.revision(revision_id)
+        return self.repository.request_regenerate(revision_id, chapter_id)
+
     def required_page_range(self, revision_id: str, chapter_id: str) -> tuple[int, int]:
         nodes = self.outline.repository.list(revision_id)
         ordered = self.outline._topological(nodes)
@@ -200,7 +204,9 @@ class KnowledgeService:
             state = self.repository.snapshot(revision_id, chapter_id)
         except LookupError:
             return self._cancelled_job_result(revision_id, chapter_id)
-        if state["status"] != "PREPARING":
+        if state["status"] != "PREPARING" and not (
+            state["status"] == "READY" and state["regeneration_state"] == "RUNNING"
+        ):
             return state
         attempt_id = state["attempt_id"]
         generator_identity = (None, None)
@@ -363,6 +369,10 @@ class KnowledgeService:
             )
         except KnowledgePipelineError as failure:
             error = failure
+        except ChapterRegenerationBlocked as failure:
+            error = KnowledgePipelineError(
+                "PUBLICATION", "DEPENDENCY_LOCK", failure.code, str(failure)
+            )
         except (ValueError, AssertionError) as failure:
             error = KnowledgePipelineError(
                 "DETERMINISTIC_VALIDATION", "INVALID_CANDIDATE",

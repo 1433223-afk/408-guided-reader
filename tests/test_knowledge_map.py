@@ -20,7 +20,11 @@ from reader_service.foundation import (
     PageLabelService,
 )
 from reader_service.jobs import JobRepository, PreparationCoordinator
-from reader_service.knowledge import KnowledgeRepository, KnowledgeService
+from reader_service.knowledge import (
+    ChapterRegenerationBlocked,
+    KnowledgeRepository,
+    KnowledgeService,
+)
 from reader_service.knowledge.semantic import (
     MAX_SEMANTIC_WINDOW_CHARACTERS,
     build_compact_review_ledger,
@@ -598,6 +602,161 @@ def test_one_chapter_publishes_atomically_without_outline_mutation_or_payload_re
     ]
 
 
+def test_ready_chapter_regeneration_keeps_old_map_visible_and_mints_all_fresh_ids(service):
+    fixture = build_fixture(service, runtime=ScriptedRuntime(review=lambda _payload, _count: review_answer()))
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    first = claim_and_run(fixture)
+    first_ids = [point["knowledge_point_id"] for point in first["knowledge_points"]]
+
+    requested, created = fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    assert created
+    assert requested["status"] == "READY"
+    assert requested["regeneration_state"] == "RUNNING"
+    assert not requested["regeneration_allowed"]
+    assert [point["knowledge_point_id"] for point in requested["knowledge_points"]] == first_ids
+
+    joined, created = fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    assert not created and joined["attempt_id"] == requested["attempt_id"]
+    ordinary, created = fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    assert not created and ordinary["attempt_id"] == requested["attempt_id"]
+    assert [point["knowledge_point_id"] for point in ordinary["knowledge_points"]] == first_ids
+
+    replaced = claim_and_run(fixture)
+    replacement_ids = [point["knowledge_point_id"] for point in replaced["knowledge_points"]]
+    assert replaced["status"] == "READY"
+    assert replaced["regeneration_state"] == "IDLE", replaced
+    assert replaced["regeneration_allowed"]
+    assert replaced["structure_version"] == 2
+    assert set(first_ids).isdisjoint(replacement_ids)
+    with service.database.connect() as connection:
+        rows = connection.execute(
+            """
+            SELECT knowledge_point_id, chapter_structure_version
+            FROM knowledge_points
+            WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+            """,
+            (revision_id, chapter_id),
+        ).fetchall()
+    assert {row["knowledge_point_id"] for row in rows} == set(replacement_ids)
+    assert {row["chapter_structure_version"] for row in rows} == {2}
+
+
+def test_failed_ready_regeneration_preserves_published_map(service):
+    def reviewer(payload, count):
+        if count == 1:
+            return review_answer()
+        window = next(window for window in payload["windows"] if window["learning_targets"])
+        return review_answer(
+            "FAIL", "替换候选存在阻断问题。",
+            [blocking_finding(window["section_id"], window["learning_targets"][0]["unit_ids"])],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    first = claim_and_run(fixture)
+    first_ids = [point["knowledge_point_id"] for point in first["knowledge_points"]]
+
+    fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+    assert failed["status"] == "READY"
+    assert failed["regeneration_state"] == "FAILED"
+    assert failed["regeneration_failure_stage"] == "REVIEW"
+    assert failed["regeneration_failure_code"] == "review_rejected"
+    assert failed["structure_version"] == 1
+    assert [point["knowledge_point_id"] for point in failed["knowledge_points"]] == first_ids
+
+
+def test_learning_state_lock_is_permanent_and_rechecked_inside_replacement(service):
+    fixture = build_fixture(service, runtime=ScriptedRuntime(review=lambda _payload, _count: review_answer()))
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    first = claim_and_run(fixture)
+    first_ids = [point["knowledge_point_id"] for point in first["knowledge_points"]]
+
+    fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    with service.database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        fixture["repository"].lock_for_learning_state(connection, first_ids[0])
+
+    failed = claim_and_run(fixture)
+    assert failed["status"] == "READY"
+    assert failed["regeneration_state"] == "FAILED"
+    assert failed["regeneration_failure_code"] == "CHAPTER_PERMANENTLY_LOCKED", failed
+    assert [point["knowledge_point_id"] for point in failed["knowledge_points"]] == first_ids
+    assert failed["regeneration_block_code"] == "CHAPTER_PERMANENTLY_LOCKED"
+
+    with service.database.connect() as connection:
+        with pytest.raises(sqlite3.IntegrityError, match="irreversible"):
+            connection.execute(
+                """
+                UPDATE chapter_preparations SET learning_state_ever_at = NULL
+                WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                """,
+                (revision_id, chapter_id),
+            )
+    with pytest.raises(ChapterRegenerationBlocked) as blocked:
+        fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    assert blocked.value.code == "CHAPTER_PERMANENTLY_LOCKED"
+
+
+def test_other_durable_kp_reference_blocks_ready_regeneration(service):
+    fixture = build_fixture(service)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+    point_id = ready["knowledge_points"][0]["knowledge_point_id"]
+    with service.database.connect() as connection:
+        connection.execute(
+            "CREATE TABLE fixture_user_assets(id TEXT PRIMARY KEY, knowledge_point_id TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO fixture_user_assets(id, knowledge_point_id) VALUES ('asset', ?)",
+            (point_id,),
+        )
+
+    snapshot = fixture["knowledge"].snapshot(revision_id, chapter_id)
+    assert not snapshot["regeneration_allowed"]
+    assert snapshot["regeneration_block_code"] == "CHAPTER_HAS_USER_ASSETS"
+    with pytest.raises(ChapterRegenerationBlocked) as blocked:
+        fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    assert blocked.value.code == "CHAPTER_HAS_USER_ASSETS"
+
+
+def test_ready_replacement_publication_rolls_back_to_old_map_on_insert_failure(service):
+    fixture = build_fixture(
+        service, runtime=ScriptedRuntime(review=lambda _payload, _count: review_answer())
+    )
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    first = claim_and_run(fixture)
+    first_ids = [point["knowledge_point_id"] for point in first["knowledge_points"]]
+    fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    with service.database.connect() as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER fail_replacement_kp BEFORE INSERT ON knowledge_points
+            WHEN NEW.chapter_structure_version = 2 AND NEW.order_index = 1
+            BEGIN SELECT RAISE(ABORT, 'replacement fault injection'); END
+            """
+        )
+
+    failed = claim_and_run(fixture)
+    assert failed["status"] == "READY"
+    assert failed["regeneration_state"] == "FAILED"
+    assert failed["regeneration_failure_stage"] == "PUBLICATION"
+    assert failed["regeneration_failure_code"] == "publication_failed"
+    assert failed["structure_version"] == 1
+    assert [point["knowledge_point_id"] for point in failed["knowledge_points"]] == first_ids
+
+
 def test_invalid_output_retries_only_the_identical_window_contract(service):
     first_payloads = []
 
@@ -901,6 +1060,21 @@ def test_http_contract_never_exposes_private_candidates(service):
         status, published = request_json(f"{base}{path}", token)
         assert status == 200 and published["knowledge_points"]
         assert "candidate_id" not in json.dumps(published)
+        published_ids = [point["knowledge_point_id"] for point in published["knowledge_points"]]
+        status, replacement = request_json(
+            f"{base}{path}/regenerate",
+            token,
+            method="POST",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+        )
+        assert status == 202
+        assert replacement["chapter_map"]["status"] == "READY"
+        assert replacement["chapter_map"]["regeneration_state"] == "RUNNING"
+        assert [
+            point["knowledge_point_id"]
+            for point in replacement["chapter_map"]["knowledge_points"]
+        ] == published_ids
         status, inspection = request_json(f"{base}{path}/inspection", token)
         assert status == 200 and inspection["pipeline_attempts"]
 
@@ -989,7 +1163,16 @@ def test_migration_10_preserves_legacy_attempt_as_safe_metadata(tmp_path):
         assert upgraded.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chapter_generation_attempts'"
         ).fetchone() is None
-        assert upgraded.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 10
+        assert upgraded.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 11
+        preparation = upgraded.execute(
+            """
+            SELECT regeneration_state, attempt_foundation_version,
+                   attempt_chapter_identity_revision,
+                   attempt_chapter_physical_revision, learning_state_ever_at
+            FROM chapter_preparations
+            """
+        ).fetchone()
+        assert preparation == ("IDLE", 1, 1, 1, None)
     finally:
         upgraded.close()
 

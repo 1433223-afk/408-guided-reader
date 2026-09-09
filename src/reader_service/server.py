@@ -18,7 +18,7 @@ from reader_service.annotation import AnnotationService
 from reader_service.assistant import AssistantService, AssistantStateError
 from reader_service.library import IntakeError, LibraryService
 from reader_service.jobs import PreparationCoordinator
-from reader_service.knowledge import KnowledgeService
+from reader_service.knowledge import ChapterRegenerationBlocked, KnowledgeService
 from reader_service.outline import OutlineService
 from reader_service.saved_explanations import (
     SavedExplanationError,
@@ -47,6 +47,9 @@ _CHAPTER_KNOWLEDGE_MAP = re.compile(
 )
 _CHAPTER_KNOWLEDGE_PREPARE = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/chapters/([0-9a-f-]+)/knowledge-map/prepare$"
+)
+_CHAPTER_KNOWLEDGE_REGENERATE = re.compile(
+    r"^/api/revisions/([0-9a-f-]+)/chapters/([0-9a-f-]+)/knowledge-map/regenerate$"
 )
 _CHAPTER_KNOWLEDGE_INSPECTION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/chapters/([0-9a-f-]+)/knowledge-map/inspection$"
@@ -312,6 +315,40 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            regenerate_knowledge = _CHAPTER_KNOWLEDGE_REGENERATE.fullmatch(parsed.path)
+            if regenerate_knowledge:
+                if not self._authorized():
+                    return
+                if knowledge is None or preparation is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "KNOWLEDGE_UNAVAILABLE", "error": "章节学习地图不可用。"
+                    })
+                    return
+                try:
+                    self._read_json()
+                    result, created = preparation.schedule_chapter_regeneration(
+                        regenerate_knowledge.group(1), regenerate_knowledge.group(2)
+                    )
+                except ChapterRegenerationBlocked as exc:
+                    self._json(HTTPStatus.CONFLICT, {"code": exc.code, "error": str(exc)})
+                    return
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except RuntimeError as exc:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "KNOWLEDGE_UNAVAILABLE", "error": str(exc)
+                    })
+                    return
+                self._json(
+                    HTTPStatus.ACCEPTED
+                    if result["regeneration_state"] == "RUNNING" else HTTPStatus.OK,
+                    {"chapter_map": result, "created": created},
+                )
+                return
             prepare_knowledge = _CHAPTER_KNOWLEDGE_PREPARE.fullmatch(parsed.path)
             if prepare_knowledge:
                 if not self._authorized():

@@ -131,11 +131,10 @@ generation was performed after the accepted Chapter 3 run.
 
 ## Known limitations / deferred debt
 
-- `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: reconcile same-concept durable IDs, mint new IDs
-  only for new concepts, and block ambiguous split/merge identity decisions.
-- `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: separate published availability from replacement
-  prepare-attempt lifecycle so a failed replacement cannot obscure the current published version.
-- READY-map regeneration remains blocked, and this Phase still writes no Learning/Mastery state.
+At this Phase's closure READY regeneration remained blocked and no Learning/Mastery state was
+written. The former identity-reconciliation prerequisite was superseded later on 2026-09-09 by
+Product decision 69 and the
+[`REGENERATE_READY_CHAPTER_KNOWLEDGE_MAP`](./REGENERATE_READY_CHAPTER_KNOWLEDGE_MAP.md) report.
 
 ## Reproducible entry points
 

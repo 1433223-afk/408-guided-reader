@@ -822,7 +822,7 @@ async function loadKnowledgeMap() {
         || state.knowledgeChapterId !== chapterId) return;
     state.knowledgeMap = payload;
     renderKnowledgeMap(payload);
-    if (payload.status === "PREPARING") {
+    if (payload.status === "PREPARING" || payload.regeneration_state === "RUNNING") {
       state.knowledgePollTimer = setTimeout(loadKnowledgeMap, 700);
     }
   } catch (_error) {
@@ -836,8 +836,18 @@ function renderKnowledgeMap(payload) {
   elements["knowledge-title"].textContent = payload.chapter_title || "章节学习地图";
   elements["knowledge-map"].replaceChildren();
   elements["knowledge-empty"].hidden = payload.status === "READY";
-  elements["knowledge-prepare"].hidden = payload.status === "READY" || payload.status === "PREPARING";
-  elements["knowledge-prepare"].disabled = payload.status === "PREPARING";
+  const replacementRunning = payload.status === "READY" && payload.regeneration_state === "RUNNING";
+  elements["knowledge-prepare"].hidden = payload.status === "PREPARING";
+  elements["knowledge-prepare"].disabled = payload.status === "PREPARING" || replacementRunning
+    || (payload.status === "READY" && !payload.regeneration_allowed);
+  const stages = {
+    QUEUED: "等待开始",
+    RESOLVING_SOURCE: "正在解析本章来源范围",
+    GENERATING: "正在按小节生成知识点",
+    REVIEWING: "正在进行整章结构审查",
+    VALIDATING: "正在校验整章学习地图",
+    PUBLISHING: "正在整体发布学习地图",
+  };
   if (payload.status === "NOT_PREPARED") {
     elements["knowledge-status"].textContent = "本章学习地图尚未准备；PDF 阅读和现有工具可继续使用。";
     elements["knowledge-empty"].textContent = "尚未准备这个章节的学习地图。";
@@ -845,14 +855,6 @@ function renderKnowledgeMap(payload) {
     return;
   }
   if (payload.status === "PREPARING") {
-    const stages = {
-      QUEUED: "等待开始",
-      RESOLVING_SOURCE: "正在解析本章来源范围",
-      GENERATING: "正在按小节生成知识点",
-      REVIEWING: "正在进行整章结构审查",
-      VALIDATING: "正在校验整章学习地图",
-      PUBLISHING: "正在整体发布学习地图",
-    };
     const stage = stages[payload.prepare_stage] || "正在准备本章学习地图";
     const total = Number(payload.sections_total) || 0;
     const completed = Math.min(Number(payload.sections_completed) || 0, total);
@@ -869,7 +871,27 @@ function renderKnowledgeMap(payload) {
     return;
   }
   const route = `${payload.generator_provider} / ${payload.generator_model} → ${payload.reviewer_provider} / ${payload.reviewer_model}`;
-  elements["knowledge-status"].textContent = `结构版本 ${payload.structure_version} · ${payload.knowledge_points.length} 个知识点 · ${route}`;
+  let replacementStatus = "";
+  if (replacementRunning) {
+    const total = Number(payload.sections_total) || 0;
+    const completed = Math.min(Number(payload.sections_completed) || 0, total);
+    const progress = total > 0 ? `，已完成 ${completed}/${total} 个小节` : "";
+    replacementStatus = `；${stages[payload.prepare_stage] || "正在重新生成"}${progress}，当前地图继续可用`;
+    elements["knowledge-prepare"].textContent = "正在重新生成知识点";
+  } else if (payload.regeneration_state === "FAILED") {
+    replacementStatus = `；上次重新生成失败（${payload.regeneration_failure_stage || "准备"} / ${payload.regeneration_failure_code || "失败"}），旧地图保持不变`;
+    elements["knowledge-prepare"].textContent = "重试重新生成知识点";
+  } else {
+    elements["knowledge-prepare"].textContent = "重新生成知识点";
+  }
+  if (payload.regeneration_block_code === "CHAPTER_PERMANENTLY_LOCKED") {
+    replacementStatus = "；已有学习状态，本章学习地图已永久冻结";
+    elements["knowledge-prepare"].textContent = "本章已永久冻结";
+  } else if (payload.regeneration_block_code === "CHAPTER_HAS_USER_ASSETS") {
+    replacementStatus = "；已有用户内容关联知识点，不能重新生成";
+    elements["knowledge-prepare"].textContent = "当前不能重新生成";
+  }
+  elements["knowledge-status"].textContent = `结构版本 ${payload.structure_version} · ${payload.knowledge_points.length} 个知识点 · ${route}${replacementStatus}`;
   const groups = new Map();
   for (const point of payload.knowledge_points) {
     if (!groups.has(point.primary_section_id)) groups.set(point.primary_section_id, []);
@@ -908,15 +930,16 @@ async function prepareKnowledgeMap() {
   if (!state.revision || !state.knowledgeChapterId) return;
   elements["knowledge-prepare"].disabled = true;
   try {
-    const payload = await api(`/api/revisions/${state.revision.id}/chapters/${state.knowledgeChapterId}/knowledge-map/prepare`, {
+    const action = state.knowledgeMap?.status === "READY" ? "regenerate" : "prepare";
+    const payload = await api(`/api/revisions/${state.revision.id}/chapters/${state.knowledgeChapterId}/knowledge-map/${action}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
     });
     state.knowledgeMap = payload.chapter_map;
     renderKnowledgeMap(payload.chapter_map);
     clearTimeout(state.knowledgePollTimer);
     state.knowledgePollTimer = setTimeout(loadKnowledgeMap, 350);
-  } catch (_error) {
-    elements["knowledge-status"].textContent = "学习地图请求未能启动；阅读不受影响，可以重试。";
+  } catch (error) {
+    elements["knowledge-status"].textContent = `${error.message || "学习地图请求未能启动"}；当前地图与阅读不受影响。`;
     elements["knowledge-prepare"].disabled = false;
   }
 }

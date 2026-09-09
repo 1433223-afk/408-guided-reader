@@ -13,6 +13,12 @@ def now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+class ChapterRegenerationBlocked(RuntimeError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
 class KnowledgeRepository:
     def __init__(self, database: Database):
         self.database = database
@@ -60,12 +66,18 @@ class KnowledgeRepository:
                         foundation_version, chapter_identity_revision,
                         chapter_physical_revision, structure_version, attempt_id,
                         requested_at, updated_at, prepare_stage,
-                        sections_completed, sections_total
-                    ) VALUES (?, ?, 'PREPARING', ?, ?, ?, 0, ?, ?, ?, 'QUEUED', 0, 0)
+                        sections_completed, sections_total,
+                        attempt_foundation_version,
+                        attempt_chapter_identity_revision,
+                        attempt_chapter_physical_revision
+                    ) VALUES (?, ?, 'PREPARING', ?, ?, ?, 0, ?, ?, ?, 'QUEUED', 0, 0, ?, ?, ?)
                     ON CONFLICT(book_source_revision_id, chapter_outline_node_id) DO UPDATE SET
                         status = 'PREPARING', foundation_version = excluded.foundation_version,
                         chapter_identity_revision = excluded.chapter_identity_revision,
                         chapter_physical_revision = excluded.chapter_physical_revision,
+                        attempt_foundation_version = excluded.attempt_foundation_version,
+                        attempt_chapter_identity_revision = excluded.attempt_chapter_identity_revision,
+                        attempt_chapter_physical_revision = excluded.attempt_chapter_physical_revision,
                         attempt_id = excluded.attempt_id,
                         generator_provider = NULL, generator_model = NULL,
                         reviewer_provider = NULL, reviewer_model = NULL,
@@ -80,6 +92,8 @@ class KnowledgeRepository:
                         revision_id, chapter_id, chapter["foundation_version"],
                         chapter["identity_revision"], chapter["physical_revision"],
                         attempt_id, timestamp, timestamp,
+                        chapter["foundation_version"], chapter["identity_revision"],
+                        chapter["physical_revision"],
                     ),
                 )
             else:
@@ -96,6 +110,81 @@ class KnowledgeRepository:
             )
             return self._snapshot_connection(connection, revision_id, chapter_id), created
 
+    def request_regenerate(self, revision_id: str, chapter_id: str) -> tuple[dict, bool]:
+        """Start or join an explicit dependency-free replacement of one READY map."""
+        timestamp = now()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            chapter = connection.execute(
+                """
+                SELECT node.outline_node_id, node.kind, node.parent_id,
+                       node.identity_revision, node.physical_revision,
+                       revision.foundation_version
+                FROM outline_nodes AS node
+                JOIN book_source_revisions AS revision
+                  ON revision.id = node.book_source_revision_id
+                WHERE node.book_source_revision_id = ? AND node.outline_node_id = ?
+                  AND revision.status = 'ACTIVE'
+                """,
+                (revision_id, chapter_id),
+            ).fetchone()
+            if chapter is None:
+                raise LookupError("Chapter not found")
+            if chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
+                raise ValueError("Knowledge Map regeneration requires one top-level Chapter")
+
+            current = connection.execute(
+                """
+                SELECT * FROM chapter_preparations
+                WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                """,
+                (revision_id, chapter_id),
+            ).fetchone()
+            if current is None or current["status"] != "READY":
+                raise ChapterRegenerationBlocked(
+                    "CHAPTER_NOT_READY", "只有已经准备完成的章节才能重新生成知识点。"
+                )
+            if current["regeneration_state"] == "RUNNING":
+                return self._snapshot_connection(connection, revision_id, chapter_id), False
+
+            self._assert_regeneration_allowed_connection(
+                connection, revision_id, chapter_id, current
+            )
+            attempt_id = str(uuid4())
+            cursor = connection.execute(
+                """
+                UPDATE chapter_preparations
+                SET regeneration_state = 'RUNNING', attempt_id = ?,
+                    attempt_foundation_version = ?,
+                    attempt_chapter_identity_revision = ?,
+                    attempt_chapter_physical_revision = ?,
+                    regeneration_failure_stage = NULL,
+                    regeneration_failure_kind = NULL,
+                    regeneration_failure_code = NULL,
+                    requested_at = ?, updated_at = ?, prepare_stage = 'QUEUED',
+                    sections_completed = 0, sections_total = 0
+                WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                  AND status = 'READY' AND regeneration_state != 'RUNNING'
+                """,
+                (
+                    attempt_id, chapter["foundation_version"],
+                    chapter["identity_revision"], chapter["physical_revision"],
+                    timestamp, timestamp, revision_id, chapter_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Chapter regeneration lost its state guard")
+            self._ensure_job(
+                connection,
+                revision_id=revision_id,
+                chapter_id=chapter_id,
+                foundation_version=int(chapter["foundation_version"]),
+                identity_revision=int(chapter["identity_revision"]),
+                physical_revision=int(chapter["physical_revision"]),
+                timestamp=timestamp,
+            )
+            return self._snapshot_connection(connection, revision_id, chapter_id), True
+
     def recover_preparing_jobs(self) -> int:
         timestamp = now()
         recovered = 0
@@ -111,7 +200,10 @@ class KnowledgeRepository:
                     SELECT 1 FROM chapter_preparations AS prep
                     WHERE prep.book_source_revision_id = chapter_pipeline_attempts.book_source_revision_id
                       AND prep.chapter_outline_node_id = chapter_pipeline_attempts.chapter_outline_node_id
-                      AND prep.status = 'PREPARING'
+                      AND (
+                          prep.status = 'PREPARING'
+                          OR (prep.status = 'READY' AND prep.regeneration_state = 'RUNNING')
+                      )
                   )
                 """,
                 (timestamp,),
@@ -122,20 +214,33 @@ class KnowledgeRepository:
                 SET prepare_stage = 'QUEUED', sections_completed = 0,
                     sections_total = 0, updated_at = ?
                 WHERE status = 'PREPARING'
+                   OR (status = 'READY' AND regeneration_state = 'RUNNING')
                 """,
                 (timestamp,),
             )
             rows = connection.execute(
-                "SELECT * FROM chapter_preparations WHERE status = 'PREPARING'"
+                """
+                SELECT * FROM chapter_preparations
+                WHERE status = 'PREPARING'
+                   OR (status = 'READY' AND regeneration_state = 'RUNNING')
+                """
             ).fetchall()
             for row in rows:
                 recovered += self._ensure_job(
                     connection,
                     revision_id=row["book_source_revision_id"],
                     chapter_id=row["chapter_outline_node_id"],
-                    foundation_version=int(row["foundation_version"]),
-                    identity_revision=int(row["chapter_identity_revision"]),
-                    physical_revision=int(row["chapter_physical_revision"]),
+                    foundation_version=int(
+                        row["attempt_foundation_version"] or row["foundation_version"]
+                    ),
+                    identity_revision=int(
+                        row["attempt_chapter_identity_revision"]
+                        or row["chapter_identity_revision"]
+                    ),
+                    physical_revision=int(
+                        row["attempt_chapter_physical_revision"]
+                        or row["chapter_physical_revision"]
+                    ),
                     timestamp=timestamp,
                 )
         return recovered
@@ -201,10 +306,15 @@ class KnowledgeRepository:
             cursor = connection.execute(
                 """
                 UPDATE chapter_preparations
-                SET foundation_version = ?, chapter_identity_revision = ?,
-                    chapter_physical_revision = ?, updated_at = ?
+                SET attempt_foundation_version = ?,
+                    attempt_chapter_identity_revision = ?,
+                    attempt_chapter_physical_revision = ?, updated_at = ?
                 WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
-                  AND status = 'PREPARING' AND attempt_id = ?
+                  AND attempt_id = ?
+                  AND (
+                      status = 'PREPARING'
+                      OR (status = 'READY' AND regeneration_state = 'RUNNING')
+                  )
                 """,
                 (
                     foundation_version, identity_revision, physical_revision, now(),
@@ -239,7 +349,11 @@ class KnowledgeRepository:
                 SET prepare_stage = ?, sections_completed = ?, sections_total = ?,
                     updated_at = ?
                 WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
-                  AND status = 'PREPARING' AND attempt_id = ?
+                  AND attempt_id = ?
+                  AND (
+                      status = 'PREPARING'
+                      OR (status = 'READY' AND regeneration_state = 'RUNNING')
+                  )
                 """,
                 (
                     stage, sections_completed, sections_total, now(),
@@ -417,6 +531,34 @@ class KnowledgeRepository:
         review_payload_sha256: str | None = None,
     ) -> bool:
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            state = connection.execute(
+                """
+                SELECT status, regeneration_state FROM chapter_preparations
+                WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                  AND attempt_id = ?
+                """,
+                (revision_id, chapter_id, attempt_id),
+            ).fetchone()
+            if state is None:
+                return False
+            if state["status"] == "READY" and state["regeneration_state"] == "RUNNING":
+                cursor = connection.execute(
+                    """
+                    UPDATE chapter_preparations
+                    SET regeneration_state = 'FAILED',
+                        regeneration_failure_stage = ?,
+                        regeneration_failure_kind = ?,
+                        regeneration_failure_code = ?, updated_at = ?
+                    WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                      AND status = 'READY' AND regeneration_state = 'RUNNING'
+                      AND attempt_id = ?
+                    """,
+                    (stage, kind, code, now(), revision_id, chapter_id, attempt_id),
+                )
+                return cursor.rowcount == 1
+            if state["status"] != "PREPARING":
+                return False
             cursor = connection.execute(
                 """
                 UPDATE chapter_preparations
@@ -435,6 +577,97 @@ class KnowledgeRepository:
                 ),
             )
             return cursor.rowcount == 1
+
+    def lock_for_learning_state(self, connection, knowledge_point_id: str) -> None:
+        """Permanently lock a Chapter inside the caller's learning-write transaction."""
+        timestamp = now()
+        point = connection.execute(
+            """
+            SELECT book_source_revision_id, chapter_outline_node_id
+            FROM knowledge_points WHERE knowledge_point_id = ?
+            """,
+            (knowledge_point_id,),
+        ).fetchone()
+        if point is None:
+            raise LookupError("KnowledgePoint not found")
+        cursor = connection.execute(
+            """
+            UPDATE chapter_preparations
+            SET learning_state_ever_at = COALESCE(learning_state_ever_at, ?), updated_at = ?
+            WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+              AND status = 'READY'
+            """,
+            (
+                timestamp, timestamp, point["book_source_revision_id"],
+                point["chapter_outline_node_id"],
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Learning state requires a READY Chapter Knowledge Map")
+
+    @staticmethod
+    def _has_kp_linked_user_asset_connection(connection, revision_id: str, chapter_id: str) -> bool:
+        """Find current durable KP references without making content an identity authority."""
+        tables = connection.execute(
+            """
+            SELECT name FROM sqlite_schema
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            ORDER BY name
+            """
+        ).fetchall()
+        for row in tables:
+            table = row["name"]
+            if table == "knowledge_points" or not table.replace("_", "").isalnum():
+                continue
+            quoted = '"' + table.replace('"', '""') + '"'
+            columns = connection.execute(f"PRAGMA table_info({quoted})").fetchall()
+            if not any(column["name"] == "knowledge_point_id" for column in columns):
+                continue
+            found = connection.execute(
+                f"""
+                SELECT 1 FROM {quoted} AS asset
+                JOIN knowledge_points AS kp
+                  ON kp.knowledge_point_id = asset.knowledge_point_id
+                JOIN chapter_preparations AS prep
+                  ON prep.book_source_revision_id = kp.book_source_revision_id
+                 AND prep.chapter_outline_node_id = kp.chapter_outline_node_id
+                 AND prep.structure_version = kp.chapter_structure_version
+                WHERE kp.book_source_revision_id = ?
+                  AND kp.chapter_outline_node_id = ?
+                LIMIT 1
+                """,
+                (revision_id, chapter_id),
+            ).fetchone()
+            if found is not None:
+                return True
+        return False
+
+    @classmethod
+    def _assert_regeneration_allowed_connection(
+        cls, connection, revision_id: str, chapter_id: str, state=None
+    ) -> None:
+        if state is None:
+            state = connection.execute(
+                """
+                SELECT * FROM chapter_preparations
+                WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
+                """,
+                (revision_id, chapter_id),
+            ).fetchone()
+        if state is None or state["status"] != "READY":
+            raise ChapterRegenerationBlocked(
+                "CHAPTER_NOT_READY", "只有已经准备完成的章节才能重新生成知识点。"
+            )
+        if state["learning_state_ever_at"] is not None:
+            raise ChapterRegenerationBlocked(
+                "CHAPTER_PERMANENTLY_LOCKED",
+                "本章知识点已经产生学习状态，整章学习地图已永久冻结。",
+            )
+        if cls._has_kp_linked_user_asset_connection(connection, revision_id, chapter_id):
+            raise ChapterRegenerationBlocked(
+                "CHAPTER_HAS_USER_ASSETS",
+                "本章已有用户内容关联旧知识点，不能重新生成。",
+            )
 
     def publish(
         self,
@@ -464,8 +697,20 @@ class KnowledgeRepository:
                 """,
                 (revision_id, chapter_id),
             ).fetchone()
-            if state is None or state["status"] != "PREPARING" or state["attempt_id"] != attempt_id:
+            replacement = bool(
+                state is not None
+                and state["status"] == "READY"
+                and state["regeneration_state"] == "RUNNING"
+            )
+            first_publication = bool(state is not None and state["status"] == "PREPARING")
+            if not (replacement or first_publication) or state["attempt_id"] != attempt_id:
                 raise RuntimeError("Chapter publication requires the current PREPARING attempt")
+            if (
+                int(state["attempt_foundation_version"] or -1),
+                int(state["attempt_chapter_identity_revision"] or -1),
+                int(state["attempt_chapter_physical_revision"] or -1),
+            ) != (foundation_version, identity_revision, physical_revision):
+                raise RuntimeError("Chapter preparation dependency snapshot changed before publication")
             chapter = connection.execute(
                 """
                 SELECT identity_revision, physical_revision FROM outline_nodes
@@ -478,6 +723,11 @@ class KnowledgeRepository:
             ) != (identity_revision, physical_revision):
                 raise RuntimeError("Chapter Outline dependency changed before publication")
 
+            if replacement:
+                self._assert_regeneration_allowed_connection(
+                    connection, revision_id, chapter_id, state
+                )
+
             prior_ids = [
                 row[0] for row in connection.execute(
                     """
@@ -487,15 +737,6 @@ class KnowledgeRepository:
                     (revision_id, chapter_id),
                 )
             ]
-            if prior_ids:
-                placeholders = ",".join("?" for _ in prior_ids)
-                locked = connection.execute(
-                    f"SELECT 1 FROM annotations WHERE knowledge_point_id IN ({placeholders}) LIMIT 1",
-                    prior_ids,
-                ).fetchone()
-                if locked is not None:
-                    raise RuntimeError("Chapter structure is locked by a durable user asset")
-
             version = int(state["structure_version"]) + 1
             rows = []
             for order_index, point in enumerate(points):
@@ -538,9 +779,17 @@ class KnowledgeRepository:
                     reviewer_provider = ?, reviewer_model = ?, review_summary = ?,
                     failure_stage = NULL, failure_kind = NULL, failure_code = NULL,
                     source_payload_sha256 = ?, review_payload_sha256 = ?,
-                    updated_at = ?, published_at = ?, prepare_stage = NULL
+                    updated_at = ?, published_at = ?, prepare_stage = NULL,
+                    regeneration_state = 'IDLE',
+                    regeneration_failure_stage = NULL,
+                    regeneration_failure_kind = NULL,
+                    regeneration_failure_code = NULL
                 WHERE book_source_revision_id = ? AND chapter_outline_node_id = ?
-                  AND status = 'PREPARING' AND attempt_id = ?
+                  AND attempt_id = ?
+                  AND (
+                      status = 'PREPARING'
+                      OR (status = 'READY' AND regeneration_state = 'RUNNING')
+                  )
                 """,
                 (
                     foundation_version, identity_revision, physical_revision, version,
@@ -569,8 +818,8 @@ class KnowledgeRepository:
                 raise ValueError("Knowledge Map requires one top-level Chapter")
             return self._snapshot_connection(connection, revision_id, chapter_id)
 
-    @staticmethod
-    def _snapshot_connection(connection, revision_id: str, chapter_id: str) -> dict:
+    @classmethod
+    def _snapshot_connection(cls, connection, revision_id: str, chapter_id: str) -> dict:
         state = connection.execute(
             """
             SELECT prep.*, chapter.title AS chapter_title
@@ -599,6 +848,9 @@ class KnowledgeRepository:
                 "prepare_stage": None,
                 "sections_completed": 0,
                 "sections_total": 0,
+                "regeneration_state": "IDLE",
+                "regeneration_allowed": False,
+                "regeneration_block_code": "CHAPTER_NOT_READY",
                 "knowledge_points": [],
             }
         result = dict(state)
@@ -621,6 +873,21 @@ class KnowledgeRepository:
             ):
                 points.append(dict(row))
         result["knowledge_points"] = points
+        result["regeneration_allowed"] = False
+        result["regeneration_block_code"] = "CHAPTER_NOT_READY"
+        if result["status"] == "READY":
+            if result["regeneration_state"] == "RUNNING":
+                result["regeneration_block_code"] = "REGENERATION_RUNNING"
+            else:
+                try:
+                    cls._assert_regeneration_allowed_connection(
+                        connection, revision_id, chapter_id, result
+                    )
+                except ChapterRegenerationBlocked as blocked:
+                    result["regeneration_block_code"] = blocked.code
+                else:
+                    result["regeneration_allowed"] = True
+                    result["regeneration_block_code"] = None
         return result
 
     @staticmethod

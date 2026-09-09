@@ -689,6 +689,47 @@ MIGRATIONS = (
             );
         """,
     ),
+    (
+        11,
+        """
+        -- READY Chapter replacement keeps the published snapshot available
+        -- while a private replacement attempt runs.  The learning marker is
+        -- irreversible: current-state deletion/reset can never unlock IDs that
+        -- have already carried learning history.
+        ALTER TABLE chapter_preparations ADD COLUMN regeneration_state TEXT
+            NOT NULL DEFAULT 'IDLE'
+            CHECK (regeneration_state IN ('IDLE', 'RUNNING', 'FAILED'));
+        ALTER TABLE chapter_preparations ADD COLUMN regeneration_failure_stage TEXT;
+        ALTER TABLE chapter_preparations ADD COLUMN regeneration_failure_kind TEXT;
+        ALTER TABLE chapter_preparations ADD COLUMN regeneration_failure_code TEXT;
+        ALTER TABLE chapter_preparations ADD COLUMN attempt_foundation_version INTEGER
+            CHECK (attempt_foundation_version IS NULL OR attempt_foundation_version >= 1);
+        ALTER TABLE chapter_preparations ADD COLUMN attempt_chapter_identity_revision INTEGER
+            CHECK (
+                attempt_chapter_identity_revision IS NULL
+                OR attempt_chapter_identity_revision >= 1
+            );
+        ALTER TABLE chapter_preparations ADD COLUMN attempt_chapter_physical_revision INTEGER
+            CHECK (
+                attempt_chapter_physical_revision IS NULL
+                OR attempt_chapter_physical_revision >= 1
+            );
+        ALTER TABLE chapter_preparations ADD COLUMN learning_state_ever_at TEXT;
+
+        UPDATE chapter_preparations
+        SET attempt_foundation_version = foundation_version,
+            attempt_chapter_identity_revision = chapter_identity_revision,
+            attempt_chapter_physical_revision = chapter_physical_revision;
+
+        CREATE TRIGGER chapter_learning_lock_is_irreversible
+        BEFORE UPDATE OF learning_state_ever_at ON chapter_preparations
+        WHEN OLD.learning_state_ever_at IS NOT NULL
+             AND NEW.learning_state_ever_at IS NOT OLD.learning_state_ever_at
+        BEGIN
+            SELECT RAISE(ABORT, 'Chapter learning lock is irreversible');
+        END;
+        """,
+    ),
 )
 
 

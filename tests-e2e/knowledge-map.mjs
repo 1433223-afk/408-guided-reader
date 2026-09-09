@@ -117,6 +117,15 @@ try {
   await page.goto(running.url);
   const book = await openBook(page, 348);
   assert.equal(book.active_revision.blob_sha256, expectedHash);
+  const siblingBooksBefore = (await json(page, "/api/books")).books
+    .filter((candidate) => candidate.id !== book.id)
+    .map((candidate) => [
+      candidate.id,
+      candidate.active_revision?.page_count,
+      candidate.active_revision?.blob_sha256,
+    ])
+    .sort((left, right) => left[0].localeCompare(right[0]));
+  assert.ok(siblingBooksBefore.length > 0, "a sibling book is required for cascade isolation");
   const revisionId = book.active_revision.id;
 
   await page.locator("#outline-toggle").click();
@@ -288,10 +297,19 @@ try {
   const deletion = page.waitForResponse((response) => response.request().method() === "DELETE" && response.url().includes("/api/books/"));
   await card.getByRole("button", { name: "删除", exact: true }).click();
   assert.equal((await deletion).status(), 204);
-  await page.waitForFunction(() => document.querySelectorAll(".book-card").length === 1);
+  await page.waitForFunction(
+    (count) => document.querySelectorAll(".book-card").length === count,
+    siblingBooksBefore.length,
+  );
   const remaining = await json(page, "/api/books");
-  assert.equal(remaining.books.length, 1);
-  assert.equal(remaining.books[0].active_revision.page_count, 29);
+  assert.deepEqual(
+    remaining.books.map((candidate) => [
+      candidate.id,
+      candidate.active_revision?.page_count,
+      candidate.active_revision?.blob_sha256,
+    ]).sort((left, right) => left[0].localeCompare(right[0])),
+    siblingBooksBefore,
+  );
   assert.deepEqual(pageErrors, []);
 
   console.log(JSON.stringify({
