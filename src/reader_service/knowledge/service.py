@@ -54,6 +54,8 @@ GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义
 输入是一个真实 Outline 小节（或没有子小节时的 Section fallback）内按教材顺序排列的 deterministic evidence units。你只做这一次最终 learning-identity partition；不得依据先前模型结果做第二轮合并、拆分、清理或修复。
 KP 是最小的、值得独立教学、独立检查、独立诊断、独立补救并长期记录掌握状态的学习单元。必须预设吸收：只有当前教材证据能正面证明某个内容需要独立 teaching + assessment + diagnosis + remediation，才建立一个 learning target。对相邻条目必须先问：未来是否确实需要分别教学，并在学习者失败时采用不同的诊断或补救路径？只要不需要分别教学，或补救路径没有实质区别，就必须合为同一个 target。若不确定是否值得维护两个独立 mastery 状态，也必须合并。能单独出一道事实题、拥有不同标题、术语、段落、方向、变体或编号，都不足以形成 mastery boundary。
 标题本身、例子本身不成为 KP；definition/property/ordinary step/example 默认属于同一 learning target。只有既能独立教学、又具有不同错误模式或补救路径，且当前 source evidence 对两者都有充分展开时，才可以拆成不同 targets。
+同一学习对象的多种分类方式，默认合为一个分类框架；分类维度或分类项本身不单独成为 KP。同一学习目标下的一组成套方法、互补步骤或替代实现，默认整体理解并合为一个 target；只有其中某项有充分独立展开，并确实需要不同教学、检查和补救时才拆分。
+例题、章节概览、后文预告和对前文的比较总结，默认进入 non_kp_units 或吸收到其所说明的 learning target，不单独铸造 KP；它们包含的新且充分展开的独立机制除外。
 window.kp_creation 为 FORBIDDEN_REVIEW_MATERIAL 时，该窗口属于本章/本节小结、常见问题、易混淆或 FAQ 复习材料：learning_targets 必须为空，全部 unit_id 必须进入 non_kp_units；这些内容只补充已有 KP，绝不在这里铸造新 KP。
 non_kp_units 只表示这些 evidence 不在本窗口铸造成独立 KP，不表示内容无价值。facet/property/step/example 可以被包含在某个 target 的连续 source evidence 中。
 不得追求特定 KP 数量，也不得创建掩盖不同机制、错误模式或补救路径的宽泛伞形 KP。
