@@ -1,11 +1,9 @@
 # Phase / First Chapter Knowledge Map
 
-> **Status: ACCEPTED — SEMANTIC SIMPLIFICATION READY FOR IMPLEMENTATION (2026-09-08); user retest
-> and independent narrow review pending.** The product shell remains accepted. Repeated real-use failures
-> showed that the LLM-first semantic middle was not a stable implementation of that product. The user
-> accepted the bounded deterministic-first replacement below after external Prior-art Research. This
-> brief remains the implementation authority for the open Phase; it does not claim user acceptance or
-> Phase closure.
+> **Status: CLOSED / COMPLETE (2026-09-09).** Machine acceptance PASS; agent real-use PASS; user
+> acceptance PASS; independent narrow review PASS (`P0=0`, `P1=0`, `P2=0`) with
+> `CLOSURE_RECOMMENDATION: CLOSE`. The user approved Phase closure on 2026-09-09. The accepted
+> implementation and deferred boundaries below remain authoritative history for this completed Phase.
 
 ## User-approved architecture correction
 

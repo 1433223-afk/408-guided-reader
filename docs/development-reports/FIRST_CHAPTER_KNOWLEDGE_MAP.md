@@ -2,13 +2,14 @@
 
 ## Result
 
-`IMPLEMENTATION_READY`
+`CLOSED / PASS`
 
 - `AGENT_REAL_USE: PASS`
 - `USER_ACCEPTANCE: PASS` — the user accepted the real Chapter 2 and Chapter 3 Knowledge Maps on
   2026-09-09.
-- `INDEPENDENT_NARROW_REVIEW: PENDING`
-- Phase status remains **OPEN**. This report does not close the Phase.
+- `INDEPENDENT_NARROW_REVIEW: PASS` — `P0=0`, `P1=0`, `P2=0`;
+  `CLOSURE_RECOMMENDATION: CLOSE`.
+- Phase status: **CLOSED / COMPLETE** on 2026-09-09 by user approval.
 
 The Reader can prepare one requested Chapter as a private, Section-progress-visible operation and
 publish the complete Section-grouped Knowledge Map atomically. No candidate KP is exposed before
@@ -121,6 +122,8 @@ CLOSURE / BROAD.
   unchanged skips are optional external real-OCR entrypoints). `npm test` — **30 passed**.
 - FINAL STATIC CHECKS: `python -m compileall -q src`, Node syntax checks for both Knowledge E2E
   runners, `git diff --check`, and a staged secret/user-material inspection — **PASS**.
+- INDEPENDENT NARROW REVIEW: **PASS** — `P0=0`, `P1=0`, `P2=0`;
+  `CLOSURE_RECOMMENDATION: CLOSE`.
 
 The complete-Section generation experiment was removed after real 3.2/3.5 responses exceeded the
 existing structured-output budget. It is not part of the implementation or checkpoint. No provider
@@ -133,7 +136,6 @@ generation was performed after the accepted Chapter 3 run.
 - `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: separate published availability from replacement
   prepare-attempt lifecycle so a failed replacement cannot obscure the current published version.
 - READY-map regeneration remains blocked, and this Phase still writes no Learning/Mastery state.
-- Independent narrow review remains required before Phase closure.
 
 ## Reproducible entry points
 
@@ -164,5 +166,6 @@ after Review PASS. A representative `回到教材` action must navigate to its p
 
 ## Git checkpoint
 
-The implementation and this report are committed together as the current UAT-rework checkpoint;
-its exact hash is recorded in the completion handoff.
+Final implementation checkpoint: `9b3109a710a6fba77d4a395fa07f221086b9c97f`.
+The docs-only closure checkpoint is the commit containing this final report; its exact hash is
+recorded in the closure handoff.
