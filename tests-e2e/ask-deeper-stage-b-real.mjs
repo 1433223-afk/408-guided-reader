@@ -20,7 +20,7 @@ try {
   const status = await json(page, "/api/assistant/status");
   const deepseek = status.providers.find((provider) => provider.provider === "deepseek");
   assert.equal(deepseek?.configured, true, "DeepSeek is not callable for the Stage B smoke");
-  assert.equal(deepseek.model, "deepseek-v4-pro");
+  assert.equal(deepseek.model, "deepseek-v4-flash");
 
   await openBook(page, 348);
   const inspectionBefore = await json(page, "/api/assistant/inspection");
@@ -108,7 +108,7 @@ try {
   const childBState = (await childBHttp.json()).assistant;
   const childBId = childBState.current.node_id;
   assert.equal(childBState.current.provider, "deepseek");
-  assert.equal(childBState.current.model, "deepseek-v4-pro");
+  assert.equal(childBState.current.model, "deepseek-v4-flash");
 
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
   await page.locator("#assistant-back").click();
@@ -176,7 +176,7 @@ try {
   const newCalls = inspectionAfter.calls.slice(inspectionBefore.calls.length);
   assert.ok(newCalls.length >= 5);
   assert.ok(newCalls.every((call) => (
-    call.provider === "deepseek" && call.request_body.model === "deepseek-v4-pro"
+    call.provider === "deepseek" && call.request_body.model === "deepseek-v4-flash"
   )));
   const childCalls = newCalls.filter((call) => (
     call.request_body.messages.at(-1).content.includes("【直接上一轮】")
@@ -206,7 +206,7 @@ try {
       secondRootPdfPage: 263,
     },
     provider: "deepseek",
-    model: "deepseek-v4-pro",
+    model: "deepseek-v4-flash",
     childPageImmediateFocus: true,
     pendingOwner: "CHILD",
     backParentRestored: true,

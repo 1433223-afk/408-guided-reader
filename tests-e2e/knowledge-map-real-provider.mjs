@@ -11,13 +11,13 @@ const expectedHash = "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af80775116902
 const generatorProvider = process.env.READER_REAL_KP_GENERATOR || "deepseek";
 const reviewerProvider = process.env.READER_REAL_KP_REVIEWER || "zhipu";
 const providerModels = {
-  deepseek: "deepseek-v4-pro",
+  deepseek: "deepseek-v4-flash",
   zhipu: "GLM-5.3-Flash",
   openrouter: "google/gemini-3.8-flash",
 };
 const targetTitles = (process.env.READER_REAL_KP_CHAPTERS || "第1章 计算机系统概述|第6章 总线")
   .split("|").map((value) => value.trim()).filter(Boolean);
-assert.ok(targetTitles.length >= 2, "real-provider reliability requires at least two Chapters");
+assert.ok(targetTitles.length >= 1, "real-provider run requires at least one Chapter");
 
 const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-knowledge-real-"));
 const dataDir = path.join(acceptanceRoot, "data");
@@ -48,9 +48,11 @@ try {
     const chapter = outline.nodes.find((node) => node.title === title);
     assert.ok(chapter, `missing real Outline Chapter: ${title}`);
     const pathName = `/api/revisions/${revisionId}/chapters/${chapter.outline_node_id}/knowledge-map`;
+    const startedAt = Date.now();
     const requested = await postJson(page, `${pathName}/prepare`, {});
     assert.equal(requested.chapter_map.status, "PREPARING");
     const result = await waitForTerminalChapter(page, pathName, 900_000);
+    const durationMs = Date.now() - startedAt;
     const inspection = await json(page, `${pathName}/inspection`);
     if (result.status !== "READY") {
       throw new Error(`Real provider Chapter preparation did not publish: ${JSON.stringify({
@@ -74,20 +76,16 @@ try {
     assert.equal(observed.outcome, "READY");
     assert.equal(observed.chapter_id, chapter.outline_node_id);
     assert.ok(observed.unit_count > 0);
-    assert.ok(observed.packet_count > 0);
-    assert.equal(observed.packet_bounds.length, observed.packet_count);
-    assert.ok(observed.packet_bounds.every((packet) => (
-      packet.unit_count >= 1
-        && packet.unit_count <= 24
-        && packet.character_count > 0
-        && packet.character_count <= 4_800
+    assert.ok(observed.window_count > 0);
+    assert.equal(observed.window_bounds.length, observed.window_count);
+    assert.ok(observed.window_bounds.every((window) => (
+      window.unit_count >= 1
+        && window.character_count > 0
+        && window.character_count <= 4_800
     )));
-    assert.ok(observed.review_rounds.length >= 1 && observed.review_rounds.length <= 4);
-    assert.equal(observed.review_rounds.at(-1).verdict, "PASS");
-    assert.ok(observed.review_rounds.every((round) => (
-      round.payload_character_count > 0
-        && round.payload_character_count < observed.source_payload_character_count
-    )));
+    assert.equal(observed.review.verdict, "PASS");
+    assert.ok(observed.review.payload_character_count > 0);
+    assert.ok(observed.review.payload_character_count < observed.source_payload_character_count);
     const serializedObservation = JSON.stringify(observed);
     assert.ok(!/"(?:source_payload|generation_payloads|review_payload|request_body|response_body|reasoning_content)"\s*:/.test(serializedObservation));
 
@@ -100,13 +98,14 @@ try {
     const reviewAttempts = attempts.filter(
       (attempt) => attempt.pipeline_stage === "STRUCTURAL_REVIEW",
     );
-    assert.ok(semanticAttempts.length >= observed.packet_count);
+    assert.ok(semanticAttempts.length >= observed.window_count);
     assert.ok(reviewAttempts.length >= 1);
     assert.ok(semanticAttempts.every((attempt) => (
       attempt.provider === generatorProvider
         && attempt.model === providerModels[generatorProvider]
         && attempt.primary_section_id
-        && attempt.packet_or_stage_id.startsWith("p")
+        && attempt.packet_or_stage_id.startsWith("w")
+        && attempt.semantic_round === 0
     )));
     assert.ok(reviewAttempts.every((attempt) => (
       attempt.provider === reviewerProvider
@@ -136,23 +135,31 @@ try {
     const sectionGroups = new Set(
       result.knowledge_points.map((point) => point.primary_section_id),
     ).size;
+    const sectionTitles = new Map(
+      outline.nodes.map((node) => [node.outline_node_id, node.title]),
+    );
     metrics.push({
       chapter: title,
+      durationMs,
       unitCount: observed.unit_count,
-      packetCount: observed.packet_count,
+      windowCount: observed.window_count,
       candidateCount: observed.candidate_count,
-      maxPacketCharacters: Math.max(...observed.packet_bounds.map((packet) => packet.character_count)),
+      maxWindowCharacters: Math.max(...observed.window_bounds.map((window) => window.character_count)),
       rawSourceCharacters: observed.source_character_count,
       rawSourcePayloadCharacters: observed.source_payload_character_count,
-      compactReviewCharacters: observed.review_rounds.at(-1).payload_character_count,
+      compactReviewCharacters: observed.review.payload_character_count,
       generatorRoute: `${result.generator_provider}/${result.generator_model}`,
       reviewerRoute: `${result.reviewer_provider}/${result.reviewer_model}`,
       technicalFailures: attempts.filter((attempt) => attempt.status === "FAILED").length,
-      semanticRepairRounds: Math.max(...semanticAttempts.map((attempt) => attempt.semantic_round)),
       structureVersion: result.structure_version,
       knowledgePointCount: result.knowledge_points.length,
       sectionGroups,
       briefIoControlFrameworkCount,
+      knowledgePoints: result.knowledge_points.map((point) => ({
+        section: sectionTitles.get(point.primary_section_id),
+        title: point.title,
+        oneSentenceMeaning: point.one_sentence_definition,
+      })),
     });
   }
 

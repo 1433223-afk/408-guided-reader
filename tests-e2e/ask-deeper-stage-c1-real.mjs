@@ -19,7 +19,7 @@ try {
   const status = await json(page, "/api/assistant/status");
   const deepseek = status.providers.find((provider) => provider.provider === "deepseek");
   assert.equal(deepseek?.configured, true);
-  assert.equal(deepseek.model, "deepseek-v4-pro");
+  assert.equal(deepseek.model, "deepseek-v4-flash");
   await openBook(page, 348);
   const before = await json(page, "/api/assistant/inspection");
 
@@ -70,7 +70,7 @@ try {
   const childCall = newCalls.at(-1);
   const content = childCall.request_body.messages.at(-1).content;
   assert.equal(childCall.provider, "deepseek");
-  assert.equal(childCall.request_body.model, "deepseek-v4-pro");
+  assert.equal(childCall.request_body.model, "deepseek-v4-flash");
   assert.ok(content.startsWith("【当前解释焦点（用户所选）】\n时钟周期\n"));
   assert.ok(!/父子关系|当前解释深度|ORIGINAL_PDF|ASSISTANT_ANSWER|字符范围/.test(content));
   assert.ok(!JSON.stringify(after).includes("Authorization"));
@@ -84,7 +84,7 @@ try {
       pdfPage: 25,
     },
     provider: "deepseek",
-    model: "deepseek-v4-pro",
+    model: "deepseek-v4-flash",
     markdownRendered: true,
     rawMarkdownMarkersVisible: false,
     blockMathRendered: true,

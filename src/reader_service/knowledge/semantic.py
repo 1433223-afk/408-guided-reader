@@ -8,15 +8,8 @@ import re
 MAX_EVIDENCE_UNIT_CHARACTERS = 900
 SOFT_EVIDENCE_UNIT_CHARACTERS = 160
 MAX_SHORT_HEADING_CHARACTERS = 48
-MAX_BRIEF_ENUMERATION_ITEM_CHARACTERS = 180
-MIN_BRIEF_ENUMERATION_ITEMS = 3
-MAX_SEMANTIC_PACKET_CHARACTERS = 4_800
-MAX_SEMANTIC_PACKET_UNITS = 24
+MAX_SEMANTIC_WINDOW_CHARACTERS = 4_800
 MAX_REVIEW_EXCERPT_CHARACTERS = 60
-MAX_REPAIR_PACKETS = 4
-MAX_REPAIR_UNITS = 24
-MAX_PRIOR_SECTION_CANDIDATES = 40
-MAX_PRIOR_SECTION_MEANING_CHARACTERS = 80
 MAX_PAGE_TOP_FURNITURE_Y = 0.10
 MIN_PAGE_BOTTOM_CONTINUATION_Y = 0.84
 MAX_PAGE_TOP_CONTINUATION_Y = 0.20
@@ -27,18 +20,13 @@ _HEADING_OR_ITEM = re.compile(
     r"(?:\d+\.)+\d*\s*|[（(]?\d+[）)、.]\s*|"
     r"[一二三四五六七八九十]+[、.]\s*)"
 )
-_REFERENCE_ONLY = re.compile(
-    r"^(?:[（(]?\d+[）)、.．]?\s*)?(?:见|参见|详见|请参阅)"
-    r"(?:本章|本节|上文|下文|前文|后文|教材)?[^。！？!?；;]{0,80}"
-    r"[。！？!?；;]?$"
-)
-_HEADING_PLUS_REFERENCE_ONLY = re.compile(
-    r"^[^。！？!?；;]{1,48}(?:见|参见|详见|请参阅)"
-    r"[^。！？!?；;]{0,80}[。！？!?；;]?$"
-)
-_ENUMERATED_ITEM = re.compile(
-    r"^(?:[（(](?P<parenthesized>\d{1,2})[）)]|"
-    r"(?P<plain>\d{1,2})[、）.)．](?!\d))\s*"
+_NON_MINTING_SECTION_MARKERS = (
+    "本章小结",
+    "本节小结",
+    "章节小结",
+    "常见问题",
+    "易混淆",
+    "faq",
 )
 
 
@@ -50,6 +38,18 @@ class SemanticOutputError(ValueError):
 
 def _semantic_error(code: str, message: str) -> SemanticOutputError:
     return SemanticOutputError(code, message)
+
+
+def _source_subsection(subsections: list[dict], line: dict) -> dict | None:
+    position = (line["pdf_page_index"], line["y_start"])
+    return next(
+        (
+            subsection
+            for subsection in subsections
+            if tuple(subsection["start"]) <= position < tuple(subsection["end"])
+        ),
+        None,
+    )
 
 
 def build_evidence_units(source_payload: dict) -> list[dict]:
@@ -64,6 +64,16 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
             text = _normalize_text(line.get("text"))
             if not text:
                 continue
+            subsection = _source_subsection(section.get("subsections", []), line)
+            line = {
+                **line,
+                "outline_subsection_id": (
+                    subsection["outline_node_id"] if subsection is not None else None
+                ),
+                "outline_subsection_title": (
+                    subsection["title"] if subsection is not None else None
+                ),
+            }
             if _is_page_top_furniture_during_continuation(current, line):
                 continue
             is_heading_or_item = bool(_HEADING_OR_ITEM.match(text))
@@ -77,12 +87,18 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
                 and _is_high_confidence_page_continuation(current, line, text)
             )
             starts_new_item = bool(current and is_heading_or_item)
+            starts_new_subsection = bool(
+                current
+                and current[-1].get("outline_subsection_id")
+                != line.get("outline_subsection_id")
+            )
             exceeds_hard_limit = bool(
                 current
                 and current_characters + len(text) > MAX_EVIDENCE_UNIT_CHARACTERS
             )
             if (
                 (page_changed and not continues_across_page)
+                or starts_new_subsection
                 or starts_new_item
                 or exceeds_hard_limit
             ):
@@ -106,10 +122,15 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
         if not section_units:
             raise ValueError("Resolved Section produced no deterministic evidence units")
 
+        previous_subsection_id = None
         for section_unit_order, lines in enumerate(section_units):
             text = _join_lines(lines)
             start = lines[0]
             end = lines[-1]
+            subsection_id = start.get("outline_subsection_id")
+            starts_outline_subsection = bool(
+                subsection_id is not None and subsection_id != previous_subsection_id
+            )
             fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
             unit_id = f"u{global_order + 1:04d}"
             units.append(
@@ -120,6 +141,9 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
                     ],
                     "primary_section_id": section["section_id"],
                     "primary_section_title": section["title"],
+                    "outline_subsection_id": subsection_id,
+                    "outline_subsection_title": start.get("outline_subsection_title"),
+                    "starts_outline_subsection": starts_outline_subsection,
                     "section_order": section_order,
                     "section_unit_order": section_unit_order,
                     "order_index": global_order,
@@ -133,255 +157,233 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
                     "fingerprint": fingerprint,
                 }
             )
+            previous_subsection_id = subsection_id
             global_order += 1
     if not units:
         raise ValueError("Chapter produced no deterministic evidence units")
     return units
 
 
-def packetize_evidence_units(units: list[dict]) -> list[dict]:
-    packets: list[dict] = []
-    by_section: dict[str, list[dict]] = {}
-    section_order: list[str] = []
+def build_semantic_windows(units: list[dict]) -> list[dict]:
+    section_has_subsections = {
+        unit["primary_section_id"]
+        for unit in units
+        if unit.get("outline_subsection_id") is not None
+    }
+    grouped: list[tuple[tuple[str, str], list[dict]]] = []
+    current_key: tuple[str, str] | None = None
+    current_units: list[dict] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    def flush() -> None:
+        nonlocal current_key, current_units
+        if current_key is None:
+            return
+        if current_key in seen_keys:
+            raise ValueError("Semantic window boundary is non-contiguous")
+        grouped.append((current_key, current_units))
+        seen_keys.add(current_key)
+        current_key = None
+        current_units = []
+
     for unit in units:
         section_id = unit["primary_section_id"]
-        if section_id not in by_section:
-            by_section[section_id] = []
-            section_order.append(section_id)
-        by_section[section_id].append(unit)
+        subsection_id = unit.get("outline_subsection_id")
+        if subsection_id is not None:
+            key = ("SUBSECTION", subsection_id)
+        elif section_id in section_has_subsections:
+            key = ("SECTION_LEAD_IN", section_id)
+        else:
+            key = ("SECTION", section_id)
+        if current_key is not None and key != current_key:
+            flush()
+        if current_key is None:
+            current_key = key
+        current_units.append(unit)
+    flush()
 
-    packet_order = 0
-    for section_id in section_order:
-        section_units = by_section[section_id]
-        groups: list[list[dict]] = []
-        current: list[dict] = []
-        current_characters = 0
-        for unit in section_units:
-            unit_characters = len(unit["text"])
-            if unit_characters > MAX_EVIDENCE_UNIT_CHARACTERS:
-                raise ValueError("Evidence unit exceeds semantic packet safety bound")
-            if current and (
-                len(current) >= MAX_SEMANTIC_PACKET_UNITS
-                or current_characters + unit_characters > MAX_SEMANTIC_PACKET_CHARACTERS
-            ):
-                groups.append(current)
-                current = []
-                current_characters = 0
-            current.append(unit)
-            current_characters += unit_characters
-        if current:
-            groups.append(current)
-
-        for section_packet_index, group in enumerate(groups):
-            packet_id = f"p{packet_order + 1:03d}"
-            packets.append(
-                {
-                    "packet_id": packet_id,
-                    "packet_order": packet_order,
-                    "section_packet_index": section_packet_index,
-                    "section_packet_count": len(groups),
-                    "primary_section_id": section_id,
-                    "primary_section_title": group[0]["primary_section_title"],
-                    "units": group,
-                    "character_count": sum(len(unit["text"]) for unit in group),
-                }
-            )
-            packet_order += 1
-    _validate_packet_coverage(units, packets)
-    return packets
+    windows = []
+    for window_order, (key, window_units) in enumerate(grouped):
+        character_count = sum(len(unit["text"]) for unit in window_units)
+        if character_count > MAX_SEMANTIC_WINDOW_CHARACTERS:
+            raise ValueError("Semantic window exceeds configured source bound")
+        first = window_units[0]
+        windows.append(
+            {
+                "window_id": f"w{window_order + 1:03d}",
+                "window_order": window_order,
+                "window_kind": key[0],
+                "primary_section_id": first["primary_section_id"],
+                "primary_section_title": first["primary_section_title"],
+                "outline_subsection_id": first.get("outline_subsection_id"),
+                "outline_subsection_title": first.get("outline_subsection_title"),
+                "units": window_units,
+                "character_count": character_count,
+            }
+        )
+    _validate_window_coverage(units, windows)
+    return windows
 
 
-def semantic_packet_payload(
-    chapter: dict,
-    packet: dict,
-    *,
-    repair_context: dict | None = None,
-    prior_section_candidates: list[dict] | None = None,
-) -> dict:
-    payload = {
+def semantic_window_payload(chapter: dict, window: dict) -> dict:
+    return {
         "chapter": {
             "chapter_outline_node_id": chapter["chapter_outline_node_id"],
             "title": chapter["title"],
         },
         "section": {
-            "section_id": packet["primary_section_id"],
-            "title": packet["primary_section_title"],
+            "section_id": window["primary_section_id"],
+            "title": window["primary_section_title"],
         },
-        "packet": {
-            "packet_id": packet["packet_id"],
-            "packet_index": packet["section_packet_index"],
-            "packet_count": packet["section_packet_count"],
+        "window": {
+            "window_id": window["window_id"],
+            "kind": window["window_kind"],
+            "outline_subsection_id": window["outline_subsection_id"],
+            "title": (
+                window["outline_subsection_title"]
+                or window["primary_section_title"]
+            ),
+            "kp_creation": (
+                "FORBIDDEN_REVIEW_MATERIAL"
+                if _is_non_minting_review_window(window)
+                else "ALLOWED"
+            ),
         },
         "units": [
             {"unit_id": unit["unit_id"], "text": unit["text"]}
-            for unit in packet["units"]
+            for unit in window["units"]
         ],
-        "granularity_hints": {
-            "brief_enumeration_runs": brief_enumeration_runs(packet),
-        },
     }
-    if prior_section_candidates:
-        payload["prior_section_candidates"] = [
-            {
-                "title": candidate["title"],
-                "one_sentence_meaning": candidate["one_sentence_meaning"][
-                    :MAX_PRIOR_SECTION_MEANING_CHARACTERS
-                ],
-            }
-            for candidate in prior_section_candidates[-MAX_PRIOR_SECTION_CANDIDATES:]
-        ]
-    if repair_context is not None:
-        payload["repair_context"] = repair_context
-    return payload
 
 
-def validate_semantic_output(answer: str, packet: dict) -> list[dict]:
+def validate_semantic_output(answer: str, window: dict) -> dict:
     try:
         value = json.loads(answer)
     except (TypeError, ValueError):
         raise _semantic_error("not_json", "Semantic output is not JSON") from None
-    if not isinstance(value, dict) or set(value) != {"decisions"}:
+    if not isinstance(value, dict) or set(value) != {
+        "learning_targets", "non_kp_units"
+    }:
         raise _semantic_error("top_level_fields", "Semantic output fields are invalid")
-    decisions = value["decisions"]
-    if not isinstance(decisions, list) or not 1 <= len(decisions) <= len(packet["units"]):
-        raise _semantic_error("decision_count", "Semantic decision count is invalid")
 
-    supplied = [unit["unit_id"] for unit in packet["units"]]
+    learning_targets = value["learning_targets"]
+    non_kp_units = value["non_kp_units"]
+    supplied = [unit["unit_id"] for unit in window["units"]]
     position = {unit_id: index for index, unit_id in enumerate(supplied)}
+    if (
+        not isinstance(learning_targets, list)
+        or len(learning_targets) > len(supplied)
+        or not isinstance(non_kp_units, list)
+    ):
+        raise _semantic_error("partition_shape", "Semantic partition shape is invalid")
+
+    normalized_targets = []
     consumed: list[str] = []
-    normalized: list[dict] = []
     previous_end = -1
-    for decision in decisions:
-        if not isinstance(decision, dict) or "action" not in decision:
-            raise _semantic_error("decision_shape", "Semantic decision is invalid")
-        action = decision["action"]
-        expected = {"action", "unit_ids"} if action == "DROP" else {
-            "action", "unit_ids", "title", "one_sentence_meaning"
-        }
-        if action not in {"KEEP", "MERGE", "DROP"} or set(decision) != expected:
-            raise _semantic_error("decision_fields", "Semantic decision fields are invalid")
-        unit_ids = decision["unit_ids"]
-        if not isinstance(unit_ids, list) or not unit_ids or any(
-            not isinstance(unit_id, str) or unit_id not in position
-            for unit_id in unit_ids
-        ) or len(unit_ids) != len(set(unit_ids)):
-            raise _semantic_error("unit_ids", "Semantic decision unit IDs are invalid")
+    for target in learning_targets:
+        if not isinstance(target, dict) or set(target) != {
+            "unit_ids", "title", "one_sentence_meaning"
+        }:
+            raise _semantic_error("target_fields", "Learning-target fields are invalid")
+        unit_ids = target["unit_ids"]
+        if (
+            not isinstance(unit_ids, list)
+            or not unit_ids
+            or any(
+                not isinstance(unit_id, str) or unit_id not in position
+                for unit_id in unit_ids
+            )
+            or len(unit_ids) != len(set(unit_ids))
+        ):
+            raise _semantic_error("unit_ids", "Learning-target unit IDs are invalid")
         positions = [position[unit_id] for unit_id in unit_ids]
         if positions != list(range(positions[0], positions[0] + len(positions))):
             raise _semantic_error(
                 "noncontiguous_units",
-                "Semantic decision unit IDs are not an ordered contiguous run",
+                "Learning-target unit IDs are not an ordered contiguous run",
             )
         if positions[0] <= previous_end:
             raise _semantic_error(
                 "reordered_or_reused_units",
-                "Semantic decisions are reordered or consume a unit twice",
+                "Learning targets are reordered or consume a unit twice",
             )
         previous_end = positions[-1]
-        if action == "KEEP" and len(unit_ids) != 1:
-            raise _semantic_error("keep_arity", "KEEP must reference exactly one evidence unit")
-        if action == "MERGE" and len(unit_ids) < 2:
-            raise _semantic_error(
-                "merge_arity", "MERGE must reference at least two adjacent evidence units"
-            )
-        item = {"action": action, "unit_ids": list(unit_ids)}
-        if action != "DROP":
-            title = decision["title"]
-            meaning = decision["one_sentence_meaning"]
-            if not isinstance(title, str) or not 1 <= len(title.strip()) <= 80:
-                raise _semantic_error("title", "Semantic title is invalid")
-            if not isinstance(meaning, str) or not 1 <= len(meaning.strip()) <= 300:
-                raise _semantic_error("meaning", "Semantic meaning is invalid")
-            selected_texts = [
-                packet["units"][position[unit_id]]["text"] for unit_id in unit_ids
-            ]
-            if all(_is_non_teaching_prompt(text) for text in selected_texts):
-                raise _semantic_error(
-                    "nonteaching_evidence",
-                    "A published candidate cannot be grounded only in questions or references",
-                )
-            item["title"] = title.strip()
-            item["one_sentence_meaning"] = meaning.strip()
-        normalized.append(item)
+        title = target["title"]
+        meaning = target["one_sentence_meaning"]
+        if not isinstance(title, str) or not 1 <= len(title.strip()) <= 80:
+            raise _semantic_error("title", "Semantic title is invalid")
+        if not isinstance(meaning, str) or not 1 <= len(meaning.strip()) <= 300:
+            raise _semantic_error("meaning", "Semantic meaning is invalid")
+        normalized_targets.append(
+            {
+                "unit_ids": list(unit_ids),
+                "title": title.strip(),
+                "one_sentence_meaning": meaning.strip(),
+            }
+        )
         consumed.extend(unit_ids)
-    if consumed != supplied:
+
+    if (
+        any(
+            not isinstance(unit_id, str) or unit_id not in position
+            for unit_id in non_kp_units
+        )
+        or len(non_kp_units) != len(set(non_kp_units))
+        or [position[unit_id] for unit_id in non_kp_units]
+        != sorted(position[unit_id] for unit_id in non_kp_units)
+    ):
+        raise _semantic_error("non_kp_units", "Non-KP unit IDs are invalid")
+    consumed.extend(non_kp_units)
+    if len(consumed) != len(supplied) or set(consumed) != set(supplied):
         raise _semantic_error(
             "incomplete_accounting",
-            "Semantic output does not account for every supplied unit exactly once",
+            "Semantic partition does not account for every supplied unit exactly once",
         )
-    for run in brief_enumeration_runs(packet):
-        run_ids = set(run)
-        if not any(
-            decision["action"] == "MERGE"
-            and run_ids.issubset(decision["unit_ids"])
-            for decision in normalized
-        ):
-            raise _semantic_error(
-                "fragmented_brief_enumeration",
-                "A brief enumeration run must be materialized as one merged learning unit",
-            )
-    return normalized
+    if _is_non_minting_review_window(window) and normalized_targets:
+        raise _semantic_error(
+            "non_minting_review_material",
+            "Summary, FAQ, and misconception windows cannot mint KnowledgePoints",
+        )
+    return {
+        "learning_targets": normalized_targets,
+        "non_kp_units": list(non_kp_units),
+    }
 
 
-def brief_enumeration_runs(packet: dict) -> list[list[str]]:
-    """Return high-confidence short numbered runs that lack item-level teaching depth."""
-    runs: list[list[str]] = []
-    current: list[str] = []
-    expected_number = 1
-    contains_substantial_item = False
-
-    def flush() -> None:
-        nonlocal current, expected_number, contains_substantial_item
-        if (
-            not contains_substantial_item
-            and len(current) >= MIN_BRIEF_ENUMERATION_ITEMS
-        ):
-            runs.append(current)
-        current = []
-        expected_number = 1
-        contains_substantial_item = False
-
-    for unit in packet["units"]:
-        text = _normalize_text(unit.get("text"))
-        match = _ENUMERATED_ITEM.match(text)
-        number = int(match.group("parenthesized") or match.group("plain")) if match else None
-        if number is None or number != expected_number:
-            flush()
-            if number != 1:
-                continue
-        if len(text) > MAX_BRIEF_ENUMERATION_ITEM_CHARACTERS:
-            contains_substantial_item = True
-        else:
-            current.append(unit["unit_id"])
-        expected_number = number + 1
-    flush()
-    return runs
+def _is_non_minting_review_window(window: dict) -> bool:
+    titles = (
+        window.get("primary_section_title"),
+        window.get("outline_subsection_title"),
+    )
+    return any(
+        marker in title.casefold()
+        for title in titles
+        if isinstance(title, str)
+        for marker in _NON_MINTING_SECTION_MARKERS
+    )
 
 
 def materialize_candidates(
-    packets: list[dict], decisions_by_packet: dict[str, list[dict]]
+    windows: list[dict], partitions_by_window: dict[str, dict]
 ) -> list[dict]:
-    if set(decisions_by_packet) != {packet["packet_id"] for packet in packets}:
-        raise ValueError("Semantic decision ledger is incomplete")
+    if set(partitions_by_window) != {window["window_id"] for window in windows}:
+        raise ValueError("Semantic partition ledger is incomplete")
     candidates: list[dict] = []
-    for packet in packets:
-        unit_index = {unit["unit_id"]: unit for unit in packet["units"]}
-        for decision in decisions_by_packet[packet["packet_id"]]:
-            if decision["action"] == "DROP":
-                continue
-            selected = [unit_index[unit_id] for unit_id in decision["unit_ids"]]
+    for window in windows:
+        unit_index = {unit["unit_id"]: unit for unit in window["units"]}
+        for target in partitions_by_window[window["window_id"]]["learning_targets"]:
+            selected = [unit_index[unit_id] for unit_id in target["unit_ids"]]
             first = selected[0]
             last = selected[-1]
             candidates.append(
                 {
                     "candidate_id": f"c{len(candidates) + 1:04d}",
-                    "packet_id": packet["packet_id"],
-                    "unit_ids": list(decision["unit_ids"]),
-                    "decision_action": decision["action"],
+                    "window_id": window["window_id"],
+                    "unit_ids": list(target["unit_ids"]),
                     "source_revision_id": first["source_revision_id"],
                     "primary_section_id": first["primary_section_id"],
-                    "title": decision["title"],
-                    "one_sentence_definition": decision["one_sentence_meaning"],
+                    "title": target["title"],
+                    "one_sentence_definition": target["one_sentence_meaning"],
                     "order_index": first["order_index"],
                     "start_page": first["start_page"],
                     "start_y": first["start_y"],
@@ -390,8 +392,9 @@ def materialize_candidates(
                 }
             )
     candidates.sort(key=lambda candidate: candidate["order_index"])
-    if not 1 <= len(candidates) <= 120:
-        raise ValueError("Materialized Chapter KP count is implausible")
+    maximum_candidate_count = sum(len(window["units"]) for window in windows)
+    if not 1 <= len(candidates) <= maximum_candidate_count:
+        raise ValueError("Materialized candidate count exceeds evidence-unit authority")
     return candidates
 
 
@@ -413,18 +416,17 @@ def publication_points(candidates: list[dict]) -> list[dict]:
 def build_compact_review_ledger(
     chapter: dict,
     units: list[dict],
-    packets: list[dict],
-    decisions_by_packet: dict[str, list[dict]],
+    windows: list[dict],
+    partitions_by_window: dict[str, dict],
     candidates: list[dict],
     *,
     semantic_provider: str,
     semantic_model: str,
-    semantic_repair_round: int,
     review_rubric: tuple[str, ...],
     overlap_warnings: list[dict],
 ) -> dict:
     candidate_by_membership = {
-        (candidate["packet_id"], tuple(candidate["unit_ids"])): candidate["candidate_id"]
+        (candidate["window_id"], tuple(candidate["unit_ids"])): candidate["candidate_id"]
         for candidate in candidates
     }
     sections = []
@@ -450,25 +452,31 @@ def build_compact_review_ledger(
                 ],
             }
         )
-    packet_ledger = []
-    for packet in packets:
-        decisions = []
-        for decision in decisions_by_packet[packet["packet_id"]]:
-            item = {
-                "action": decision["action"],
-                "unit_ids": list(decision["unit_ids"]),
-            }
+    window_ledger = []
+    for window in windows:
+        targets = []
+        partition = partitions_by_window[window["window_id"]]
+        for target in partition["learning_targets"]:
+            item = {"unit_ids": list(target["unit_ids"])}
             candidate_id = candidate_by_membership.get(
-                (packet["packet_id"], tuple(decision["unit_ids"]))
+                (window["window_id"], tuple(target["unit_ids"]))
             )
-            if candidate_id is not None:
-                item["candidate_id"] = candidate_id
-            decisions.append(item)
-        packet_ledger.append(
+            if candidate_id is None:
+                raise ValueError("Learning target lacks a materialized candidate")
+            item["candidate_id"] = candidate_id
+            targets.append(item)
+        window_ledger.append(
             {
-                "packet_id": packet["packet_id"],
-                "section_id": packet["primary_section_id"],
-                "decisions": decisions,
+                "window_id": window["window_id"],
+                "window_kind": window["window_kind"],
+                "section_id": window["primary_section_id"],
+                "outline_subsection_id": window["outline_subsection_id"],
+                "title": (
+                    window["outline_subsection_title"]
+                    or window["primary_section_title"]
+                ),
+                "learning_targets": targets,
+                "non_kp_units": list(partition["non_kp_units"]),
             }
         )
     ledger = {
@@ -477,7 +485,7 @@ def build_compact_review_ledger(
             "title": chapter["title"],
         },
         "sections": sections,
-        "packets": packet_ledger,
+        "windows": window_ledger,
         "candidates": [
             {
                 "candidate_index": index,
@@ -492,8 +500,7 @@ def build_compact_review_ledger(
         "semantic_provenance": {
             "provider": semantic_provider,
             "model": semantic_model,
-            "packet_count": len(packets),
-            "semantic_repair_round": semantic_repair_round,
+            "window_count": len(windows),
         },
         "review_rubric": list(review_rubric),
         "overlap_warnings": overlap_warnings,
@@ -510,22 +517,28 @@ def validate_compact_review_ledger(ledger: dict) -> None:
     ]
     if len(unit_ids) != len(set(unit_ids)) or not unit_ids:
         raise ValueError("Compact Review ledger unit membership is invalid")
-    decision_unit_ids = [
+    partition_unit_ids = [
         unit_id
-        for packet in ledger["packets"]
-        for decision in packet["decisions"]
-        for unit_id in decision["unit_ids"]
+        for window in ledger["windows"]
+        for target in window["learning_targets"]
+        for unit_id in target["unit_ids"]
+    ] + [
+        unit_id
+        for window in ledger["windows"]
+        for unit_id in window["non_kp_units"]
     ]
-    if decision_unit_ids != unit_ids:
+    if (
+        len(partition_unit_ids) != len(unit_ids)
+        or set(partition_unit_ids) != set(unit_ids)
+    ):
         raise ValueError("Compact Review ledger does not completely account for units")
     candidate_ids = {candidate["candidate_id"] for candidate in ledger["candidates"]}
-    decision_candidate_ids = {
-        decision["candidate_id"]
-        for packet in ledger["packets"]
-        for decision in packet["decisions"]
-        if "candidate_id" in decision
+    target_candidate_ids = {
+        target["candidate_id"]
+        for window in ledger["windows"]
+        for target in window["learning_targets"]
     }
-    if not candidate_ids or candidate_ids != decision_candidate_ids:
+    if not candidate_ids or candidate_ids != target_candidate_ids:
         raise ValueError("Compact Review ledger candidate membership is invalid")
     prohibited = {
         "text", "lines", "line_ref", "start_ref", "end_ref", "pdf_page_index",
@@ -536,62 +549,21 @@ def validate_compact_review_ledger(ledger: dict) -> None:
         raise ValueError("Compact Review ledger contains source-authority fields")
 
 
-def repair_packet_ids(
-    findings: tuple[dict, ...], units: list[dict], packets: list[dict]
-) -> list[str]:
-    unit_index = {unit["unit_id"]: unit for unit in units}
-    packet_by_unit = {
-        unit["unit_id"]: packet["packet_id"]
-        for packet in packets
-        for unit in packet["units"]
-    }
-    target_units = []
-    for finding in findings:
-        if finding["severity"] != "BLOCKING":
-            continue
-        for unit_id in finding["unit_ids"]:
-            if unit_id not in target_units:
-                target_units.append(unit_id)
-    if not target_units or len(target_units) > MAX_REPAIR_UNITS:
-        raise ValueError("Review repair target is absent or over-broad")
-    target_packets = []
-    for unit_id in target_units:
-        packet_id = packet_by_unit[unit_id]
-        if packet_id not in target_packets:
-            target_packets.append(packet_id)
-    if len(target_packets) > MAX_REPAIR_PACKETS or (
-        len(packets) > 1 and len(target_packets) == len(packets)
-    ):
-        raise ValueError("Review repair target spans too much of the Chapter")
-    for section_id in {unit_index[unit_id]["primary_section_id"] for unit_id in target_units}:
-        section_packets = {
-            packet["packet_id"] for packet in packets
-            if packet["primary_section_id"] == section_id
-        }
-        if len(section_packets) > 1 and section_packets.issubset(target_packets):
-            raise ValueError("Review repair target requests complete-Section regeneration")
-    return [
-        packet["packet_id"] for packet in packets
-        if packet["packet_id"] in target_packets
-    ]
-
-
-def _validate_packet_coverage(units: list[dict], packets: list[dict]) -> None:
+def _validate_window_coverage(units: list[dict], windows: list[dict]) -> None:
     expected = [unit["unit_id"] for unit in units]
     actual = [
-        unit["unit_id"] for packet in packets for unit in packet["units"]
+        unit["unit_id"] for window in windows for unit in window["units"]
     ]
     if expected != actual or len(actual) != len(set(actual)):
-        raise ValueError("Semantic packetization changed evidence-unit accounting")
-    for packet in packets:
-        if len(packet["units"]) > MAX_SEMANTIC_PACKET_UNITS \
-                or packet["character_count"] > MAX_SEMANTIC_PACKET_CHARACTERS:
-            raise ValueError("Semantic packet exceeds configured bounds")
+        raise ValueError("Semantic windows changed evidence-unit accounting")
+    for window in windows:
+        if window["character_count"] > MAX_SEMANTIC_WINDOW_CHARACTERS:
+            raise ValueError("Semantic window exceeds configured source bound")
         if any(
-            unit["primary_section_id"] != packet["primary_section_id"]
-            for unit in packet["units"]
+            unit["primary_section_id"] != window["primary_section_id"]
+            for unit in window["units"]
         ):
-            raise ValueError("Semantic packet crosses a Section boundary")
+            raise ValueError("Semantic window crosses a Section boundary")
 
 
 def _normalize_text(value: object) -> str:
@@ -631,23 +603,6 @@ def _is_high_confidence_page_continuation(
         and float(line["y_start"]) <= MAX_PAGE_TOP_CONTINUATION_Y
         and not _TERMINAL_PUNCTUATION.search(previous["text"])
         and not _HEADING_OR_ITEM.match(text)
-    )
-
-
-def _is_non_teaching_prompt(text: str) -> bool:
-    normalized = _normalize_text(text)
-    if _REFERENCE_ONLY.fullmatch(normalized) or _HEADING_PLUS_REFERENCE_ONLY.fullmatch(
-        normalized
-    ):
-        return True
-    pieces = [
-        piece.strip()
-        for piece in re.findall(r"[^。！？!?；;]+[。！？!?；;]?", normalized)
-        if piece.strip()
-    ]
-    return bool(pieces) and all(
-        piece.endswith(("？", "?")) or _REFERENCE_ONLY.fullmatch(piece)
-        for piece in pieces
     )
 
 

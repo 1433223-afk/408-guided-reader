@@ -28,7 +28,7 @@ try {
   const status = await json(page, "/api/assistant/status");
   const deepseek = status.providers.find((provider) => provider.provider === "deepseek");
   assert.equal(deepseek?.configured, true, "DeepSeek Windows Credential Manager target is unavailable");
-  assert.equal(deepseek.model, "deepseek-v4-pro");
+  assert.equal(deepseek.model, "deepseek-v4-flash");
 
   await openBook(page, 348);
   const bigEndian = await selectExactText(page, {
@@ -174,7 +174,7 @@ try {
   console.log(JSON.stringify({
     status: "PASS",
     provider: "deepseek",
-    model: "deepseek-v4-pro",
+    model: "deepseek-v4-flash",
     realBook: { pages: 348, sha256: "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd" },
     rootOne: { selection: bigEndian.text, firstConcept, secondConcept, deepestDepth: 3 },
     rootTwo: { selection: littleEndian.text, retainedAfterRootOneClose: true },

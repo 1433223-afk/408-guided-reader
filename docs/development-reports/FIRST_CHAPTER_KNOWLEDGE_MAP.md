@@ -4,260 +4,151 @@
 
 `IMPLEMENTATION_READY`
 
-`AGENT_REAL_USE_PASS`
+- `AGENT_REAL_USE: PASS`
+- `USER_ACCEPTANCE: PASS` — the user accepted the real Chapter 2 Knowledge Map on 2026-09-09.
+- `INDEPENDENT_NARROW_REVIEW: PENDING`
+- Phase status remains **OPEN**. This report does not close the Phase.
 
-`READY_FOR_USER_RETEST`
+The Reader can prepare one requested Chapter as a private, Section-progress-visible operation and
+publish the complete Section-grouped Knowledge Map atomically. No candidate KP is exposed before
+publication. A valid final Review failure ends the attempt without regeneration or partial
+publication.
 
-`USER_ACCEPTANCE: PENDING RETEST`
-
-The user-approved architecture correction, `review_rejected` UAT rework and taxonomy-granularity
-UAT correction are implemented. The Phase remains open. Nothing in this report claims
-`USER_ACCEPTANCE: PASS` or adds Learning, Mastery, Master, Teaching or Guide behavior.
-
-The production path is now:
+The accepted semantic path is:
 
 ```text
-deterministic Chapter evidence units and brief-enumeration hints
-→ bounded Section-local semantic packets
-→ deterministic private KP materialization
-→ one compact whole-Chapter structural Review
-→ cumulative-bounded unit-addressed repair of newly implicated packets when required
-→ whole-Chapter re-review until PASS or a fail-closed repair bound
-→ deterministic validation
-→ one atomic Chapter publication
+Outline-subsection bounded textbook evidence
+-> one group-first semantic partition per real subsection
+-> deterministic KP materialization
+-> one compact whole-Chapter structural Review
+-> deterministic validation
+-> atomic Chapter publication
 ```
-
-Before publication, the Reader exposes only stage and completed/total Section progress. No private
-unit, candidate title, definition or source range is user-visible.
-
-## UAT root cause
-
-- Chapter 7.1.3 briefly enumerates program polling, interrupts, DMA and channels as four I/O control
-  modes. The prior Section reducer prompt described independent assessability but did not make a
-  brief taxonomy/composition/step run default to one learning unit. Its deterministic contract also
-  accepted four `KEEP` decisions, so four overview labels reached atomic publication as durable KPs
-  even though the current source taught only one classification framework.
-- This was not caused by packet boundaries or final Review. Real source reconstruction placed all
-  four units in one Section packet. The missing upstream rule and validator guard allowed the
-  reducer to confuse editorial enumeration items with independently trackable learning units.
-- The first real-provider verification of the taxonomy fix then exposed a separate genuine
-  upstream evidence defect. An inkjet-printer paragraph crossed PDF pages 310/311, but the evidence
-  builder unconditionally flushed on page change. Page-number/running-header lines and the sentence
-  continuation became a second candidate, so Review correctly reported a duplicate spanning two
-  packets and the accepted complete-Section repair guard rejected the over-broad repair request.
-- The minimal correction keeps both defects upstream: a declared high-confidence brief enumeration
-  must be one `MERGE`, while a high-confidence unfinished sentence at the physical page bottom is
-  joined to its next-page body continuation without adding page furniture to semantic text. Neither
-  change weakens Chapter Review, broadens repair authority or changes atomic publication.
-
-- The latest persistent-library Chapter 7 failure was attempt
-  `bac0dff8-ebe1-445d-8f11-e44c653629a2`: 223 units, 12 packets and 87 private candidates reached
-  two valid Reviews before terminal `REVIEW / SEMANTIC_FAILURE / review_rejected`. Round 0 identified
-  real duplicates in Section 7.1; after repairing only `p001`, round 1 discovered different real
-  blockers in untouched `p005` (near-identical I/O-port definitions) and `p009` (overlapping
-  DMA-controller functionality). The second findings were not repair regressions: the first Review
-  had not exhaustively reported all Chapter blockers.
-- Persistent-library Chapter 1 attempt `878ab11a-c00b-434c-a76f-594846a16780` showed the same
-  pattern. Its first Review repaired `p002`/`p006`; the next Review newly found an untouched Section
-  1.4 candidate whose “meaning” was only a `见常见问题和易混淆知识点1` pointer. One-repair-round
-  orchestration therefore made a genuine but non-exhaustive Review behave like an unavoidable whole-
-  Chapter rejection.
-- The upstream semantic causes were concrete: short numbered headings were emitted as independent
-  evidence units, the reducer could keep both heading and following definition, question/reference-
-  only evidence was not deterministically rejected, and repair lacked bounded same-Section peer
-  summaries. These defects could not be solved safely by lowering the Review rubric.
-- Chapter candidates are intentionally private and disposable. A terminal Review failure publishes
-  none of them, so a later user retry starts a new private Chapter attempt. This remains the accepted
-  no-partial-publication boundary; the correction instead permits bounded convergence inside one live
-  attempt.
-
-- The original real Chapter 1 failure was attempt
-  `fb1a46b5-b5e7-4a1a-b2d6-a8c4cb5e6872`. All five Sections generated successfully and produced 46
-  private candidates. The Reviewer returned a valid semantic FAIL, not an output-contract failure.
-- Its concrete findings were real structural-quality issues: Section 1.4 repeated language direct
-  execution already taught in 1.2; Section 1.5 repeated benchmark limitations from 1.3 and
-  translation-program distinctions from 1.2; Section 1.4 also repeated the von Neumann five-part
-  hardware model from 1.2 while mixing it with a distinct architecture-evolution idea that needed
-  narrowing rather than wholesale deletion.
-- The old Review result had only a summary and Section-level repair authority. It could not identify
-  the smallest evidence units. After FAIL, all candidates left process memory, so a user retry had
-  to regenerate the entire Chapter.
-- Reproduction also established the latency/`empty_response` cause. DeepSeek's default thinking
-  consumed the completion budget and returned `finish_reason=length`, reasoning content and an
-  empty answer after roughly 65–173 seconds per call. Explicit `thinking.type=disabled` reduced real
-  packet calls to roughly 4–13 seconds and returned ordinary content.
-- The configured `GLM-5.3-Flash` Reviewer is an always-thinking model: it rejects
-  `thinking.type=disabled` with HTTP 400/provider code 1210. A safe parameter probe established that
-  its bounded minimum is top-level `reasoning_effort=low`. The runtime now maps the two named
-  providers accurately instead of treating their controls as equivalent.
 
 ## Implemented
 
-- Added a local deterministic evidence-unit builder and Section-local packetizer. Every unit has a
-  pipeline-local ID and server-owned Section, order, source revision and continuous physical range.
-  AI receives only the current bounded packet's unit IDs/text and may return only
-  `KEEP`/`MERGE`/`DROP`, title and one-sentence meaning.
-- The Section reducer now applies all five KP gates: worthwhile independent learning, focused
-  assessability, one coherent meaning, sufficient current textbook teaching, and a meaningful future
-  learning-state interpretation. A high-confidence consecutive numbered run of at least three brief
-  items is supplied as a server-owned granularity hint and must be covered by one `MERGE`; a run with
-  substantial item-level evidence is not deterministically forced. Fragmentation retries only the
-  current private packet and never reaches materialization.
-- Page changes are no longer unconditional evidence boundaries. Only a high-confidence unfinished
-  sentence at the physical page bottom may continue into the next page's top body line; intervening
-  top-margin page-number/running-header lines are excluded from semantic text. Completed sentences,
-  new numbered items, Section boundaries and all size limits remain hard boundaries. The resulting
-  source range remains one continuous multi-page server-owned range.
-- Short numbered headings now remain attached to their following explanation instead of becoming a
-  sibling unit. A validated `KEEP`/`MERGE` grounded only in questions and/or `见` / `参见` / `详见`
-  references is rejected as `invalid_semantic_output.nonteaching_evidence`; substantive teaching
-  that merely contains a question or the word `参考` remains valid.
-- Kept semantic validation strict. Invented, missing, repeated, reordered or multiply consumed unit
-  IDs, non-contiguous runs, unary `MERGE`, partial/invalid JSON and undeclared fields fail closed.
-  Up to three structured attempts remain packet-local; error-code-specific retry instructions do
-  not normalize or partially accept invalid output.
-- Packets from one Section are classified in source order while independent Sections remain
-  concurrent. A later packet receives only a bounded list of earlier private title/meaning
-  summaries from that same Section, so repeated definitions are dropped without resending the
-  Section's OCR or crossing a Section boundary.
-- Materialization is deterministic. Section ownership, order and source range come exclusively from
-  the accepted unit ledger; model output cannot create or mutate Outline, page, line, geometry,
-  source-revision or durable identity fields.
-- Replaced the old Review payload with a compact whole-Chapter ledger containing complete unit
-  accounting, candidate membership, bounded evidence excerpts/fingerprints and overlap warnings.
-  The rubric covers independently trackable granularity, duplicate/near-duplicate semantics,
-  instructional specificity, split/merge quality, major learning coverage, Section/source
-  faithfulness and map-level balance.
-- All seven Review dimensions remain mandatory. The contract now reserves `BLOCKING` for a high-
-  confidence defect that makes the supplied map unpublishable; alternative naming, optional
-  consolidation, mild balance issues and excerpt-limited uncertainty are `WARNING`, so “can be
-  improved” no longer means “cannot publish.” The Reviewer must scan every Section before deciding.
-- Review findings must name one real Section and the smallest real unit-ID set. Up to three semantic
-  repair rounds may converge across at most four packets and 48 implicated units, but a later round
-  may touch only newly discovered packets. Each repair receives bounded same-Section peer
-  title/meaning summaries and no source authority. A blocker recurring in a repaired packet,
-  invalid/unaddressable target, over-broad request or exhausted cumulative budget is terminal and
-  publishes nothing.
-- Removed deterministic no-overlap rejection. Overlap is a Review/warning signal; no-gaps remains
-  unnecessary. Continuous Chapter/Section-contained source ranges remain hard validation gates.
-- Preserved the existing atomic publication transaction. `PREPARING` and `FAILED` snapshots contain
-  no KPs; durable opaque IDs and the complete structure version appear together only after Review
-  PASS and final validation. A READY prepare remains a no-op, so replacement publication is still
-  unavailable.
-- Added Migration 10 and safe packet/stage attempt observability. It records provider/model role,
-  packet or Review stage, semantic/structured/transport attempt, timing, finish reason, token usage,
-  content/reasoning presence and lengths, and typed failures. Structured validation failures now
-  annotate the exact packet/round. Request bodies, response bodies, reasoning text, credentials and
-  private candidate content are never retained.
-- Protected inspection now retains bounded actionable Review detail alongside dimension, severity
-  and real Section/unit IDs. It still retains no ledger, provider body, source text/geometry,
-  reasoning or credentials.
-- Kept the existing Simplified Chinese Section-progress UI and READY-only Section-grouped map. The
-  KP action resolves the published `start_page/start_y` and scrolls that source anchor into the
-  rendered Reader viewport.
+- Retained deterministic Outline/OCR evidence ownership. The server constructs stable ordered
+  evidence units and real subsection-bounded windows; AI cannot author Section, page, line,
+  geometry, source-revision or source-range fields.
+- Replaced the former packet `KEEP`/`MERGE`/`DROP` and repair chain with one final group-first result
+  per window: `learning_targets[{unit_ids,title,one_sentence_meaning}]` plus `non_kp_units`.
+  Validation requires exact, ordered, contiguous, once-only unit accounting and fails closed on
+  invented IDs, missing units, extra fields or malformed/empty output.
+- Made the semantic contract absorption-first: definitions, properties, ordinary steps, examples
+  and terminology are absorbed unless separate teaching, assessment, diagnosis and remediation
+  paths are justified. “本章小结” and “本节小结” windows cannot mint KPs; “常见问题”, “易混淆” and
+  FAQ windows likewise remain non-minting review/support material.
+- Materialize private KPs deterministically from the accepted unit grouping. Source ownership,
+  continuous range and order come only from the evidence ledger.
+- Retained all seven Chapter Review dimensions: granularity, coverage, duplicates, instructional
+  specificity, split/merge quality, source/Section faithfulness and map-level balance. Review
+  consumes the compact ledger, runs once, cannot rewrite candidates, and a valid FAIL terminates the
+  preparation.
+- Retained same-input, same-contract bounded technical retry for transport, empty/length-limited or
+  structured-output failures. There is no result-driven absorption, cleanup, audit, repair,
+  re-partition or re-review stage.
+- Retained secret-safe generation-attempt telemetry and the minimum Reader Section progress UI.
+  Request/response bodies, reasoning, credentials and private KP content are not persisted.
+- Added the authorized OpenRouter Gemini Reviewer route without a new provider framework. External
+  OpenRouter traffic requires an explicit proxy or the enabled Windows user proxy and fails closed
+  when no safe proxy route exists or bypass is requested. Credentials continue to use the existing
+  local environment storage and are never logged.
+- Kept the existing durable job lifecycle, READY no-op, opaque IDs minted at first publication,
+  source navigation, ownership/cascade rules and Chapter-atomic publication. No Learning, Mastery,
+  Master, Teaching or ExamEvidence writes were added.
+
+## Important implementation decisions
+
+- One real Outline subsection receives one semantic judgment. Technical retry repeats identical
+  input; prior semantic output and Review findings never become another semantic pass.
+- Summary/FAQ/misconception evidence remains useful source material but does not create an
+  additional durable learning identity. No facet/attachment persistence model was introduced.
+- The production generator is `deepseek / deepseek-v4-flash`. The real accepted Reviewer route is
+  `openrouter / google/gemini-3.8-flash`; no higher-tier model was used.
+- `tools/kp_granularity_calibration.py` is retained only as a development-time regression aid. It is
+  not a production stage, publication gate or correctness oracle.
+
+## Deviations from Spec
+
+The accepted Phase brief listed OpenRouter proxy/region work under Not now. During UAT the user
+explicitly authorized the narrow exception needed to make Gemini available as the Knowledge Map
+Reviewer, including reuse of the existing Windows proxy and credential mechanism. The change is
+limited to the existing OpenAI-compatible provider adapter and does not create a new provider system,
+dependency or fallback that can bypass the proxy.
+
+No other product or publication authority changed.
 
 ## Acceptance evidence
 
-Evidence was executed in the required order: TARGETED → AGENT REAL-USE GOLDEN PATH → AFFECTED
-REGRESSION → CLOSURE / BROAD.
+Evidence followed the required order: TARGETED -> AGENT REAL-USE GOLDEN PATH -> AFFECTED ->
+CLOSURE / BROAD.
 
-- TARGETED: `pytest -q tests/test_knowledge_map.py` — **41 passed**. This covers deterministic unit
-  accounting and ranges, Section-local bounded packets, strict semantic contracts, same-Section
-  sequential context with no cross-Section leakage, heading/definition joining, question/reference-
-  only rejection, brief-enumeration merge enforcement, substantial-item escape, high-confidence
-  cross-page continuation and header exclusion, packet-local technical retry, new-packet-only bounded convergence, recurring-
-  blocker and cumulative-budget fail-closed behavior, peer repair context, actionable safe telemetry,
-  all seven Review dimensions, overlap-as-warning, atomic rollback, restart/idempotency/cascade and
-  UI/API projections.
-- AGENT REAL-USE GOLDEN PATH — PERSISTENT USER LIBRARY: the actually served Reader at
-  `127.0.0.1:8000` retried failed Chapter 7 through the production
-  `deepseek / deepseek-v4-pro → zhipu / GLM-5.3-Flash` route. Attempt
-  `e16aeab1-a455-4381-a275-6f199548bab9` completed in about 80 seconds: UI visibly advanced to 4/5
-  Sections without exposing candidates; nine semantic packet calls succeeded, one packet-local call
-  failed and recovered, the complete Chapter passed Review, and 58 KPs appeared atomically in five
-  Section groups. A published `回到教材` action moved the Reader from PDF page 312 to page 310;
-  close/reopen preserved the READY map. Outline identity remained revision 1; preparation changed no
-  logical Outline identity.
-- AGENT REAL-USE GOLDEN PATH: `npm run test:e2e:knowledge` — **PASS** against the prepared 348-page
-  textbook (SHA-256
-  `6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`), Chapter 6. It exercised a
-  packet-local length/empty response and retry, a unit-addressed `instructional_specificity` FAIL,
-  targeted repair, whole-Chapter re-review, atomic READY, four Section groups, source-anchor
-  navigation, unchanged logical Outline identity, restart-stable IDs and book cascade.
-- REAL PROVIDER GOLDEN PATH: `npm run test:e2e:knowledge:real` — **PASS** twice through the production
-  `deepseek / deepseek-v4-pro → zhipu / GLM-5.3-Flash` route on two real Chapters:
-  - Chapter 7: 16,045 source characters → 146 units / 9 packets → 60 published KPs in 5 Section
-    groups. The real 7.1.3 source band containing all four overview modes was covered by exactly one
-    published framework KP (`briefIoControlFrameworkCount=1`), and the former cross-page inkjet
-    duplicate no longer appeared. The whole-Chapter Review passed without semantic repair.
-  - Chapter 6: 7,662 source characters → 89 units / 6 packets → 48 published KPs in 4 Section groups;
-    bounded packet transport retries recovered and the whole-Chapter Review passed.
-  - The final compact Review payloads were 37,337 and 25,210 characters respectively, both smaller
-    than their raw Chapter source projections. No request body was retained. Both maps appeared only
-    at READY, and Section-grouped rendering plus published source-anchor navigation passed.
-- AFFECTED REGRESSION: API, jobs, Map the Book, Ask Deeper, AI_SAVED, annotations, Library and
-  Foundation Python suites — **PASS**.
-- CLOSURE / BROAD: full `pytest -q` — **161 passed, 2 skipped**; the unchanged skips are the optional
-  external real-OCR entrypoints. `npm test` — **30 passed**. `python -m compileall -q src`, Node syntax
-  checks for both Knowledge E2E runners and `git diff --check` also passed.
-- `INTENTIONALLY_NOT_RUN`: standalone Reader/selectable-reader/annotations/find E2E runners were not
-  repeated because the current Knowledge golden path exercised those actual Reader controls on the
-  348-page material, while their persistence/geometry surfaces were included in affected and broad
-  Python suites.
+- TARGETED: `python -m pytest tests/test_knowledge_map.py tests/test_ask_about_this.py -q` —
+  **83 passed**. This covers one-pass window contracts, strict unit accounting, deterministic
+  materialization/source authority, terminal Review failure, same-input technical retry, safe
+  observability, proxy fail-closed behavior, atomic publication, restart/idempotency and cascade.
+- AGENT REAL-USE GOLDEN PATH: `npm run test:e2e:knowledge` — **PASS** on the served Reader with the
+  real 348-page textbook. It exercised Chapter 6, Section progress with no partial KP exposure, a
+  same-window `empty_response` retry, terminal Review FAIL, explicit user retry, atomic READY,
+  source navigation, restart-stable IDs and cascade.
+- REAL USER PATH: Chapter 2 used 226 deterministic evidence units in 17 windows and published
+  **42 KPs in 3 Section groups** after one Review. Observed total duration was **40.51 seconds** with
+  zero technical failures. Sections 2.4 “本章小结” and 2.5 “常见问题和易混淆知识点” each published
+  **0 KPs**. The user inspected the complete map and declared `USER_ACCEPTANCE: PASS`.
+- REAL REVIEWER EGRESS: a real `google/gemini-3.8-flash` OpenRouter call succeeded through the
+  configured `127.0.0.1:7890` Windows proxy. A deliberately unavailable proxy produced a typed
+  network failure with no direct fallback. No credential or provider body was printed or retained.
+- AFFECTED Python regression — **117 passed** across API, jobs, Map the Book, Ask About This,
+  AI_SAVED explanations, annotations, Library and Foundation suites.
+- AFFECTED served E2E: `npm run test:e2e:ask`, `test:e2e:r3`, `test:e2e:find`, `test:e2e:map`, and
+  `test:e2e:save` — **PASS**.
+- Real-material Reader/recovery E2E: `npm run test:e2e:r2` and `npm run test:e2e:recovery` —
+  **PASS**. The first isolated `r2` attempt hit a transient SQLite `database is locked`; an
+  unchanged-input rerun passed, and no product code was changed or failure reclassified.
+- CLOSURE / BROAD: full `python -m pytest -q` — **141 passed, 2 skipped** (143 collected; the two
+  unchanged skips are optional external real-OCR entrypoints). `npm test` — **30 passed**.
+- FINAL STATIC CHECKS: `python -m compileall -q src`, Node syntax checks for both Knowledge E2E
+  runners, `git diff --check`, and a staged secret/user-material inspection — **PASS**.
 
-Visual evidence:
+No Chapter 2/provider regeneration was performed after user acceptance.
 
-- `test-results/knowledge-map-golden.png`
-- `test-results/knowledge-map-real-provider.png`
+## Known limitations / deferred debt
 
-## Boundaries and deferred debt
-
-- `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: same-concept durable-ID reuse/new-concept mint,
-  ambiguous split/merge blocking, and separation of published availability from replacement-attempt
-  lifecycle. No READY-map regeneration or Learning/Mastery reference exists yet.
-- Private candidates remain intentionally disposable across process/job failure. Localized repair
-  preserves unaffected candidates only inside the current live attempt; a later explicit retry
-  starts a fresh private Chapter attempt. This preserves the accepted no-checkpoint/no-partial-draft
-  boundary.
-- Provider latency and structured-output variability still exist, but they are bounded to the
-  current packet or Review stage and are now diagnosable without content retention. Exhaustion
-  remains an honest Chapter-local failure, never a PASS.
-- User retest remains required. The Phase is not closed.
+- `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: reconcile same-concept durable IDs, mint new IDs
+  only for new concepts, and block ambiguous split/merge identity decisions.
+- `REQUIRED_BEFORE_MASTERY_OR_FIRST_REGENERATION`: separate published availability from replacement
+  prepare-attempt lifecycle so a failed replacement cannot obscure the current published version.
+- READY-map regeneration remains blocked, and this Phase still writes no Learning/Mastery state.
+- Independent narrow review remains required before Phase closure.
 
 ## Reproducible entry points
 
 ```powershell
-pytest -q tests/test_knowledge_map.py
+python -m pytest tests/test_knowledge_map.py tests/test_ask_about_this.py -q
 $env:READER_DATA_DIR='D:\codex\408-guided-reader\var\manual-browser'
 npm run test:e2e:knowledge
-npm run test:e2e:knowledge:real
-pytest -q tests/test_api.py tests/test_jobs.py tests/test_map_the_book.py tests/test_ask_about_this.py tests/test_saved_explanations.py tests/test_annotations.py tests/test_library.py tests/test_foundation.py
-pytest -q
+python -m pytest -q
 npm test
 ```
 
-Both Knowledge E2E runners copy the prepared Library to a temporary directory, clear Knowledge-only
-state in that copy and delete the copy afterward. They never mutate the source acceptance Library.
-The real-provider runner uses the already-authorized configured credentials.
+Manual verification: open `http://127.0.0.1:8000`, choose an unprepared Chapter, open 学习地图,
+observe stage plus `已完成 X/Y 个小节`, and verify that one complete Section-grouped map appears only
+after Review PASS. A representative `回到教材` action must navigate to its published source anchor.
 
-Manual user retest: open `http://127.0.0.1:8000`, choose the failed Chapter 1, open 学习地图, click
-重试准备, observe the stage and `已完成 X/Y 个小节`, then verify that the complete five-Section map
-appears at once and representative `回到教材` actions land on their published source anchors.
+## Important files / architecture entry points
 
-## Important files
-
-- `src/reader_service/knowledge/semantic.py` — deterministic units/packets, strict semantic
-  validation, materialization, compact Review ledger and repair-target bounds.
-- `src/reader_service/knowledge/service.py` — Section sequencing, provider calls, Chapter Review,
-  localized repair, validation and atomic pipeline orchestration.
-- `src/reader_service/knowledge/repository.py` and `src/reader_service/library/database.py` — durable
-  progress/attempt metadata, recovery, cascade and atomic publication.
-- `src/reader_service/agent_runtime/runtime.py` — per-call request retention and provider-specific
-  reasoning controls at the existing egress boundary.
-- `src/reader_service/static/app.js` — user-visible stage/Section progress and READY-only map.
+- `src/reader_service/knowledge/semantic.py` — evidence units/windows, group-first contract,
+  deterministic materialization and compact Review ledger.
+- `src/reader_service/knowledge/service.py` — one-pass Section orchestration, one Chapter Review,
+  deterministic validation and atomic publication.
+- `src/reader_service/agent_runtime/deepseek.py` and `runtime.py` — existing provider runtime,
+  model defaults and fail-closed OpenRouter proxy routing.
+- `src/reader_service/static/index.html` — Knowledge Map provider configuration surface.
 - `tests/test_knowledge_map.py`, `tests-e2e/knowledge-map.mjs` and
-  `tests-e2e/knowledge-map-real-provider.mjs` — current acceptance evidence.
+  `tests-e2e/knowledge-map-real-provider.mjs` — primary acceptance contracts.
+- `tools/kp_granularity_calibration.py` — developer-only calibration/regression aid.
 
 ## Git checkpoint
 
-The implementation and this report are committed together as the current UAT-rework checkpoint.
+The implementation and this report are committed together as the current UAT-rework checkpoint;
+its exact hash is recorded in the completion handoff.

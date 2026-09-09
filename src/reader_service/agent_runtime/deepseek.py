@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import json
+import ipaddress
+import os
 import socket
+import sys
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.parse import urlparse
+from urllib.request import (
+    HTTPRedirectHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+    proxy_bypass,
+)
 
 from .runtime import ProviderFailure, ProviderFailureKind, ProviderResponse
 
@@ -31,7 +41,7 @@ class OpenAICompatibleAdapter:
         try:
             # Redirects are refused so one configured endpoint can never turn into
             # an implicit call to a second host or URL.
-            with build_opener(ProxyHandler({}), _NoRedirect()).open(
+            with build_opener(self._proxy_handler(endpoint), _NoRedirect()).open(
                 request, timeout=timeout
             ) as response:
                 payload = json.load(response)
@@ -85,6 +95,18 @@ class OpenAICompatibleAdapter:
         return ProviderResponse(
             answer=answer.strip(), usage=usage, diagnostics=metadata
         )
+
+    def _proxy_handler(self, endpoint: str) -> ProxyHandler:
+        if self.provider_name != "openrouter" or _is_loopback_endpoint(endpoint):
+            return ProxyHandler({})
+        proxy_url = _configured_openrouter_proxy()
+        if proxy_url is None:
+            raise ProviderFailure(
+                ProviderFailureKind.USER_ACTIONABLE,
+                "proxy_required",
+                "OpenRouter/Gemini 必须通过已配置代理访问；当前未找到可用代理配置。",
+            )
+        return _StrictProxyHandler({"http": proxy_url, "https": proxy_url})
 
     def _raise_http_failure(self, error: HTTPError) -> None:
         # The remote body is used only for coarse classification and is never logged,
@@ -175,3 +197,86 @@ class DeepSeekAdapter(OpenAICompatibleAdapter):
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+class _StrictProxyHandler(ProxyHandler):
+    """Refuse configured bypasses instead of ever falling back to direct egress."""
+
+    def proxy_open(self, req, proxy, type):
+        if req.host and proxy_bypass(req.host):
+            raise ProviderFailure(
+                ProviderFailureKind.USER_ACTIONABLE,
+                "proxy_bypass_forbidden",
+                "OpenRouter/Gemini 的代理配置试图绕过目标地址；已拒绝直连。",
+            )
+        return super().proxy_open(req, proxy, type)
+
+
+def _configured_openrouter_proxy() -> str | None:
+    configured = os.environ.get("GUIDED_READER_OPENROUTER_PROXY", "").strip()
+    if not configured and sys.platform == "win32":
+        configured = _windows_user_proxy()
+    if not configured:
+        return None
+    if "://" not in configured:
+        configured = f"http://{configured}"
+    parsed = urlparse(configured)
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ProviderFailure(
+            ProviderFailureKind.USER_ACTIONABLE,
+            "proxy_configuration",
+            "OpenRouter/Gemini 代理配置无效；已拒绝直连。",
+        ) from error
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or port is None
+    ):
+        raise ProviderFailure(
+            ProviderFailureKind.USER_ACTIONABLE,
+            "proxy_configuration",
+            "OpenRouter/Gemini 代理配置无效；已拒绝直连。",
+        )
+    return configured
+
+
+def _windows_user_proxy() -> str:
+    try:
+        import winreg
+
+        path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            enabled = int(winreg.QueryValueEx(key, "ProxyEnable")[0])
+            raw = str(winreg.QueryValueEx(key, "ProxyServer")[0]).strip()
+    except (ImportError, OSError, TypeError, ValueError):
+        return ""
+    if enabled != 1 or not raw:
+        return ""
+    if "=" not in raw:
+        return raw
+    routes = {}
+    for item in raw.split(";"):
+        name, separator, value = item.partition("=")
+        if separator and value.strip():
+            routes[name.strip().casefold()] = value.strip()
+    return routes.get("https") or routes.get("http") or ""
+
+
+def _is_loopback_endpoint(endpoint: str) -> bool:
+    hostname = urlparse(endpoint).hostname
+    if not hostname:
+        return False
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False

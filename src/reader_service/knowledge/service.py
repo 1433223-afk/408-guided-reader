@@ -25,19 +25,15 @@ from .semantic import (
     SemanticOutputError,
     build_compact_review_ledger,
     build_evidence_units,
+    build_semantic_windows,
     materialize_candidates,
-    packetize_evidence_units,
     publication_points,
-    repair_packet_ids,
-    semantic_packet_payload,
+    semantic_window_payload,
     validate_semantic_output,
 )
 
 
 MAX_STRUCTURED_ATTEMPTS = 3
-MAX_SEMANTIC_REPAIR_ROUNDS = 3
-MAX_CUMULATIVE_REPAIR_PACKETS = 4
-MAX_CUMULATIVE_REPAIR_UNITS = 48
 MAX_SAFE_REVIEW_DETAIL_CHARACTERS = 240
 MAX_SOURCE_CHARACTERS = 180_000
 DEFAULT_GENERATOR_MAX_TOKENS = 4_096
@@ -54,20 +50,19 @@ REVIEW_RUBRIC = (
     "chapter_map_balance",
 )
 
-GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义分类器，不是用户对话助手。
-输入只包含同一 Section、同一 packet 中按教材顺序排列的确定性 evidence units。unit_id、Section 身份和来源范围均由服务端确定；你不能创建或改写它们。
-逐个完整核算所有 unit，只允许：KEEP（一个 unit 独立成为 KP）、MERGE（同一 packet 内相邻连续的两个或更多 units 合并为一个 KP）、DROP（相邻连续 units 不形成独立学习单元）。
-KEEP 的 unit_ids 必须恰好 1 个；MERGE 的 unit_ids 必须至少 2 个，单个 unit 绝不能标成 MERGE。
-KP 必须同时满足五个门槛：值得单独学习；可以聚焦判断“会不会”且可能会 A 不会相邻 B；自身表达一个完整原理、机制、方法、关系、分类框架或概念；当前教材证据确实充分教学而非仅提到一次；未来单独记录 UNDERSTOOD/NOT_UNDERSTOOD 有实际意义。不得机械复制每段文字、标题、术语，也不得生成“推理、答题、问题解决”等泛化认知动作。短编号标题应与紧随的讲解作为一个 evidence unit 理解，不能把标题和定义分别保留成重复 KP；只有问题或“见/参见/详见……”交叉引用而没有实质讲解的 unit 必须 DROP。
-连续 units 若共同构成一个分类、组成、步骤或并列枚举，而各 item 在当前证据中只有简短定义、没有足够独立教学展开，默认且必须 MERGE 为一个可独立追踪的框架型 KP，不能把每个名词或枚举项分别 KEEP。只有 item 自身包含充分的机制、方法、关系或可考查教学证据，足以支持“会 A 但不会 B”的独立判断时才可拆开。输入 granularity_hints.brief_enumeration_runs 是服务端识别出的高置信短枚举；每个 run 的全部 unit_ids 必须由同一个 MERGE decision 覆盖。
-把当前 packet 作为一个候选集合整体判断：同一概念的重复定义、复述、例示或再次列举不得各自保留为同标题/同含义 KP。相邻且共同构成一个学习单元时 MERGE；否则保留最充分的一处并 DROP 冗余处。
-如果输入含 prior_section_candidates，它们只是本 Section 先前 packet 已保留的私有标题/含义摘要，只用于避免再次保留同一独立学习单元；不得改写或重复输出这些先前 candidates。当前 unit 若只是重复其中一个 candidate，应 DROP 当前 unit；绝不能用单-unit MERGE 表示与先前 packet 合并。
-不得跨 packet 或跨 Section 合并，不得生成 Section/page/ref/坐标/来源字段，不得创建、删除、改名、重排或重挂 Outline；不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
-只返回一个 JSON 对象：{"decisions":[{"action":"KEEP","unit_ids":["给定 unit_id"],"title":"知识点标题","one_sentence_meaning":"一句话含义"},{"action":"MERGE","unit_ids":["相邻 unit_id","相邻 unit_id"],"title":"知识点标题","one_sentence_meaning":"一句话含义"},{"action":"DROP","unit_ids":["给定 unit_id"]}]}。
-每个给定 unit_id 必须恰好出现一次，decision 顺序必须与输入一致。不得返回 Markdown 代码围栏、推理过程或其他字段。"""
+GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义归并器，不是用户对话助手。
+输入是一个真实 Outline 小节（或没有子小节时的 Section fallback）内按教材顺序排列的 deterministic evidence units。你只做这一次最终 learning-identity partition；不得依据先前模型结果做第二轮合并、拆分、清理或修复。
+KP 是最小的、值得独立教学、独立检查、独立诊断、独立补救并长期记录掌握状态的学习单元。必须预设吸收：只有当前教材证据能正面证明某个内容需要独立 teaching + assessment + diagnosis + remediation，才建立一个 learning target。对相邻条目必须先问：未来是否确实需要分别教学，并在学习者失败时采用不同的诊断或补救路径？只要不需要分别教学，或补救路径没有实质区别，就必须合为同一个 target。若不确定是否值得维护两个独立 mastery 状态，也必须合并。能单独出一道事实题、拥有不同标题、术语、段落、方向、变体或编号，都不足以形成 mastery boundary。
+标题本身、例子本身不成为 KP；definition/property/ordinary step/example 默认属于同一 learning target。只有既能独立教学、又具有不同错误模式或补救路径，且当前 source evidence 对两者都有充分展开时，才可以拆成不同 targets。
+window.kp_creation 为 FORBIDDEN_REVIEW_MATERIAL 时，该窗口属于本章/本节小结、常见问题、易混淆或 FAQ 复习材料：learning_targets 必须为空，全部 unit_id 必须进入 non_kp_units；这些内容只补充已有 KP，绝不在这里铸造新 KP。
+non_kp_units 只表示这些 evidence 不在本窗口铸造成独立 KP，不表示内容无价值。facet/property/step/example 可以被包含在某个 target 的连续 source evidence 中。
+不得追求特定 KP 数量，也不得创建掩盖不同机制、错误模式或补救路径的宽泛伞形 KP。
+unit_id、Section、Outline 小节和来源范围均由服务端确定；不得创建或改写，不得输出 Section/page/ref/坐标/来源字段，不得跨 window 或跨 Section 组合，也不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
+只返回一个 JSON 对象：{"learning_targets":[{"unit_ids":["一个或多个连续的给定 unit_id"],"title":"知识点标题","one_sentence_meaning":"一句话含义"}],"non_kp_units":["其余给定 unit_id"]}。
+learning_targets 按教材顺序排列，每个 target 的 unit_ids 必须连续；non_kp_units 也按教材顺序排列。两者合计必须覆盖每个给定 unit_id 恰好一次。不得返回 Markdown 代码围栏、推理过程或其他字段。"""
 
 REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定的完整 Chapter map 是否可以发布。
-输入是服务端生成的 compact ledger：完整 unit/decision accounting、候选标题与含义、截断证据提示和 overlap warnings，不含原始几何。必须先扫描全部 Sections，再整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
+输入是服务端生成的 compact ledger：完整 unit/partition accounting、候选标题与含义、截断证据提示和 overlap warnings，不含原始几何。必须先扫描全部 Sections，再整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
 overlap_warnings 只是审查信号，不是自动失败；来源空隙正常，不要求 no-gaps。你只能定位问题，不能改写候选，不能生成来源字段，也不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
 BLOCKING 仅用于依据 ledger 可高置信判断、若不修复就会让整张图不可发布的缺陷，例如同一学习状态被重复保留、伪造或泛化认知 KP、重大独立学习内容缺失、明显错误的 Section/来源归属，或会形成无意义 mastery 状态的严重拆分/合并。存在优化空间、可选的命名/合并方案、轻微不均衡、例示/回顾是否另列、或因截断证据无法高置信判断的问题只能是 WARNING；不得因为还能改进就阻断发布。
 每个 finding 必须定位到一个现有 section_id，并引用该 Section 中一个或多个给定 unit_id；只定位真正需要改变的最小 units。跨 Section 重复应为需要修复的一侧给出定位明确的 finding，不要把正确对照一并列为修复目标。
@@ -221,10 +216,10 @@ class KnowledgeService:
             "source_character_count": 0,
             "source_payload_character_count": 0,
             "unit_count": 0,
-            "packet_count": 0,
+            "window_count": 0,
             "candidate_count": 0,
-            "packet_bounds": [],
-            "review_rounds": [],
+            "window_bounds": [],
+            "review": None,
             "outcome": "PREPARING",
         }
         try:
@@ -250,160 +245,73 @@ class KnowledgeService:
                 self._canonical(source_payload)
             )
             units = build_evidence_units(source_payload)
-            packets = packetize_evidence_units(units)
+            windows = build_semantic_windows(units)
             section_count = len({unit["primary_section_id"] for unit in units})
             inspection["unit_count"] = len(units)
             inspection["source_character_count"] = sum(
                 len(unit["text"]) for unit in units
             )
-            inspection["packet_count"] = len(packets)
-            inspection["packet_bounds"] = [
+            inspection["window_count"] = len(windows)
+            inspection["window_bounds"] = [
                 {
-                    "packet_id": packet["packet_id"],
-                    "section_id": packet["primary_section_id"],
-                    "unit_count": len(packet["units"]),
-                    "character_count": packet["character_count"],
+                    "window_id": window["window_id"],
+                    "section_id": window["primary_section_id"],
+                    "outline_subsection_id": window["outline_subsection_id"],
+                    "unit_count": len(window["units"]),
+                    "character_count": window["character_count"],
                 }
-                for packet in packets
+                for window in windows
             ]
             self.repository.update_progress(
                 revision_id, chapter_id, attempt_id,
                 stage="GENERATING", sections_completed=0,
                 sections_total=section_count,
             )
-            decisions_by_packet, generator_identity = self._classify_packets(
-                packets, source_payload["chapter"], revision_id, chapter_id,
-                attempt_id, semantic_round=0,
+            partitions_by_window, generator_identity = self._classify_windows(
+                windows, source_payload["chapter"], revision_id, chapter_id,
+                attempt_id,
             )
-            semantic_repair_round = 0
-            repaired_packet_ids: set[str] = set()
-            repaired_unit_ids: set[str] = set()
-            while True:
-                inspection["candidate_count"] = sum(
-                    decision["action"] != "DROP"
-                    for decisions in decisions_by_packet.values()
-                    for decision in decisions
+            inspection["candidate_count"] = sum(
+                len(partition["learning_targets"])
+                for partition in partitions_by_window.values()
+            )
+            candidates = materialize_candidates(windows, partitions_by_window)
+            points = publication_points(candidates)
+            self._validate_points(points, section_bounds)
+            review_payload = build_compact_review_ledger(
+                source_payload["chapter"], units, windows,
+                partitions_by_window, candidates,
+                semantic_provider=self._required_identity(
+                    generator_identity, "generator"
+                )[0],
+                semantic_model=self._required_identity(
+                    generator_identity, "generator"
+                )[1],
+                review_rubric=REVIEW_RUBRIC,
+                overlap_warnings=self._overlap_warnings(points),
+            )
+            review_hash = self._digest(review_payload)
+            self.repository.update_progress(
+                revision_id, chapter_id, attempt_id,
+                stage="REVIEWING", sections_completed=section_count,
+                sections_total=section_count,
+            )
+            verdict, reviewer_identity = self._review(
+                review_payload, revision_id, chapter_id, attempt_id,
+            )
+            review_summary = verdict.summary
+            inspection["review"] = self._safe_review_observation(
+                verdict,
+                review_hash,
+                len(self._canonical(review_payload)),
+            )
+            if verdict.verdict != "PASS":
+                raise KnowledgePipelineError(
+                    "REVIEW", "SEMANTIC_FAILURE", "review_rejected",
+                    "Structural Review rejected the candidate set",
+                    provider=reviewer_identity[0], model=reviewer_identity[1],
+                    summary=verdict.summary,
                 )
-                candidates = materialize_candidates(packets, decisions_by_packet)
-                points = publication_points(candidates)
-                self._validate_points(points, section_bounds)
-                review_payload = build_compact_review_ledger(
-                    source_payload["chapter"], units, packets,
-                    decisions_by_packet, candidates,
-                    semantic_provider=self._required_identity(
-                        generator_identity, "generator"
-                    )[0],
-                    semantic_model=self._required_identity(
-                        generator_identity, "generator"
-                    )[1],
-                    semantic_repair_round=semantic_repair_round,
-                    review_rubric=REVIEW_RUBRIC,
-                    overlap_warnings=self._overlap_warnings(points),
-                )
-                review_hash = self._digest(review_payload)
-                self.repository.update_progress(
-                    revision_id, chapter_id, attempt_id,
-                    stage="REVIEWING", sections_completed=section_count,
-                    sections_total=section_count,
-                )
-                verdict, reviewer_identity = self._review(
-                    review_payload, revision_id, chapter_id, attempt_id,
-                    semantic_repair_round,
-                )
-                review_summary = verdict.summary
-                inspection["review_rounds"].append(
-                    self._safe_review_observation(
-                        verdict,
-                        semantic_repair_round,
-                        review_hash,
-                        len(self._canonical(review_payload)),
-                    )
-                )
-                if verdict.verdict == "PASS":
-                    break
-                if semantic_repair_round >= MAX_SEMANTIC_REPAIR_ROUNDS:
-                    raise KnowledgePipelineError(
-                        "REVIEW", "SEMANTIC_FAILURE", "review_rejected",
-                        "Structural Review rejected the repaired candidate set",
-                        provider=reviewer_identity[0], model=reviewer_identity[1],
-                        summary=verdict.summary,
-                    )
-
-                try:
-                    selected_packet_ids = repair_packet_ids(
-                        verdict.findings, units, packets
-                    )
-                except ValueError as failure:
-                    raise KnowledgePipelineError(
-                        "REVIEW", "SEMANTIC_FAILURE",
-                        "review_repair_scope_exceeded", str(failure),
-                        provider=reviewer_identity[0], model=reviewer_identity[1],
-                        summary=verdict.summary,
-                    ) from failure
-                selected_packet_id_set = set(selected_packet_ids)
-                if selected_packet_id_set & repaired_packet_ids:
-                    raise KnowledgePipelineError(
-                        "REVIEW", "SEMANTIC_FAILURE", "review_rejected",
-                        "Structural Review repeated a blocker in an already repaired packet",
-                        provider=reviewer_identity[0], model=reviewer_identity[1],
-                        summary=verdict.summary,
-                    )
-                selected_unit_ids = {
-                    unit_id
-                    for finding in verdict.findings
-                    if finding["severity"] == "BLOCKING"
-                    for unit_id in finding["unit_ids"]
-                }
-                if (
-                    len(repaired_packet_ids | selected_packet_id_set)
-                    > MAX_CUMULATIVE_REPAIR_PACKETS
-                    or len(repaired_unit_ids | selected_unit_ids)
-                    > MAX_CUMULATIVE_REPAIR_UNITS
-                ):
-                    raise KnowledgePipelineError(
-                        "REVIEW", "SEMANTIC_FAILURE",
-                        "review_repair_scope_exceeded",
-                        "Cumulative Review repair scope exceeds the bounded Chapter budget",
-                        provider=reviewer_identity[0], model=reviewer_identity[1],
-                        summary=verdict.summary,
-                    )
-                repair_packets = [
-                    packet for packet in packets
-                    if packet["packet_id"] in selected_packet_ids
-                ]
-                repair_contexts = self._packet_repair_contexts(
-                    verdict, repair_packets, decisions_by_packet,
-                    semantic_repair_round + 1,
-                )
-                peer_candidates = self._repair_peer_candidates(
-                    repair_packets, packets, decisions_by_packet
-                )
-                repair_section_count = len({
-                    packet["primary_section_id"] for packet in repair_packets
-                })
-                self.repository.update_progress(
-                    revision_id, chapter_id, attempt_id,
-                    stage="GENERATING", sections_completed=0,
-                    sections_total=repair_section_count,
-                )
-                repaired_sets, repaired_identity = self._classify_packets(
-                    repair_packets, source_payload["chapter"], revision_id,
-                    chapter_id, attempt_id,
-                    semantic_round=semantic_repair_round + 1,
-                    repair_contexts=repair_contexts,
-                    prior_section_candidates_by_packet=peer_candidates,
-                )
-                if repaired_identity != generator_identity:
-                    raise KnowledgePipelineError(
-                        "GENERATION", "TECHNICAL_FAILURE",
-                        "inconsistent_generator_route",
-                        "Semantic repair changed the actual generator route",
-                        provider=repaired_identity[0], model=repaired_identity[1],
-                    )
-                decisions_by_packet.update(repaired_sets)
-                repaired_packet_ids.update(selected_packet_id_set)
-                repaired_unit_ids.update(selected_unit_ids)
-                semantic_repair_round += 1
             self.repository.update_progress(
                 revision_id, chapter_id, attempt_id,
                 stage="VALIDATING", sections_completed=section_count,
@@ -502,12 +410,10 @@ class KnowledgeService:
     @staticmethod
     def _safe_review_observation(
         verdict: ReviewVerdict,
-        semantic_round: int,
         review_hash: str,
         payload_character_count: int,
     ) -> dict:
         return {
-            "semantic_round": semantic_round,
             "review_payload_sha256": review_hash,
             "payload_character_count": payload_character_count,
             "verdict": verdict.verdict,
@@ -560,6 +466,26 @@ class KnowledgeService:
                 (section["end_page"], section["end_y"]),
             )
             section_bounds[section["outline_node_id"]] = bounds
+            subsection_ranges = []
+            for subsection in resolved["nodes"]:
+                if (
+                    subsection["kind"] != "SUBSECTION"
+                    or subsection["parent_id"] != section["outline_node_id"]
+                    or subsection.get("start_page") is None
+                    or subsection.get("start_y") is None
+                    or subsection.get("end_page") is None
+                    or subsection.get("end_y") is None
+                ):
+                    continue
+                subsection_ranges.append(
+                    {
+                        "outline_node_id": subsection["outline_node_id"],
+                        "title": subsection["title"],
+                        "start": (subsection["start_page"], subsection["start_y"]),
+                        "end": (subsection["end_page"], subsection["end_y"]),
+                    }
+                )
+            subsection_ranges.sort(key=lambda value: value["start"])
             source_lines = []
             for page_index in range(bounds[0][0], min(bounds[1][0], revision["page_count"] - 1) + 1):
                 for line in ready_pages.get(page_index, []):
@@ -590,6 +516,7 @@ class KnowledgeService:
                         "start_page": bounds[0][0], "start_y": bounds[0][1],
                         "end_page": bounds[1][0], "end_y": bounds[1][1],
                     },
+                    "subsections": subsection_ranges,
                     "lines": source_lines,
                 }
             )
@@ -619,73 +546,42 @@ class KnowledgeService:
         }
         return payload, ref_index, section_bounds
 
-    def _classify_packets(
+    def _classify_windows(
         self,
-        packets: list[dict],
+        windows: list[dict],
         chapter: dict,
         revision_id: str,
         chapter_id: str,
         attempt_id: str,
-        *,
-        semantic_round: int,
-        repair_contexts: dict[str, dict] | None = None,
-        prior_section_candidates_by_packet: dict[str, list[dict]] | None = None,
     ):
-        if not packets:
-            raise ValueError("Chapter has no semantic packets")
-        repair_contexts = repair_contexts or {}
-        prior_section_candidates_by_packet = prior_section_candidates_by_packet or {}
-        results: dict[str, list[dict]] = {}
+        if not windows:
+            raise ValueError("Chapter has no semantic windows")
+        results: dict[str, dict] = {}
         identities: set[tuple[str | None, str | None]] = set()
-        section_packets: dict[str, list[dict]] = {}
-        for packet in packets:
-            section_id = packet["primary_section_id"]
-            section_packets.setdefault(section_id, []).append(packet)
+        section_windows: dict[str, list[dict]] = {}
+        for window in windows:
+            section_windows.setdefault(window["primary_section_id"], []).append(window)
 
-        def classify_section(local_packets: list[dict]):
+        def classify_section(local_windows: list[dict]):
             local_results = {}
             local_identities = set()
-            prior_section_candidates: list[dict] = []
-            for packet in local_packets:
-                repair_context = repair_contexts.get(packet["packet_id"])
-                configured_peers = prior_section_candidates_by_packet.get(
-                    packet["packet_id"], []
+            for window in local_windows:
+                partition, identity = self._classify_window(
+                    window, chapter, revision_id, chapter_id, attempt_id
                 )
-                decisions, identity = self._classify_packet(
-                    packet,
-                    chapter,
-                    revision_id,
-                    chapter_id,
-                    attempt_id,
-                    semantic_round=semantic_round,
-                    repair_context=repair_context,
-                    prior_section_candidates=(
-                        prior_section_candidates
-                        if semantic_round == 0 and repair_context is None
-                        else [*configured_peers, *prior_section_candidates]
-                    ),
-                )
-                local_results[packet["packet_id"]] = decisions
+                local_results[window["window_id"]] = partition
                 local_identities.add(identity)
-                prior_section_candidates.extend(
-                    {
-                        "title": decision["title"],
-                        "one_sentence_meaning": decision["one_sentence_meaning"],
-                    }
-                    for decision in decisions
-                    if decision["action"] != "DROP"
-                )
             return local_results, local_identities
 
         first_failure: Exception | None = None
         completed_sections = 0
-        workers = min(self.section_generation_workers, len(section_packets))
+        workers = min(self.section_generation_workers, len(section_windows))
         executor = ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="kp-semantic-section"
         )
         futures = {
-            executor.submit(classify_section, local_packets): section_id
-            for section_id, local_packets in section_packets.items()
+            executor.submit(classify_section, local_windows): section_id
+            for section_id, local_windows in section_windows.items()
         }
         try:
             for future in as_completed(futures):
@@ -707,102 +603,49 @@ class KnowledgeService:
                         revision_id, chapter_id, attempt_id,
                         stage="GENERATING",
                         sections_completed=completed_sections,
-                        sections_total=len(section_packets),
+                        sections_total=len(section_windows),
                     )
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
         if first_failure is not None:
             raise first_failure
-        if set(results) != {packet["packet_id"] for packet in packets}:
+        if set(results) != {window["window_id"] for window in windows}:
             raise KnowledgePipelineError(
                 "GENERATION", "TECHNICAL_FAILURE",
-                "incomplete_packet_classification",
-                "Not every required semantic packet produced private decisions",
+                "incomplete_window_classification",
+                "Not every required semantic window produced a private partition",
             )
         if len(identities) != 1:
             raise KnowledgePipelineError(
                 "GENERATION", "TECHNICAL_FAILURE",
                 "inconsistent_generator_route",
-                "Semantic packets did not retain one actual provider/model route",
+                "Semantic windows did not retain one actual provider/model route",
             )
         return results, next(iter(identities))
 
-    def _classify_packet(
+    def _classify_window(
         self,
-        packet: dict,
+        window: dict,
         chapter: dict,
         revision_id: str,
         chapter_id: str,
         attempt_id: str,
-        *,
-        semantic_round: int,
-        repair_context: dict | None,
-        prior_section_candidates: list[dict] | None,
     ):
         identity = self._configured_identity(self.generator_provider, "GENERATION")
-        payload = semantic_packet_payload(
-            chapter,
-            packet,
-            repair_context=repair_context,
-            prior_section_candidates=prior_section_candidates,
-        )
-        validation_error = None
-        validation_code = None
+        payload = semantic_window_payload(chapter, window)
+        messages = [
+            {"role": "system", "content": GENERATOR_SYSTEM_MESSAGE},
+            {"role": "user", "content": self._canonical(payload)},
+        ]
         for structured_attempt in range(1, MAX_STRUCTURED_ATTEMPTS + 1):
-            system = GENERATOR_SYSTEM_MESSAGE
-            if repair_context is not None:
-                system += (
-                    "\n这是结构 Review 后的一次有界 packet 修复。只修复 "
-                    "repair_context 指出的 units；仍须为本 packet 返回完整 replacement "
-                    "decision ledger，不能触及其他 packet。"
-                )
-            if validation_error is not None:
-                system += (
-                    "\n上一次输出未通过确定性校验："
-                    f"{validation_error}。请严格按 schema 完整重试。"
-                )
-                if validation_code == "merge_arity":
-                    system += (
-                        "逐项检查：任何只有一个 unit_id 的 decision 只能是 KEEP "
-                        "或 DROP；MERGE 必须含当前 packet 内至少两个相邻 unit_id。"
-                    )
-                elif validation_code == "noncontiguous_units":
-                    system += (
-                        "逐项检查：同一个 decision 的 unit_ids 必须按输入原顺序连续，"
-                        "不能跳过中间 unit；不相邻的 DROP 也必须拆成各自按顺序的 "
-                        "decision，不能组合成一个 decision。"
-                    )
-                elif validation_code == "incomplete_accounting":
-                    system += (
-                        "逐项对照输入 units：每个 unit_id 必须恰好出现一次，"
-                        "不得遗漏、重复或新增。"
-                    )
-                elif validation_code == "reordered_or_reused_units":
-                    system += (
-                        "把所有 decisions 的 unit_ids 依次展开后，必须与输入 unit_id "
-                        "序列完全相同；每个 ID 只出现一次，不能按 action 或主题重排。"
-                    )
-                elif validation_code == "not_json":
-                    system += "只输出裸 JSON 对象，禁止 Markdown 代码围栏或任何前后文字。"
-                elif validation_code == "nonteaching_evidence":
-                    system += (
-                        "只有问题或‘见/参见/详见’交叉引用、没有实质讲解的 evidence "
-                        "必须 DROP，不能成为 KP。"
-                    )
-                elif validation_code == "fragmented_brief_enumeration":
-                    system += (
-                        "逐项检查 granularity_hints.brief_enumeration_runs：每个短分类、"
-                        "组成、步骤或并列枚举 run 的全部 unit_ids 必须由同一个 MERGE "
-                        "decision 覆盖，不能分别 KEEP。"
-                    )
             observer = lambda event, current_attempt=structured_attempt: (
                 self.repository.record_pipeline_attempt(
                     revision_id,
                     chapter_id,
                     attempt_id,
-                    section_id=packet["primary_section_id"],
-                    packet_or_stage_id=packet["packet_id"],
-                    semantic_round=semantic_round,
+                    section_id=window["primary_section_id"],
+                    packet_or_stage_id=window["window_id"],
+                    semantic_round=0,
                     structured_attempt=current_attempt,
                     provider_role="KP_GENERATOR",
                     pipeline_stage="SEMANTIC_CLASSIFICATION",
@@ -812,13 +655,10 @@ class KnowledgeService:
             try:
                 completion = self.runtime.complete_for_with_metadata(
                     self.generator_provider,
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": self._canonical(payload)},
-                    ],
+                    messages,
                     interaction_id=(
-                        f"kp-semantic:{attempt_id}:{packet['packet_id']}:"
-                        f"round-{semantic_round}:structured-{structured_attempt}"
+                        f"kp-semantic:{attempt_id}:{window['window_id']}:"
+                        f"structured-{structured_attempt}"
                     ),
                     max_tokens=self.generator_max_tokens,
                     attempt_observer=observer,
@@ -837,17 +677,15 @@ class KnowledgeService:
                 ) from failure
             identity = self._completion_identity(completion)
             try:
-                return validate_semantic_output(completion.answer, packet), identity
+                return validate_semantic_output(completion.answer, window), identity
             except SemanticOutputError as failure:
-                validation_error = str(failure)
-                validation_code = failure.code
                 safe_failure_code = f"invalid_semantic_output.{failure.code}"
                 self.repository.record_structured_validation_failure(
                     revision_id,
                     chapter_id,
                     attempt_id,
-                    packet_or_stage_id=packet["packet_id"],
-                    semantic_round=semantic_round,
+                    packet_or_stage_id=window["window_id"],
+                    semantic_round=0,
                     structured_attempt=structured_attempt,
                     pipeline_stage="SEMANTIC_CLASSIFICATION",
                     failure_code=safe_failure_code,
@@ -855,82 +693,10 @@ class KnowledgeService:
                 if structured_attempt == MAX_STRUCTURED_ATTEMPTS:
                     raise KnowledgePipelineError(
                         "GENERATION", "INVALID_STRUCTURED_OUTPUT",
-                        safe_failure_code, validation_error,
+                        safe_failure_code, str(failure),
                         provider=identity[0], model=identity[1],
                     ) from failure
         raise AssertionError("bounded semantic classification loop exhausted")
-
-    @staticmethod
-    def _packet_repair_contexts(
-        verdict: ReviewVerdict,
-        packets: list[dict],
-        decisions_by_packet: dict[str, list[dict]],
-        semantic_round: int,
-    ) -> dict[str, dict]:
-        contexts = {}
-        for packet in packets:
-            packet_unit_ids = {
-                unit["unit_id"] for unit in packet["units"]
-            }
-            findings = []
-            for finding in verdict.findings:
-                local_unit_ids = [
-                    unit_id for unit_id in finding["unit_ids"]
-                    if unit_id in packet_unit_ids
-                ]
-                if finding["severity"] == "BLOCKING" and local_unit_ids:
-                    findings.append(
-                        {
-                            "dimension": finding["dimension"],
-                            "severity": "BLOCKING",
-                            "unit_ids": local_unit_ids,
-                            "detail": finding["detail"],
-                        }
-                    )
-            if not findings:
-                raise ValueError("Repair packet lacks an addressed blocking finding")
-            contexts[packet["packet_id"]] = {
-                "semantic_round": semantic_round,
-                "blocking_findings": findings,
-                "previous_decisions": copy.deepcopy(
-                    decisions_by_packet[packet["packet_id"]]
-                ),
-            }
-        return contexts
-
-    @staticmethod
-    def _repair_peer_candidates(
-        repair_packets: list[dict],
-        all_packets: list[dict],
-        decisions_by_packet: dict[str, list[dict]],
-    ) -> dict[str, list[dict]]:
-        packet_section = {
-            packet["packet_id"]: packet["primary_section_id"]
-            for packet in all_packets
-        }
-        repair_packet_ids = {
-            packet["packet_id"] for packet in repair_packets
-        }
-        contexts: dict[str, list[dict]] = {}
-        for repair_packet in repair_packets:
-            peers = []
-            for packet in all_packets:
-                packet_id = packet["packet_id"]
-                if packet_id in repair_packet_ids or (
-                    packet_section[packet_id]
-                    != repair_packet["primary_section_id"]
-                ):
-                    continue
-                peers.extend(
-                    {
-                        "title": decision["title"],
-                        "one_sentence_meaning": decision["one_sentence_meaning"],
-                    }
-                    for decision in decisions_by_packet[packet_id]
-                    if decision["action"] != "DROP"
-                )
-            contexts[repair_packet["packet_id"]] = peers
-        return contexts
 
     def _review(
         self,
@@ -938,17 +704,13 @@ class KnowledgeService:
         revision_id: str,
         chapter_id: str,
         attempt_id: str,
-        semantic_repair_round: int,
     ):
         identity = self._configured_identity(self.reviewer_provider, "REVIEW")
-        validation_error = None
+        messages = [
+            {"role": "system", "content": REVIEW_SYSTEM_MESSAGE},
+            {"role": "user", "content": self._canonical(payload)},
+        ]
         for structured_attempt in range(1, MAX_STRUCTURED_ATTEMPTS + 1):
-            system = REVIEW_SYSTEM_MESSAGE
-            if validation_error is not None:
-                system += (
-                    "\n上一次输出未通过确定性校验："
-                    f"{validation_error}。请严格按同一 schema 重试。"
-                )
             observer = lambda event, current_attempt=structured_attempt: (
                 self.repository.record_pipeline_attempt(
                     revision_id,
@@ -956,7 +718,7 @@ class KnowledgeService:
                     attempt_id,
                     section_id=None,
                     packet_or_stage_id="chapter-structural-review",
-                    semantic_round=semantic_repair_round,
+                    semantic_round=0,
                     structured_attempt=current_attempt,
                     provider_role="KP_STRUCTURAL_REVIEWER",
                     pipeline_stage="STRUCTURAL_REVIEW",
@@ -966,13 +728,9 @@ class KnowledgeService:
             try:
                 completion = self.runtime.complete_for_with_metadata(
                     self.reviewer_provider,
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": self._canonical(payload)},
-                    ],
+                    messages,
                     interaction_id=(
-                        f"kp-review:{attempt_id}:round-{semantic_repair_round}:"
-                        f"structured-{structured_attempt}"
+                        f"kp-review:{attempt_id}:structured-{structured_attempt}"
                     ),
                     max_tokens=self.reviewer_max_tokens,
                     attempt_observer=observer,
@@ -993,13 +751,12 @@ class KnowledgeService:
             try:
                 return self._validate_review(completion.answer, payload), identity
             except ValueError as failure:
-                validation_error = str(failure)
                 self.repository.record_structured_validation_failure(
                     revision_id,
                     chapter_id,
                     attempt_id,
                     packet_or_stage_id="chapter-structural-review",
-                    semantic_round=semantic_repair_round,
+                    semantic_round=0,
                     structured_attempt=structured_attempt,
                     pipeline_stage="STRUCTURAL_REVIEW",
                     failure_code="invalid_review_output",
@@ -1007,15 +764,15 @@ class KnowledgeService:
                 if structured_attempt == MAX_STRUCTURED_ATTEMPTS:
                     raise KnowledgePipelineError(
                         "REVIEW", "INVALID_STRUCTURED_OUTPUT",
-                        "invalid_review_output", validation_error,
+                        "invalid_review_output", str(failure),
                         provider=identity[0], model=identity[1],
                     ) from failure
         raise AssertionError("bounded Review loop exhausted")
 
     @staticmethod
     def _validate_points(points: list[dict], section_bounds: dict) -> None:
-        if not 1 <= len(points) <= 120:
-            raise ValueError("Published KP count is implausible")
+        if not points:
+            raise ValueError("Published Chapter contains no KnowledgePoints")
         for point in points:
             if set(point) != {
                 "primary_section_id", "title", "one_sentence_definition",

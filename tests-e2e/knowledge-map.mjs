@@ -15,10 +15,8 @@ await cp(sourceDataDir, dataDir, { recursive: true });
 resetCopiedKnowledgeState();
 
 const transports = [];
-const generationCallsByPacket = new Map();
-let failingPacketId = null;
-let repairTargetPacketId = null;
-let repairTargetSectionId = null;
+const generationCallsByWindow = new Map();
+let failingWindowId = null;
 let reviewCallCount = 0;
 const reasoningCanary = "PRIVATE_PROVIDER_REASONING_MUST_NOT_BE_STORED";
 const provider = createServer(async (request, response) => {
@@ -30,78 +28,62 @@ const provider = createServer(async (request, response) => {
   let answer;
   let finishReason = "stop";
   let reasoningContent = "";
-  if (system.includes("内部语义分类器")) {
+  if (system.includes("内部语义归并器")) {
     assert.deepEqual(body.thinking, { type: "disabled" });
     const payload = JSON.parse(body.messages[1].content);
-    const semanticRepair = Object.hasOwn(payload, "repair_context");
-    const priorContext = Object.hasOwn(payload, "prior_section_candidates");
-    const expectedKeys = ["chapter", "granularity_hints", "packet", "section", "units"];
-    if (semanticRepair) expectedKeys.push("repair_context");
-    if (priorContext) expectedKeys.push("prior_section_candidates");
-    assert.deepEqual(
-      Object.keys(payload).sort(),
-      expectedKeys.sort(),
-    );
-    assert.deepEqual(Object.keys(payload.granularity_hints), ["brief_enumeration_runs"]);
-    const suppliedUnitIds = new Set(payload.units.map((unit) => unit.unit_id));
-    assert.ok(payload.granularity_hints.brief_enumeration_runs.every(
-      (run) => run.length >= 3 && run.every((unitId) => suppliedUnitIds.has(unitId)),
+    assert.deepEqual(Object.keys(payload).sort(), ["chapter", "section", "units", "window"]);
+    assert.deepEqual(Object.keys(payload.window).sort(), [
+      "kind", "kp_creation", "outline_subsection_id", "title", "window_id",
+    ]);
+    assert.ok(payload.units.every(
+      (unit) => Object.keys(unit).sort().join(",") === "text,unit_id",
     ));
-    if (priorContext) assert.ok(payload.prior_section_candidates.every(
-      (candidate) => Object.keys(candidate).sort().join(",") === "one_sentence_meaning,title",
-    ));
-    const packetId = payload.packet.packet_id;
-    failingPacketId ??= packetId;
-    if (packetId !== failingPacketId && repairTargetPacketId === null) {
-      repairTargetPacketId = packetId;
-      repairTargetSectionId = payload.section.section_id;
-    }
-    const callCount = (generationCallsByPacket.get(packetId) || 0) + 1;
-    generationCallsByPacket.set(packetId, callCount);
-    if (packetId === failingPacketId && callCount === 1) {
+    const windowId = payload.window.window_id;
+    failingWindowId ??= windowId;
+    const callCount = (generationCallsByWindow.get(windowId) || 0) + 1;
+    generationCallsByWindow.set(windowId, callCount);
+    if (windowId === failingWindowId && callCount === 1) {
       answer = "";
       finishReason = "length";
       reasoningContent = reasoningCanary;
       await delay(700);
     } else {
-      const genericCandidate = packetId === repairTargetPacketId && !semanticRepair;
-      answer = JSON.stringify({ decisions: [{
-        action: payload.units.length === 1 ? "KEEP" : "MERGE",
-        unit_ids: payload.units.map((unit) => unit.unit_id),
-        title: genericCandidate ? "问题解决" : `${payload.section.title}：核心学习单元`,
-        one_sentence_meaning: genericCandidate
-          ? "这是泛化的认知动作，不是可独立追踪的学科知识。"
-          : `概括 ${payload.section.title} 中需要独立理解的学科内容。`,
-      }] });
-      await delay(semanticRepair ? 1600 : 250);
+      const nonMinting = payload.window.kp_creation === "FORBIDDEN_REVIEW_MATERIAL";
+      answer = JSON.stringify({
+        learning_targets: nonMinting ? [] : [{
+          unit_ids: payload.units.map((unit) => unit.unit_id),
+          title: `${payload.window.title}：核心学习单元`,
+          one_sentence_meaning: `概括 ${payload.window.title} 中需要独立理解的学科内容。`,
+        }],
+        non_kp_units: nonMinting ? payload.units.map((unit) => unit.unit_id) : [],
+      });
+      await delay(1000);
     }
   } else if (system.includes("Chapter Knowledge Map 结构审查者")) {
     assert.equal(body.reasoning_effort, "low");
     assert.equal(body.thinking, undefined);
     const payload = JSON.parse(body.messages[1].content);
     reviewCallCount += 1;
-    const generic = payload.candidates.find(
-      (candidate) => candidate.title === "问题解决",
-    );
+    const firstWindow = payload.windows.find((window) => window.learning_targets.length > 0);
     answer = reviewCallCount === 1
       ? JSON.stringify({
         verdict: "FAIL",
-        summary: "一个候选是泛化认知动作，须定点修复对应小节。",
+        summary: "一个候选存在阻断性拆分问题，本次准备应终止。",
         findings: [{
-          dimension: "instructional_specificity",
+          dimension: "split_merge_quality",
           severity: "BLOCKING",
-          section_id: repairTargetSectionId,
-          unit_ids: generic.unit_ids,
-          detail: "“问题解决”不是教材中的学科知识；重新分类定位到的 evidence unit。",
+          section_id: firstWindow.section_id,
+          unit_ids: firstWindow.learning_targets[0].unit_ids,
+          detail: "这些 evidence units 不应形成当前独立学习状态。",
         }],
       })
       : JSON.stringify({
         verdict: "PASS",
-        summary: "定点修复后，整章候选的颗粒度、重复、教学特异性、拆分合并、覆盖和均衡均通过。",
+        summary: "显式用户重试的新准备通过整章结构审查。",
         findings: [],
       });
-    if (reviewCallCount === 1) assert.ok(generic);
-    await delay(500);
+    assert.ok(firstWindow);
+    await delay(700);
   } else {
     answer = "学习地图准备失败不会影响这条临时解释。";
     await delay(120);
@@ -180,13 +162,27 @@ try {
   assert.equal(await page.locator("#knowledge-map li").count(), 0);
   await page.waitForFunction(() => {
     const status = document.querySelector("#knowledge-status")?.textContent || "";
-    return document.querySelectorAll("#knowledge-map .knowledge-section").length === 4
-      || status.includes("准备失败");
+    return status.includes("准备失败");
+  }, null, { timeout: 40_000 });
+  const failed = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map`);
+  assert.equal(failed.status, "FAILED");
+  assert.equal(failed.failure_stage, "REVIEW");
+  assert.equal(failed.failure_code, "review_rejected");
+  assert.deepEqual(failed.knowledge_points, []);
+  assert.equal(reviewCallCount, 1, "a valid Review FAIL must not auto-review or regenerate");
+  assert.equal(await page.locator("#knowledge-map li").count(), 0);
+
+  const retryResponse = page.waitForResponse((response) => response.url().endsWith("/knowledge-map/prepare"));
+  await page.locator("#knowledge-prepare").click();
+  assert.equal((await retryResponse).status(), 202);
+  await page.waitForFunction(() => {
+    const status = document.querySelector("#knowledge-status")?.textContent || "";
+    return status.includes("结构版本") || status.includes("准备失败");
   }, null, { timeout: 40_000 });
   const ready = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map`);
   assert.equal(ready.status, "READY", JSON.stringify({
     state: ready,
-    calls: [...generationCallsByPacket.entries()],
+    calls: [...generationCallsByWindow.entries()],
     reviewCallCount,
   }));
   assert.equal(ready.structure_version, 1);
@@ -195,7 +191,10 @@ try {
     new Set(ready.knowledge_points.map((point) => point.knowledge_point_id)).size,
     ready.knowledge_points.length,
   );
-  assert.equal(await page.locator("#knowledge-map .knowledge-section").count(), 4);
+  const publishedSectionGroups = new Set(
+    ready.knowledge_points.map((point) => point.primary_section_id),
+  ).size;
+  assert.equal(await page.locator("#knowledge-map .knowledge-section").count(), publishedSectionGroups);
   assert.equal(await page.locator("#knowledge-map li").count(), ready.knowledge_points.length);
   const statusHistory = await page.evaluate(() => window.__knowledgeStatusHistory);
   assert.ok(statusHistory.some((status) => (
@@ -203,24 +202,24 @@ try {
   )), `missing Section progress: ${JSON.stringify(statusHistory)}`);
 
   const inspection = await json(page, `/api/revisions/${revisionId}/chapters/${chapter6.outline_node_id}/knowledge-map/inspection`);
-  assert.equal(inspection.attempts.length, 1);
-  assert.deepEqual(inspection.attempts.map((attempt) => attempt.outcome), ["READY"]);
+  assert.equal(inspection.attempts.length, 2);
+  assert.deepEqual(inspection.attempts.map((attempt) => attempt.outcome), ["FAILED", "READY"]);
   for (const attempt of inspection.attempts) {
     assert.equal(attempt.chapter_id, chapter6.outline_node_id);
     assert.ok(attempt.unit_count > 0);
-    assert.ok(attempt.packet_count > 0);
-    assert.equal(attempt.packet_bounds.length, attempt.packet_count);
-    assert.deepEqual(attempt.review_rounds.map((round) => round.verdict), ["FAIL", "PASS"]);
+    assert.ok(attempt.window_count > 0);
+    assert.equal(attempt.window_bounds.length, attempt.window_count);
+    assert.ok(["FAIL", "PASS"].includes(attempt.review.verdict));
     const serialized = JSON.stringify(attempt);
     assert.ok(!/本节习题精选|答案与解析|knowledge-generator-loopback-secret|knowledge-review-loopback-secret/.test(serialized));
   }
   assert.equal(reviewCallCount, 2);
-  const readyAttemptId = inspection.attempts[0].attempt_id;
-  const readyGenerationAttempts = inspection.pipeline_attempts.filter(
-    (attempt) => attempt.preparation_attempt_id === readyAttemptId,
+  const failedAttemptId = inspection.attempts[0].attempt_id;
+  const failedGenerationAttempts = inspection.pipeline_attempts.filter(
+    (attempt) => attempt.preparation_attempt_id === failedAttemptId,
   );
-  const failedTransport = readyGenerationAttempts.find(
-    (attempt) => attempt.packet_or_stage_id === failingPacketId && attempt.status === "FAILED",
+  const failedTransport = failedGenerationAttempts.find(
+    (attempt) => attempt.packet_or_stage_id === failingWindowId && attempt.status === "FAILED",
   );
   assert.ok(failedTransport);
   assert.equal(failedTransport.failure_code, "empty_response");
@@ -228,18 +227,15 @@ try {
   assert.equal(failedTransport.content_present, 0);
   assert.equal(failedTransport.reasoning_present, 1);
   assert.equal(failedTransport.reasoning_length, reasoningCanary.length);
-  assert.ok(!JSON.stringify(readyGenerationAttempts).includes(reasoningCanary));
-  const repairAttempts = readyGenerationAttempts.filter(
-    (attempt) => attempt.pipeline_stage === "SEMANTIC_CLASSIFICATION"
-      && attempt.packet_or_stage_id === repairTargetPacketId
-      && attempt.semantic_round === 1,
-  );
-  assert.equal(repairAttempts.length, 1);
-  assert.equal(repairAttempts[0].primary_section_id, repairTargetSectionId);
-  assert.equal(repairAttempts[0].structured_attempt, 1);
-  assert.ok(readyGenerationAttempts.filter(
+  assert.ok(!JSON.stringify(inspection.pipeline_attempts).includes(reasoningCanary));
+  assert.ok(inspection.pipeline_attempts.every(
+    (attempt) => attempt.semantic_round === 0,
+  ));
+  const reviewAttempts = inspection.pipeline_attempts.filter(
     (attempt) => attempt.pipeline_stage === "STRUCTURAL_REVIEW",
-  ).length >= 2);
+  );
+  assert.equal(reviewAttempts.length, 2);
+  assert.ok(reviewAttempts.every((attempt) => attempt.structured_attempt === 1));
 
   const outlineAfter = await json(page, `/api/revisions/${revisionId}/outline`);
   assert.deepEqual(logicalProjection(outlineAfter.nodes), logicalBefore);
@@ -304,7 +300,7 @@ try {
     oneChapterOnly: true,
     outlineLogicalIdentityPreserved: true,
     atomicVisibility: true,
-    failureRecovery: "packet-local EMPTY_RESPONSE retry -> unit-addressed Review finding -> targeted packet repair -> READY",
+    failureRecovery: "same-window EMPTY_RESPONSE retry -> terminal Review FAIL -> explicit user retry -> READY",
     structureVersion: ready.structure_version,
     knowledgePointCount: ready.knowledge_points.length,
     sectionGroups: await page.locator("#knowledge-map .knowledge-section").count().catch(() => 0),
