@@ -165,11 +165,14 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
 
 
 def build_semantic_windows(units: list[dict]) -> list[dict]:
-    section_has_subsections = {
-        unit["primary_section_id"]
-        for unit in units
-        if unit.get("outline_subsection_id") is not None
-    }
+    first_subsection_by_section: dict[str, str] = {}
+    for unit in units:
+        subsection_id = unit.get("outline_subsection_id")
+        if subsection_id is not None:
+            first_subsection_by_section.setdefault(
+                unit["primary_section_id"], subsection_id
+            )
+
     grouped: list[tuple[tuple[str, str], list[dict]]] = []
     current_key: tuple[str, str] | None = None
     current_units: list[dict] = []
@@ -191,8 +194,8 @@ def build_semantic_windows(units: list[dict]) -> list[dict]:
         subsection_id = unit.get("outline_subsection_id")
         if subsection_id is not None:
             key = ("SUBSECTION", subsection_id)
-        elif section_id in section_has_subsections:
-            key = ("SECTION_LEAD_IN", section_id)
+        elif section_id in first_subsection_by_section:
+            key = ("SUBSECTION", first_subsection_by_section[section_id])
         else:
             key = ("SECTION", section_id)
         if current_key is not None and key != current_key:
@@ -208,6 +211,14 @@ def build_semantic_windows(units: list[dict]) -> list[dict]:
         if character_count > MAX_SEMANTIC_WINDOW_CHARACTERS:
             raise ValueError("Semantic window exceeds configured source bound")
         first = window_units[0]
+        subsection = next(
+            (
+                unit
+                for unit in window_units
+                if unit.get("outline_subsection_id") == key[1]
+            ),
+            None,
+        ) if key[0] == "SUBSECTION" else None
         windows.append(
             {
                 "window_id": f"w{window_order + 1:03d}",
@@ -215,8 +226,16 @@ def build_semantic_windows(units: list[dict]) -> list[dict]:
                 "window_kind": key[0],
                 "primary_section_id": first["primary_section_id"],
                 "primary_section_title": first["primary_section_title"],
-                "outline_subsection_id": first.get("outline_subsection_id"),
-                "outline_subsection_title": first.get("outline_subsection_title"),
+                "outline_subsection_id": (
+                    subsection.get("outline_subsection_id")
+                    if subsection is not None
+                    else None
+                ),
+                "outline_subsection_title": (
+                    subsection.get("outline_subsection_title")
+                    if subsection is not None
+                    else None
+                ),
                 "units": window_units,
                 "character_count": character_count,
             }

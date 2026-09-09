@@ -5,7 +5,8 @@
 `IMPLEMENTATION_READY`
 
 - `AGENT_REAL_USE: PASS`
-- `USER_ACCEPTANCE: PASS` — the user accepted the real Chapter 2 Knowledge Map on 2026-09-09.
+- `USER_ACCEPTANCE: PASS` — the user accepted the real Chapter 2 and Chapter 3 Knowledge Maps on
+  2026-09-09.
 - `INDEPENDENT_NARROW_REVIEW: PENDING`
 - Phase status remains **OPEN**. This report does not close the Phase.
 
@@ -18,7 +19,8 @@ The accepted semantic path is:
 
 ```text
 Outline-subsection bounded textbook evidence
--> one group-first semantic partition per real subsection
+-> Section lead-in joined to the first subsection (or whole Section when it has no subsection)
+-> one group-first semantic partition per resulting window
 -> deterministic KP materialization
 -> one compact whole-Chapter structural Review
 -> deterministic validation
@@ -28,8 +30,9 @@ Outline-subsection bounded textbook evidence
 ## Implemented
 
 - Retained deterministic Outline/OCR evidence ownership. The server constructs stable ordered
-  evidence units and real subsection-bounded windows; AI cannot author Section, page, line,
-  geometry, source-revision or source-range fields.
+  evidence units and real subsection-bounded windows. A Section lead-in is included in its first
+  subsection judgment instead of becoming a separate KP window; a Section without subsections is
+  one window. AI cannot author Section, page, line, geometry, source-revision or source-range fields.
 - Replaced the former packet `KEEP`/`MERGE`/`DROP` and repair chain with one final group-first result
   per window: `learning_targets[{unit_ids,title,one_sentence_meaning}]` plus `non_kp_units`.
   Validation requires exact, ordered, contiguous, once-only unit accounting and fails closed on
@@ -59,12 +62,14 @@ Outline-subsection bounded textbook evidence
 
 ## Important implementation decisions
 
-- One real Outline subsection receives one semantic judgment. Technical retry repeats identical
-  input; prior semantic output and Review findings never become another semantic pass.
+- One real Outline subsection receives one semantic judgment, with its owning Section lead-in
+  included only in the first subsection. Technical retry repeats identical input; prior semantic
+  output and Review findings never become another semantic pass.
 - Summary/FAQ/misconception evidence remains useful source material but does not create an
   additional durable learning identity. No facet/attachment persistence model was introduced.
-- The production generator is `deepseek / deepseek-v4-flash`. The real accepted Reviewer route is
-  `openrouter / google/gemini-3.8-flash`; no higher-tier model was used.
+- The production default generator remains `deepseek / deepseek-v4-flash`. The accepted Chapter 3
+  path used `openrouter / google/gemini-3.8-flash` for both clean-context generation and Review;
+  no higher-tier model was used.
 - `tools/kp_granularity_calibration.py` is retained only as a development-time regression aid. It is
   not a production stage, publication gate or correctness oracle.
 
@@ -84,7 +89,8 @@ Evidence followed the required order: TARGETED -> AGENT REAL-USE GOLDEN PATH -> 
 CLOSURE / BROAD.
 
 - TARGETED: `python -m pytest tests/test_knowledge_map.py tests/test_ask_about_this.py -q` —
-  **83 passed**. This covers one-pass window contracts, strict unit accounting, deterministic
+  **84 passed**. This covers one-pass window contracts, Section-lead-in ownership, strict unit
+  accounting, deterministic
   materialization/source authority, terminal Review failure, same-input technical retry, safe
   observability, proxy fail-closed behavior, atomic publication, restart/idempotency and cascade.
 - AGENT REAL-USE GOLDEN PATH: `npm run test:e2e:knowledge` — **PASS** on the served Reader with the
@@ -95,6 +101,12 @@ CLOSURE / BROAD.
   **42 KPs in 3 Section groups** after one Review. Observed total duration was **40.51 seconds** with
   zero technical failures. Sections 2.4 “本章小结” and 2.5 “常见问题和易混淆知识点” each published
   **0 KPs**. The user inspected the complete map and declared `USER_ACCEPTANCE: PASS`.
+- REAL USER PATH: isolated Chapter 3 used 251 deterministic evidence units in 25 windows and
+  published **37 KPs in 6 Section groups** after one Review. Its Section lead-ins were judged with
+  the first subsection, and the former duplicated virtual-memory introduction became one learning
+  identity. Observed total duration was **155.45 seconds**; one bounded technical failure recovered.
+  The source Library and its existing publication were not modified. The user inspected the full
+  result and declared `USER_ACCEPTANCE: PASS`.
 - REAL REVIEWER EGRESS: a real `google/gemini-3.8-flash` OpenRouter call succeeded through the
   configured `127.0.0.1:7890` Windows proxy. A deliberately unavailable proxy produced a typed
   network failure with no direct fallback. No credential or provider body was printed or retained.
@@ -105,12 +117,14 @@ CLOSURE / BROAD.
 - Real-material Reader/recovery E2E: `npm run test:e2e:r2` and `npm run test:e2e:recovery` —
   **PASS**. The first isolated `r2` attempt hit a transient SQLite `database is locked`; an
   unchanged-input rerun passed, and no product code was changed or failure reclassified.
-- CLOSURE / BROAD: full `python -m pytest -q` — **141 passed, 2 skipped** (143 collected; the two
+- CLOSURE / BROAD: full `python -m pytest -q` — **142 passed, 2 skipped** (144 collected; the two
   unchanged skips are optional external real-OCR entrypoints). `npm test` — **30 passed**.
 - FINAL STATIC CHECKS: `python -m compileall -q src`, Node syntax checks for both Knowledge E2E
   runners, `git diff --check`, and a staged secret/user-material inspection — **PASS**.
 
-No Chapter 2/provider regeneration was performed after user acceptance.
+The complete-Section generation experiment was removed after real 3.2/3.5 responses exceeded the
+existing structured-output budget. It is not part of the implementation or checkpoint. No provider
+generation was performed after the accepted Chapter 3 run.
 
 ## Known limitations / deferred debt
 
@@ -139,7 +153,7 @@ after Review PASS. A representative `回到教材` action must navigate to its p
 
 - `src/reader_service/knowledge/semantic.py` — evidence units/windows, group-first contract,
   deterministic materialization and compact Review ledger.
-- `src/reader_service/knowledge/service.py` — one-pass Section orchestration, one Chapter Review,
+- `src/reader_service/knowledge/service.py` — one-pass subsection-window orchestration, one Chapter Review,
   deterministic validation and atomic publication.
 - `src/reader_service/agent_runtime/deepseek.py` and `runtime.py` — existing provider runtime,
   model defaults and fail-closed OpenRouter proxy routing.

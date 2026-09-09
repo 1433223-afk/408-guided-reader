@@ -338,6 +338,36 @@ def test_deterministic_units_and_outline_bounded_windows(service):
         )
 
 
+def test_section_lead_in_joins_first_subsection_only():
+    def unit(unit_id, section_id, subsection_id=None, subsection_title=None):
+        return {
+            "unit_id": unit_id,
+            "text": unit_id,
+            "primary_section_id": section_id,
+            "primary_section_title": section_id,
+            "outline_subsection_id": subsection_id,
+            "outline_subsection_title": subsection_title,
+        }
+
+    windows = build_semantic_windows(
+        [
+            unit("u0001", "section-a"),
+            unit("u0002", "section-a", "subsection-a1", "A.1"),
+            unit("u0003", "section-a", "subsection-a2", "A.2"),
+            unit("u0004", "section-b"),
+        ]
+    )
+
+    assert [window["window_kind"] for window in windows] == [
+        "SUBSECTION", "SUBSECTION", "SECTION"
+    ]
+    assert [unit["unit_id"] for unit in windows[0]["units"]] == ["u0001", "u0002"]
+    assert windows[0]["outline_subsection_id"] == "subsection-a1"
+    assert windows[0]["outline_subsection_title"] == "A.1"
+    assert [unit["unit_id"] for unit in windows[1]["units"]] == ["u0003"]
+    assert [unit["unit_id"] for unit in windows[2]["units"]] == ["u0004"]
+
+
 def test_short_heading_and_cross_page_continuation_preserve_evidence_boundaries():
     source = {
         "chapter": {"book_source_revision_id": "revision"},
