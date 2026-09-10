@@ -106,7 +106,7 @@ Subsection membership is derived from the existing parent Section and full physi
 containment. Same-page boundaries are compared as `(page, y)` pairs; multi-page KPs are supported,
 crossing KPs are excluded, and no durable KP ownership is changed. Only UNCONFIRMED is updated;
 NOT_FULLY_CLEAR and existing UNDERSTOOD remain intact. Both batch controls now show remaining
-unclear counts. Section and Subsection controls are offset when their endpoints coincide.
+unclear counts. The subsequent layout correction below supersedes the initial endpoint offsets.
 
 - TARGETED: Learning suite **14/14 PASS**, including same-page adjacent ranges, a multi-page KP
   ending exactly at the boundary, crossing-KP exclusion, other-Section isolation, events/Topics,
@@ -123,6 +123,26 @@ unclear counts. Section and Subsection controls are offset when their endpoints 
   messages, events and statuses were preserved; golden-path writes stayed in the isolated copy.
 
 Status remains `READY_FOR_USER_RETEST`; user and independent acceptance remain pending.
+
+## Same-Phase UAT layout correction (2026-09-10)
+
+The reported overlap came from controls positioned inside the PDF page; Subsection placement also
+used the outline end, which can be the next heading's start. Controls now occupy a reserved right
+gutter. Batch confirmation anchors to its own last contained KP's end and names the owning unit even
+when collapsed. Expanding stacks controls upward without covering PDF content or pushing the batch
+control into the next subsection. No learning state, scope, persistence or provider behavior changed.
+
+- REAL USE / TARGETED: real 348-page `test:e2e:master` PASS on an isolated Library copy, including
+  confirmation, unclear count, scope isolation, restart, Dock close/reopen and retry. Geometry checks
+  prove controls stay outside every rendered PDF canvas at normal size, with the Dock open, zoomed,
+  and at a 1100px viewport. The batch control names its owner and ends at/before its final KP end.
+  Inspected `test-results/subsection-confirmation.png`: original text and the next heading are clear.
+- AFFECTED: `npm run test:e2e:ask` PASS, including selection, navigation, Dock and temporary-tree
+  recovery/isolation. CLOSURE/BROAD rerun: Python **162 passed, 2 unchanged optional OCR skips**;
+  frontend **30/30 PASS**. Retest service at port 8766 responds HTTP 200 with the updated static UI.
+- No new provider run is needed for this layout-only change; the prior live-provider evidence applies.
+
+Status remains `READY_FOR_USER_RETEST`, not user acceptance or Phase closure.
 
 ## Reproducible entry points
 

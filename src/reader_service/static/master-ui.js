@@ -3,7 +3,7 @@ import { renderAssistantAnswer } from "/assistant-render.js";
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂" };
 const REVIEW = { NOT_REQUESTED: "快速 · 未独立审查", PENDING: "审查中", PASS: "审查通过", FAIL: "审查未通过", TECHNICAL_FAILURE: "审查技术失败" };
 
-export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce }) {
+export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout }) {
   let entries = { points: [], sections: [] };
   let current = null;
   let poll = 0;
@@ -55,6 +55,11 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     const result = await api(`/api/revisions/${owner}/learning`);
     if (owner !== revision()) return;
     entries = result;
+    const hasControls = entries.points.length > 0;
+    if (pages.classList.contains("has-learning-controls") !== hasControls) {
+      pages.classList.toggle("has-learning-controls", hasControls);
+      relayout();
+    }
     for (const label of document.querySelectorAll("[data-learning-status]")) {
       const point = entries.points.find((p) => p.knowledge_point_id === label.dataset.learningStatus);
       if (point) label.textContent = STATUS[point.status];
@@ -198,7 +203,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     for (const [y, points] of groups) {
       const marker = document.createElement("details");
       marker.className = "learning-marker kp-learning-marker";
-      marker.style.top = `${Math.min(y, .94) * 100}%`;
+      marker.dataset.sourceY = String(y);
       const summary = document.createElement("summary");
       summary.textContent = "知识点 · 学习";
       marker.append(summary);
@@ -210,17 +215,20 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       }
       page.append(marker);
     }
-    for (const section of entries.sections.filter((s) => s.end_page === index)) {
+    for (const section of entries.sections) {
       const points = entries.points.filter((p) => section.knowledge_point_ids.includes(p.knowledge_point_id));
       if (!points.length) continue;
+      const lastPoint = points.reduce((last, point) => point.end_page > last.end_page
+        || (point.end_page === last.end_page && point.end_y > last.end_y) ? point : last);
+      if (lastPoint.end_page !== index) continue;
       const subsection = section.kind === "SUBSECTION";
       const label = subsection ? "本小节" : "本节";
       const marker = document.createElement("details");
       marker.className = `learning-marker ${subsection ? "subsection" : "section"}-learning-marker`;
       marker.dataset.outlineNodeId = section.outline_node_id;
-      marker.style.top = `${Math.min(section.end_y, .98) * 100}%`;
+      marker.dataset.sourceY = String(lastPoint.end_y);
       const summary = document.createElement("summary");
-      summary.textContent = `${label}确认`;
+      summary.textContent = `${label}确认 · ${section.title}`;
       const title = document.createElement("p");
       title.textContent = section.title;
       const output = document.createElement("p");
@@ -230,6 +238,20 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       marker.append(summary, title, button(subsection ? "一键确认本小节 KP" : "一键确认本节全部 KP", () => confirmSection(section, output)), output);
       page.append(marker);
     }
+    const markers = [...page.querySelectorAll(".learning-marker")]
+      .sort((a, b) => Number(a.dataset.sourceY) - Number(b.dataset.sourceY));
+    const layout = () => {
+      let nextTop = Infinity;
+      for (const marker of [...markers].reverse()) {
+        const bottom = Math.min(Number(marker.dataset.sourceY) * page.clientHeight, nextTop - 6);
+        const top = bottom - marker.offsetHeight;
+        marker.style.top = `${top}px`;
+        nextTop = top;
+      }
+      page.style.marginTop = `${Math.max(20, 20 - nextTop)}px`;
+    };
+    markers.forEach((marker) => marker.addEventListener("toggle", layout));
+    layout();
   }
   function decorateKnowledgeItem(item, point) {
     const saved = entries.points.find((p) => p.knowledge_point_id === point.knowledge_point_id);
@@ -244,6 +266,10 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     clearTimeout(poll);
     current = null;
     entries = { points: [], sections: [] };
+    if (pages.classList.contains("has-learning-controls")) {
+      pages.classList.remove("has-learning-controls");
+      relayout();
+    }
     sendIntent = null;
     select(false);
     el("title").textContent = "学习 Master";

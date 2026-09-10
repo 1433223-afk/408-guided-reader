@@ -46,7 +46,7 @@ const state = {
 const master = createMasterUI({ api, revision: () => state.revision?.id,
   pages: elements.pages, dock: elements["assistant-panel"],
   openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
-  goToPage, announce });
+  goToPage, announce, relayout: () => relayoutPages() });
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 const ASSISTANT_PROVIDER_LABELS = {
@@ -302,7 +302,8 @@ function displayedRatio(geometry) {
 }
 
 function pageWidth() {
-  return Math.max(240, Math.min(920, elements.viewer.clientWidth - 72)) * state.zoom;
+  const gutter = elements.pages.classList.contains("has-learning-controls") ? 176 : 0;
+  return Math.max(240, Math.min(920, elements.viewer.clientWidth - 72 - gutter)) * state.zoom;
 }
 
 function snappedPageSize(ratio) {
@@ -341,8 +342,9 @@ function alignedCssDimension(target, pixelRatio) {
 function applyPageSize(wrapper, size) {
   wrapper.style.width = `${size.cssWidth}px`;
   wrapper.style.height = `${size.cssHeight}px`;
-  const fits = size.cssWidth <= elements.viewer.clientWidth - 64;
-  const naturalLeft = fits ? (elements.viewer.clientWidth - size.cssWidth) / 2 : 32;
+  const gutter = elements.pages.classList.contains("has-learning-controls") ? 176 : 0;
+  const fits = size.cssWidth <= elements.viewer.clientWidth - 64 - gutter;
+  const naturalLeft = fits ? (elements.viewer.clientWidth - gutter - size.cssWidth) / 2 : 32;
   const alignedLeft = alignedCssDimension(naturalLeft, size.pixelRatio).css;
   wrapper.style.marginLeft = `${Math.max(0, alignedLeft - 32)}px`;
   wrapper.style.marginRight = "0";

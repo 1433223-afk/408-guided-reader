@@ -87,6 +87,11 @@ No external code, framework or dependency is adopted.
 
 ## Build
 
+- User-requested same-Phase layout correction (2026-09-10): learning controls occupy a reserved
+  gutter outside the PDF, including when expanded, zoomed or alongside the Dock. Section/Subsection
+  confirmation is anchored to its own last contained KP's source end, not the next heading's start;
+  the collapsed control names its Section/Subsection. Controls stack upward when necessary so they
+  do not drift into the next unit. This changes presentation only, not batch membership or state.
 - User-authorized same-Phase addition (2026-09-10): each third-level Subsection end also offers
   `一键确认本小节 KP`, reusing the existing batch transaction. Membership is derived from the
   published KP's owning parent Section and complete containment in the Subsection's resolved
@@ -149,6 +154,9 @@ No external code, framework or dependency is adopted.
 11. Subsection confirmation obeys the same rules within its contained KP set, including same-page
     boundaries and multi-page KPs; adjacent Subsections, other Sections/Books and crossing KPs remain
     untouched. The UI reports the remaining NOT_FULLY_CLEAR count.
+12. Collapsed and expanded learning controls do not intersect PDF content at normal size, with the
+    Dock open, after zooming or in a narrower viewport. Subsection confirmation names its owner and
+    remains at or before its last contained KP's source end rather than the next subsection heading.
 
 ### Agent real-use golden path
 

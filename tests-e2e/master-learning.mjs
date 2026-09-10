@@ -82,8 +82,10 @@ try {
   assert.equal(await page.locator("#master-history .master-message").count(), 4);
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
   const subsection = entries.sections.find((s) => s.kind === "SUBSECTION" && s.knowledge_point_ids.includes(point.knowledge_point_id));
+  const subsectionLast = entries.points.filter((p) => subsection.knowledge_point_ids.includes(p.knowledge_point_id))
+    .sort((a, b) => b.end_page - a.end_page || b.end_y - a.end_y)[0];
   const beforeSubsection = await json(page, base);
-  await page.locator("#page-number").fill(String(subsection.end_page + 1));
+  await page.locator("#page-number").fill(String(subsectionLast.end_page + 1));
   await page.locator("#page-number").press("Enter");
   const subMarker = page.locator(`.subsection-learning-marker[data-outline-node-id="${subsection.outline_node_id}"]`);
   await subMarker.locator("summary").click();
@@ -100,6 +102,31 @@ try {
   await subMarker.locator("summary").click();
   await mkdir("test-results", { recursive: true });
   await page.screenshot({ path: "test-results/subsection-confirmation.png", fullPage: true });
+  assert.ok((await subMarker.locator("summary").textContent()).includes(subsection.title));
+  const confirmationPlacement = await subMarker.evaluate((marker) => {
+    const pdf = marker.closest(".page").querySelector("canvas").getBoundingClientRect();
+    return { end: (marker.getBoundingClientRect().bottom - pdf.top) / pdf.height,
+      page: Number(marker.closest(".page").dataset.index) };
+  });
+  assert.equal(confirmationPlacement.page, subsectionLast.end_page);
+  assert.ok(confirmationPlacement.end <= subsectionLast.end_y + .002, "Confirmation belongs before its own final KP end, not the next heading");
+  await assertLearningControlsOutsidePdf(page);
+  await page.locator("#assistant-toggle").click();
+  await page.waitForTimeout(250);
+  await subMarker.locator("summary").click();
+  await assertLearningControlsOutsidePdf(page);
+  await page.locator("#zoom-in").click();
+  await page.waitForTimeout(250);
+  await subMarker.locator("summary").click();
+  await assertLearningControlsOutsidePdf(page);
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.waitForTimeout(250);
+  await subMarker.locator("summary").click();
+  await assertLearningControlsOutsidePdf(page);
+  await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
+  await page.locator("#zoom-out").click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.waitForTimeout(250);
   await page.locator("#page-number").fill(String(point.end_page + 3));
   await page.locator("#page-number").press("Enter");
   await page.locator("#back-to-library").click();
@@ -143,9 +170,11 @@ try {
   const retried = await snapshot();
   assert.deepEqual(retried.messages.filter((m) => m.role === "user").map((m) => m.id), failed.messages.filter((m) => m.role === "user").map((m) => m.id));
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
-  await page.locator("#page-number").fill(String(section.end_page + 1));
+  const sectionLast = entries.points.filter((p) => p.primary_section_id === section.outline_node_id)
+    .sort((a, b) => b.end_page - a.end_page || b.end_y - a.end_y)[0];
+  await page.locator("#page-number").fill(String(sectionLast.end_page + 1));
   await page.locator("#page-number").press("Enter");
-  const marker = page.locator(`.page[data-index="${section.end_page}"] .section-learning-marker`).filter({ hasText: section.title }).first();
+  const marker = page.locator(`.page[data-index="${sectionLast.end_page}"] .section-learning-marker`).filter({ hasText: section.title }).first();
   await marker.locator("summary").click();
   await marker.getByRole("button", { name: "一键确认本节全部 KP", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本节仍有未完全清楚"));
@@ -177,7 +206,7 @@ try {
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ status: "PASS", liveInitialConversation: live, realPages: 348, kp: point.title,
     restartAndAIoffHistory: true, retryNoDuplicates: true, explicitConfirmation: true, sectionIsolation: true,
-    payloadAllowlist: true, subsectionIsolationAndRestart: true, subsection: subsection.title,
+    payloadAllowlist: true, subsectionIsolationAndRestart: true, controlsOutsidePdf: true, subsection: subsection.title,
     dataDir, screenshot: "test-results/master-learning.png" }));
 } finally {
   if (browser) await browser.close();
@@ -187,6 +216,21 @@ try {
 
 async function json(page, url) {
   return page.evaluate(async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }, url);
+}
+async function assertLearningControlsOutsidePdf(page) {
+  const violations = await page.evaluate(() => {
+    const pages = [...document.querySelectorAll(".page:has(canvas)")];
+    const controls = [...document.querySelectorAll(".learning-marker")];
+    return controls.flatMap((control) => {
+      const box = control.getBoundingClientRect();
+      return pages.filter((page) => {
+        const pdf = page.querySelector("canvas").getBoundingClientRect();
+        return Math.min(box.right, pdf.right) - Math.max(box.left, pdf.left) > 1
+          && Math.min(box.bottom, pdf.bottom) - Math.max(box.top, pdf.top) > 1;
+      }).map(() => control.textContent);
+    });
+  });
+  assert.deepEqual(violations, [], "Learning controls must never overlap original PDF pixels");
 }
 async function openBook(page) {
   await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).click();
