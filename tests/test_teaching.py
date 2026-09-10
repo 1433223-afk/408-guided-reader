@@ -16,8 +16,8 @@ from test_knowledge_map import build_fixture, claim_and_run
 def candidate(packet):
     refs = [packet['evidence'][0]['source_id']]
     return {'modules': [
-        {'id': 'm1', 'kind': 'route', 'title': '阅读路线', 'text': '先辨认基本概念，再比较各自成立的条件。', 'source_ids': refs},
-        {'id': 'm2', 'kind': 'exit', 'title': '退出标准', 'text': '能解释本节概念的含义及条件差异。', 'source_ids': refs}]}
+        {'id': 'm1', 'kind': 'article', 'title': '为什么需要新的表示', 'text': '现有办法在条件变化时不再适用，因此需要能够表达这些差异的表示。', 'source_ids': refs},
+        {'id': 'm2', 'kind': 'article', 'title': '表示背后的约定', 'text': '新的表示回应了这个问题，也让我们看清条件与结果之间的联系。', 'source_ids': refs}]}
 
 
 class Runtime:
@@ -162,7 +162,7 @@ def test_contract_rejects_untrusted_source_authority(guide, change):
     if change == 'quote': m['text'] = '教材说“编造的逐字引文”'
     if change == 'exam': m['text'] = '这是高频常考重点'
     if change == 'locator': m['pdf_page_index'] = 99
-    if change == 'partial': value['modules'].pop()
+    if change == 'partial': value['modules'] = []
     if change == 'url': m['text'] = '看 https://example.com'
     with pytest.raises(ValueError): validate_guide(value, packet)
 
@@ -328,3 +328,15 @@ def test_identical_evidence_republication_keeps_source_ids(guide):
         fresh, _, _ = evidence.build(c, rev, section)
         assert evidence.current(c, deps)
         assert fresh == original
+
+
+def test_article_contract_has_no_route_exit_or_kp_checklist(guide):
+    _, _, g, rev, section = guide
+    with g.database.connect() as c:
+        packet, _, _ = evidence.build(c, rev, section)
+    value = candidate(packet)
+    value['modules'] = value['modules'][:1]
+    assert validate_guide(value, packet) == value
+    value['modules'][0]['text'] = '文' * 1401
+    with pytest.raises(ValueError):
+        validate_guide(value, packet)

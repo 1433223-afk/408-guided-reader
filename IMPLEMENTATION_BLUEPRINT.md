@@ -2770,7 +2770,7 @@ ledgers (§6–§15 of that document) is disposed below into exactly one of:
 | LEGACY-MASTER-TOPIC-001 | P1 | A | §26.1 | §15.5 |
 | LEGACY-MASTER-CONDENSATION-RACE-001 | P1 | A | §26.1 (finalization race) | §15.5 (`frozen_basis_ref`, `continuation_of`) |
 | LEGACY-MASTER-NODOWNGRADE-001 | P1 | A | §26.2 | §15.6 |
-| LEGACY-SYS-CLOSURE-001 | P1 | **B** | §20 (退出标准 module) + light addition at §20.4 | — |
+| LEGACY-SYS-CLOSURE-001 | P1 | **B** | §20 / §20.4 (superseded by user-approved continuous-article amendment, 2026-09-10) | — |
 | LEGACY-SYS-RECALL-001 | P1 | A | §32 (added paragraph) | — (Recall generation itself is Phase R7, not yet designed) |
 | LEGACY-REVIEW-REWORKCOUNT-001 | P1 | A *(adapted — see note)* | §33.2.1 | §13.7a |
 | LEGACY-REVIEW-EXHAUST-001 | P1 | A | §33.2.1 | §13.7a |

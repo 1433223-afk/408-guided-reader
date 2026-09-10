@@ -13,7 +13,8 @@ const dataDir = path.join(root, "data");
 console.log('Disposable guide Library:', dataDir);
 await mkdir(dataDir);
 await cp(path.join(source, "blobs"), path.join(dataDir, "blobs"), { recursive: true });
-const backup = spawnSync("python", ["-c", "import sqlite3,sys; source=sqlite3.connect(sys.argv[1]); target=sqlite3.connect(sys.argv[2]); source.backup(target); target.close(); source.close()", path.join(source, "state.sqlite3"), path.join(dataDir, "state.sqlite3")], { windowsHide: true, encoding: "utf8" });
+// The disposable copy must not resume unrelated live-library work against the test provider.
+const backup = spawnSync("python", ["-c", "import sqlite3,sys; source=sqlite3.connect(sys.argv[1]); target=sqlite3.connect(sys.argv[2]); source.backup(target); target.execute(\"UPDATE jobs SET status='CANCELLED' WHERE status IN ('QUEUED','RUNNING')\"); target.commit(); target.close(); source.close()", path.join(source, "state.sqlite3"), path.join(dataDir, "state.sqlite3")], { windowsHide: true, encoding: "utf8" });
 assert.equal(backup.status, 0, backup.stderr);
 
 let running;
@@ -32,8 +33,8 @@ const provider = createServer(async (req, res) => {
   else if (payload?.source?.evidence) {
     const refs = [payload.source.evidence[0].source_id];
     answer = JSON.stringify({ modules: [
-      { id: 'm1', kind: 'route', title: '阅读路线', text: '先定位本节讨论的概念，再比较各自的作用与成立条件；阅读时记录能区分它们的例子。', source_ids: refs },
-      { id: 'm2', kind: 'exit', title: '退出标准', text: '能够说明本节概念的含义，并解释它们的条件差异。', source_ids: refs }] });
+      { id: 'm1', kind: 'article', title: '从问题出发', text: '表示需要回应真实的限制。已有约定不足以表达变化，因此新的方式引入了不同的解释。', source_ids: refs },
+      { id: 'm2', kind: 'article', title: '理解约定的作用', text: '这些约定连接起条件与结果，让新的问题也有了可以理解的起点。', source_ids: refs }] });
   }
   await new Promise(r => setTimeout(r, 200));
   res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -72,7 +73,8 @@ try {
   const ordered = first.published.content.modules.flatMap(m => m.source_ids.map(id => first.published.sources[id]));
   for (let i = 0; i < sourceCount; i++) {
     await sources.nth(i).click();
-    await page.locator('#guide-panel').waitFor({ state: 'hidden' });
+    await page.waitForTimeout(250);
+    assert.ok(await page.locator('#guide-panel').isVisible());
     const position = await page.evaluate(source => {
       const viewer = document.getElementById('viewer');
       const target = document.querySelector(`.page[data-index="${source.pdf_page_index}"]`);

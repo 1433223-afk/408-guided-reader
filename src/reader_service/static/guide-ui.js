@@ -1,11 +1,13 @@
-export function createGuideUI({ state, api, goToPage, explain }) {
+export function createGuideUI({ state, api, goToPage, explain, layout, closeDock }) {
   const panel = document.createElement("aside");
   panel.id = "guide-panel";
   panel.className = "guide-panel";
   panel.hidden = true;
   panel.setAttribute("aria-label", "本节导读");
-  panel.innerHTML = `<div class="marks-panel-heading"><strong id="guide-title">本节导读</strong><button id="guide-close" type="button" aria-label="关闭导读">×</button></div>
-    <p id="guide-status" role="status"></p><div id="guide-actions"></div><div id="guide-content"></div>
+  panel.innerHTML = `<div id="guide-divider" role="separator" tabindex="0" aria-label="导读宽度" aria-orientation="vertical" aria-controls="guide-panel"></div>
+    <div class="guide-heading"><strong id="guide-title">本节导读</strong><button id="guide-expand" type="button">展开导读</button><button id="guide-close" type="button">收起</button></div>
+    <div class="guide-meta"><p id="guide-status" role="status"></p><div id="guide-actions"></div></div>
+    <div id="guide-scroll"><div id="guide-content"></div></div>
     <button id="guide-explain" type="button" hidden>解释所选导读</button>`;
   document.getElementById("reader").append(panel);
   const title = panel.querySelector("#guide-title");
@@ -15,8 +17,80 @@ export function createGuideUI({ state, api, goToPage, explain }) {
   const explainButton = panel.querySelector("#guide-explain");
   let sectionId = null, revisionId = null, snapshot = null, timer = 0, epoch = 0, pending = false;
   let selection = null, renderedId = null, intent = null;
-  function close() { panel.hidden = true; clearTimeout(timer); epoch++; }
-  panel.querySelector("#guide-close").onclick = close;
+  const reader = document.getElementById("reader"), scroll = panel.querySelector("#guide-scroll");
+  const divider = panel.querySelector("#guide-divider"), expand = panel.querySelector("#guide-expand");
+  const reopen = document.createElement("button");
+  reopen.id = "guide-reopen"; reopen.textContent = "展开导读"; reopen.hidden = true; reader.append(reopen);
+  const positions = new Map();
+  let width = 0, normalWidth = 0, expanded = false, dragging = false;
+  const locationKey = () => `${revisionId}:${sectionId}:${renderedId}`;
+  function readingPosition() {
+    const top = scroll.getBoundingClientRect().top;
+    const texts = [...content.querySelectorAll(".guide-text")];
+    const item = texts.find(t => t.getBoundingClientRect().bottom > top);
+    if (!item) return { scroll: scroll.scrollTop };
+    const rect = item.getBoundingClientRect();
+    return { id: item.dataset.moduleId, fraction: Math.max(0, (top - rect.top) / rect.height),
+      gap: Math.max(0, rect.top - top), scroll: scroll.scrollTop };
+  }
+  function restorePosition(saved) {
+    if (!saved) return;
+    const item = [...content.querySelectorAll(".guide-text")].find(t => t.dataset.moduleId === saved.id);
+    if (!item) { scroll.scrollTop = saved.scroll; return; }
+    const rect = item.getBoundingClientRect();
+    scroll.scrollTop += rect.top - scroll.getBoundingClientRect().top + rect.height * saved.fraction - saved.gap;
+  }
+  function savePosition() { if (renderedId && !panel.hidden) positions.set(locationKey(), readingPosition()); }
+  function limits() {
+    const available = reader.clientWidth;
+    return { min: Math.min(360, available * .45), max: Math.max(available * .45, available - Math.min(320, available * .4)) };
+  }
+  function setWidth(value) {
+    const saved = readingPosition(), { min, max } = limits();
+    width = Math.round(Math.max(min, Math.min(max, value)));
+    layout(() => reader.style.setProperty("--guide-width", `${width}px`));
+    divider.setAttribute("aria-valuemin", String(Math.round(min)));
+    divider.setAttribute("aria-valuemax", String(Math.round(max)));
+    divider.setAttribute("aria-valuenow", String(width));
+    restorePosition(saved);
+  }
+  function setExpanded(value) {
+    if (value === expanded) return;
+    if (value) normalWidth = width;
+    expanded = value;
+    expand.textContent = value ? "恢复双栏" : "展开导读";
+    expand.setAttribute("aria-pressed", String(value));
+    setWidth(value ? reader.clientWidth * .65 : normalWidth);
+  }
+  function close(collapsed = false) {
+    if (panel.hidden && reopen.hidden) return;
+    savePosition(); clearTimeout(timer); epoch++;
+    layout(() => { panel.hidden = true; reader.classList.remove("guide-open"); });
+    reopen.hidden = !collapsed;
+  }
+  panel.querySelector("#guide-close").onclick = () => close(true);
+  reopen.onclick = () => open(sectionId);
+  expand.onclick = () => setExpanded(!expanded);
+  divider.onpointerdown = event => {
+    if (event.button !== 0) return;
+    event.preventDefault(); dragging = true; divider.setPointerCapture(event.pointerId);
+  };
+  divider.onpointermove = event => {
+    if (!dragging) return;
+    setWidth(reader.getBoundingClientRect().right - event.clientX);
+    if (!expanded) normalWidth = width;
+  };
+  const finishDrag = () => { dragging = false; savePosition(); };
+  divider.onpointerup = finishDrag; divider.onpointercancel = finishDrag; divider.onlostpointercapture = finishDrag;
+  divider.onkeydown = event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === 'Enter') { close(true); reopen.focus(); return; }
+    const { min, max } = limits();
+    setWidth(event.key === 'Home' ? min : event.key === 'End' ? max : width + (event.key === 'ArrowLeft' ? 24 : -24));
+    if (!expanded) normalWidth = width;
+  };
+  window.addEventListener("resize", () => { if (!panel.hidden) setWidth(expanded ? reader.clientWidth * .65 : width); });
   function base() { return `/api/revisions/${revisionId}/sections/${sectionId}/guide`; }
   function button(label, action) {
     const b = document.createElement("button"); b.type = "button"; b.textContent = label;
@@ -48,10 +122,13 @@ export function createGuideUI({ state, api, goToPage, explain }) {
         text.dataset.moduleId = module.id;
         text.className = "guide-text";
         block.append(heading, text);
+        const references = document.createElement("div"); references.className = "guide-references";
         for (const [i, sourceId] of module.source_ids.entries()) {
           const source = published.sources[sourceId], b = document.createElement("button");
           b.type = "button"; b.className = "guide-source";
-          b.textContent = source.available ? `教材来源 ${i + 1} · PDF ${source.pdf_page_index + 1}` : `教材来源 ${i + 1} · 位置待核实`;
+          b.textContent = `[${i + 1}]`;
+          b.title = source.available ? `查看教材 · PDF ${source.pdf_page_index + 1}` : "来源位置待核实";
+          b.setAttribute("aria-label", `${module.title} · 来源 ${i + 1} · ${b.title}`);
           b.disabled = !source.available;
           b.onclick = async () => {
             const stamp = epoch;
@@ -60,14 +137,17 @@ export function createGuideUI({ state, api, goToPage, explain }) {
               if (stamp !== epoch) return;
               const verified = fresh.published?.id === published.id && fresh.published.sources[sourceId];
               if (!verified?.available) { status.textContent = "该教材位置已变化，请重新生成导读。"; return; }
+              if (expanded) setExpanded(false);
               goToPage(verified.pdf_page_index, verified.y);
-              close();
+              savePosition();
             } catch (error) { status.textContent = error.message; }
           };
-          block.append(b);
+          references.append(b);
         }
+        block.append(references);
         content.append(block);
       }
+      restorePosition(positions.get(locationKey()));
     }
     if (busy && !panel.hidden) timer = setTimeout(load, 700);
   }
@@ -111,11 +191,15 @@ export function createGuideUI({ state, api, goToPage, explain }) {
   });
   explainButton.onmousedown = (event) => event.preventDefault();
   explainButton.onclick = () => { if (selection) { const { text, ...request } = selection; close(); explain(text, request); } };
-  return { close, async open(id) {
+  async function open(id) {
     close(); sectionId = id; revisionId = state.revision.id; snapshot = null; renderedId = null; pending = false;
     content.replaceChildren(); actions.replaceChildren(); explainButton.hidden = true; intent = null;
-    panel.hidden = false; status.textContent = "正在读取导读…";
+    closeDock(); reopen.hidden = true;
+    layout(() => { panel.hidden = false; reader.classList.add("guide-open"); });
+    setWidth(width || reader.clientWidth * .45);
+    status.textContent = "正在读取导读…";
     for (const id of ["outline-panel", "knowledge-panel", "search-panel", "marks-panel"]) document.getElementById(id).hidden = true;
     await load();
-  } };
+  }
+  return { close, open };
 }

@@ -9,7 +9,7 @@ that passes independent AI Review publishes. Source buttons return to the actual
 Guide selection opens the existing temporary Assistant. Closing/restarting restores the published
 Guide. Failed or pending regeneration keeps the previous published version readable.
 
-**USER_ACCEPTANCE PENDING. Independent narrow code acceptance PENDING. Phase closure PENDING.**
+**USER_ACCEPTANCE FAIL for the former checklist Guide; article/split-reader rework READY_FOR_USER_RETEST. Independent narrow code acceptance PENDING. Phase closure PENDING.**
 The live AI content Review described below is not independent code acceptance. The accepted brief
 requires that separate narrow audit before closure; no audit invocation or independent PASS is claimed.
 
@@ -25,7 +25,8 @@ requires that separate narrow audit before closure; no audit invocation or indep
   Annotation, Assistant or profile state enters generation or Review. The actual KP version is
   recorded only when the ledger was supplied.
 - Server-owned source IDs resolve to persisted revision/page/geometry/quote provenance. Strict JSON,
-  exact fields, required route/exit modules, bounded text and reference validation precede Review.
+  exact fields, bounded text and reference validation precede Review. The original route/exit
+  requirement was removed by the user-approved article amendment.
   Foreign IDs, model-authored locators, unsupported quoted wording and exam-weight language fail.
   Review receives newly assembled allowlisted evidence, returns only a verdict and scoped issues,
   and cannot rewrite content. Rework replaces only rejected modules; three semantic FAILs terminate
@@ -165,6 +166,53 @@ and test Learning state stayed in disposable copies. Port 8000 was not touched.
 - TARGETED: 18 Guide tests PASS. BROAD: 232 Python PASS / 2 unchanged optional OCR skips;
   30 frontend PASS. Prompt style still requires user retest; content Review does not constitute
   user acceptance or independent code acceptance. Status remains **READY_FOR_USER_RETEST**.
+
+## Accepted article / split-reader rework — 2026-09-10
+
+- Synced Product §20/§20.4, its Implementation audit cross-reference and this Phase brief before
+  code: continuous problem-led articles, no exit module/per-KP checklist; flexible narrative rather
+  than a compulsory problem/limitation template. No PDF Inline Guidance, dependencies or layout framework.
+- Generator and Review now share that rubric. Existing JSON envelopes, stable block IDs, selection
+  offsets and source ledgers remain; `article` supports 1–6 content-chosen parts, 1400 characters per
+  part / 4500 total as technical bounds. Legacy kinds remain readable and retry-compatible; no
+  migration, blanket staleness or published-content rewrite. Prompt targets are not fixed templates.
+- PDF left / Guide right; native pointer and keyboard divider, bounded width, expand/restore and
+  collapse/reopen. A section/version-keyed in-memory paragraph position restores reading across
+  reflow, source jumps and reopening; it is a UI position, not a new durable learner-state record.
+  Numbered references retain fresh server validation and locate PDF without closing Guide. The
+  existing Assistant/Master dock and Guide use the space alternately, retaining their own state.
+- Prior-art inspected during accepted proposal: [Split.js](https://github.com/nathancahill/split/tree/master/packages/splitjs),
+  [react-resizable-panels](https://github.com/bvaughn/react-resizable-panels), and
+  [W3C APG Window Splitter](https://www.w3.org/WAI/ARIA/apg/patterns/windowsplitter/).
+  Borrowed min/max bounds, divider keyboard semantics and restore-width patterns; no copied code.
+- Real 2.1: three explicit live article generations (versions 3–5). Versions 3/4 received model
+  Review PASS but agent reading found operand confusion, excessive textbook restatement and
+  overgeneralized C rules; they were not accepted as deliverables. Corrected prompts on both sides
+  to check these concrete issues. Version 5 published with real Review PASS, zero semantic reworks,
+  2275 characters / six naturally titled parts. Review transport made two attempts; this is not two
+  semantic cycles. All intermediate immutable versions remain recorded; version 5 is current.
+- Verified all three final wire attempts against freshly built exact Section evidence and allowed
+  payload shapes, including no streaming. Actual metadata remains persisted. Checked the final
+  article, screenshot, and exact source geometry. Service restart recovered the same version 5 ID.
+  Pre/post backups are ignored Library files; SQLite integrity and FK checks PASS; port 8000 untouched.
+- TARGETED: 19 Guide tests PASS, including an article with no route/exit and bounded text failure.
+  Real 348-page split-reader test PASS: pointer/keyboard resize, expand/restore, collapse/reopen,
+  source retention and exact PDF target, responsive resize, PDF visibility, no browser errors.
+- AFFECTED: controlled real-book Guide E2E PASS (failure preserves old publication, retry, restart,
+  non-READY KP, source scope, selection-to-Assistant); Assistant and Master real-book E2Es PASS.
+  BROAD: 233 Python PASS / 2 unchanged optional OCR skips; 30 frontend PASS. Final Guide targeted
+  tests rerun after prompt calibration. `git diff --check` PASS.
+- Earlier failures were real: old test assumed removing exit made any one-part article invalid;
+  narrow-window grid intrinsic sizing caused overlap; a disposable test copy resumed an unrelated
+  in-flight user job against the test provider. Updated the obsolete test contract, constrained the
+  Guide grid column and cancelled inherited jobs only inside the disposable copy, then reran successfully.
+- Final ignored artifacts: `.tmp/guide-2.1-article.md`, `.tmp/guide-2.1-article.json`,
+  `.tmp/guide-2.1-dual.png`, `.tmp/guide-article-inspection.json`. The page is served at port 8766.
+  Reproduce layout verification with `node tests-e2e/guide-split-reader.mjs` against that prepared
+  Library (`READER_URL` may override). No additional live generation occurs in that layout test.
+
+Status: **READY_FOR_USER_RETEST** for the accepted rework. Earlier USER_ACCEPTANCE FAIL remains
+recorded; no user acceptance, independent code acceptance or Phase closure is claimed.
 
 ## Git checkpoint
 

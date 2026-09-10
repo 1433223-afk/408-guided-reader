@@ -57,7 +57,10 @@ const ASSISTANT_DOCK_MIN_WIDTH = 320;
 const ASSISTANT_DOCK_MAX_WIDTH = 760;
 const ASSISTANT_READER_MIN_WIDTH = 280;
 
-const guide = createGuideUI({ state, api, goToPage, explain: (selectedText, request) => {
+const guide = createGuideUI({ state, api, goToPage,
+  layout: change => { const anchor = captureZoomAnchor(); change(); if (state.revision) relayoutPages(anchor); },
+  closeDock: () => setAssistantPanelOpen(false, { relayout: false }),
+  explain: (selectedText, request) => {
   if (!state.readerSessionId || state.assistantPending) return;
   state.assistantDraft = { readerSessionId: state.readerSessionId, revisionId: state.revision.id, selectedText, request };
   openAssistantPanel(); renderAssistantDraft(); refreshAssistantStatus();
@@ -1398,6 +1401,7 @@ function setAssistantExpanded(expanded) {
 }
 
 function setAssistantPanelOpen(open, { focusViewer = false, relayout = true } = {}) {
+  if (open) guide.close();
   const wasOpen = !elements["assistant-panel"].hidden;
   const anchor = relayout && wasOpen !== open ? captureZoomAnchor() : null;
   if (!open && state.assistantExpanded) setAssistantExpanded(false);

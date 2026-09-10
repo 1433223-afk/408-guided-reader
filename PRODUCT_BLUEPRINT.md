@@ -903,21 +903,18 @@ Reading Position may exist before Mastery readiness; bulk KP state changes may n
 
 # 20. Reading Guide
 
-Reading Guide is Section-level macro scaffolding, not a rewritten mini-textbook and not 1:1 with KP.
+Reading Guide is a continuous Section-level article organized around the Section's core problem.
+It opens with why the knowledge is needed and connects ideas through explanatory prose, like a
+well-reasoned companion book, without rewriting the textbook or enumerating KPs.
+Problem → limitations → new knowledge is a writing approach, not a fixed template or invented history.
+Titles, paragraphs and examples follow the actual Section. Pitfalls, conceptual emphasis and thinking
+prompts may appear naturally inside the Guide article, but must not dominate it. Exam claims remain
+subject to §20.3. There is no exit-criteria module or per-KP checklist requirement.
 
-Useful modules may include:
-
-- **定位** — where this sits in the larger map;
-- **动机** — what problem the concept solves;
-- **桥接/前置知识** — what earlier concepts the section assumes;
-- **阅读路线** — what questions organize the section;
-- **防坑** — ambiguity, common misconceptions, typical exam traps;
-- **权重证据** — what deserves more attention and why;
-- **图表阅读方法** — how to read an important figure/table;
-- **退出标准** — what the learner should be able to explain afterwards;
-- **Active Retrieval** when it genuinely improves learning.
-
-Modules are chosen because they help, not because a template requires all of them.
+User-approved amendment (2026-09-10): the Guide and original PDF use separate reading columns with a
+resizable divider, expand/restore/collapse controls and an always-visible PDF. Low-distraction numbered
+sources navigate the PDF while preserving the Guide reading position. No AI content is inserted into
+the PDF; Inline Guidance remains separate and deferred in the current Phase.
 
 ## 20.1 Factual vs pedagogical freedom
 
@@ -975,11 +972,9 @@ Future teacher opinions must remain attributed to their source rather than being
 
 ## 20.4 Closure
 
-A Section's Reading Guide is not complete unless a learner working through it could, for each KP the
-Section primarily owns, explain the exit criteria the 退出标准 module describes for that KP. This is a
-quality bar on what the Guide/Guidance collectively achieve — not a requirement for a dedicated,
-separately-labeled "summary" segment. If the material doesn't need a distinct summary, don't
-manufacture one merely to satisfy a template.
+The article should leave the learner with a coherent understanding of the Section's central problem
+and the relationships between its ideas. A natural closing paragraph may consolidate that understanding;
+no separately labelled exit criteria, per-KP coverage checklist or fixed closing template is required.
 
 ---
 

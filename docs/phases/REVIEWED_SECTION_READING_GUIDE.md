@@ -1,14 +1,15 @@
 # Phase / Reviewed Section Reading Guide
 
-> **Status: ACCEPTED — implementation READY_FOR_USER_RETEST.**
+> **Status: ACCEPTED — former user UAT FAIL; article / split-reader rework READY_FOR_USER_RETEST.**
 
-Implementation checkpoint (2026-09-10): `READY_FOR_USER_RETEST`. User acceptance, independent narrow
-code acceptance and closure remain pending; see the [Development Report](../development-reports/REVIEWED_SECTION_READING_GUIDE.md).
+The former checklist implementation failed user acceptance. The user accepted continuous articles and
+split PDF/Guide reading on 2026-09-10; rework is READY_FOR_USER_RETEST. Independent narrow code acceptance and
+closure remain pending; see the [Development Report](../development-reports/REVIEWED_SECTION_READING_GUIDE.md).
 
 ## Goal
 
 Turn one real resolved Section into a concise, source-linked Reading Guide that helps the learner
-decide how to read and when the Section is sufficiently covered. Generation, independent Review,
+understand why the Section’s knowledge is needed and how its ideas connect. Generation, independent Review,
 durable publication and safe regeneration form one vertical slice.
 
 ## User-visible result
@@ -23,6 +24,14 @@ durable publication and safe regeneration form one vertical slice.
   Reader navigation, persistent learning-state and provider/Review baseline.
 
 Nothing else from either Blueprint is required for this Phase.
+
+## Accepted UAT amendment — 2026-09-10
+
+User rejected the checklist product form and accepted the continuous-article and split-reader design.
+This supersedes the prior route/exit and one-page list-style acceptance. No PDF Inline Guidance.
+Prior-art: Split.js README, react-resizable-panels README, and W3C APG Window Splitter guidance;
+borrow min-size constraints, resize handles, restore proportions and keyboard interaction patterns only.
+No copied external implementation or new dependency.
 
 ## Prior-art check
 
@@ -57,8 +66,9 @@ framework or new dependency is adopted.
   credentials, Review or job readiness. Generation is an explicit user action; AI-off/original-only
   use remains available.
 - A Guide is concise macro reading scaffolding, not a rewritten textbook or a long Section summary.
-  Its modules are selected for the Section's actual content rather than mechanically filling a fixed
-  template, but the published result must give an actionable reading route and clear exit criteria.
+  Write a continuous article around its core problem. Problem → limitations → new knowledge is a
+  writing approach, never a fixed template. No exit criteria or per-KP checklist. Pitfalls, conceptual
+  emphasis and thinking prompts may support the narrative without dominating it.
 - Build the generation packet deterministically from the Section identity/title and resolved physical
   range, real PDF/OCR evidence, necessary parent positioning, and optionally the owning Chapter's
   `READY` Section KP ledger. Do not send KP status, Master history, notes/highlights, Assistant state,
@@ -106,9 +116,10 @@ framework or new dependency is adopted.
 - Durable Section Guide identity, dependency/version/provider metadata, recovery, scoped staleness,
   ownership/cascade and atomic first publication/replacement using the existing job and persistence
   architecture.
-- A concise Section Guide presentation whose content-selected modules provide a useful reading route,
-  exit criteria and validated source links back to the real PDF; its text remains available to the
-  existing selection-to-Assistant path.
+- A continuous Section article with natural headings and validated numbered source references.
+  PDF + Guide columns have a draggable divider and expand/restore/collapse controls. PDF remains
+  visible; source jumps and layout changes preserve the Guide reading position. No new dependency
+  or generic layout system. Text remains available to the existing selection-to-Assistant path.
 
 ## Not now
 
@@ -159,8 +170,9 @@ Using the real 348-page textbook:
 
 1. Open one resolved Section whose Chapter KP is `READY`, explicitly generate a Guide, and inspect the
    actual generation and Review payload boundaries.
-2. Verify the published Guide gives a concise, useful reading route and exit criteria rather than a
-   padded template or Section rewrite.
+2. Verify the real 2.1 Guide opens with the motivating problem and connects ideas in continuous prose,
+   without exit criteria, KP enumeration or a fixed template. Exercise drag, expand, restore, collapse
+   and reopen; PDF remains visible and the Guide reading position is retained across source jumps.
 3. Follow its source links and confirm each returns to the correct real PDF evidence; select one Guide
    phrase and open the existing Assistant explanation flow.
 4. Close the Guide, navigate away, close the Reader, restart the service, return, and recover the same

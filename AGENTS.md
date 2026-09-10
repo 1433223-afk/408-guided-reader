@@ -276,7 +276,8 @@ Both blueprints are frozen at Gate D (2026-09-03). Since then the Frozen Core ha
 user-approved amendments recorded in the blueprints themselves (Implementation §14.8 per Ask Deeper
 decision D1; Decision Register A-19 for the Markdown/math/sanitizer libraries; Implementation
 §12.2/§12.4/§22 for the First Chapter Knowledge Map UAT/architecture corrections accepted
-2026-09-07). One
+2026-09-07; Product §20/§20.4 for the Reading Guide article/split-reader amendment accepted
+2026-09-10). One
 Frozen-level sync still awaits the user: `IMPLEMENTATION_BLUEPRINT.md` §26 carries the D-4/D-5 rows
 already resolved in `ASK_ABOUT_THIS.md`.
 
