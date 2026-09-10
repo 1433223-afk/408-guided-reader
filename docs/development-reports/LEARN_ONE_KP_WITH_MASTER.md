@@ -44,6 +44,34 @@ statuses. Third-level `确认本小节` keeps its existing UNCONFIRMED-only beha
 - This addition needs its own independent scope/persistence/mastery review before eventual closure;
   the previous audit is not reused as acceptance of migration 13. Stop here at user retest as requested.
 
+## Same-Phase reading-position UAT fix (2026-09-10)
+
+`READY_FOR_USER_RETEST`; no new user acceptance or Phase closure is claimed.
+
+- Reproduced on an isolated copy of the real 348-page Library: navigation to PDF page 50 saved
+  successfully (HTTP 200), but reload/open saved page 1 over it. Page 70 with delayed PDF loading
+  reproduced the same defect. Master-entry gutter relayout captured the initial placeholder viewport
+  and changed `currentPage` before the stored reading position was restored.
+- Minimal frontend-only correction: pre-restoration relayout sizes placeholders without restoring a
+  viewport anchor; PDF readiness is published only after reading-position restoration. Debounced
+  and pagehide saves reject the unrestored placeholder state. The existing open-generation check
+  also runs after the animation-frame wait. No new state, schema, UI or learning-rule changes.
+- TARGETED: Library/API tests **13 PASS**. New `npm run test:e2e:position` **PASS** on a real-book
+  clone: refresh, Library close/reopen, held PDF load (including pagehide with zero premature writes),
+  service restart, PDF page 50 / in-page offset / zoom restoration, unchanged Learning entries.
+- AFFECTED: controlled real-book Master E2E **PASS**, including Section/Subsection isolation,
+  Section reviews `[PASS, PASS]`, durable history/retry and explicit confirmation. Assistant E2E
+  **PASS**, including Reader/Dock close/reopen and AI-off navigation. No new live-provider calls:
+  provider execution, context and Review code are unchanged.
+- BROAD: Python **214 passed / 2 unchanged optional OCR skips**; frontend **30/30 PASS**.
+- Port 8766 serves the updated script with `Cache-Control: no-store`; no service restart or source
+  Library write was required. Refresh the existing page before retest. Already overwritten historical
+  positions are not reconstructed or guessed by this fix.
+- Reproduce with `READER_DATA_DIR` pointing to the prepared Library and
+  `npm run test:e2e:position`; it backs up SQLite and copies blobs into a temporary test Library.
+  This local restoration-order correction does not add an independent-review trigger; the Section
+  addition's outstanding narrow review remains pending before its eventual closure.
+
 ## Previous accepted baseline (`fbe36d5`)
 
 `CLOSED / COMPLETE` / `USER_ACCEPTANCE PASS` (2026-09-10).

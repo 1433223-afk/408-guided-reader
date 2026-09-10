@@ -227,10 +227,11 @@ async function openBook(book) {
     });
     const pdf = await loading.promise;
     if (generation !== state.generation) return;
-    state.pdf = pdf;
     if (pdf.numPages !== state.revision.page_count) throw new Error("保存的 PDF 元数据与来源文件不再一致");
     await nextFrame();
+    if (generation !== state.generation) return;
     applyRestoredPosition();
+    state.pdf = pdf;
     scheduleViewportUpdate();
     await startPreparation();
     await loadBookMap();
@@ -513,7 +514,8 @@ function relayoutPages(anchor = captureZoomAnchor()) {
     wrapper.replaceChildren();
     applyPageSize(wrapper, size);
   });
-  restoreZoomAnchor(anchor);
+  // Before PDF restoration, placeholders are layout only, not a reading position.
+  if (state.pdf) restoreZoomAnchor(anchor);
   scheduleViewportUpdate();
   scheduleSave();
 }
@@ -572,7 +574,7 @@ function scheduleSave() {
 }
 
 async function savePosition() {
-  if (!state.revision) return;
+  if (!state.revision || !state.pdf) return;
   const page = elements.pages.children[state.currentPage];
   if (!page) return;
   const normalizedOffset = currentNormalizedOffset(page);
@@ -589,7 +591,7 @@ async function savePosition() {
 }
 
 function savePositionKeepalive() {
-  if (!state.revision) return;
+  if (!state.revision || !state.pdf) return;
   const page = elements.pages.children[state.currentPage];
   if (!page) return;
   fetch(`/api/revisions/${state.revision.id}/position`, {

@@ -9,6 +9,11 @@ Current machine/agent checks passed; the live Section run had content Review res
 honestly displayed without mastery writes. New user acceptance and independent narrow review remain
 pending. See the development report for exact evidence and migration verification.
 
+Same-Phase user-authorized UAT fix (2026-09-10): preserve the saved reading position while
+Master entries resize the initial PDF placeholders. Only a restored Reader may autosave its
+position. Verify refresh, Library reopen, delayed PDF loading, restart, page/offset/zoom recovery
+and unchanged Learning records. No UI, learning semantics, schema or new Phase changes.
+
 ## Same-Phase addition: formal Section check
 
 - Only second-level Section cards change to `都清楚了` / `还有些地方不完全清楚`.
