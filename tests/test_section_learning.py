@@ -123,8 +123,8 @@ def test_populated_migration_12_to_13_preserves_learning_and_cascade(learning, s
         old = Database(old_path)
         old.initialize()
     with service.database.connect() as source:
-        tables = [r[0] for r in source.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_migrations','section_learning_states')")]
         c = sqlite3.connect(old_path)
+        tables = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name != 'schema_migrations'")]
         for table in tables:
             cols = [r[1] for r in c.execute(f'PRAGMA table_info({table})')]
             for row in source.execute(f"SELECT {','.join(cols)} FROM {table}"):

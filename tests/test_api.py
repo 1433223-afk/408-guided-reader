@@ -25,6 +25,7 @@ def running_server(
     assistant=None,
     saved_explanations=None,
     learning=None,
+    teaching=None,
 ):
     token = "test-launch-token"
     server = ReaderServer(
@@ -32,6 +33,7 @@ def running_server(
             service, token, annotations=annotations, preparation=preparation, outline=outline,
             knowledge=knowledge, assistant=assistant, saved_explanations=saved_explanations,
             learning=learning,
+            teaching=teaching,
         )
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)

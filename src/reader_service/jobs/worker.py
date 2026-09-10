@@ -22,6 +22,7 @@ class PreparationCoordinator:
         worker_count: int = 1,
         outline: "OutlineService | None" = None,
         knowledge: "KnowledgeService | None" = None,
+        teaching=None,
     ):
         if worker_count < 1 or worker_count > 4:
             raise ValueError("Worker count must be between 1 and 4")
@@ -31,6 +32,7 @@ class PreparationCoordinator:
         self.worker_count = worker_count
         self.outline = outline
         self.knowledge = knowledge
+        self.teaching = teaching
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._dispatch_lock = threading.Lock()
@@ -137,6 +139,11 @@ class PreparationCoordinator:
             if job is None:
                 self._wake.wait(0.25)
                 self._wake.clear()
+                continue
+            if job["job_type"] in {"TEACHING_GENERATE", "TEACHING_REVIEW"}:
+                if self.teaching is not None:
+                    self.teaching.run_job(job)
+                self.jobs.complete(job["id"])
                 continue
             if job["job_type"] == "CHAPTER_PREPARE":
                 if self.knowledge is not None:

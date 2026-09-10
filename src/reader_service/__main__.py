@@ -25,6 +25,7 @@ from reader_service.server import ReaderServer, handler_factory
 from reader_service.saved_explanations import SavedExplanationService
 from reader_service.storage import ManagedPaths
 from reader_service.learning.service import LearningService
+from reader_service.teaching.service import TeachingService
 
 
 def default_data_dir() -> Path:
@@ -67,6 +68,7 @@ def main() -> None:
         KnowledgeRepository(service.database),
         agent_runtime,
     )
+    teaching = TeachingService(service.database, agent_runtime)
     preparation = PreparationCoordinator(
         service,
         foundation,
@@ -74,6 +76,7 @@ def main() -> None:
         worker_count=args.prepare_workers,
         outline=outline,
         knowledge=knowledge,
+        teaching=teaching,
     )
     assistant = AssistantService(
         AssistantContextBuilder(foundation, outline),
@@ -98,6 +101,7 @@ def main() -> None:
             assistant=assistant,
             saved_explanations=saved_explanations,
             learning=learning,
+            teaching=teaching,
         ),
     )
     host, port = server.server_address[:2]

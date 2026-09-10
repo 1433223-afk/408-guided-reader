@@ -5,6 +5,7 @@ import {
 } from "/selection.js";
 import { renderAssistantAnswer, renderedSelectionToRaw } from "/assistant-render.js";
 import { createMasterUI } from "/master-ui.js";
+import { createGuideUI } from "/guide-ui.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -55,6 +56,12 @@ const ASSISTANT_PROVIDER_LABELS = {
 const ASSISTANT_DOCK_MIN_WIDTH = 320;
 const ASSISTANT_DOCK_MAX_WIDTH = 760;
 const ASSISTANT_READER_MIN_WIDTH = 280;
+
+const guide = createGuideUI({ state, api, goToPage, explain: (selectedText, request) => {
+  if (!state.readerSessionId || state.assistantPending) return;
+  state.assistantDraft = { readerSessionId: state.readerSessionId, revisionId: state.revision.id, selectedText, request };
+  openAssistantPanel(); renderAssistantDraft(); refreshAssistantStatus();
+} });
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -241,6 +248,7 @@ async function openBook(book) {
 }
 
 function closeReader() {
+  guide.close();
   state.generation += 1;
   cancelRenders();
   closePreparationStream();
@@ -690,6 +698,8 @@ async function loadBookMap() {
 }
 
 function renderOutline(payload) {
+  const expanded = new Set([...elements["outline-tree"].querySelectorAll('.outline-target[aria-expanded="true"]')]
+    .map((button) => button.closest("li").dataset.nodeId));
   const nodes = payload.nodes || [];
   const children = new Map();
   for (const node of nodes) {
@@ -741,6 +751,14 @@ function renderOutline(payload) {
         });
       }
       row.append(disclosure, target);
+      if (node.kind === "SECTION") {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "outline-guide-action";
+        button.textContent = "导读";
+        button.onclick = () => guide.open(node.outline_node_id);
+        row.append(button);
+      }
       if (node.kind === "CHAPTER") {
         const map = document.createElement("button");
         map.type = "button";
@@ -765,6 +783,7 @@ function renderOutline(payload) {
         };
         disclosure.addEventListener("click", toggleDescendants);
         item.append(nested);
+        if (expanded.has(node.outline_node_id)) toggleDescendants();
       }
       list.append(item);
     }
@@ -1581,6 +1600,7 @@ function renderAssistantWorkspace() {
     const saved = state.assistantSavedTurns.has(saveKey);
     save.textContent = saved ? "已保存" : "保存到笔记";
     save.disabled = saved;
+    save.hidden = state.assistantState.roots.find((root) => root.root_id === current.root_id)?.created_from.kind === "READING_GUIDE";
     turnActions.append(save);
     article.append(question, answer, turnActions);
     return article;

@@ -129,6 +129,7 @@ class FoundationRepository:
         confidence = sum(line.confidence for line in lines) / len(lines) if lines else 0.0
         timestamp = now()
         with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             current = connection.execute(
                 "SELECT status FROM ocr_pages WHERE book_source_revision_id = ? "
                 "AND pdf_page_index = ?",
@@ -136,6 +137,19 @@ class FoundationRepository:
             ).fetchone()
             if current is None or current[0] != "PREPARING":
                 raise RuntimeError("Page publication requires PREPARING state")
+            old = connection.execute(
+                "SELECT text,quad_json,cells_json FROM ocr_lines WHERE book_source_revision_id=? AND pdf_page_index=? ORDER BY line_ordinal",
+                (revision_id, page_index),
+            ).fetchall()
+            previous = [(row["text"], json.loads(row["quad_json"]), json.loads(row["cells_json"])) for row in old]
+            replacement = [(line.text, json.loads(json.dumps(line.quad)), json.loads(json.dumps(line.cells))) for line in lines]
+            if old and previous != replacement:
+                revision_version = connection.execute("SELECT foundation_version FROM book_source_revisions WHERE id=?", (revision_id,)).fetchone()[0]
+                foundation_version = max(foundation_version, revision_version + 1)
+                connection.execute("UPDATE book_source_revisions SET foundation_version=? WHERE id=?", (foundation_version, revision_id))
+                geometry_same = [item[1:] for item in previous] == [item[1:] for item in replacement]
+                connection.execute("INSERT INTO foundation_events(book_source_revision_id,event_type,page_start,page_end,foundation_version,created_at) VALUES (?,?,?,?,?,?)",
+                    (revision_id, "TEXT_CORRECTION" if geometry_same else "REPROCESS", page_index, page_index, foundation_version, timestamp))
             connection.execute(
                 "DELETE FROM ocr_lines WHERE book_source_revision_id = ? AND pdf_page_index = ?",
                 (revision_id, page_index),

@@ -273,7 +273,11 @@ try {
   await openMap(page, point.chapter_outline_node_id);
   await page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first().getByRole("button", { name: "继续 Master 对话", exact: true }).click();
   assert.ok(await page.locator("#knowledge-panel").isHidden());
-  await page.locator("#master-confirm").click();
+  await Promise.all([
+    page.waitForResponse((response) => response.url().endsWith(`/learning/${point.knowledge_point_id}/confirm`)
+      && response.request().method() === "POST"),
+    page.locator("#master-confirm").click(),
+  ]);
   await page.waitForFunction(() => document.querySelector("#master-status")?.textContent.includes("已弄懂"));
   const final = await snapshot();
   assert.equal(final.topics[0].state, "RESOLVED");

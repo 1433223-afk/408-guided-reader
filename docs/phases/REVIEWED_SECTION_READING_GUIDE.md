@@ -1,6 +1,9 @@
 # Phase / Reviewed Section Reading Guide
 
-> **Status: ACCEPTED — ready for implementation.**
+> **Status: ACCEPTED — implementation READY_FOR_USER_RETEST.**
+
+Implementation checkpoint (2026-09-10): `READY_FOR_USER_RETEST`. User acceptance, independent narrow
+code acceptance and closure remain pending; see the [Development Report](../development-reports/REVIEWED_SECTION_READING_GUIDE.md).
 
 ## Goal
 

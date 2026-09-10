@@ -277,7 +277,9 @@ def test_restart_interruption_and_ownership_cascade(learning, service):
             assert c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] == 0
 
 
-def test_migration_11_to_12_is_additive(tmp_path):
+def test_migration_11_to_12_is_additive(tmp_path, monkeypatch):
+    from reader_service.library import database as db_module
+    monkeypatch.setattr(db_module, 'MIGRATIONS', [m for m in MIGRATIONS if m[0] <= 12])
     path = tmp_path / 'migration.sqlite'
     c = sqlite3.connect(path)
     c.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY)')

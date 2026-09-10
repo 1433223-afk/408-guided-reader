@@ -93,6 +93,7 @@ def handler_factory(
     assistant: AssistantService | None = None,
     saved_explanations: SavedExplanationService | None = None,
     learning=None,
+    teaching=None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -106,6 +107,20 @@ def handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/guide", parsed.path)
+            if guide:
+                if not self._authorized():
+                    return
+                if teaching is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "导读服务不可用。"})
+                    return
+                try:
+                    result = teaching.snapshot(*guide.groups())
+                except (LookupError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning(?:/([0-9a-f-]+))?", parsed.path)
             if match:
                 if not self._authorized():
@@ -331,6 +346,22 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/guide/(generate|regenerate|retry)", parsed.path)
+            if guide:
+                if not self._authorized():
+                    return
+                if teaching is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "导读服务不可用。"})
+                    return
+                try:
+                    payload = self._read_json()
+                    revision, section, action = guide.groups()
+                    result = teaching.retry(revision, section, payload["asset_id"]) if action == "retry" else teaching.request(revision, section, payload["intent_id"], regenerate=action == "regenerate")
+                except (KeyError, LookupError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning/([0-9a-f-]+)/(open|send|retry|confirm|confirm-section|check-section)", parsed.path)
             if match:
                 if not self._authorized():
@@ -527,15 +558,21 @@ def handler_factory(
                     return
                 try:
                     payload = self._read_json()
-                    state = assistant.ask_selection(
-                        payload["reader_session_id"],
-                        ask_match.group(1),
-                        int(payload["pdf_page_index"]),
-                        start=payload["start"],
-                        end=payload["end"],
-                        provider=payload.get("provider"),
-                        source_kind=payload.get("source_kind", "ORIGINAL_PDF"),
-                    )
+                    if payload.get("source_kind") == "READING_GUIDE":
+                        if teaching is None:
+                            raise ValueError("导读服务不可用。")
+                        context = teaching.selection_context(ask_match.group(1), payload["section_id"], payload["asset_id"], payload["module_id"], payload["start_offset"], payload["end_offset"])
+                        state = assistant.ask_guide(payload["reader_session_id"], ask_match.group(1), context, payload.get("provider"))
+                    else:
+                        state = assistant.ask_selection(
+                            payload["reader_session_id"],
+                            ask_match.group(1),
+                            int(payload["pdf_page_index"]),
+                            start=payload["start"],
+                            end=payload["end"],
+                            provider=payload.get("provider"),
+                            source_kind=payload.get("source_kind", "ORIGINAL_PDF"),
+                        )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASK", "error": str(exc)})
                     return
@@ -922,7 +959,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/app.js", "/assistant-render.js", "/master-ui.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/app.js", "/assistant-render.js", "/master-ui.js", "/guide-ui.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

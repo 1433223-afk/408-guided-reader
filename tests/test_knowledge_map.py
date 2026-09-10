@@ -1230,12 +1230,11 @@ def test_book_delete_cascades_and_knowledge_does_not_write_learning(service):
             ).fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM books WHERE id = ?", (other["id"],)).fetchone()[0] == 1
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        for table in ("kp_status", "learning_events", "master_threads", "master_topics", "master_messages"):
+        for table in ("kp_status", "learning_events", "master_threads", "master_topics", "master_messages", "teaching_assets"):
             assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     assert tables.isdisjoint(
         {
             "section_learning_state",
-            "teaching_assets",
             "exam_evidence",
         }
     )

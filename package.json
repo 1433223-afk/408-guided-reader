@@ -15,6 +15,7 @@
     "test:e2e:knowledge": "node tests-e2e/knowledge-map.mjs",
     "test:e2e:knowledge:regenerate": "node tests-e2e/knowledge-map-regeneration.mjs",
     "test:e2e:master": "node tests-e2e/master-learning.mjs",
+    "test:e2e:guide": "node tests-e2e/reading-guide.mjs",
     "test:e2e:knowledge:real": "node tests-e2e/knowledge-map-real-provider.mjs",
     "test:e2e:ask:real": "node tests-e2e/ask-about-this-real.mjs",
     "test:e2e:bakeoff:real": "node tests-e2e/provider-bakeoff-real.mjs",

@@ -201,7 +201,17 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .outline-other-toggle small { color: #9a8f7e; font-size: 9px; }
 .search-panel { width: min(390px, calc(100% - 28px)); }
 .knowledge-panel { width: min(440px, calc(100% - 28px)); }
-.outline-row:has(.outline-map-action) { grid-template-columns: 20px minmax(0, 1fr) auto; }
+.guide-panel { position: absolute; z-index: 24; top: 64px; left: 14px; bottom: 14px;
+  width: min(420px, calc(100% - 28px)); overflow: auto; padding: 18px;
+  background: #fffefb; border: 1px solid #ddd9cf; border-radius: 6px; }
+.guide-panel[hidden] { display: none; }
+.guide-text { white-space: pre-wrap; line-height: 1.8; user-select: text; }
+.guide-source { font-size: 12px; margin: 0 8px 6px 0; }
+#guide-actions { display: flex; gap: 8px; }
+#guide-status { color: #65645f; font-size: 13px; }
+#guide-explain { position: sticky; bottom: 0; background: #f1f5ec; }
+.outline-guide-action { flex-shrink: 0; font-size: 12px; padding: 4px 8px; }
+.outline-row:has(.outline-map-action), .outline-row:has(.outline-guide-action) { grid-template-columns: 20px minmax(0, 1fr) auto; }
 .outline-map-action {
   align-self: center; padding: 4px 6px; cursor: pointer; color: #72562c;
   background: #f4eddf; border: 1px solid #d8c8aa; border-radius: 5px; font-size: 9px;

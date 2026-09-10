@@ -287,11 +287,19 @@ class AssistantService:
         provider: str | None = None,
         source_kind: str | SelectionSourceKind = SelectionSourceKind.ORIGINAL_PDF,
     ) -> dict:
-        session_id = self._validate_session_id(reader_session_id)
         kind = self._root_source_kind(source_kind)
+        context = lambda: self.contexts.build(revision_id, page_index, start=start, end=end)
+        return self._ask_context(reader_session_id, revision_id, page_index, context, kind, provider)
+
+    def ask_guide(self, reader_session_id, revision_id, context, provider=None):
+        return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
+                                 context, SelectionSourceKind.READING_GUIDE, provider)
+
+    def _ask_context(self, reader_session_id, revision_id, page_index, context, kind, provider):
+        session_id = self._validate_session_id(reader_session_id)
         slot = self._slot_for(session_id)
         generation, focus_version = self._begin(slot, session_id)
-        context = self.contexts.build(revision_id, page_index, start=start, end=end)
+        context = context() if callable(context) else context
         selected_provider, selected_model = self._provider_identity(provider)
         turn_id = str(uuid4())
         user_content = provider_user_message(context)
@@ -648,6 +656,8 @@ class AssistantService:
                         "ANSWER_NOT_COMPLETED",
                         "只能保存一条已经完成的 Assistant 回答。",
                     )
+                if root.created_from.kind is SelectionSourceKind.READING_GUIDE:
+                    raise AssistantStateError("GUIDE_NOTE_SOURCE_UNAVAILABLE", "导读解释没有教材选区，不能保存为教材笔记。")
                 concept_path = [root.created_from.selected_text]
                 child_focus = None
                 if clean_node_id is not None:

@@ -302,11 +302,11 @@ def test_review_allowlist_semantic_fail_and_zero_learning_writes(assistant_fixtu
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        for table in ("master_threads", "master_topics", "master_messages", "learning_events", "kp_status"):
+        for table in ("master_threads", "master_topics", "master_messages", "learning_events", "kp_status", "teaching_assets"):
             assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     forbidden = {
         "mastery", "progress", "learning_history", "knowledge",
-        "teaching", "teaching_assets",
+        "teaching",
     }
     assert tables.isdisjoint(forbidden)
 
