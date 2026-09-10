@@ -4,6 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from reader_service.learning.schema import SCHEMA as LEARNING_SCHEMA
 
 
 MIGRATIONS = (
@@ -731,6 +732,9 @@ MIGRATIONS = (
         """,
     ),
 )
+
+
+MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA))
 
 
 class Database:

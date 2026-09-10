@@ -2,6 +2,10 @@
 
 > **Status: ACCEPTED — ready for implementation (2026-09-10).**
 
+Implementation handoff (2026-09-10): `READY_FOR_USER_RETEST`.
+Machine acceptance and agent real-use passed; user acceptance and independent narrow acceptance
+remain pending. See `docs/development-reports/LEARN_ONE_KP_WITH_MASTER.md`. This is not Phase closure.
+
 ## Goal
 
 Turn one real published Knowledge Point into a durable learning interaction: the learner can say it
@@ -83,6 +87,13 @@ No external code, framework or dependency is adopted.
 
 ## Build
 
+- User-authorized addition (2026-09-10): at each second-level Section's physical end,
+  offer `一键确认本节全部 KP`. In one transaction, change only its owned `UNCONFIRMED`
+  KPs to `UNDERSTOOD` with explicit-user events and the permanent Chapter lock.
+  Preserve `NOT_FULLY_CLEAR`, existing `UNDERSTOOD`, Topics and all other Sections;
+  show `本节仍有未完全清楚的知识点` whenever such KPs remain. Repeated clicks are no-ops.
+  This bounded action is not the full `都清楚了` Section Learning Check of Product §28.1 /
+  Implementation §15.3; it introduces no Section state or negative Section workflow.
 - The minimum KP-local `这里没完全懂` affordance at the real KP/source position and the minimum
   Master tab surface in the existing shared right-side Dock.
 - Durable KP-scoped `MasterThread`, `MasterMessage`, `MasterTopic`, the necessary `KPStatus`, and
@@ -127,6 +138,8 @@ No external code, framework or dependency is adopted.
    additive and lossless; ownership, restart recovery and book-delete cascade are correct.
 9. No path writes `SectionLearningState`, Teaching/Guide state, or any unrelated KP/Section/Book
    state. AI-off still permits normal Reader use and opening/reviewing durable Master history.
+10. Section bulk confirmation changes only owned UNCONFIRMED KPs, preserves unclear KP/Topic
+    history, reports remaining unclear KPs, is idempotent, and survives restart with its events/lock.
 
 ### Agent real-use golden path
 
@@ -177,4 +190,5 @@ suite; record honest evidence in a concise Development Report and create a clean
 this Phase changes durable identity, migration, Mastery-write authority, source grounding, cascade and
 Review egress, an independent narrow review is required before closure and must attack those exact
 boundaries. Stop at `IMPLEMENTATION_READY`; user acceptance, independent acceptance and Phase closure
-remain separate approval gates.
+remain separate approval gates. Implementation handoff requested by the user is
+`READY_FOR_USER_RETEST`; never declare `USER_ACCEPTANCE PASS` or Phase closure autonomously.

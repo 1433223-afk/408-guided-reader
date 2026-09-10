@@ -92,6 +92,7 @@ def handler_factory(
     knowledge: KnowledgeService | None = None,
     assistant: AssistantService | None = None,
     saved_explanations: SavedExplanationService | None = None,
+    learning=None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -105,6 +106,21 @@ def handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning(?:/([0-9a-f-]+))?", parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if learning is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "学习服务不可用。"})
+                    return
+                try:
+                    service.revision(match[1])
+                    result = learning.snapshot(match[1], match[2]) if match[2] else learning.repository.entries(match[1])
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             if parsed.path == "/api/health":
                 if not self._authorized():
                     return
@@ -315,6 +331,34 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning/([0-9a-f-]+)/(open|send|retry|confirm|confirm-section)", parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if learning is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "学习服务不可用。"})
+                    return
+                try:
+                    payload = self._read_json()
+                    revision_id, scope_id, action = match.groups()
+                    if action == "open":
+                        result = learning.repository.open(revision_id, scope_id)
+                    elif action == "send":
+                        result = learning.send(revision_id, scope_id, payload)
+                    elif action == "retry":
+                        result = learning.retry(revision_id, scope_id, payload["message_id"])
+                    elif action == "confirm":
+                        result = learning.repository.confirm(revision_id, scope_id, payload["topic_id"])
+                    else:
+                        result = learning.repository.confirm_section(revision_id, scope_id)
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except (KeyError, ValueError, TypeError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             regenerate_knowledge = _CHAPTER_KNOWLEDGE_REGENERATE.fullmatch(parsed.path)
             if regenerate_knowledge:
                 if not self._authorized():
@@ -876,7 +920,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/app.js", "/assistant-render.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/app.js", "/assistant-render.js", "/master-ui.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

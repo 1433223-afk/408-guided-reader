@@ -24,6 +24,7 @@ from reader_service.outline import OutlineRepository, OutlineService
 from reader_service.server import ReaderServer, handler_factory
 from reader_service.saved_explanations import SavedExplanationService
 from reader_service.storage import ManagedPaths
+from reader_service.learning.service import LearningService
 
 
 def default_data_dir() -> Path:
@@ -84,6 +85,7 @@ def main() -> None:
         agent_runtime,
     )
     preparation.start()
+    learning = LearningService(service.database, foundation, agent_runtime)
     server = ReaderServer(
         (args.host, args.port),
         handler_factory(
@@ -95,6 +97,7 @@ def main() -> None:
             knowledge=knowledge,
             assistant=assistant,
             saved_explanations=saved_explanations,
+            learning=learning,
         ),
     )
     host, port = server.server_address[:2]

@@ -410,7 +410,9 @@ try {
     GUIDED_READER_OPENROUTER_DISABLED: "1",
   });
   await page.goto(running.url);
-  await openBook(page, 29);
+  const siblingBook = (await json(page, "/api/books")).books.find((book) => book.active_revision.page_count !== 348);
+  assert.ok(siblingBook, "AI-off cross-book check requires a second real book");
+  await openBook(page, siblingBook.active_revision.page_count);
   await selectLine(page, 0);
   assert.equal(await page.locator("#ask-selection").isDisabled(), true);
   assert.equal(await page.locator("#copy-selection").isEnabled(), true);

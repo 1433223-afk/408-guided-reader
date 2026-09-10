@@ -4,6 +4,7 @@ import {
   selectionPresentationQuads,
 } from "/selection.js";
 import { renderAssistantAnswer, renderedSelectionToRaw } from "/assistant-render.js";
+import { createMasterUI } from "/master-ui.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -41,6 +42,11 @@ const state = {
   assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
   assistantExpanded: false, assistantResizeAnchor: null,
 };
+
+const master = createMasterUI({ api, revision: () => state.revision?.id,
+  pages: elements.pages, dock: elements["assistant-panel"],
+  openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
+  goToPage, announce });
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 const ASSISTANT_PROVIDER_LABELS = {
@@ -210,6 +216,8 @@ async function openBook(book) {
   elements.pages.replaceChildren();
   buildPlaceholders();
   resetAssistantPanel();
+  master.reset();
+  master.refreshEntries().catch((error) => announce(error.message, true));
   refreshAssistantStatus();
   try {
     const loading = pdfjsLib.getDocument({
@@ -239,6 +247,7 @@ function closeReader() {
   clearSearchMatch();
   state.book = null;
   state.revision = null;
+  master.reset();
   state.pdf = null;
   state.readerSessionId = null;
   state.assistantState = emptyAssistantState();
@@ -436,6 +445,7 @@ async function renderPage(index) {
     await task.promise;
     if (generation === state.generation) {
       state.rendered.add(index);
+      master.renderPage(index);
       syncPagePreparationUi(index);
       ensureOverlay(index);
     }
@@ -821,6 +831,7 @@ async function loadKnowledgeMap() {
     if (request !== state.knowledgeRequest || state.revision?.id !== revisionId
         || state.knowledgeChapterId !== chapterId) return;
     state.knowledgeMap = payload;
+    await master.refreshEntries();
     renderKnowledgeMap(payload);
     if (payload.status === "PREPARING" || payload.regeneration_state === "RUNNING") {
       state.knowledgePollTimer = setTimeout(loadKnowledgeMap, 700);
@@ -918,6 +929,7 @@ function renderKnowledgeMap(payload) {
         elements.viewer.focus({ preventScroll: true });
       });
       item.append(heading, definition, source);
+      master.decorateKnowledgeItem(item, point);
       list.append(item);
     }
     section.append(title, list);
@@ -1435,6 +1447,7 @@ function resetAssistantPanel() {
 }
 
 function openAssistantPanel() {
+  master.selectAssistant();
   setAssistantPanelOpen(true);
   elements["search-panel"].hidden = true;
   elements["marks-panel"].hidden = true;

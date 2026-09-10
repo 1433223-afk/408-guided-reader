@@ -24,12 +24,14 @@ def running_server(
     knowledge=None,
     assistant=None,
     saved_explanations=None,
+    learning=None,
 ):
     token = "test-launch-token"
     server = ReaderServer(
         ("127.0.0.1", 0), handler_factory(
             service, token, annotations=annotations, preparation=preparation, outline=outline,
             knowledge=knowledge, assistant=assistant, saved_explanations=saved_explanations,
+            learning=learning,
         )
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)

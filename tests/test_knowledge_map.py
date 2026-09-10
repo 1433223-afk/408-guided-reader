@@ -1198,7 +1198,7 @@ def test_migration_10_preserves_legacy_attempt_as_safe_metadata(tmp_path):
         assert upgraded.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chapter_generation_attempts'"
         ).fetchone() is None
-        assert upgraded.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == 11
+        assert upgraded.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0] == MIGRATIONS[-1][0]
         preparation = upgraded.execute(
             """
             SELECT regeneration_state, attempt_foundation_version,
@@ -1212,7 +1212,7 @@ def test_migration_10_preserves_legacy_attempt_as_safe_metadata(tmp_path):
         upgraded.close()
 
 
-def test_book_delete_cascades_and_phase_does_not_create_learning_tables(service):
+def test_book_delete_cascades_and_knowledge_does_not_write_learning(service):
     fixture = build_fixture(service)
     revision_id = fixture["revision"]["id"]
     chapter_id = fixture["chapter"]["outline_node_id"]
@@ -1230,14 +1230,11 @@ def test_book_delete_cascades_and_phase_does_not_create_learning_tables(service)
             ).fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM books WHERE id = ?", (other["id"],)).fetchone()[0] == 1
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        for table in ("kp_status", "learning_events", "master_threads", "master_topics", "master_messages"):
+            assert connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     assert tables.isdisjoint(
         {
-            "kp_status",
             "section_learning_state",
-            "learning_events",
-            "master_threads",
-            "master_topics",
-            "master_messages",
             "teaching_assets",
             "exam_evidence",
         }
