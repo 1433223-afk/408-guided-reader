@@ -52,3 +52,46 @@ CREATE TRIGGER learning_events_no_direct_delete BEFORE DELETE ON learning_events
 WHEN EXISTS (SELECT 1 FROM book_source_revisions WHERE id = OLD.book_source_revision_id)
 BEGIN SELECT RAISE(ABORT, 'Learning history can only cascade with its book'); END;
 """
+
+SECTION_SCHEMA = """
+CREATE TABLE master_threads_section_upgrade (
+    id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    knowledge_point_id TEXT UNIQUE REFERENCES knowledge_points(knowledge_point_id),
+    created_at TEXT NOT NULL,
+    section_outline_node_id TEXT UNIQUE REFERENCES outline_nodes(outline_node_id),
+    CHECK ((knowledge_point_id IS NOT NULL) != (section_outline_node_id IS NOT NULL))
+);
+INSERT INTO master_threads_section_upgrade SELECT id, book_source_revision_id, knowledge_point_id, created_at, NULL FROM master_threads;
+DROP TABLE master_threads;
+ALTER TABLE master_threads_section_upgrade RENAME TO master_threads;
+
+CREATE TABLE section_learning_states (
+    outline_node_id TEXT PRIMARY KEY REFERENCES outline_nodes(outline_node_id),
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    reading_reached_end_at TEXT,
+    mastery_check_state TEXT NOT NULL CHECK(mastery_check_state IN ('ANSWERED_CLEAR', 'ANSWERED_HAS_UNCLEAR')),
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE learning_events_section_upgrade (
+    id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    knowledge_point_id TEXT REFERENCES knowledge_points(knowledge_point_id),
+    topic_id TEXT REFERENCES master_topics(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('NOT_FULLY_CLEAR', 'UNDERSTOOD', 'ANSWERED_CLEAR', 'ANSWERED_HAS_UNCLEAR')),
+    created_at TEXT NOT NULL,
+    section_outline_node_id TEXT REFERENCES outline_nodes(outline_node_id),
+    CHECK ((knowledge_point_id IS NOT NULL) != (section_outline_node_id IS NOT NULL))
+);
+INSERT INTO learning_events_section_upgrade SELECT *, NULL FROM learning_events;
+DROP TRIGGER learning_events_no_update;
+DROP TRIGGER learning_events_no_direct_delete;
+DROP TABLE learning_events;
+ALTER TABLE learning_events_section_upgrade RENAME TO learning_events;
+CREATE TRIGGER learning_events_no_update BEFORE UPDATE ON learning_events
+BEGIN SELECT RAISE(ABORT, 'Learning history is append-only'); END;
+CREATE TRIGGER learning_events_no_direct_delete BEFORE DELETE ON learning_events
+WHEN EXISTS (SELECT 1 FROM book_source_revisions WHERE id = OLD.book_source_revision_id)
+BEGIN SELECT RAISE(ABORT, 'Learning history can only cascade with its book'); END;
+"""

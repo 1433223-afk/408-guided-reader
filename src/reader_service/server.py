@@ -331,7 +331,7 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning/([0-9a-f-]+)/(open|send|retry|confirm|confirm-section)", parsed.path)
+            match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning/([0-9a-f-]+)/(open|send|retry|confirm|confirm-section|check-section)", parsed.path)
             if match:
                 if not self._authorized():
                     return
@@ -349,6 +349,8 @@ def handler_factory(
                         result = learning.retry(revision_id, scope_id, payload["message_id"])
                     elif action == "confirm":
                         result = learning.repository.confirm(revision_id, scope_id, payload["topic_id"])
+                    elif action == "check-section":
+                        result = learning.repository.clear_section(revision_id, scope_id)
                     else:
                         result = learning.repository.confirm_section(revision_id, scope_id)
                 except LookupError as exc:

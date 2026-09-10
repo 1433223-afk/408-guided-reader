@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
-from reader_service.learning.schema import SCHEMA as LEARNING_SCHEMA
+from reader_service.learning.schema import SCHEMA as LEARNING_SCHEMA, SECTION_SCHEMA
 
 
 MIGRATIONS = (
@@ -734,7 +734,7 @@ MIGRATIONS = (
 )
 
 
-MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA))
+MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA))
 
 
 class Database:
@@ -763,6 +763,16 @@ class Database:
                     continue
                 if version == 7:
                     self._backup_durable_annotations(connection, version)
+                if version == 13:
+                    # SQLite's documented table-rebuild procedure: disable cascades outside
+                    # the transaction, preserve IDs, and validate all FKs before committing.
+                    connection.execute("PRAGMA foreign_keys = OFF")
+                    connection.executescript(f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations(version) VALUES (13);")
+                    if connection.execute("PRAGMA foreign_key_check").fetchone():
+                        raise RuntimeError("Section Master migration failed foreign-key validation")
+                    connection.commit()
+                    connection.execute("PRAGMA foreign_keys = ON")
+                    continue
                 # executescript does not add a transaction of its own. Keep the
                 # schema change and its migration marker atomic, which is
                 # especially important once migrations preserve user assets.

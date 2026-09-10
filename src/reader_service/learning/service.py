@@ -102,6 +102,14 @@ class LearningService:
             pages.append({"pdf_page_number": index + 1, "ocr_text": "\n".join(lines)})
         if not any(page["ocr_text"].strip() for page in pages):
             raise ValueError("该知识点的教材证据为空；问题已保留，请检查教材准备状态。")
+        if point.get("scope_kind") == "SECTION":
+            with self.repository.database.connect() as c:
+                points = [dict(row) for row in c.execute("""SELECT knowledge_point_id, title, start_page, start_y, end_page, end_y
+                    FROM knowledge_points WHERE book_source_revision_id=? AND primary_section_id=? ORDER BY order_index""",
+                    (point["book_source_revision_id"], point["scope_id"]))]
+            return {"scope_kind": "SECTION", "section": {"id": point["scope_id"], "title": point["title"]},
+                    "range": {key: point[key] for key in ("start_page", "start_y", "end_page", "end_y")},
+                    "knowledge_points": points, "pages": pages}
         return {"knowledge_point_id": point["knowledge_point_id"], "title": point["title"],
                 "section": {"id": point["primary_section_id"], "title": point["section_title"]},
                 "range": {key: point[key] for key in ("start_page", "start_y", "end_page", "end_y")}, "pages": pages}
@@ -129,7 +137,7 @@ class LearningService:
                 history = [{"role": m["role"], "content": m["content"]} for m in snapshot["messages"]
                            if m["topic_id"] == message["topic_id"] and (m["state"] == "COMPLETE" or m["id"] == message["id"])]
                 completion = self.runtime.complete_for_with_metadata(self.provider, [
-                    {"role": "system", "content": MASTER_SYSTEM},
+                    {"role": "system", "content": MASTER_SYSTEM + ("\n当前范围是整个 Section。围绕这一节回答，不猜测哪些知识点未掌握；整节确认只能由用户明确点击。" if snapshot["point"]["scope_kind"] == "SECTION" else "")},
                     {"role": "user", "content": json.dumps({"source": source, "topic_messages": history}, ensure_ascii=False)}
                 ], interaction_id=f"master:{message['id']}")
                 self.grounding(completion.answer, source)

@@ -2,6 +2,50 @@
 
 ## Result
 
+`READY_FOR_USER_RETEST` — user-authorized same-Phase Section Learning Check addition (2026-09-10).
+Previous acceptance/closure at `fbe36d5` remains the baseline; it does not automatically accept this
+addition. New user acceptance and independent narrow acceptance are PENDING. No new Phase is created.
+
+Second-level Section cards now offer `都清楚了` and `还有些地方不完全清楚`. Clear sets every owned KP
+to UNDERSTOOD, including previously unclear ones, resolves current Section state/Topic and preserves
+history. Unclear records only Section state/event, opens Section Master and never guesses negative KP
+statuses. Third-level `确认本小节` keeps its existing UNCONFIRMED-only behavior.
+
+### Same-Phase implementation and evidence
+
+- Migration 13 extends the existing Master thread and append-only event tables to carry exactly one
+  real KP or Section scope, preserving old IDs and rows. SQLite table rebuild runs atomically with
+  cascades temporarily disabled and foreign keys checked before commit. Only the Section state
+  projection is added; reading-end remains a separate nullable axis, never inferred as mastery.
+- Both scopes share the existing messages/Topics, enqueue/replay/retry/recovery, grounding/Review,
+  provider runtime and Dock. Section context is its resolved source range and owned KP list; KP
+  context remains unchanged. No automated multi-KP attribution, summaries or new teaching pipeline.
+- TARGETED: new Section suite **5 PASS**: state choices, no negative KP inference, independent KP /
+  Section threads, restart/retry, context scope, clear/history/lock, old-topic replay, transactional
+  rollback, populated 12→13 migration, FK-failure rollback, book cascade and sibling-book isolation.
+  Existing Learning/display/grounding suite **61 PASS** before the final unchanged-risk test additions.
+- AGENT REAL USE: real 348-page textbook, isolated Library copies, `test:e2e:master` PASS. At Section
+  `1.3 计算机的性能指标`, two Section questions persist across service restart and AI-off reopening;
+  KP history remains separate. Formal clear sets all 11 Section KPs understood and retains Section
+  messages/history. Existing Subsection and KP golden paths still pass. Controlled Section reviews
+  both PASS; page/Dock/source controls stay operable. Screenshot: `test-results/section-master.png`.
+- LIVE SECTION RUN (`MASTER_E2E_SECTION_REAL=1`): DeepSeek `deepseek-v4-flash` answered both Section
+  questions; Zhipu `GLM-5.3-Flash` reviewed them. Actual review outcomes were **PASS, FAIL**: the second
+  answer was incomplete, and the UI honestly retained its failed Review and retry affordance. The
+  interaction/persistence path passed; this is explicitly **not** two live content-review PASSes.
+  No mastery changed until explicit clear. No provider configuration or output-limit changes made.
+- AFFECTED: `test:e2e:ask` PASS. All test writes used temporary/isolated data, not the source Library.
+- Final BROAD: **214 passed, 2 unchanged optional OCR skips**; frontend **30/30 PASS**. Final
+  controlled real-book rerun explicitly reported Section reviews `[PASS, PASS]`.
+- Source Library backed up as `state.sqlite3.pre-section-master-20260910.bak` before migration;
+  refreshed port 8766 responds HTTP 200. Migration 13 integrity/FK checks pass, all original columns
+  and rows of KP, Master thread/topic/message, KP status, event and annotation tables match the
+  backup. New Section state is empty until the user's own check; no test Section history was inserted.
+- This addition needs its own independent scope/persistence/mastery review before eventual closure;
+  the previous audit is not reused as acceptance of migration 13. Stop here at user retest as requested.
+
+## Previous accepted baseline (`fbe36d5`)
+
 `CLOSED / COMPLETE` / `USER_ACCEPTANCE PASS` (2026-09-10).
 
 - Machine acceptance: PASS.
@@ -115,10 +159,12 @@ it now selects the actual second Book (412 pages) for the same AI-off isolation 
 
 ## Known limitations / deferred debt
 
-No open narrow-review finding remains. Deterministic reference validation covers the supported
+No open baseline narrow-review finding remains; the Section addition needs its own review.
+Deterministic reference validation covers the supported
 ordinary citation forms, not universal natural-language claim extraction or academic correctness;
-previously saved answers are not rewritten. Section-scoped Master, the full Section
-Learning Check, summaries, global history UI and multimodal explanation remain outside this slice.
+previously saved answers are not rewritten. Section Master and the READY-Section two-option check
+are now implemented above. Automatic multi-KP attribution, pre-READY reading-end offers, summaries,
+global history UI and multimodal explanation remain outside this bounded addition.
 
 ## Same-Phase addition: Subsection confirmation (2026-09-10)
 
@@ -310,7 +356,7 @@ click `确认本节` / `确认本小节`; existing unclear KPs must remain uncle
 
 ## Git checkpoint
 
-Human-accepted implementation: `3aff1639c4679c728ee924a6468e8bd15836df8d`.
-Initial blocked-audit documentation checkpoint: `aa2711f` (not closure).
-The commit containing this final report includes the user-authorized grounding-only correction,
-independent re-review evidence and **Phase closure**; its hash is recorded in the final handoff.
+Human-accepted baseline implementation: `3aff1639c4679c728ee924a6468e8bd15836df8d`.
+Initial blocked-audit checkpoint: `aa2711f`; baseline grounding correction and closure: `fbe36d5`.
+The commit containing the current Section addition is a **READY_FOR_USER_RETEST checkpoint**, not
+new user acceptance or Phase closure. Its hash is recorded in the handoff.

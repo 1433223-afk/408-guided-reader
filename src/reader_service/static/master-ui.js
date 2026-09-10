@@ -1,6 +1,6 @@
 import { renderAssistantAnswer } from "/assistant-render.js";
 
-const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂" };
+const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 const REVIEW = { NOT_REQUESTED: "快速 · 未独立审查", PENDING: "审查中", PASS: "审查通过", FAIL: "审查未通过", TECHNICAL_FAILURE: "审查技术失败" };
 
 export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout }) {
@@ -34,7 +34,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   dock.append(panel);
   const el = (id) => panel.querySelector(`#master-${id}`);
   const post = (path, body = {}) => api(path, { method: "POST", body: JSON.stringify(body) });
-  const base = (id = current?.point.knowledge_point_id) => `/api/revisions/${revision()}/learning/${id}`;
+  const scopeId = (point) => point.scope_id || point.knowledge_point_id || point.outline_node_id;
+  const base = (id = current && scopeId(current.point)) => `/api/revisions/${revision()}/learning/${id}`;
 
   function select(master) {
     dock.classList.toggle("master-active", master);
@@ -78,7 +79,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     select(true);
     el("status").textContent = "正在读取已保存的对话…";
     try {
-      const result = unclear ? await post(base(point.knowledge_point_id) + "/open") : await api(base(point.knowledge_point_id));
+      const result = unclear ? await post(base(scopeId(point)) + "/open") : await api(base(scopeId(point)));
       if (request !== generation) return;
       current = result;
       sendIntent = null;
@@ -131,6 +132,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     // A second question must not overtake an unanswered durable question.
     el("send").disabled = current.messages.some((m) => m.role === "user" && ["PENDING", "FAILED"].includes(m.state));
     el("confirm").hidden = !active;
+    el("confirm").textContent = current.point.scope_kind === "SECTION" ? "都清楚了" : "已经弄懂";
+    el("question").placeholder = current.point.scope_kind === "SECTION" ? "这一节哪些地方还没完全懂？" : "这个知识点哪里还没完全懂？";
     clearTimeout(poll);
     if (current.messages.some((m) => m.state === "PENDING" || m.review_state === "PENDING")) {
       const request = generation;
@@ -194,6 +197,21 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       if (footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
     }
   }
+  async function clearWholeSection(section, output) {
+    try {
+      const result = await post(base(section.outline_node_id) + "/check-section");
+      if (current && scopeId(current.point) === section.outline_node_id) {
+        current = result;
+        render();
+      }
+      announce("本节知识点已全部确认；此前的不清楚记录已保留。");
+      await refreshEntries();
+    } catch (error) {
+      output.textContent = error.message;
+      const footer = output.closest(".learning-footer");
+      if (footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
+    }
+  }
   function renderPage(index) {
     const page = pages.children[index];
     if (!page) return;
@@ -243,11 +261,21 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       stats.textContent = `${label}共 ${points.length} 个知识点 · 已确认 ${understood} 个 · 未完全清楚 ${unclear} 个`;
       const hint = document.createElement("p");
       hint.className = "learning-batch-hint";
-      hint.textContent = "仅确认未标记为“没完全懂”的知识点";
+      hint.textContent = subsection ? "仅确认未标记为“没完全懂”的知识点" : "都清楚了将确认本节全部知识点，保留此前的学习记录。";
       const output = document.createElement("p");
       output.className = "learning-batch-result";
       output.setAttribute("role", "status");
-      marker.append(title, stats, button(`确认${label}`, () => confirmSection(section, output)), hint, output);
+      if (subsection) {
+        marker.append(title, stats, button("确认本小节", () => confirmSection(section, output)), hint, output);
+      } else {
+        const state = document.createElement("p");
+        state.className = "learning-batch-stats";
+        state.textContent = STATUS[section.status];
+        marker.append(title, stats, state, button("都清楚了", () => clearWholeSection(section, output)),
+          button("还有些地方不完全清楚", () => open(section, true)));
+        if (section.thread_id) marker.append(button("继续本节 Master 对话", () => open(section)));
+        marker.append(hint, output);
+      }
       footer.append(marker);
     }
     if (footer.children.length) page.append(footer);

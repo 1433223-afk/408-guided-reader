@@ -1,6 +1,36 @@
 # Phase / Learn One KP with Master
 
-> **Status: CLOSED / COMPLETE (2026-09-10).**
+> **Status: READY_FOR_USER_RETEST — accepted same-Phase Section Learning Check addition (2026-09-10).**
+
+The user explicitly reopened this implementation conversation for the formal Section two-option
+check and durable Section Master, stopping at READY_FOR_USER_RETEST. Prior acceptance/closure below
+remains historical evidence, not acceptance of this addition. No new Phase is created.
+Current machine/agent checks passed; the live Section run had content Review results PASS then FAIL,
+honestly displayed without mastery writes. New user acceptance and independent narrow review remain
+pending. See the development report for exact evidence and migration verification.
+
+## Same-Phase addition: formal Section check
+
+- Only second-level Section cards change to `都清楚了` / `还有些地方不完全清楚`.
+- Follow Product §28.1–28.2 / Implementation §15.3: clear confirms every owned KP, resolves current
+  Section unresolved state and appends events without deleting history. Unclear records Section
+  state/event and opens Section Master without any guessed negative KP attribution.
+- Reuse the Master thread/topic/message storage, execution, retry, Review, Dock and explicit
+  confirmation flow. Section history survives close/restart and can be reopened locally without AI.
+- Section source is its resolved range and owned published KP list in a READY Chapter; it cannot
+  leak other Sections, Assistant trees, notes or global history. No automatic KP attribution from
+  general Section dialogue is introduced; existing explicit KP controls remain available.
+- Add only the persistence changes required for real Section scopes and append-only Section events;
+  preserve every existing KP thread/message/event during migration. Keep reading-end and mastery
+  state separate; showing/scrolling past a card is never mastery evidence.
+- Subsection bulk confirmation, KP Master, source/display positioning and all other accepted UI
+  remain unchanged. No summaries, new teaching pipeline or unrelated optimization.
+- Verify populated migration, both Section choices, scope isolation, unchanged KP state on unclear,
+  durable send/retry/restart/Review, clear/history/lock semantics, the real-book path and affected/broad
+  regression. Independent narrow review is required before eventual closure, not self-acceptance.
+
+This explicit addition supersedes the KP-only hard rules, Section exclusions and old Section bulk
+acceptance below only where necessary; Subsection and existing KP semantics remain binding.
 
 Closure (2026-09-10): the user explicitly reported `USER_ACCEPTANCE PASS` on `3aff163`, then
 authorized correction of the independent audit's P1 source-grounding bypass and completion of closure.

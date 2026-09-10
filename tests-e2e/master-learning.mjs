@@ -41,6 +41,7 @@ const loopbackEnv = {
 let running;
 let browser;
 const live = process.env.MASTER_E2E_REAL === "1";
+const liveSection = process.env.MASTER_E2E_SECTION_REAL === "1";
 try {
   running = await start(live ? {} : loopbackEnv);
   browser = await chromium.launch({ executablePath: process.env.READER_CHROMIUM || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", headless: true });
@@ -218,16 +219,55 @@ try {
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
   const sectionLast = entries.points.filter((p) => p.primary_section_id === section.outline_node_id)
     .sort((a, b) => b.display_end_page - a.display_end_page || b.display_end_y - a.display_end_y)[0];
+  if (liveSection) {
+    await stop();
+    running = await start({});
+    await page.goto(running.url);
+    await openBook(page);
+  }
   await page.locator("#page-number").fill(String(sectionLast.display_end_page + 1));
   await page.locator("#page-number").press("Enter");
   const marker = page.locator(`.page[data-index="${sectionLast.display_end_page}"] .section-learning-marker`).filter({ hasText: section.title }).first();
-  await marker.getByRole("button", { name: "确认本节", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本节仍有未完全清楚"));
+  const beforeSectionCheck = await json(page, base);
+  await marker.getByRole("button", { name: "还有些地方不完全清楚", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("#master-status")?.textContent.includes("本节还有未完全清楚"));
+  assert.deepEqual((await json(page, base)).points.map((p) => [p.knowledge_point_id, p.status]), beforeSectionCheck.points.map((p) => [p.knowledge_point_id, p.status]));
+  await page.locator("#master-question").fill("这一节的几个知识点如何联系起来？请先说明整节的主线。");
+  await page.locator("#master-send").click();
+  await completed(page, 2);
+  await page.locator("#master-question").fill("请接着解释刚才提到的这些联系，不要替我判断已经掌握。");
+  await page.locator("#master-send").click();
+  await completed(page, 4);
+  const sectionConversation = await json(page, `${base}/${section.outline_node_id}`);
+  assert.equal(sectionConversation.status, "ANSWERED_HAS_UNCLEAR");
+  assert.equal(sectionConversation.point.scope_kind, "SECTION");
+  const sectionReviews = sectionConversation.messages.filter((m) => m.role === "assistant").map((m) => m.review_state);
+  if (!liveSection) assert.deepEqual(sectionReviews, ["PASS", "PASS"]);
+  assert.notEqual(sectionConversation.thread_id, retried.thread_id);
+  await page.screenshot({ path: "test-results/section-master.png", fullPage: true });
+  await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
+  await stop();
+  running = await start({ ...loopbackEnv, GUIDED_READER_DEEPSEEK_DISABLED: "1", GUIDED_READER_ZHIPU_DISABLED: "1" });
+  await page.goto(running.url);
+  await openBook(page);
+  await page.locator("#page-number").fill(String(sectionLast.display_end_page + 1));
+  await page.locator("#page-number").press("Enter");
+  await marker.getByRole("button", { name: "继续本节 Master 对话", exact: true }).click();
+  await page.locator("#master-history .master-message").nth(3).waitFor();
+  assert.deepEqual(await json(page, `${base}/${section.outline_node_id}`), sectionConversation);
+  assert.deepEqual(await snapshot(), retried);
+  await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
+  await marker.getByRole("button", { name: "都清楚了", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本节知识点已全部确认"));
   const afterBulk = await json(page, base);
-  assert.equal((await snapshot()).status, "NOT_FULLY_CLEAR");
+  assert.equal((await snapshot()).status, "UNDERSTOOD");
+  const clearSection = await json(page, `${base}/${section.outline_node_id}`);
+  assert.equal(clearSection.status, "ANSWERED_CLEAR");
+  assert.equal(clearSection.topics[0].state, "RESOLVED");
+  assert.deepEqual(clearSection.messages, sectionConversation.messages);
   for (const p of afterBulk.points) {
     const before = entries.points.find((q) => q.knowledge_point_id === p.knowledge_point_id);
-    if (p.primary_section_id === section.outline_node_id && p.knowledge_point_id !== point.knowledge_point_id) assert.equal(p.status, "UNDERSTOOD");
+    if (p.primary_section_id === section.outline_node_id) assert.equal(p.status, "UNDERSTOOD");
     else if (p.primary_section_id !== section.outline_node_id) assert.equal(p.status, before.status);
   }
   await openMap(page, point.chapter_outline_node_id);
@@ -241,7 +281,10 @@ try {
   assert.equal(final.messages.length, 6);
   for (const payload of payloads) {
     assert.deepEqual(Object.keys(payload).sort(), payload.candidate ? ["candidate", "mode", "question", "source"] : ["source", "topic_messages"]);
-    assert.equal(payload.source.knowledge_point_id, point.knowledge_point_id);
+    if (payload.source.scope_kind === "SECTION") {
+      assert.deepEqual(Object.keys(payload.source).sort(), ["knowledge_points", "pages", "range", "scope_kind", "section"]);
+      assert.deepEqual(payload.source.knowledge_points.map((p) => p.knowledge_point_id).sort(), entries.points.filter((p) => p.primary_section_id === section.outline_node_id).map((p) => p.knowledge_point_id).sort());
+    } else assert.equal(payload.source.knowledge_point_id, point.knowledge_point_id);
     assert.equal(payload.source.section.id, section.outline_node_id);
   }
   const inspection = await json(page, "/api/assistant/inspection");
@@ -249,9 +292,9 @@ try {
   await mkdir("test-results", { recursive: true });
   await page.screenshot({ path: "test-results/master-learning.png", fullPage: true });
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ status: "PASS", liveInitialConversation: live, realPages: 348, kp: point.title,
+  console.log(JSON.stringify({ status: "PASS", liveInitialConversation: live, liveSectionConversation: liveSection, sectionReviews, realPages: 348, kp: point.title,
     restartAndAIoffHistory: true, retryNoDuplicates: true, explicitConfirmation: true, sectionIsolation: true,
-    payloadAllowlist: true, subsectionIsolationAndRestart: true, controlsOutsidePdf: true, subsection: subsection.title,
+    payloadAllowlist: true, subsectionIsolationAndRestart: true, controlsOutsidePdf: true, sectionMasterRestartAndClear: true, subsection: subsection.title,
     dataDir, screenshot: "test-results/master-learning.png" }));
 } finally {
   if (browser) await browser.close();
