@@ -15,6 +15,7 @@ await cp(path.join(source, "blobs"), path.join(dataDir, "blobs"), { recursive: t
 const backup = spawnSync("python", ["-c", "import sqlite3,sys; source=sqlite3.connect(sys.argv[1]); target=sqlite3.connect(sys.argv[2]); source.backup(target); target.close(); source.close()", path.join(source, "state.sqlite3"), path.join(dataDir, "state.sqlite3")], { windowsHide: true, encoding: "utf8" });
 assert.equal(backup.status, 0, backup.stderr);
 let fail = false;
+let unsupportedReference = null;
 const payloads = [];
 const provider = createServer(async (req, res) => {
   const chunks = [];
@@ -25,7 +26,7 @@ const provider = createServer(async (req, res) => {
   if (fail) { res.writeHead(401); res.end('{}'); return; }
   const answer = payload.candidate
     ? JSON.stringify({ verdict: "PASS", summary: "教材归属和解释已检查。" })
-    : "依据所附教材，这个知识点需要区分概念本身与它的实现条件。补充解释：先看成立条件，再用例子检查边界。";
+    : unsupportedReference || "依据所附教材，这个知识点需要区分概念本身与它的实现条件。补充解释：先看成立条件，再用例子检查边界。";
   await new Promise((resolve) => setTimeout(resolve, 150));
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ choices: [{ message: { content: answer }, finish_reason: "stop" }] }));
@@ -198,6 +199,18 @@ try {
   await openMap(page, point.chapter_outline_node_id);
   await page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first().getByRole("button", { name: "继续 Master 对话", exact: true }).click();
   assert.ok(await page.locator("#knowledge-panel").isHidden());
+  for (const [answer, error] of [["PDF p. 999", "PDF 页码"], ["教材图 999-9", "图号"]]) {
+    unsupportedReference = answer;
+    await page.getByRole("button", { name: "重试发送", exact: true }).click();
+    await page.waitForFunction((error) => [...document.querySelectorAll(".master-message-status")]
+      .some((p) => p.textContent.includes(error)), error);
+    const grounded = await snapshot();
+    assert.equal(grounded.messages.length, 5);
+    assert.deepEqual(grounded.messages.map((m) => m.id), failed.messages.map((m) => m.id));
+    assert.equal(grounded.status, "NOT_FULLY_CLEAR");
+    assert.equal(grounded.topics[0].state, "ACTIVE");
+  }
+  unsupportedReference = null;
   await page.getByRole("button", { name: "重试发送", exact: true }).click();
   await completed(page, 6);
   const retried = await snapshot();

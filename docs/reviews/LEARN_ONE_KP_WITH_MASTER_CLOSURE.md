@@ -126,3 +126,71 @@ No claim of exhaustive semantic correctness or multi-process execution support i
 The finding was reported to the coordinating agent before finalizing this report. Independent
 acceptance remains failed and the Phase must remain open until the grounding defect is addressed and
 independently rechecked under appropriate authorization.
+
+## Independent re-review — 2026-09-10
+
+The user subsequently authorized correcting P1 and completing closure. The same independent Codex
+reviewer rechecked the correction without implementing it. The original FAIL above is retained as
+historical evidence; the current disposition below supersedes its open-finding status.
+
+**Current P0=0 · P1=0 · P2=0. INDEPENDENT_NARROW_REVIEW: PASS.
+CLOSURE_RECOMMENDATION: CLOSE**, subject to the separate user/real-use/broad-regression gates.
+
+Reviewed working-tree correction on `aa2711f90b4c3c54ace88f84cfffece51fa5663a`.
+The sole changed product file, `src/reader_service/learning/service.py`, had SHA-256
+`0E05158E086F969DDA9D43FB5FA42F71238E667BEB3338573FE647DE30BE94D7`
+at final inspection and independent execution. Final checkpoint assignment belongs to the
+coordinating agent; this verdict applies to those exact product bytes.
+
+### Intermediate failure retained
+
+The first proposed correction rejected the original spaced `PDF p. 999` and missing-figure
+examples, but used Unicode `\bPDF`. Independent inline Python checks found that `教材PDF p. 999`
+and `见PDF第999页` still passed with only page 1 supplied. Chinese characters count as word
+characters, so the new expression did not see a boundary before PDF.
+
+An isolated durable test then sent the original invalid PDF answer, retried an invalid figure,
+and retried `见PDF第999页`. The first two attempts retained the FAILED question; the last incorrectly
+saved an assistant `COMPLETE` / `NOT_REQUESTED` answer. This was reported immediately as the
+same unresolved P1, not a passing correction. The implementer changed the PDF and English figure
+token boundaries to ASCII-identifier lookbehinds and added negative/positive CJK-adjacent tests.
+The intermediate product file was not separately committed or hashed before replacement; no
+claim is made that it is the final hash above.
+
+### Final correction and evidence
+
+- `service.py:28` normalizes width, dash typography and simple Markdown emphasis identically for
+  candidate/evidence. `:34` recognizes PDF citation forms, lists and intervals, including ordinary
+  Chinese-adjacent use. `:38`/`:42` derive figure identifiers from candidate and supplied OCR.
+  `:110` rejects unavailable pages, unavailable interval interiors/reversed ranges and absent figure
+  identifiers. The existing pre-save and pre-Review gate locations remain; source construction,
+  ownership, persistence, mastery and Review routing were not changed by this correction.
+- Final independent notation experiment (`@' ... '@ | python -`, exit 0) rejected six cases:
+  `教材PDF p. 999`, `见PDF第999页`, `参见Figure 999-9`, `PDF pp. 1, 999`,
+  `PDF pp. 1-999`, and full-width `ＰＤＦ p. 999`. It accepted five cases grounded in supplied
+  pages 1–2/figure 1-2: `教材PDF p. 1`, `见PDF第1页`, `参见Figure 1-2`, `PDF pp. 1-2`,
+  and ordinary supplemental prose containing the number 999. Output:
+  `INDEPENDENT_NOTATION_MATRIX_PASS 6 5`.
+- Final independent durable experiment (`@' ... '@ | python -`, exit 0) used
+  `TemporaryDirectory(prefix='master-rereview-')`, the existing synthetic Chapter fixture and an
+  injected `ProviderCompletion` runtime. Sequential provider answers were `PDF p. 999`,
+  `教材图 999-9`, `见PDF第999页`, `教材PDF p. 999`, then valid `见PDF第1页`.
+  The first four attempts each retained exactly the same one FAILED user message and no answer.
+  The fifth saved exactly one completed Fast answer, with the same question ID; status remained
+  UNCONFIRMED and Topic ACTIVE. Exactly five stub calls occurred. Output:
+  `DURABLE_REREVIEW_PASS: four invalid attempts retain one question; valid retry saves one answer; no mastery mutation`.
+- Independently reran
+  `python -m pytest tests/test_learning_grounding.py tests/test_learning.py tests/test_learning_display.py -o addopts='' -q`
+  on the final correction: **61 passed in 27.78s**. This includes Fast/Standard/Deep rejection before
+  Review, retained-intent retry, refusal to Review a legacy unsupported saved answer, normal valid
+  references, and nearest Learning/display invariants. An earlier invocation collected the preceding
+  55-case test set and passed in 33.30s; it is retained as intermediate evidence and is not substituted
+  for the final 61-case run.
+
+No remaining actionable finding was identified in this bounded correction review. This verifies
+deterministic reference handling for the inspected ordinary citation forms, not universal natural-
+language claim extraction or academic correctness. It does not retroactively repair existing answers
+or assert that every possible notation is recognized. No new semantic reviewer requirement was
+imposed on Fast. No live provider, real Library write, product edit, service restart or commit was
+performed by the reviewer. The parent separately owns real-material E2E, affected/broad regression
+and the closure checkpoint.

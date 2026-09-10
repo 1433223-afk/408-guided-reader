@@ -154,6 +154,54 @@ def test_context_isolation_and_review_strength(learning, mode, expected):
         assert runtime.calls[1][1]['mode'] == mode
 
 
+@pytest.mark.parametrize('mode', ['Fast', 'Standard', 'Deep'])
+@pytest.mark.parametrize('bad_answer', ['PDF p. 999', '教材图 999-9 明确表明了这一事实。'])
+def test_grounding_failure_preserves_intent_and_retry_before_review(learning, monkeypatch, mode, bad_answer):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    original = runtime.complete_for_with_metadata
+    def unsupported(*args, **kwargs):
+        completion = original(*args, **kwargs)
+        return ProviderCompletion(bad_answer, 1, None, completion.effective_config)
+    monkeypatch.setattr(runtime, 'complete_for_with_metadata', unsupported)
+    master.send(rev, kp, {'intent_id': 'grounding-retry', 'question': '为什么？', 'review_mode': mode})
+    idle(master)
+    failed = master.snapshot(rev, kp)
+    assert len(runtime.calls) == len(failed['messages']) == 1
+    assert failed['messages'][0]['state'] == 'FAILED'
+    assert failed['topics'][0]['state'] == 'ACTIVE'
+    assert failed['status'] == 'UNCONFIRMED'
+    monkeypatch.setattr(runtime, 'complete_for_with_metadata', original)
+    master.retry(rev, kp, failed['messages'][0]['id'])
+    idle(master)
+    restored = master.snapshot(rev, kp)
+    assert len(restored['messages']) == 2
+    assert restored['messages'][0]['id'] == failed['messages'][0]['id']
+    assert restored['messages'][1]['review_state'] == ('NOT_REQUESTED' if mode == 'Fast' else 'PASS')
+    assert restored['topics'] == failed['topics']
+    assert restored['status'] == 'UNCONFIRMED'
+    with master.repository.database.connect() as c:
+        assert c.execute('SELECT COUNT(*) FROM learning_events').fetchone()[0] == 0
+
+
+def test_grounding_blocks_review_retry_of_legacy_unsupported_answer(learning):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    master.send(rev, kp, {'intent_id': 'legacy', 'question': '为什么？'})
+    idle(master)
+    answer = master.snapshot(rev, kp)['messages'][-1]
+    with master.repository.database.connect() as c:
+        c.execute("UPDATE master_messages SET content=?, review_state='FAIL' WHERE id=?", ('教材图 999-9', answer['id']))
+    calls = len(runtime.calls)
+    master.retry(rev, kp, answer['id'])
+    idle(master)
+    result = master.snapshot(rev, kp)
+    assert len(runtime.calls) == calls  # Reject before any reviewer egress.
+    assert result['messages'][-1]['review_state'] == 'TECHNICAL_FAILURE'
+    assert result['status'] == 'UNCONFIRMED'
+    assert result['topics'][0]['state'] == 'ACTIVE'
+
+
 @pytest.mark.parametrize('verdict', ['FAIL', 'INVALID'])
 def test_review_failure_never_pass_never_mastery_and_retry(learning, verdict):
     f, master, runtime, points = learning

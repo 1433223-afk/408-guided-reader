@@ -2,7 +2,7 @@
 
 ## Result
 
-`USER_ACCEPTANCE PASS` / `CLOSURE_BLOCKED` (2026-09-10).
+`CLOSED / COMPLETE` / `USER_ACCEPTANCE PASS` (2026-09-10).
 
 - Machine acceptance: PASS.
 - Agent real-use: PASS with the real 348-page textbook, both configured live providers and controlled
@@ -10,13 +10,20 @@
 - User acceptance: PASS — explicitly reported by the user in the implementation conversation on
   2026-09-10, after the display-endpoint correction at `3aff163`. The user authorized remaining
   closure work only, with no further UI/business changes or unrelated optimization.
-- Independent narrow acceptance: BLOCK — a reproducible P1 source-attribution bypass was found.
+- Initial independent narrow acceptance: BLOCK — a reproducible P1 source-attribution bypass was found.
   `PDF p. 999` can be durably accepted in Fast mode outside the supplied PDF-page allowlist although
-  `PDF 第 999 页` is rejected. The user prohibited business-code changes in this closure turn; no fix
-  or waiver is inferred. Phase is not closed; user acceptance remains PASS.
+  `PDF 第 999 页` is rejected. The initial closure-only turn therefore made no product changes.
+  The user subsequently explicitly authorized fixing this P1 and independent recheck before closure.
+  That bounded correction is implemented and independently rechecked; no finding was waived.
   Independent Codex reviewer `closure_audit` (not involved in implementation; not ZCode):
   **P0=0 / P1=1 / P2=0, recommendation BLOCK**. Full evidence and reproduction:
   [`LEARN_ONE_KP_WITH_MASTER_CLOSURE.md`](../reviews/LEARN_ONE_KP_WITH_MASTER_CLOSURE.md).
+- Final independent narrow acceptance: **PASS, P0=0 / P1=0 / P2=0; recommendation CLOSE**.
+  The same independent reviewer verified the correction without implementing it. Original and
+  intermediate FAIL evidence remains in the report; the final verdict supersedes the open finding.
+- Final regression: **209 Python passed / 2 unchanged optional OCR skips; 30/30 frontend PASS**.
+  Real-book Master and Assistant E2Es PASS. All closure gates are satisfied under the user's explicit
+  correction/closure authorization; no UI or unrelated work is included.
 
 One real published KP can open Master, retain questions/answers and its current Topic through restart,
 and become understood only on explicit confirmation. Section-end bulk confirmation updates only its
@@ -108,7 +115,9 @@ it now selects the actual second Book (412 pages) for the same AI-off isolation 
 
 ## Known limitations / deferred debt
 
-Closure is blocked on the independent source-grounding finding; user retest has passed. Section-scoped Master, the full Section
+No open narrow-review finding remains. Deterministic reference validation covers the supported
+ordinary citation forms, not universal natural-language claim extraction or academic correctness;
+previously saved answers are not rewritten. Section-scoped Master, the full Section
 Learning Check, summaries, global history UI and multimodal explanation remain outside this slice.
 
 ## Same-Phase addition: Subsection confirmation (2026-09-10)
@@ -235,6 +244,35 @@ were inspected; the display projection reuses stored OCR/labels, without changin
 
 At this implementation checkpoint: `READY_FOR_USER_RETEST`; both acceptance gates were pending.
 
+## Authorized P1 grounding correction (2026-09-10)
+
+After the blocked audit checkpoint `aa2711f`, the user explicitly authorized correcting only the
+source-reference bypass, independent recheck and closure. Changes are confined to the existing
+Master grounding gate and tests: common Chinese/English PDF page forms, numeric lists/ranges and
+typographic variants are checked against supplied PDF pages; figure identifiers are checked against
+the supplied KP-local OCR. Both checks still run before answer persistence and before reviewer egress.
+No UI, source scope, provider payload, status, schema, mastery rule or dependency changed.
+
+- Reproduced both original failures before editing. Initial correction passed its tests but the
+  independent reviewer found a CJK-adjacent form (`见PDF第999页`) missed by Unicode word boundaries.
+  Fixed that same-P1 boundary and added invalid and valid Chinese-adjacent cases. The intermediate
+  failure is retained in the independent report, not relabelled PASS.
+- TARGETED final: **61 PASS**. Includes invalid/valid notation, absent figure IDs, page-range interior
+  and reversed ranges, all three Review modes, retained FAILED intent, duplicate-free retry, unchanged
+  mastery/Topic and rejection before reviewer calls when retrying a legacy unsupported answer.
+- REAL USE: final `test:e2e:master` PASS on an isolated real 348-page Library copy. The HTTP provider
+  returned `PDF p. 999`, then `教材图 999-9` during successive retries; both showed honest failures,
+  kept the same five-message history/ACTIVE Topic/unclear status, and a valid retry added one answer.
+  Existing explicit confirmation, restart, scope isolation and display checks also PASS.
+- AFFECTED: `test:e2e:ask` PASS. No live-provider calls were needed for the deterministic gate change;
+  prior live-provider evidence remains applicable. No real-user Library writes occurred in tests.
+- Final CLOSURE/BROAD: **209 passed, 2 unchanged optional OCR skips**; **30/30 frontend PASS**.
+- Independent re-review PASS on service SHA-256
+  `0E05158E086F969DDA9D43FB5FA42F71238E667BEB3338573FE647DE30BE94D7`: final 61 focused tests plus
+  separately authored notation/durable retry experiments; P0=0 / P1=0 / P2=0, CLOSE recommended.
+- Refreshed port 8766 after a consistent backup and no-pending-message check; HTTP 200. All source
+  KP, Master thread/topic/message, KP status and event rows equal their pre-restart snapshots.
+
 ## Reproducible entry points
 
 ```powershell
@@ -273,6 +311,6 @@ click `确认本节` / `确认本小节`; existing unclear KPs must remain uncle
 ## Git checkpoint
 
 Human-accepted implementation: `3aff1639c4679c728ee924a6468e8bd15836df8d`.
-The commit containing this closure-attempt update records explicit user PASS, independent audit BLOCK
-and unchanged product code. It is a **documentation/audit checkpoint, not a Phase closure commit**.
-Closure requires an authorized grounding correction and independent recheck; no fix is included here.
+Initial blocked-audit documentation checkpoint: `aa2711f` (not closure).
+The commit containing this final report includes the user-authorized grounding-only correction,
+independent re-review evidence and **Phase closure**; its hash is recorded in the final handoff.
