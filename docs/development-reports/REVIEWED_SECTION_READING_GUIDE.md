@@ -149,6 +149,23 @@ and test Learning state stayed in disposable copies. Port 8000 was not touched.
 - `src/reader_service/static/guide-ui.js`, `app.js`, `styles.css`
 - `tests/test_teaching.py`, `tests-e2e/{reading-guide.mjs,guide_runner.py,guide_verify.py}`
 
+## Same-Phase style retest — 2026-09-10
+
+- User requested a one-page prereading guide instead of dense lecture notes. Changed only the
+  generator's pedagogical prompt: 3–5 route stages, 4–6 driving questions, short prerequisites,
+  3–5 pitfalls and 4–6 grouped exit goals, with distinct module responsibilities. No runtime,
+  schema, reviewer, validator or skill-version changes.
+- Submitted exactly one real UI regeneration for `2.1 数制与编码` in the 348-page textbook on
+  port 8766. Version 2 published after real independent content Review **PASS**, with zero
+  semantic reworks. Actual body: 989 characters; 5 route stages, 6 questions, 2 prerequisite
+  sentences, 5 pitfalls and 6 exit goals. The former version remained available during generation.
+- Real pointer-path regeneration, source jump and close/reopen **PASS**. Exact published text and
+  screenshot are local ignored artifacts `.tmp/guide-2.1-preview.md` and `.tmp/guide-2.1-style.png`.
+  Backed up the Library before restarting the prompt-bearing service; port 8000 was untouched.
+- TARGETED: 18 Guide tests PASS. BROAD: 232 Python PASS / 2 unchanged optional OCR skips;
+  30 frontend PASS. Prompt style still requires user retest; content Review does not constitute
+  user acceptance or independent code acceptance. Status remains **READY_FOR_USER_RETEST**.
+
 ## Git checkpoint
 
 The commit containing this report is the implementation/retest checkpoint. Its exact hash is supplied
