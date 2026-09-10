@@ -2,14 +2,32 @@
 
 ## Result
 
-`READY_FOR_USER_RETEST` — user-authorized same-Phase Section Learning Check addition (2026-09-10).
-Previous acceptance/closure at `fbe36d5` remains the baseline; it does not automatically accept this
-addition. New user acceptance and independent narrow acceptance are PENDING. No new Phase is created.
+`CLOSED / COMPLETE` / `USER_ACCEPTANCE PASS` — the user explicitly accepted the same-Phase Section Learning Check
+addition and reading-position UAT correction at `f4c76db` on 2026-09-10, then authorized closure
+only. Independent narrow acceptance is PASS. Previous closure at `fbe36d5` remains the baseline;
+this addition has its own acceptance evidence. No new Phase is created.
 
 Second-level Section cards now offer `都清楚了` and `还有些地方不完全清楚`. Clear sets every owned KP
 to UNDERSTOOD, including previously unclear ones, resolves current Section state/Topic and preserves
 history. Unclear records only Section state/event, opens Section Master and never guesses negative KP
 statuses. Third-level `确认本小节` keeps its existing UNCONFIRMED-only behavior.
+
+### Section addition closure verification (2026-09-10)
+
+- User acceptance: **PASS**, explicitly reported after the reading-position fix at `f4c76db`.
+- Independent narrow acceptance: **PASS; P0=0 / P1=0 / P2=0; CLOSE**, by independent Codex reviewer
+  `section_closure_audit` (not ZCode, not the implementer). **65 focused tests PASS**, plus independently
+  authored concurrent unclear/send/clear, stale-Topic/in-flight answer, append-only history, scope XOR
+  and Section source/context isolation probes on disposable fixtures. No findings were waived.
+  Full evidence: [`LEARN_ONE_KP_WITH_MASTER_SECTION_CLOSURE.md`](../reviews/LEARN_ONE_KP_WITH_MASTER_SECTION_CLOSURE.md).
+- Closure-only BROAD rerun on unchanged product code: `python -m pytest -o addopts='' -q` —
+  **214 passed / 2 unchanged optional OCR skips**; `npm test` — **30/30 PASS**.
+- Real-book Master, Assistant and reading-position golden paths passed at the same accepted code
+  immediately before user retest (details below). No new live calls or source-Library writes were
+  needed for this documentation/audit-only closure; the recorded live Review FAIL remains FAIL.
+- No UI, Master, KP state logic, schema, provider configuration or unrelated product code changed.
+- All closure gates for this addition are satisfied. Phase/index now record **CLOSED / COMPLETE**;
+  the closure checkpoint contains documentation only.
 
 ### Same-Phase implementation and evidence
 
@@ -41,12 +59,13 @@ statuses. Third-level `确认本小节` keeps its existing UNCONFIRMED-only beha
   refreshed port 8766 responds HTTP 200. Migration 13 integrity/FK checks pass, all original columns
   and rows of KP, Master thread/topic/message, KP status, event and annotation tables match the
   backup. New Section state is empty until the user's own check; no test Section history was inserted.
-- This addition needs its own independent scope/persistence/mastery review before eventual closure;
-  the previous audit is not reused as acceptance of migration 13. Stop here at user retest as requested.
+- The original implementation stopped at user retest. The user has now accepted the addition and
+  its own independent scope/persistence/mastery review passed. The previous audit is not reused
+  as acceptance of migration 13.
 
 ## Same-Phase reading-position UAT fix (2026-09-10)
 
-`READY_FOR_USER_RETEST`; no new user acceptance or Phase closure is claimed.
+Originally `READY_FOR_USER_RETEST`; now covered by the user's explicit PASS at `f4c76db`.
 
 - Reproduced on an isolated copy of the real 348-page Library: navigation to PDF page 50 saved
   successfully (HTTP 200), but reload/open saved page 1 over it. Page 70 with delayed PDF loading
@@ -70,7 +89,7 @@ statuses. Third-level `确认本小节` keeps its existing UNCONFIRMED-only beha
 - Reproduce with `READER_DATA_DIR` pointing to the prepared Library and
   `npm run test:e2e:position`; it backs up SQLite and copies blobs into a temporary test Library.
   This local restoration-order correction does not add an independent-review trigger; the Section
-  addition's outstanding narrow review remains pending before its eventual closure.
+  addition's separate narrow review is now complete, as recorded above.
 
 ## Previous accepted baseline (`fbe36d5`)
 
@@ -187,7 +206,7 @@ it now selects the actual second Book (412 pages) for the same AI-off isolation 
 
 ## Known limitations / deferred debt
 
-No open baseline narrow-review finding remains; the Section addition needs its own review.
+No open baseline or Section-addition narrow-review finding remains.
 Deterministic reference validation covers the supported
 ordinary citation forms, not universal natural-language claim extraction or academic correctness;
 previously saved answers are not rewritten. Section Master and the READY-Section two-option check
@@ -369,10 +388,12 @@ stopped. Use 8766 for this implementation. Before startup, SQLite backup was ver
 2 Books, 220 KPs and 6 annotations; foreign-key check is clean. No test Learning history was inserted
 into this source Library; golden paths used isolated copies.
 
-Manual retest: open a READY Chapter's 学习地图, choose a KP's `这里没完全懂`, ask and follow up,
-close/reopen Master, then restart the service and reopen via `继续 Master 对话`. Verify understanding
-stays unchanged until `已经弄懂`. Below a unit's ending PDF page, check its named footer card and
-click `确认本节` / `确认本小节`; existing unclear KPs must remain unclear and retain their count.
+Manual path for the accepted Section addition: at a READY Section's footer, choose
+`还有些地方不完全清楚`, ask/follow up in Section Master, then close/restart/reopen its history.
+KP statuses remain unchanged. Explicit `都清楚了` confirms all owned KPs (including unclear ones),
+resolves the current Section check and retains its history. Subsection `确认本小节` still changes only
+UNCONFIRMED KPs and preserves its unclear count. KP-local Master remains independent. Verify reading
+page/offset/zoom after refresh, Library reopen and service restart.
 
 ## Important files / architecture entry points
 
@@ -386,5 +407,6 @@ click `确认本节` / `确认本小节`; existing unclear KPs must remain uncle
 
 Human-accepted baseline implementation: `3aff1639c4679c728ee924a6468e8bd15836df8d`.
 Initial blocked-audit checkpoint: `aa2711f`; baseline grounding correction and closure: `fbe36d5`.
-The commit containing the current Section addition is a **READY_FOR_USER_RETEST checkpoint**, not
-new user acceptance or Phase closure. Its hash is recorded in the handoff.
+Section addition: `015b57a`; reading-position UAT correction and user-accepted code: `f4c76db`.
+The documentation-only closure checkpoint is the commit containing the final closure evidence;
+its exact hash is recorded in the handoff.

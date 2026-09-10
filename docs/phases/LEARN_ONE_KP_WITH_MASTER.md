@@ -1,13 +1,18 @@
 # Phase / Learn One KP with Master
 
-> **Status: READY_FOR_USER_RETEST — accepted same-Phase Section Learning Check addition (2026-09-10).**
+> **Status: CLOSED / COMPLETE — same-Phase Section Learning Check addition (2026-09-10).**
 
 The user explicitly reopened this implementation conversation for the formal Section two-option
-check and durable Section Master, stopping at READY_FOR_USER_RETEST. Prior acceptance/closure below
-remains historical evidence, not acceptance of this addition. No new Phase is created.
+check and durable Section Master, initially stopping at READY_FOR_USER_RETEST. The user explicitly
+accepted the addition and reading-position UAT fix at `f4c76db`, and authorized closure only.
+Prior acceptance/closure below remains historical evidence. No new Phase is created.
 Current machine/agent checks passed; the live Section run had content Review results PASS then FAIL,
-honestly displayed without mastery writes. New user acceptance and independent narrow review remain
-pending. See the development report for exact evidence and migration verification.
+honestly displayed without mastery writes. Independent Codex narrow review `section_closure_audit`
+passed (P0=0 / P1=0 / P2=0; CLOSE), including migration, scope, history and mastery-write boundaries.
+Closure broad rerun: 214 Python passed / 2 unchanged optional OCR skips; 30 frontend passed.
+User acceptance, independent acceptance and requested closure are complete. This closure changes
+documentation only. See the development report and
+`docs/reviews/LEARN_ONE_KP_WITH_MASTER_SECTION_CLOSURE.md` for exact evidence.
 
 Same-Phase user-authorized UAT fix (2026-09-10): preserve the saved reading position while
 Master entries resize the initial PDF placeholders. Only a restored Reader may autosave its
