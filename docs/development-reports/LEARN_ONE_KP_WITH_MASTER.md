@@ -170,6 +170,24 @@ included in viewport retention; PDF page dimensions remain unchanged for selecti
 
 `READY_FOR_USER_RETEST`. User and independent acceptance remain pending; no Phase closure claimed.
 
+## Same-Phase KP tag styling (2026-09-10)
+
+CSS-only product change: collapsed KP entries now share a 124px width, compact padding/line height,
+subtle neutral background/border and 2px corners. Hover and keyboard focus strengthen the affordance;
+expanded entries retain reading space without a floating shadow. Existing source positions, collision
+spacing, DOM structure, business logic and footer-card styles are unchanged. No guide line was added.
+
+- REAL USE / TARGETED: `test:e2e:master` PASS on the isolated real 348-page book, now also opening and
+  closing the actual KP tag before the existing confirmation/restart/retry path. No PDF overlap in
+  the existing Dock/zoom/narrow-viewport checks. Inspected `test-results/kp-learning-tags.png` and
+  retained the footer screenshot; both are ignored real-material artifacts, not synthetic mockups.
+- AFFECTED: separate Assistant E2E `INTENTIONALLY_NOT_RUN` for this delta: only `.learning-marker`
+  styles changed, with no Assistant selectors, layout algorithm or runtime changes. Master E2E still
+  exercises the shared Dock. Prior Assistant regression passed in the immediately preceding change.
+- CLOSURE/BROAD: Python **162 passed, 2 unchanged optional OCR skips**; frontend **30/30 PASS**.
+
+Status remains `READY_FOR_USER_RETEST`; no user acceptance or Phase closure is claimed.
+
 ## Reproducible entry points
 
 ```powershell

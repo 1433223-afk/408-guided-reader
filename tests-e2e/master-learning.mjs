@@ -88,6 +88,13 @@ try {
   await page.locator("#page-number").fill(String(subsectionLast.end_page + 1));
   await page.locator("#page-number").press("Enter");
   const subMarker = page.locator(`.subsection-learning-marker[data-outline-node-id="${subsection.outline_node_id}"]`);
+  const learningTag = page.locator(`.page[data-index="${subsectionLast.end_page}"] .kp-learning-marker`).first();
+  await learningTag.locator("summary").click();
+  assert.ok(await learningTag.getByRole("button", { name: "这里没完全懂", exact: true }).first().isVisible());
+  await learningTag.locator("summary").click();
+  await assertLearningControlsOutsidePdf(page);
+  await mkdir("test-results", { recursive: true });
+  await page.screenshot({ path: "test-results/kp-learning-tags.png", fullPage: true });
   await subMarker.getByRole("button", { name: "确认本小节", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本小节仍有未完全清楚的知识点：1 个"));
   const afterSubsection = await json(page, base);

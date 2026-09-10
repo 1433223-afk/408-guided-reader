@@ -285,9 +285,12 @@ button, label { -webkit-tap-highlight-color: transparent; }
 #master-question { width: 100%; resize: vertical; padding: 8px; }
 #master-workspace button:disabled { opacity: .55; cursor: wait; }
 .page:has(.learning-marker) { overflow: visible; }
-.learning-marker { position: absolute; left: calc(100% + 12px); width: 156px; z-index: 5; font-size: 11px; color: #5f4b2b; }
-.learning-marker summary { cursor: pointer; padding: 4px 6px; background: #faf3df; border: 1px solid #d4c39e; border-radius: 5px; }
-.learning-marker[open] { padding: 8px; background: #fffaf0; border: 1px solid #c9b893; box-shadow: 0 3px 12px #0002; }
+.learning-marker { position: absolute; left: calc(100% + 12px); width: 124px; z-index: 5; font-size: 11px; color: #73766e; }
+.learning-marker summary { cursor: pointer; padding: 2px 5px; line-height: 1.45; background: #eeede8; border: 1px solid #dbdad4; border-radius: 2px; }
+.learning-marker summary::marker { color: #96998f; font-size: 9px; }
+.learning-marker summary:hover { color: #4d6046; background: #f6f7f2; border-color: #b8c2ae; }
+.learning-marker summary:focus-visible { outline: 2px solid #7f9273; outline-offset: 2px; }
+.learning-marker[open] { width: 156px; padding: 8px; background: #f8f8f5; border: 1px solid #d4d8ce; border-radius: 3px; }
 .learning-marker p { margin: 6px 0; }
 .page:has(.learning-footer) { overflow: visible; }
 .learning-footer { position: absolute; top: 100%; left: 0; width: 100%; padding-top: 12px; display: grid; gap: 8px; }
