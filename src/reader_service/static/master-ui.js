@@ -199,8 +199,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     if (!page) return;
     page.querySelectorAll(".learning-marker, .learning-footer").forEach((n) => n.remove());
     const groups = new Map();
-    for (const point of entries.points.filter((p) => p.end_page === index)) {
-      const key = point.end_y;
+    for (const point of entries.points.filter((p) => p.display_end_page === index)) {
+      const key = point.display_end_y;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(point);
     }
@@ -225,9 +225,9 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       || a.end_y - b.end_y || Number(b.kind === "SUBSECTION") - Number(a.kind === "SUBSECTION"))) {
       const points = entries.points.filter((p) => section.knowledge_point_ids.includes(p.knowledge_point_id));
       if (!points.length) continue;
-      const lastPoint = points.reduce((last, point) => point.end_page > last.end_page
-        || (point.end_page === last.end_page && point.end_y > last.end_y) ? point : last);
-      if (lastPoint.end_page !== index) continue;
+      const lastPoint = points.reduce((last, point) => point.display_end_page > last.display_end_page
+        || (point.display_end_page === last.display_end_page && point.display_end_y > last.display_end_y) ? point : last);
+      if (lastPoint.display_end_page !== index) continue;
       const subsection = section.kind === "SUBSECTION";
       const label = subsection ? "本小节" : "本节";
       const marker = document.createElement("section");

@@ -61,6 +61,29 @@ try {
   assert.ok(section);
   const snapshot = () => json(page, `${base}/${point.knowledge_point_id}`);
   await openBook(page);
+  // User-reported Chapter 2 boundary: the durable span includes the next page's header.
+  const boundaryPoint = entries.points.find((p) => p.title === "十进制数转换为任意进制数" && p.start_page === 38);
+  assert.ok(boundaryPoint, "Need the real user-reported KP boundary");
+  assert.equal(boundaryPoint.end_page, 39);
+  assert.equal(boundaryPoint.display_end_page, 38);
+  const boundarySubsection = entries.sections.find((s) => s.kind === "SUBSECTION"
+    && s.knowledge_point_ids.includes(boundaryPoint.knowledge_point_id));
+  await page.locator("#page-number").fill("39");
+  await page.locator("#page-number").press("Enter");
+  const boundaryTag = page.locator('.page[data-index="38"] .kp-learning-marker').filter({ hasText: boundaryPoint.title });
+  await boundaryTag.locator("summary").click();
+  assert.ok(await boundaryTag.getByRole("button", { name: "这里没完全懂", exact: true }).isVisible());
+  await boundaryTag.locator("summary").click();
+  const boundaryCard = page.locator(`.page[data-index="38"] .subsection-learning-marker[data-outline-node-id="${boundarySubsection.outline_node_id}"]`);
+  await boundaryCard.scrollIntoViewIfNeeded();
+  await page.locator("#viewer").hover();
+  await page.mouse.wheel(0, 250);
+  await page.waitForTimeout(250);
+  assert.equal(await page.locator('.page[data-index="39"] .kp-learning-marker').filter({ hasText: boundaryPoint.title }).count(), 0);
+  await assertLearningControlsOutsidePdf(page);
+  await mkdir("test-results", { recursive: true });
+  await page.screenshot({ path: "test-results/learning-boundary-39-40.png", fullPage: true });
+  assert.deepEqual(await json(page, base), entries, "Display navigation must not write source ranges or learning state");
   await openMap(page, point.chapter_outline_node_id);
   const kpRow = page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first();
   await kpRow.getByRole("button", { name: "这里没完全懂", exact: true }).click();
@@ -83,12 +106,12 @@ try {
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
   const subsection = entries.sections.find((s) => s.kind === "SUBSECTION" && s.knowledge_point_ids.includes(point.knowledge_point_id));
   const subsectionLast = entries.points.filter((p) => subsection.knowledge_point_ids.includes(p.knowledge_point_id))
-    .sort((a, b) => b.end_page - a.end_page || b.end_y - a.end_y)[0];
+    .sort((a, b) => b.display_end_page - a.display_end_page || b.display_end_y - a.display_end_y)[0];
   const beforeSubsection = await json(page, base);
-  await page.locator("#page-number").fill(String(subsectionLast.end_page + 1));
+  await page.locator("#page-number").fill(String(subsectionLast.display_end_page + 1));
   await page.locator("#page-number").press("Enter");
   const subMarker = page.locator(`.subsection-learning-marker[data-outline-node-id="${subsection.outline_node_id}"]`);
-  const learningTag = page.locator(`.page[data-index="${subsectionLast.end_page}"] .kp-learning-marker`).first();
+  const learningTag = page.locator(`.page[data-index="${subsectionLast.display_end_page}"] .kp-learning-marker`).first();
   await learningTag.locator("summary").click();
   assert.ok(await learningTag.getByRole("button", { name: "这里没完全懂", exact: true }).first().isVisible());
   await learningTag.locator("summary").click();
@@ -118,7 +141,7 @@ try {
       aligned: Math.abs(marker.getBoundingClientRect().left - pdf.left) < 1,
       page: Number(marker.closest(".page").dataset.index) };
   });
-  assert.equal(confirmationPlacement.page, subsectionLast.end_page);
+  assert.equal(confirmationPlacement.page, subsectionLast.display_end_page);
   assert.ok(confirmationPlacement.belowPdf && confirmationPlacement.aligned, "Batch card belongs below its ending PDF page, aligned with the reading column");
   await assertLearningControlsOutsidePdf(page);
   await page.locator("#assistant-toggle").click();
@@ -181,10 +204,10 @@ try {
   assert.deepEqual(retried.messages.filter((m) => m.role === "user").map((m) => m.id), failed.messages.filter((m) => m.role === "user").map((m) => m.id));
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
   const sectionLast = entries.points.filter((p) => p.primary_section_id === section.outline_node_id)
-    .sort((a, b) => b.end_page - a.end_page || b.end_y - a.end_y)[0];
-  await page.locator("#page-number").fill(String(sectionLast.end_page + 1));
+    .sort((a, b) => b.display_end_page - a.display_end_page || b.display_end_y - a.display_end_y)[0];
+  await page.locator("#page-number").fill(String(sectionLast.display_end_page + 1));
   await page.locator("#page-number").press("Enter");
-  const marker = page.locator(`.page[data-index="${sectionLast.end_page}"] .section-learning-marker`).filter({ hasText: section.title }).first();
+  const marker = page.locator(`.page[data-index="${sectionLast.display_end_page}"] .section-learning-marker`).filter({ hasText: section.title }).first();
   await marker.getByRole("button", { name: "确认本节", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本节仍有未完全清楚"));
   const afterBulk = await json(page, base);

@@ -188,6 +188,38 @@ spacing, DOM structure, business logic and footer-card styles are unchanged. No 
 
 Status remains `READY_FOR_USER_RETEST`; no user acceptance or Phase closure is claimed.
 
+## Same-Phase display endpoint correction (2026-09-10)
+
+The reported KP `十进制数转换为任意进制数` has a published end at zero-based page 39, y=0.078125,
+exactly the following page's running header. Using that endpoint put both its tag and the containing
+Subsection footer on the next page. The user approved correcting display placement without changing
+the published span or Learning records.
+
+Learning entries now derive `display_end_page/y` from READY OCR lines inside the original range.
+Known page-label text in margins and repeated margin text are excluded; unique near-top text and
+genuine body continuations remain eligible. Missing usable evidence retains the original endpoint.
+No generic document parser, new dependency, source migration or regeneration was introduced.
+Source ranges, scope membership, Master payloads, identity and mastery-write paths are unchanged.
+Existing narrow-margin handling in Knowledge semantic processing and Foundation page-label records
+were inspected; the display projection reuses stored OCR/labels, without changing those pipelines.
+
+- TARGETED: **15 PASS** across Learning and the new display test: header-only continuation rolls
+  back to prior body; real cross-page body stays on the next page; repeated body is retained; unique
+  near-top body, other-Book isolation, empty evidence fallback and no writes are covered.
+- REAL USE: extended `test:e2e:master` PASS on an isolated copy of the user's 348-page book. The
+  reported KP now displays at page 38, y=0.9097782373428345 (PDF 39); the card precedes PDF 40 and
+  `2.1.2`. Open/close the actual tag, scroll across the boundary and verify unchanged entry/source/
+  status data. Existing confirmation, restart, retry, payload and no-overlap checks also PASS.
+  Inspected real screenshot: `test-results/learning-boundary-39-40.png` (ignored personal material).
+- AFFECTED: Assistant real-use E2E PASS. CLOSURE/BROAD: **163 passed, 2 unchanged optional OCR
+  skips**; frontend **30/30 PASS**. No live-provider rerun for the display-only projection; existing
+  context/egress invariants and controlled-provider golden path were rerun.
+- Restarted the 8766 retest service after a SQLite backup and a no-pending-Master-message check.
+  HTTP 200; hashes of all 220 KP rows and every Master thread/topic/message, KP status and learning
+  event match before/after restart. Port 8000 was not touched.
+
+Status remains `READY_FOR_USER_RETEST`; required user and independent acceptance remain pending.
+
 ## Reproducible entry points
 
 ```powershell

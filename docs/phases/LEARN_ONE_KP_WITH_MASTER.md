@@ -87,6 +87,13 @@ No external code, framework or dependency is adopted.
 
 ## Build
 
+- User-approved display-only endpoint correction (2026-09-10): KP tags and batch ending-page
+  placement use the final usable OCR body line inside each published range, excluding recognized
+  page labels and repeated text in narrow page margins. Unique near-top body text is retained.
+  `display_end_page/y` is a read-only presentation projection; persisted KP ranges, batch membership,
+  navigation authority, Master source context and learning records remain unchanged. With no usable
+  OCR body line, retain the published endpoint rather than invent a location. This corrects the
+  real PDF 39–40 case where an old KP span ends at the following page's running header.
 - User-approved lightweight layout refinement (2026-09-10): individual KP learning entries remain
   in the side gutter. Section/Subsection batch controls are non-floating light cards below the PDF
   page containing their last contained KP's end, aligned with the reading column. The user accepted

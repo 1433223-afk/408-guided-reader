@@ -1,6 +1,7 @@
 from uuid import uuid4
 
 from reader_service.knowledge.repository import KnowledgeRepository, now
+from reader_service.learning.display import add_display_ends
 
 
 class LearningRepository:
@@ -61,6 +62,7 @@ class LearningRepository:
             """, (revision_id,))]
             for section in sections:
                 section["knowledge_point_ids"] = [p["knowledge_point_id"] for p in points if self._in_confirmation_scope(p, section)]
+            add_display_ends(c, revision_id, points)
             return {"points": points, "sections": sections}
 
     @staticmethod
