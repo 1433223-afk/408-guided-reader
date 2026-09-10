@@ -643,6 +643,41 @@ def test_ready_chapter_regeneration_keeps_old_map_visible_and_mints_all_fresh_id
     assert {row["chapter_structure_version"] for row in rows} == {2}
 
 
+def test_regeneration_requested_after_publish_before_job_completion_is_requeued(service):
+    fixture = build_fixture(
+        service, runtime=ScriptedRuntime(review=lambda _payload, _count: review_answer())
+    )
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+
+    first_job = fixture["jobs"].claim()
+    assert first_job is not None and first_job["job_type"] == "CHAPTER_PREPARE"
+    first = fixture["knowledge"].run_job(first_job)
+    first_ids = [point["knowledge_point_id"] for point in first["knowledge_points"]]
+
+    requested, created = fixture["knowledge"].request_regenerate(revision_id, chapter_id)
+    assert created
+    assert requested["status"] == "READY"
+    assert requested["regeneration_state"] == "RUNNING"
+    assert [point["knowledge_point_id"] for point in requested["knowledge_points"]] == first_ids
+
+    fixture["jobs"].complete(first_job["id"])
+    replacement_job = fixture["jobs"].claim()
+    assert replacement_job is not None
+    assert replacement_job["id"] == first_job["id"]
+    replaced = fixture["knowledge"].run_job(replacement_job)
+    fixture["jobs"].complete(replacement_job["id"])
+
+    replacement_ids = [
+        point["knowledge_point_id"] for point in replaced["knowledge_points"]
+    ]
+    assert replaced["status"] == "READY"
+    assert replaced["regeneration_state"] == "IDLE"
+    assert replaced["structure_version"] == 2
+    assert set(first_ids).isdisjoint(replacement_ids)
+
+
 def test_failed_ready_regeneration_preserves_published_map(service):
     def reviewer(payload, count):
         if count == 1:

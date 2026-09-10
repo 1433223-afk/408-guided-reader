@@ -129,12 +129,39 @@ class JobRepository:
 
     def complete(self, job_id: str, cancelled: bool = False) -> None:
         with self.database.connect() as connection:
+            if not cancelled:
+                connection.execute(
+                    """
+                    UPDATE jobs
+                    SET status = CASE
+                            WHEN job_type = 'CHAPTER_PREPARE'
+                             AND EXISTS (
+                                SELECT 1 FROM chapter_preparations AS prep
+                                WHERE prep.book_source_revision_id = jobs.book_source_revision_id
+                                  AND prep.chapter_outline_node_id = jobs.chapter_outline_node_id
+                                  AND (
+                                      prep.status = 'PREPARING'
+                                      OR (
+                                          prep.status = 'READY'
+                                          AND prep.regeneration_state = 'RUNNING'
+                                      )
+                                  )
+                             )
+                            THEN 'QUEUED'
+                            ELSE 'SUCCEEDED'
+                        END,
+                        updated_at = ?
+                    WHERE id = ? AND status = 'RUNNING'
+                    """,
+                    (now(), job_id),
+                )
+                return
             connection.execute(
                 """
                 UPDATE jobs SET status = ?, updated_at = ?
                 WHERE id = ? AND status = 'RUNNING'
                 """,
-                ("CANCELLED" if cancelled else "SUCCEEDED", now(), job_id),
+                ("CANCELLED", now(), job_id),
             )
 
     def cancel_revision(self, revision_id: str) -> None:
