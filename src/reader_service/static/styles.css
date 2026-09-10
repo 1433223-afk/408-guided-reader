@@ -288,6 +288,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .learning-marker[open] { width: min(270px, 75%); padding: 8px; background: #fffaf0; border: 1px solid #c9b893; box-shadow: 0 3px 12px #0002; }
 .learning-marker p { margin: 6px 0; }
 .section-learning-marker { right: auto; left: 4px; }
+.subsection-learning-marker { right: auto; left: 90px; }
 .reader.assistant-expanded .assistant-panel {
   left: 0; width: auto; background: #faf8f2; border-left: 0; box-shadow: none;
 }

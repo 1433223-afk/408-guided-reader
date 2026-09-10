@@ -53,7 +53,9 @@ try {
   const rev = book.active_revision.id;
   const base = `/api/revisions/${rev}/learning`;
   const entries = await json(page, base);
-  const point = entries.points.find((p) => entries.points.filter((q) => q.primary_section_id === p.primary_section_id).length >= 2);
+  const point = entries.points.find((p) => entries.points.filter((q) => q.primary_section_id === p.primary_section_id).length >= 2
+    && entries.points.filter((q) => q.primary_section_id === p.primary_section_id).every((q) => q.status === "UNCONFIRMED" && !q.thread_id)
+    && entries.sections.some((s) => s.kind === "SUBSECTION" && s.knowledge_point_ids.includes(p.knowledge_point_id) && s.knowledge_point_ids.length >= 2));
   assert.ok(point, "Need a READY Chapter with multiple real KPs in one Section");
   const section = entries.sections.find((s) => s.outline_node_id === point.primary_section_id);
   assert.ok(section);
@@ -79,6 +81,25 @@ try {
   await page.getByRole("button", { name: "学习 Master", exact: true }).click();
   assert.equal(await page.locator("#master-history .master-message").count(), 4);
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
+  const subsection = entries.sections.find((s) => s.kind === "SUBSECTION" && s.knowledge_point_ids.includes(point.knowledge_point_id));
+  const beforeSubsection = await json(page, base);
+  await page.locator("#page-number").fill(String(subsection.end_page + 1));
+  await page.locator("#page-number").press("Enter");
+  const subMarker = page.locator(`.subsection-learning-marker[data-outline-node-id="${subsection.outline_node_id}"]`);
+  await subMarker.locator("summary").click();
+  await subMarker.getByRole("button", { name: "一键确认本小节 KP", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本小节仍有未完全清楚的知识点：1 个"));
+  const afterSubsection = await json(page, base);
+  for (const p of afterSubsection.points) {
+    const before = beforeSubsection.points.find((q) => q.knowledge_point_id === p.knowledge_point_id);
+    assert.equal(p.status, subsection.knowledge_point_ids.includes(p.knowledge_point_id) && before.status === "UNCONFIRMED" ? "UNDERSTOOD" : before.status);
+  }
+  await subMarker.locator("summary").click();
+  await subMarker.getByRole("button", { name: "一键确认本小节 KP", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("已确认 0 个待确认知识点。本小节"));
+  await subMarker.locator("summary").click();
+  await mkdir("test-results", { recursive: true });
+  await page.screenshot({ path: "test-results/subsection-confirmation.png", fullPage: true });
   await page.locator("#page-number").fill(String(point.end_page + 3));
   await page.locator("#page-number").press("Enter");
   await page.locator("#back-to-library").click();
@@ -91,6 +112,8 @@ try {
   await page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first().getByRole("button", { name: "继续 Master 对话", exact: true }).click();
   await page.locator("#master-history .master-message").nth(3).waitFor();
   assert.deepEqual(await snapshot(), initial);
+  const restoredEntries = await json(page, base);
+  assert.deepEqual(restoredEntries.points.map((p) => [p.knowledge_point_id, p.status]), afterSubsection.points.map((p) => [p.knowledge_point_id, p.status]));
   await stop();
   fail = true;
   running = await start(loopbackEnv);
@@ -154,7 +177,8 @@ try {
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ status: "PASS", liveInitialConversation: live, realPages: 348, kp: point.title,
     restartAndAIoffHistory: true, retryNoDuplicates: true, explicitConfirmation: true, sectionIsolation: true,
-    payloadAllowlist: true, dataDir, screenshot: "test-results/master-learning.png" }));
+    payloadAllowlist: true, subsectionIsolationAndRestart: true, subsection: subsection.title,
+    dataDir, screenshot: "test-results/master-learning.png" }));
 } finally {
   if (browser) await browser.close();
   await stop();

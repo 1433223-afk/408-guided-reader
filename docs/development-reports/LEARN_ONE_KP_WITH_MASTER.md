@@ -96,6 +96,34 @@ it now selects the actual second Book (412 pages) for the same AI-off isolation 
 Independent narrow acceptance and user retest remain pending. Section-scoped Master, the full Section
 Learning Check, summaries, global history UI and multimodal explanation remain outside this slice.
 
+## Same-Phase addition: Subsection confirmation (2026-09-10)
+
+User-requested `一键确认本小节 KP` now appears at each resolved third-level Subsection end with
+published KPs. It reuses the existing authenticated batch endpoint, transaction, append-only events
+and permanent Chapter lock; there is no migration, new status or workflow.
+
+Subsection membership is derived from the existing parent Section and full physical-range
+containment. Same-page boundaries are compared as `(page, y)` pairs; multi-page KPs are supported,
+crossing KPs are excluded, and no durable KP ownership is changed. Only UNCONFIRMED is updated;
+NOT_FULLY_CLEAR and existing UNDERSTOOD remain intact. Both batch controls now show remaining
+unclear counts. Section and Subsection controls are offset when their endpoints coincide.
+
+- TARGETED: Learning suite **14/14 PASS**, including same-page adjacent ranges, a multi-page KP
+  ending exactly at the boundary, crossing-KP exclusion, other-Section isolation, events/Topics,
+  repeat confirmation, HTTP scope checks and restart recovery.
+- REAL USE: extended `npm run test:e2e:master` **PASS** on an isolated copy of the same 348-page
+  textbook, at `*1.1.1 计算机硬件的发展`. Its unclear KP remained unclear with count **1**; only
+  its pending KPs changed, other Subsections/Sections stayed unchanged, a repeat click changed **0**,
+  and restart recovered the exact status map. Existing Section confirmation and Master golden path
+  also passed. Inspected screenshot: `test-results/subsection-confirmation.png`.
+- AFFECTED / BROAD: **162 passed, 2 unchanged optional OCR skips**; frontend **30/30 PASS**.
+  No new live-provider run: this addition makes no provider call and changes no provider/context code;
+  the existing live-provider evidence above remains applicable.
+- Retest service refreshed at **http://127.0.0.1:8766/**. Existing source-library Master threads,
+  messages, events and statuses were preserved; golden-path writes stayed in the isolated copy.
+
+Status remains `READY_FOR_USER_RETEST`; user and independent acceptance remain pending.
+
 ## Reproducible entry points
 
 ```powershell

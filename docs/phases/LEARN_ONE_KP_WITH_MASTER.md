@@ -87,6 +87,12 @@ No external code, framework or dependency is adopted.
 
 ## Build
 
+- User-authorized same-Phase addition (2026-09-10): each third-level Subsection end also offers
+  `一键确认本小节 KP`, reusing the existing batch transaction. Membership is derived from the
+  published KP's owning parent Section and complete containment in the Subsection's resolved
+  physical range; crossing ranges are excluded, never reassigned. Only UNCONFIRMED becomes
+  UNDERSTOOD. Preserve NOT_FULLY_CLEAR and all other scopes; show the remaining unclear count.
+  No new state, schema, ownership field or workflow is introduced.
 - User-authorized addition (2026-09-10): at each second-level Section's physical end,
   offer `一键确认本节全部 KP`. In one transaction, change only its owned `UNCONFIRMED`
   KPs to `UNDERSTOOD` with explicit-user events and the permanent Chapter lock.
@@ -140,6 +146,9 @@ No external code, framework or dependency is adopted.
    state. AI-off still permits normal Reader use and opening/reviewing durable Master history.
 10. Section bulk confirmation changes only owned UNCONFIRMED KPs, preserves unclear KP/Topic
     history, reports remaining unclear KPs, is idempotent, and survives restart with its events/lock.
+11. Subsection confirmation obeys the same rules within its contained KP set, including same-page
+    boundaries and multi-page KPs; adjacent Subsections, other Sections/Books and crossing KPs remain
+    untouched. The UI reports the remaining NOT_FULLY_CLEAR count.
 
 ### Agent real-use golden path
 

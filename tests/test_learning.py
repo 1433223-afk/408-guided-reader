@@ -16,6 +16,7 @@ from test_knowledge_map import build_fixture, claim_and_run
 from conftest import make_pdf
 from test_api import running_server, request_json
 from urllib.error import HTTPError
+from uuid import uuid4
 
 
 class Runtime:
@@ -291,3 +292,50 @@ def test_resolution_during_provider_call_does_not_lose_turn_or_reopen_topic(lear
     assert state['topics'][1]['state'] == 'ACTIVE'
     assert state['status'] == 'UNDERSTOOD'
     assert len(runtime.calls[-2][1]['topic_messages']) == 1
+
+
+def test_subsection_bulk_scope_boundaries_history_and_restart(learning, service):
+    f, master, runtime, points = learning
+    rev = f['revision']['id']
+    owner = points[0]['primary_section_id']
+    sub_ids = [str(uuid4()), str(uuid4())]
+    with service.database.connect() as c:
+        template = dict(c.execute('SELECT * FROM outline_nodes WHERE outline_node_id = ? AND book_source_revision_id = ?', (owner, rev)).fetchone())
+        for i, (start, end) in enumerate([((0, .2), (1, .2)), ((1, .2), (2, .0))]):
+            node = {**template, 'outline_node_id': sub_ids[i], 'kind': 'SUBSECTION',
+                    'parent_id': owner, 'depth': template['depth'] + 1, 'order_index': i,
+                    'title': f'1.1.{i+1} 小节', 'start_page': start[0], 'start_y': start[1],
+                    'end_page': end[0], 'end_y': end[1]}
+            c.execute(f"INSERT INTO outline_nodes ({','.join(node)}) VALUES ({','.join('?' for _ in node)})", tuple(node.values()))
+        template = dict(c.execute('SELECT * FROM knowledge_points WHERE knowledge_point_id = ?', (points[0]['knowledge_point_id'],)).fetchone())
+        added = []
+        for i, (start, end) in enumerate([((0, .3), (0, .4)), ((0, .5), (1, .2)), ((1, .2), (1, .4)), ((1, .1), (1, .3))]):
+            point = {**template, 'knowledge_point_id': str(uuid4()), 'order_index': 100 + i,
+                     'start_page': start[0], 'start_y': start[1], 'end_page': end[0], 'end_y': end[1]}
+            c.execute(f"INSERT INTO knowledge_points ({','.join(point)}) VALUES ({','.join('?' for _ in point)})", tuple(point.values()))
+            added.append(point['knowledge_point_id'])
+    unclear = master.repository.open(rev, added[0])
+    before = master.repository.entries(rev)
+    subsection = next(s for s in before['sections'] if s['outline_node_id'] == sub_ids[0])
+    eligible = set(subsection['knowledge_point_ids'])
+    assert set(added[:2]) <= eligible
+    assert not set(added[2:]) & eligible  # Same-page next-start and cross-boundary KP.
+    result = master.repository.confirm_section(rev, sub_ids[0])
+    assert result == {'changed': len(eligible) - 1, 'unclear': 1}
+    after = master.repository.entries(rev)
+    for old, new in zip(before['points'], after['points']):
+        expected = 'UNDERSTOOD' if old['knowledge_point_id'] in eligible - {added[0]} else old['status']
+        assert new['status'] == expected
+    assert master.snapshot(rev, added[0]) == unclear
+    with service.database.connect() as c:
+        events = [tuple(r) for r in c.execute('SELECT knowledge_point_id,event_type FROM learning_events')]
+        assert {kp for kp, kind in events if kind == 'SUBSECTION_UNCONFIRMED_EXPLICIT_CONFIRM'} == eligible - {added[0]}
+        assert c.execute('SELECT COUNT(*) FROM master_threads').fetchone()[0] == 1
+    restarted = LearningService(service.database, f['foundation'], runtime)
+    assert restarted.repository.entries(rev) == after
+    assert restarted.repository.confirm_section(rev, sub_ids[0]) == {'changed': 0, 'unclear': 1}
+    with running_server(service, learning=restarted) as (base, token):
+        _, response = request_json(f'{base}/api/revisions/{rev}/learning/{sub_ids[0]}/confirm-section', token, method='POST', data=b'{}')
+        assert response == {'changed': 0, 'unclear': 1}
+        with pytest.raises(HTTPError):
+            request_json(f'{base}/api/revisions/{uuid4()}/learning/{sub_ids[0]}/confirm-section', token, method='POST', data=b'{}')

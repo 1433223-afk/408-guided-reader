@@ -54,11 +54,23 @@ class LearningRepository:
                 ORDER BY kp.start_page, kp.start_y, kp.order_index
             """, (revision_id,))]
             sections = [dict(r) for r in c.execute("""
-                SELECT outline_node_id, title, end_page, end_y FROM outline_nodes
-                WHERE book_source_revision_id = ? AND kind = 'SECTION'
+                SELECT outline_node_id, kind, parent_id, title, start_page, start_y, end_page, end_y FROM outline_nodes
+                WHERE book_source_revision_id = ? AND kind IN ('SECTION', 'SUBSECTION')
+                    AND start_page IS NOT NULL AND start_y IS NOT NULL
                     AND end_page IS NOT NULL AND end_y IS NOT NULL
             """, (revision_id,))]
+            for section in sections:
+                section["knowledge_point_ids"] = [p["knowledge_point_id"] for p in points if self._in_confirmation_scope(p, section)]
             return {"points": points, "sections": sections}
+
+    @staticmethod
+    def _in_confirmation_scope(point, node):
+        if node["kind"] == "SECTION":
+            return point["primary_section_id"] == node["outline_node_id"]
+        return (point["primary_section_id"] == node["parent_id"]
+                and (node["start_page"], node["start_y"]) <= (point["start_page"], point["start_y"])
+                < (node["end_page"], node["end_y"])
+                and (point["end_page"], point["end_y"]) <= (node["end_page"], node["end_y"]))
 
     def _event(self, c, point, status, evidence, topic_id=None):
         timestamp = now()
@@ -115,17 +127,20 @@ class LearningRepository:
     def confirm_section(self, revision_id, section_id):
         with self.database.connect() as c:
             c.execute("BEGIN IMMEDIATE")
-            section = c.execute("SELECT kind FROM outline_nodes WHERE book_source_revision_id = ? AND outline_node_id = ?", (revision_id, section_id)).fetchone()
-            if section is None or section[0] != "SECTION":
-                raise LookupError("二级标题 Section 不存在。")
-            ids = [r[0] for r in c.execute("SELECT knowledge_point_id FROM knowledge_points WHERE book_source_revision_id = ? AND primary_section_id = ?", (revision_id, section_id))]
+            section = c.execute("SELECT * FROM outline_nodes WHERE book_source_revision_id = ? AND outline_node_id = ?", (revision_id, section_id)).fetchone()
+            if section is None or section["kind"] not in {"SECTION", "SUBSECTION"}:
+                raise LookupError("章节或小节不存在。")
+            if section["kind"] == "SUBSECTION" and any(section[key] is None for key in ("start_page", "start_y", "end_page", "end_y")):
+                raise ValueError("本小节教材范围尚未就绪。")
+            owner_id = section_id if section["kind"] == "SECTION" else section["parent_id"]
+            ids = [r["knowledge_point_id"] for r in c.execute("SELECT * FROM knowledge_points WHERE book_source_revision_id = ? AND primary_section_id = ?", (revision_id, owner_id)) if self._in_confirmation_scope(r, section)]
             changed = 0
             unclear = 0
             for kp_id in ids:
                 point = self.point(c, revision_id, kp_id)
                 status = c.execute("SELECT status FROM kp_status WHERE knowledge_point_id = ?", (kp_id,)).fetchone()
                 if status is None:
-                    self._event(c, point, "UNDERSTOOD", "SECTION_UNCONFIRMED_EXPLICIT_CONFIRM")
+                    self._event(c, point, "UNDERSTOOD", f"{section['kind']}_UNCONFIRMED_EXPLICIT_CONFIRM")
                     changed += 1
                 elif status[0] == "NOT_FULLY_CLEAR":
                     unclear += 1

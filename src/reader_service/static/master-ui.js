@@ -178,7 +178,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   async function confirmSection(section, output) {
     try {
       const result = await post(base(section.outline_node_id) + "/confirm-section");
-      const message = `已确认 ${result.changed} 个待确认知识点。${result.unclear ? "本节仍有未完全清楚的知识点。" : "本节知识点已全部确认。"}`;
+      const label = section.kind === "SUBSECTION" ? "本小节" : "本节";
+      const message = `已确认 ${result.changed} 个待确认知识点。${result.unclear ? `${label}仍有未完全清楚的知识点：${result.unclear} 个。` : `${label}知识点已全部确认。`}`;
       output.textContent = message;
       announce(message);
       await refreshEntries();
@@ -210,19 +211,23 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       page.append(marker);
     }
     for (const section of entries.sections.filter((s) => s.end_page === index)) {
-      const points = entries.points.filter((p) => p.primary_section_id === section.outline_node_id);
+      const points = entries.points.filter((p) => section.knowledge_point_ids.includes(p.knowledge_point_id));
       if (!points.length) continue;
+      const subsection = section.kind === "SUBSECTION";
+      const label = subsection ? "本小节" : "本节";
       const marker = document.createElement("details");
-      marker.className = "learning-marker section-learning-marker";
+      marker.className = `learning-marker ${subsection ? "subsection" : "section"}-learning-marker`;
+      marker.dataset.outlineNodeId = section.outline_node_id;
       marker.style.top = `${Math.min(section.end_y, .98) * 100}%`;
       const summary = document.createElement("summary");
-      summary.textContent = "本节确认";
+      summary.textContent = `${label}确认`;
       const title = document.createElement("p");
       title.textContent = section.title;
       const output = document.createElement("p");
       output.setAttribute("role", "status");
-      output.textContent = points.some((p) => p.status === "NOT_FULLY_CLEAR") ? "本节仍有未完全清楚的知识点" : "仅确认本节待确认的知识点";
-      marker.append(summary, title, button("一键确认本节全部 KP", () => confirmSection(section, output)), output);
+      const unclear = points.filter((p) => p.status === "NOT_FULLY_CLEAR").length;
+      output.textContent = unclear ? `${label}仍有未完全清楚的知识点：${unclear} 个` : `仅确认${label}待确认的知识点`;
+      marker.append(summary, title, button(subsection ? "一键确认本小节 KP" : "一键确认本节全部 KP", () => confirmSection(section, output)), output);
       page.append(marker);
     }
   }
