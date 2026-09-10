@@ -2,11 +2,14 @@
 
 ## Result
 
-`IMPLEMENTATION_READY`
+`CLOSED / PASS`
 
 - `AGENT_REAL_USE: PASS`
-- `USER_ACCEPTANCE: PENDING`
-- `READY_FOR_NARROW_INDEPENDENT_REVIEW: YES`
+- `USER_ACCEPTANCE: PASS` — the user regenerated and inspected the real Chapter 2 Knowledge Map on
+  2026-09-10 and accepted the result.
+- `INDEPENDENT_NARROW_REVIEW: PASS` — `P0=0`, `P1=0`, `P2=0`;
+  `CLOSURE_RECOMMENDATION: CLOSE`.
+- Phase status: **CLOSED / COMPLETE** on 2026-09-10 by user approval.
 
 The Reader now offers an explicit `重新生成知识点` action for an eligible READY Chapter. The current
 Map remains visible while its complete private replacement runs and after any failure. A successful
@@ -28,6 +31,9 @@ KP IDs.
   dependency-free old set and switches the version atomically.
 - Added the READY UI action and honest running/failed/locked copy. No private candidate, old-ID map,
   migration control, history UI or single-KP edit is exposed.
+- Closed the publication/job-completion race found by independent review: if a new preparation or
+  replacement attempt is registered while the unique Chapter job is finishing its previous attempt,
+  job completion atomically requeues that job instead of leaving the new attempt falsely RUNNING.
 
 ## Important implementation decisions
 
@@ -35,6 +41,8 @@ KP IDs.
   existing Chapter preparation record. No version-history table or mapping table was introduced.
 - Published provider/source metadata remains untouched while a replacement runs or fails; attempt
   dependencies and failure fields are separate.
+- Chapter-job completion converges against the authoritative preparation row in the same database
+  transaction. Page jobs, normal success/failure and cancellation keep their existing behavior.
 - The non-learning dependency check inspects existing durable tables that actually carry a
   `knowledge_point_id` column. Future learning writes must still set the permanent marker
   transactionally; deleting their current projection or history cannot unlock the Chapter.
@@ -61,10 +69,21 @@ contract is unchanged.
   copy of the real Library. The Reader showed all 23 old KPs during replacement, then atomically
   published 23 fresh IDs; restart restored structure version 2 with the same replacement IDs. The
   source Library was not modified. Screenshot: `test-results/knowledge-map-regeneration.png`.
+- Real user acceptance: **PASS** — the user regenerated the real Chapter 2 Map, inspected its final
+  Knowledge Points and explicitly accepted it on 2026-09-10.
 - Existing Knowledge Map real-book E2E: **PASS** — Chapter 6 failure/retry/atomic-publication,
   source navigation, restart and sibling-book cascade isolation remain intact.
 - Closure broad `python -m pytest -q`: **PASS**; two real-OCR acceptance cases were skipped because
   their optional environment paths were not set. Closure broad `npm test`: **PASS**, 30/30.
+- Independent narrow review first identified one P1 race between READY publication and completion of
+  the reusable Chapter job. The exact interleaving was fixed and covered by
+  `test_regeneration_requested_after_publish_before_job_completion_is_requeued`; the single test and
+  the affected Knowledge/Jobs suites passed. Independent re-review: **PASS**, `P0=0`, `P1=0`,
+  `P2=0`, `CLOSURE_RECOMMENDATION: CLOSE`; no authority conflict.
+- Post-fix closure broad `python -m pytest -q`: **PASS**, 143 passed and 2 unchanged optional real-OCR
+  skips. Post-fix `npm test`: **INTENTIONALLY_NOT_RUN** because the review correction touched only
+  backend Chapter-job completion plus its Python test; the already-recorded 30/30 frontend closure
+  result remains on the unchanged frontend/API surface.
 - Not run: live external provider generation. The feature changes scheduling/publication state, not
   generator or reviewer semantics; controlled loopback providers exercised the actual HTTP/runtime
   boundary deterministically against real textbook evidence.
@@ -105,4 +124,7 @@ permanent learning marker is present must show a disabled `本章已永久冻结
 ## Git checkpoint
 
 Authority checkpoint: `603a378`.
-Implementation checkpoint: the commit containing this report; report its exact hash in the handoff.
+Implementation checkpoint: `1766205`.
+Independent-review correction checkpoint: `88deb05`.
+The docs-only closure checkpoint is the commit containing this final report; its exact hash is
+recorded in the closure handoff.

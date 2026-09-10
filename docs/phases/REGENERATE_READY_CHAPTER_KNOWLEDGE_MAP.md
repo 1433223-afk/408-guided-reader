@@ -1,9 +1,9 @@
 # Phase / Regenerate READY Chapter Knowledge Map
 
-> **Status: IMPLEMENTATION_READY / USER ACCEPTANCE PENDING (2026-09-09).** The user explicitly
-> approved the Frozen invariants and authorized authority sync plus implementation in the same
-> conversation. Targeted, real-use, affected and broad machine acceptance pass; closure is not yet
-> claimed.
+> **Status: CLOSED / COMPLETE (2026-09-10).** Machine acceptance PASS; agent real-use PASS; user
+> acceptance PASS on a real Chapter 2 replacement; independent narrow review PASS (`P0=0`, `P1=0`,
+> `P2=0`) with `CLOSURE_RECOMMENDATION: CLOSE`. The user approved Phase closure on 2026-09-10.
+> The accepted implementation and deferred boundaries below remain authoritative history.
 
 ## Goal
 
