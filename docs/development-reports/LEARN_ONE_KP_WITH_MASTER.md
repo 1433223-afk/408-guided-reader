@@ -2,15 +2,21 @@
 
 ## Result
 
-`READY_FOR_USER_RETEST` / `IMPLEMENTATION_READY` (2026-09-10).
+`USER_ACCEPTANCE PASS` / `CLOSURE_BLOCKED` (2026-09-10).
 
 - Machine acceptance: PASS.
 - Agent real-use: PASS with the real 348-page textbook, both configured live providers and controlled
   provider failure/retry.
-- User acceptance: PENDING — no USER_ACCEPTANCE PASS has been declared.
-- Independent narrow acceptance: PENDING / NOT_RUN. The required independent audit of identity,
-  migration, mastery authority, grounding, cascade and Review egress remains a separate pre-closure
-  gate. This report does not substitute implementer testing for that audit. Phase is not closed.
+- User acceptance: PASS — explicitly reported by the user in the implementation conversation on
+  2026-09-10, after the display-endpoint correction at `3aff163`. The user authorized remaining
+  closure work only, with no further UI/business changes or unrelated optimization.
+- Independent narrow acceptance: BLOCK — a reproducible P1 source-attribution bypass was found.
+  `PDF p. 999` can be durably accepted in Fast mode outside the supplied PDF-page allowlist although
+  `PDF 第 999 页` is rejected. The user prohibited business-code changes in this closure turn; no fix
+  or waiver is inferred. Phase is not closed; user acceptance remains PASS.
+  Independent Codex reviewer `closure_audit` (not involved in implementation; not ZCode):
+  **P0=0 / P1=1 / P2=0, recommendation BLOCK**. Full evidence and reproduction:
+  [`LEARN_ONE_KP_WITH_MASTER_CLOSURE.md`](../reviews/LEARN_ONE_KP_WITH_MASTER_CLOSURE.md).
 
 One real published KP can open Master, retain questions/answers and its current Topic through restart,
 and become understood only on explicit confirmation. Section-end bulk confirmation updates only its
@@ -64,6 +70,15 @@ it now selects the actual second Book (412 pages) for the same AI-off isolation 
 
 ## Acceptance evidence
 
+- User-authorized closure-only verification on unchanged product commit `3aff163` (2026-09-10):
+  `python -m pytest -o addopts='' -q` — **163 passed, 2 unchanged optional real-OCR skips**;
+  `npm test` — **30/30 PASS**. No UI, business logic, provider configuration or user-library data
+  changed during closure work. Existing real-book and live-provider evidence below applies to this
+  already human-accepted implementation; no new live calls are made for documentation/audit work.
+- Independent narrow audit: **15 focused tests PASS**; populated migration 11→12 preserved
+  **13 pre-existing tables / 40 rows**, with integrity/FK checks clean. Independent injected-provider
+  probes nevertheless reproduced durable acceptance of unsupported `PDF p. 999` and figure `999-9`;
+  those passing tests do not override the P1 or authorize closure. All probes used temporary fixtures.
 - TARGETED: `tests/test_learning.py` — 13 cases PASS, including evidence gates, concurrent send/retry,
   replay, modes/allowlists, semantic/invalid Review failure, restart, HTTP authorization, explicit
   resolution during an in-flight answer, section isolation, rollback, append-only history,
@@ -93,7 +108,7 @@ it now selects the actual second Book (412 pages) for the same AI-off isolation 
 
 ## Known limitations / deferred debt
 
-Independent narrow acceptance and user retest remain pending. Section-scoped Master, the full Section
+Closure is blocked on the independent source-grounding finding; user retest has passed. Section-scoped Master, the full Section
 Learning Check, summaries, global history UI and multimodal explanation remain outside this slice.
 
 ## Same-Phase addition: Subsection confirmation (2026-09-10)
@@ -122,7 +137,7 @@ unclear counts. The subsequent layout correction below supersedes the initial en
 - Retest service refreshed at **http://127.0.0.1:8766/**. Existing source-library Master threads,
   messages, events and statuses were preserved; golden-path writes stayed in the isolated copy.
 
-Status remains `READY_FOR_USER_RETEST`; user and independent acceptance remain pending.
+At this implementation checkpoint: `READY_FOR_USER_RETEST`; both acceptance gates were pending.
 
 ## Same-Phase UAT layout correction (2026-09-10)
 
@@ -142,7 +157,7 @@ control into the next subsection. No learning state, scope, persistence or provi
   frontend **30/30 PASS**. Retest service at port 8766 responds HTTP 200 with the updated static UI.
 - No new provider run is needed for this layout-only change; the prior live-provider evidence applies.
 
-Status remains `READY_FOR_USER_RETEST`, not user acceptance or Phase closure.
+At this implementation checkpoint: `READY_FOR_USER_RETEST`, not acceptance or closure.
 
 ## Same-Phase lightweight footer refinement (2026-09-10)
 
@@ -168,7 +183,7 @@ included in viewport retention; PDF page dimensions remain unchanged for selecti
   honestly; after awaiting the refresh settling, the complete real path passed twice.
 - Port 8766 remains available (HTTP 200). Test writes stayed in cloned Library data, not user records.
 
-`READY_FOR_USER_RETEST`. User and independent acceptance remain pending; no Phase closure claimed.
+At this implementation checkpoint: `READY_FOR_USER_RETEST`; no Phase closure was claimed.
 
 ## Same-Phase KP tag styling (2026-09-10)
 
@@ -186,7 +201,7 @@ spacing, DOM structure, business logic and footer-card styles are unchanged. No 
   exercises the shared Dock. Prior Assistant regression passed in the immediately preceding change.
 - CLOSURE/BROAD: Python **162 passed, 2 unchanged optional OCR skips**; frontend **30/30 PASS**.
 
-Status remains `READY_FOR_USER_RETEST`; no user acceptance or Phase closure is claimed.
+At this implementation checkpoint: `READY_FOR_USER_RETEST`; no acceptance or closure was claimed.
 
 ## Same-Phase display endpoint correction (2026-09-10)
 
@@ -218,7 +233,7 @@ were inspected; the display projection reuses stored OCR/labels, without changin
   HTTP 200; hashes of all 220 KP rows and every Master thread/topic/message, KP status and learning
   event match before/after restart. Port 8000 was not touched.
 
-Status remains `READY_FOR_USER_RETEST`; required user and independent acceptance remain pending.
+At this implementation checkpoint: `READY_FOR_USER_RETEST`; both acceptance gates were pending.
 
 ## Reproducible entry points
 
@@ -257,5 +272,7 @@ click `确认本节` / `确认本小节`; existing unclear KPs must remain uncle
 
 ## Git checkpoint
 
-The implementation checkpoint is the commit containing this report; its hash is recorded in the
-handoff. It is a ready-for-user-retest checkpoint, not an acceptance or Phase-closure commit.
+Human-accepted implementation: `3aff1639c4679c728ee924a6468e8bd15836df8d`.
+The commit containing this closure-attempt update records explicit user PASS, independent audit BLOCK
+and unchanged product code. It is a **documentation/audit checkpoint, not a Phase closure commit**.
+Closure requires an authorized grounding correction and independent recheck; no fix is included here.

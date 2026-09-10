@@ -2,9 +2,11 @@
 
 > **Status: ACCEPTED — ready for implementation (2026-09-10).**
 
-Implementation handoff (2026-09-10): `READY_FOR_USER_RETEST`.
-Machine acceptance and agent real-use passed; user acceptance and independent narrow acceptance
-remain pending. See `docs/development-reports/LEARN_ONE_KP_WITH_MASTER.md`. This is not Phase closure.
+Closure handoff (2026-09-10): user explicitly reported `USER_ACCEPTANCE PASS` on `3aff163` and
+authorized independent narrow review, report updates and the closure commit only. Machine acceptance
+and agent real-use passed; independent narrow acceptance found a P1 source-grounding bypass.
+`CLOSURE_BLOCKED`: no additional UI/business changes are authorized, so the finding is recorded
+without a fix or waiver. See `docs/development-reports/LEARN_ONE_KP_WITH_MASTER.md`.
 
 ## Goal
 
