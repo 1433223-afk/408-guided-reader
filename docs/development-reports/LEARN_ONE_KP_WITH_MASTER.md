@@ -32,8 +32,8 @@ UNCONFIRMED KPs and leaves identified confusion intact.
   route and their respective rubrics. Failure is not PASS; retry reviews the saved answer without
   rewriting it or changing learning state. Actual answer/reviewer provider and model are recorded.
 - The existing Dock now switches between temporary Assistant and durable Master. Knowledge Map items
-  and collapsed controls at KP physical ends expose the entry/history. A second-level Section's
-  physical end exposes the one-click confirmation and remaining-unclear notice.
+  and collapsed controls at KP physical ends expose the entry/history. Section/Subsection batch
+  confirmation now uses the page-footer cards described in the latest layout refinement below.
 
 ## Important implementation decisions
 
@@ -144,6 +144,32 @@ control into the next subsection. No learning state, scope, persistence or provi
 
 Status remains `READY_FOR_USER_RETEST`, not user acceptance or Phase closure.
 
+## Same-Phase lightweight footer refinement (2026-09-10)
+
+The user approved placing batch cards below the PDF page where the unit's last contained KP ends,
+rather than splitting PDF rendering to insert an operation between paragraphs. This supersedes the
+previous right-gutter batch placement. Each non-floating, reading-column-width card names its owner,
+shows total / understood / unclear counts, uses `确认本小节` or `确认本节`, and displays the requested
+muted explanation beneath the compact button. Single-KP learning remains in the side gutter.
+
+The existing button helper, batch endpoint and entries refresh are reused. No backend, business rule,
+status, dependency or PDF/source geometry changed. Footer height is reserved in page spacing and
+included in viewport retention; PDF page dimensions remain unchanged for selection and navigation.
+
+- REAL USE: `npm run test:e2e:master` PASS on the isolated real 348-page Library copy. Verified
+  refreshed counts (7 total / 6 understood / 1 unclear), no-op repeat confirmation, unchanged other
+  scopes, restart recovery and the existing Master failure/retry path. Cards align below their own
+  ending page and do not intersect rendered PDF canvases with Dock, zoom or 1100px viewport changes.
+  Final screenshot inspected: `test-results/subsection-confirmation.png` (ignored personal material).
+- AFFECTED: `npm run test:e2e:ask` PASS. Frontend tests **30/30 PASS**. No live-provider rerun for
+  this presentation-only change; prior live-provider evidence remains applicable.
+- CLOSURE/BROAD rerun: **162 passed, 2 unchanged optional OCR skips**.
+- The initial UI test attempted to scroll a card while entries refresh replaced its DOM. It failed
+  honestly; after awaiting the refresh settling, the complete real path passed twice.
+- Port 8766 remains available (HTTP 200). Test writes stayed in cloned Library data, not user records.
+
+`READY_FOR_USER_RETEST`. User and independent acceptance remain pending; no Phase closure claimed.
+
 ## Reproducible entry points
 
 ```powershell
@@ -168,8 +194,8 @@ into this source Library; golden paths used isolated copies.
 
 Manual retest: open a READY Chapter's 学习地图, choose a KP's `这里没完全懂`, ask and follow up,
 close/reopen Master, then restart the service and reopen via `继续 Master 对话`. Verify understanding
-stays unchanged until `已经弄懂`. At a Section end, expand `本节确认` and use the batch action;
-existing unclear KPs must remain unclear and display the notice.
+stays unchanged until `已经弄懂`. Below a unit's ending PDF page, check its named footer card and
+click `确认本节` / `确认本小节`; existing unclear KPs must remain unclear and retain their count.
 
 ## Important files / architecture entry points
 

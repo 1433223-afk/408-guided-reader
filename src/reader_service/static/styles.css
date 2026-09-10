@@ -289,6 +289,17 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .learning-marker summary { cursor: pointer; padding: 4px 6px; background: #faf3df; border: 1px solid #d4c39e; border-radius: 5px; }
 .learning-marker[open] { padding: 8px; background: #fffaf0; border: 1px solid #c9b893; box-shadow: 0 3px 12px #0002; }
 .learning-marker p { margin: 6px 0; }
+.page:has(.learning-footer) { overflow: visible; }
+.learning-footer { position: absolute; top: 100%; left: 0; width: 100%; padding-top: 12px; display: grid; gap: 8px; }
+.learning-batch-card { padding: 14px 18px; border: 1px solid #deddd7; border-radius: 6px; background: #f8f8f5; color: #595c55; }
+.learning-batch-card h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; line-height: 1.5; }
+.learning-batch-stats { margin: 0 0 10px; font-size: 12px; line-height: 1.7; color: #74786f; }
+.learning-batch-card button { padding: 4px 11px; min-height: 28px; font-size: 12px; background: #eef1e9; border: 1px solid #cbd2c3; border-radius: 4px; color: #4d6046; cursor: pointer; }
+.learning-batch-card button:hover { background: #e5ebde; }
+.learning-batch-card button:focus-visible { outline: 2px solid #7f9273; outline-offset: 2px; }
+.learning-batch-hint { margin: 6px 0 0; font-size: 11px; line-height: 1.5; color: #888b85; }
+.learning-batch-result { margin: 6px 0 0; font-size: 12px; }
+.learning-batch-result:empty { display: none; }
 .reader.assistant-expanded .assistant-panel {
   left: 0; width: auto; background: #faf8f2; border-left: 0; box-shadow: none;
 }

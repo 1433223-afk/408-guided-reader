@@ -88,40 +88,43 @@ try {
   await page.locator("#page-number").fill(String(subsectionLast.end_page + 1));
   await page.locator("#page-number").press("Enter");
   const subMarker = page.locator(`.subsection-learning-marker[data-outline-node-id="${subsection.outline_node_id}"]`);
-  await subMarker.locator("summary").click();
-  await subMarker.getByRole("button", { name: "一键确认本小节 KP", exact: true }).click();
+  await subMarker.getByRole("button", { name: "确认本小节", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本小节仍有未完全清楚的知识点：1 个"));
   const afterSubsection = await json(page, base);
   for (const p of afterSubsection.points) {
     const before = beforeSubsection.points.find((q) => q.knowledge_point_id === p.knowledge_point_id);
     assert.equal(p.status, subsection.knowledge_point_ids.includes(p.knowledge_point_id) && before.status === "UNCONFIRMED" ? "UNDERSTOOD" : before.status);
   }
-  await subMarker.locator("summary").click();
-  await subMarker.getByRole("button", { name: "一键确认本小节 KP", exact: true }).click();
+  await subMarker.getByRole("button", { name: "确认本小节", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("已确认 0 个待确认知识点。本小节"));
-  await subMarker.locator("summary").click();
+  await page.waitForTimeout(250);
+  await subMarker.scrollIntoViewIfNeeded();
   await mkdir("test-results", { recursive: true });
   await page.screenshot({ path: "test-results/subsection-confirmation.png", fullPage: true });
-  assert.ok((await subMarker.locator("summary").textContent()).includes(subsection.title));
+  assert.ok((await subMarker.locator("h3").textContent()).includes(subsection.title));
+  assert.equal(await subMarker.locator(".learning-batch-stats").textContent(),
+    `本小节共 ${subsection.knowledge_point_ids.length} 个知识点 · 已确认 ${subsection.knowledge_point_ids.length - 1} 个 · 未完全清楚 1 个`);
+  assert.equal(await subMarker.locator(".learning-batch-hint").textContent(), "仅确认未标记为“没完全懂”的知识点");
   const confirmationPlacement = await subMarker.evaluate((marker) => {
     const pdf = marker.closest(".page").querySelector("canvas").getBoundingClientRect();
-    return { end: (marker.getBoundingClientRect().bottom - pdf.top) / pdf.height,
+    return { belowPdf: marker.getBoundingClientRect().top >= pdf.bottom,
+      aligned: Math.abs(marker.getBoundingClientRect().left - pdf.left) < 1,
       page: Number(marker.closest(".page").dataset.index) };
   });
   assert.equal(confirmationPlacement.page, subsectionLast.end_page);
-  assert.ok(confirmationPlacement.end <= subsectionLast.end_y + .002, "Confirmation belongs before its own final KP end, not the next heading");
+  assert.ok(confirmationPlacement.belowPdf && confirmationPlacement.aligned, "Batch card belongs below its ending PDF page, aligned with the reading column");
   await assertLearningControlsOutsidePdf(page);
   await page.locator("#assistant-toggle").click();
   await page.waitForTimeout(250);
-  await subMarker.locator("summary").click();
+  await subMarker.scrollIntoViewIfNeeded();
   await assertLearningControlsOutsidePdf(page);
   await page.locator("#zoom-in").click();
   await page.waitForTimeout(250);
-  await subMarker.locator("summary").click();
+  await subMarker.scrollIntoViewIfNeeded();
   await assertLearningControlsOutsidePdf(page);
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.waitForTimeout(250);
-  await subMarker.locator("summary").click();
+  await subMarker.scrollIntoViewIfNeeded();
   await assertLearningControlsOutsidePdf(page);
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
   await page.locator("#zoom-out").click();
@@ -175,8 +178,7 @@ try {
   await page.locator("#page-number").fill(String(sectionLast.end_page + 1));
   await page.locator("#page-number").press("Enter");
   const marker = page.locator(`.page[data-index="${sectionLast.end_page}"] .section-learning-marker`).filter({ hasText: section.title }).first();
-  await marker.locator("summary").click();
-  await marker.getByRole("button", { name: "一键确认本节全部 KP", exact: true }).click();
+  await marker.getByRole("button", { name: "确认本节", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("本节仍有未完全清楚"));
   const afterBulk = await json(page, base);
   assert.equal((await snapshot()).status, "NOT_FULLY_CLEAR");
@@ -220,7 +222,7 @@ async function json(page, url) {
 async function assertLearningControlsOutsidePdf(page) {
   const violations = await page.evaluate(() => {
     const pages = [...document.querySelectorAll(".page:has(canvas)")];
-    const controls = [...document.querySelectorAll(".learning-marker")];
+    const controls = [...document.querySelectorAll(".learning-marker, .learning-batch-card")];
     return controls.flatMap((control) => {
       const box = control.getBoundingClientRect();
       return pages.filter((page) => {

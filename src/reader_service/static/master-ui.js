@@ -188,12 +188,16 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       output.textContent = message;
       announce(message);
       await refreshEntries();
-    } catch (error) { output.textContent = error.message; }
+    } catch (error) {
+      output.textContent = error.message;
+      const footer = output.closest(".learning-footer");
+      if (footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
+    }
   }
   function renderPage(index) {
     const page = pages.children[index];
     if (!page) return;
-    page.querySelectorAll(".learning-marker").forEach((n) => n.remove());
+    page.querySelectorAll(".learning-marker, .learning-footer").forEach((n) => n.remove());
     const groups = new Map();
     for (const point of entries.points.filter((p) => p.end_page === index)) {
       const key = point.end_y;
@@ -215,7 +219,10 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       }
       page.append(marker);
     }
-    for (const section of entries.sections) {
+    const footer = document.createElement("div");
+    footer.className = "learning-footer";
+    for (const section of [...entries.sections].sort((a, b) => a.end_page - b.end_page
+      || a.end_y - b.end_y || Number(b.kind === "SUBSECTION") - Number(a.kind === "SUBSECTION"))) {
       const points = entries.points.filter((p) => section.knowledge_point_ids.includes(p.knowledge_point_id));
       if (!points.length) continue;
       const lastPoint = points.reduce((last, point) => point.end_page > last.end_page
@@ -223,21 +230,28 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       if (lastPoint.end_page !== index) continue;
       const subsection = section.kind === "SUBSECTION";
       const label = subsection ? "本小节" : "本节";
-      const marker = document.createElement("details");
-      marker.className = `learning-marker ${subsection ? "subsection" : "section"}-learning-marker`;
+      const marker = document.createElement("section");
+      marker.className = `learning-batch-card ${subsection ? "subsection" : "section"}-learning-marker`;
       marker.dataset.outlineNodeId = section.outline_node_id;
-      marker.dataset.sourceY = String(lastPoint.end_y);
-      const summary = document.createElement("summary");
-      summary.textContent = `${label}确认 · ${section.title}`;
-      const title = document.createElement("p");
-      title.textContent = section.title;
-      const output = document.createElement("p");
-      output.setAttribute("role", "status");
+      marker.setAttribute("aria-label", `${label}收尾 · ${section.title}`);
+      const title = document.createElement("h3");
+      title.textContent = `${label}收尾 · ${section.title}`;
+      const stats = document.createElement("p");
+      stats.className = "learning-batch-stats";
       const unclear = points.filter((p) => p.status === "NOT_FULLY_CLEAR").length;
-      output.textContent = unclear ? `${label}仍有未完全清楚的知识点：${unclear} 个` : `仅确认${label}待确认的知识点`;
-      marker.append(summary, title, button(subsection ? "一键确认本小节 KP" : "一键确认本节全部 KP", () => confirmSection(section, output)), output);
-      page.append(marker);
+      const understood = points.filter((p) => p.status === "UNDERSTOOD").length;
+      stats.textContent = `${label}共 ${points.length} 个知识点 · 已确认 ${understood} 个 · 未完全清楚 ${unclear} 个`;
+      const hint = document.createElement("p");
+      hint.className = "learning-batch-hint";
+      hint.textContent = "仅确认未标记为“没完全懂”的知识点";
+      const output = document.createElement("p");
+      output.className = "learning-batch-result";
+      output.setAttribute("role", "status");
+      marker.append(title, stats, button(`确认${label}`, () => confirmSection(section, output)), hint, output);
+      footer.append(marker);
     }
+    if (footer.children.length) page.append(footer);
+    page.style.marginBottom = `${footer.children.length ? footer.offsetHeight + 24 : 20}px`;
     const markers = [...page.querySelectorAll(".learning-marker")]
       .sort((a, b) => Number(a.dataset.sourceY) - Number(b.dataset.sourceY));
     const layout = () => {

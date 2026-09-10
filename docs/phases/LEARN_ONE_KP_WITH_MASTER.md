@@ -87,11 +87,14 @@ No external code, framework or dependency is adopted.
 
 ## Build
 
-- User-requested same-Phase layout correction (2026-09-10): learning controls occupy a reserved
-  gutter outside the PDF, including when expanded, zoomed or alongside the Dock. Section/Subsection
-  confirmation is anchored to its own last contained KP's source end, not the next heading's start;
-  the collapsed control names its Section/Subsection. Controls stack upward when necessary so they
-  do not drift into the next unit. This changes presentation only, not batch membership or state.
+- User-approved lightweight layout refinement (2026-09-10): individual KP learning entries remain
+  in the side gutter. Section/Subsection batch controls are non-floating light cards below the PDF
+  page containing their last contained KP's end, aligned with the reading column. The user accepted
+  this page-footer placement instead of splitting the PDF to insert controls between paragraphs.
+  Each card names its owner, shows total / UNDERSTOOD / NOT_FULLY_CLEAR counts, offers the compact
+  `确认本小节` or `确认本节` button and the muted note `仅确认未标记为“没完全懂”的知识点`.
+  Reserve space below the page so cards never cover this or the next page. Business rules, scopes,
+  states and the existing batch endpoint are unchanged; this supersedes the previous gutter batch UI.
 - User-authorized same-Phase addition (2026-09-10): each third-level Subsection end also offers
   `一键确认本小节 KP`, reusing the existing batch transaction. Membership is derived from the
   published KP's owning parent Section and complete containment in the Subsection's resolved
@@ -154,9 +157,9 @@ No external code, framework or dependency is adopted.
 11. Subsection confirmation obeys the same rules within its contained KP set, including same-page
     boundaries and multi-page KPs; adjacent Subsections, other Sections/Books and crossing KPs remain
     untouched. The UI reports the remaining NOT_FULLY_CLEAR count.
-12. Collapsed and expanded learning controls do not intersect PDF content at normal size, with the
-    Dock open, after zooming or in a narrower viewport. Subsection confirmation names its owner and
-    remains at or before its last contained KP's source end rather than the next subsection heading.
+12. Learning controls do not intersect PDF content at normal size, with the Dock open, after zooming
+    or in a narrower viewport. Batch cards remain below their ending page, name the owning unit and
+    show accurate refreshed counts. Individual KP entries and batch controls are visually separated.
 
 ### Agent real-use golden path
 

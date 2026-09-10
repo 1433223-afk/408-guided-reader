@@ -391,7 +391,7 @@ function updateViewport() {
   for (const page of elements.pages.children) {
     const index = Number(page.dataset.index);
     const pageTop = page.offsetTop;
-    const pageBottom = pageTop + page.offsetHeight;
+    const pageBottom = pageTop + page.offsetHeight + parseFloat(page.style.marginBottom || "20");
     if (pageBottom >= top && first === null) first = index;
     if (pageTop <= bottom) last = index;
     const distance = Math.abs((pageTop + pageBottom) / 2 - viewportCenter);
