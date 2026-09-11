@@ -577,3 +577,24 @@ formula/selection browser fixture did not finish loading its module graph in the
 remained RUNNING, so it is not PASS; diagnostics remain ignored under `.tmp/guide-rendering-fixture.*`.
 The temporary port 8767 helper was stopped. Actual 2.1 has no formula to visually validate; formula support
 uses the unchanged shared KaTeX implementation and stylesheet. User retest remains the next step.
+
+## Section-title Guide entry / alignment — 2026-09-11
+
+User requested moving the directory Guide buttons to the right of PDF Section headings, as circled
+beside 2.1. Each resolved SECTION now gets a compact entry using its existing start_page/start_y;
+subsections get no duplicate Guide entries. Entries remount with PDF virtualization/zoom and refresh
+when the outline arrives. Removed directory Guide buttons, retaining Chapter map controls and Guide
+collapse/reopen. Aligned panel heading/status/article horizontal gutters, including expanded and narrow
+layouts, and reduced top spacing. No content, AI, Review, publication, anchor or persistence changes.
+This reuses existing page-overlay placement; no generic geometry system or dependency was added.
+
+Real 348-page book: title-row entry screenshot inspected at 2.1; pointer click opens the published Guide.
+Actual in-app Reader left open at 2.1 Guide. Updated split-reader E2E passes entry placement at two zoom
+levels, absence of old directory entry, pointer/keyboard resizing, expand/restore, collapse/reopen,
+source jump with reading-position retention and window resize with PDF visible. Screenshots remain
+ignored under `.tmp/guide-section-entry.png` and `.tmp/guide-2.1-dual.png`.
+
+Validation: 253 Python PASS / 2 unchanged optional OCR skips; 30 frontend unit PASS; JS syntax and
+diff checks PASS. Generation/Review E2E INTENTIONALLY_NOT_RUN: this changes frontend entry/layout only;
+its entry selector is updated, and no paid generation or publication was requested. READY_FOR_USER_RETEST,
+not USER_ACCEPTANCE PASS; previous Phase review/closure status is unchanged.

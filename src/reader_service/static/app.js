@@ -468,6 +468,7 @@ async function renderPage(index) {
     if (generation === state.generation) {
       state.rendered.add(index);
       master.renderPage(index);
+      renderGuideEntries(index);
       syncPagePreparationUi(index);
       ensureOverlay(index);
     }
@@ -697,6 +698,7 @@ async function loadBookMap() {
     const labels = outline.page_labels;
     if (request !== state.outlineRequest || state.revision?.id !== revisionId) return;
     state.outlineNodes = outline.nodes;
+    for (const index of state.rendered) renderGuideEntries(index);
     state.pageLabels = new Map(labels.labels.map((row) => [row.pdf_page_index, row]));
     renderOutline(outline);
     updatePrintedPageLabel();
@@ -705,6 +707,25 @@ async function loadBookMap() {
     elements["outline-status"].textContent = "目录暂时不可用，可以稍后重试。";
     elements["outline-empty"].hidden = false;
     updatePrintedPageLabel();
+  }
+}
+
+function renderGuideEntries(index) {
+  const page = elements.pages.children[index];
+  if (!page) return;
+  page.querySelectorAll(".section-guide-entry").forEach(button => button.remove());
+  for (const node of state.outlineNodes) {
+    if (node.kind !== "SECTION" || node.resolution_state !== "RESOLVED"
+        || node.start_page !== index || !Number.isFinite(node.start_y)) continue;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "section-guide-entry";
+    button.dataset.sectionId = node.outline_node_id;
+    button.style.top = `${node.start_y * 100}%`;
+    button.textContent = "导读 ›";
+    button.setAttribute("aria-label", `${node.title} · 导读`);
+    button.addEventListener("click", () => guide.open(node.outline_node_id));
+    page.append(button);
   }
 }
 
@@ -762,14 +783,6 @@ function renderOutline(payload) {
         });
       }
       row.append(disclosure, target);
-      if (node.kind === "SECTION") {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "outline-guide-action";
-        button.textContent = "导读";
-        button.onclick = () => guide.open(node.outline_node_id);
-        row.append(button);
-      }
       if (node.kind === "CHAPTER") {
         const map = document.createElement("button");
         map.type = "button";

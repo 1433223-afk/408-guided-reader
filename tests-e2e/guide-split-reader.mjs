@@ -13,7 +13,24 @@ try {
  const section=outline.nodes.find(n=>n.kind==='SECTION'&&n.title.startsWith('2.1 '));
  const row=page.locator(`li[data-node-id="${section.outline_node_id}"] > .outline-row`);
  if(!await row.isVisible())await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-disclosure`).click();
- await row.locator('.outline-guide-action').click();await page.locator('.guide-text').first().waitFor();
+ assert.equal(await page.locator('.outline-guide-action').count(), 0);
+ await row.locator('.outline-target').click();
+ await page.locator('#outline-toggle').click();
+ const entry=page.locator(`.section-guide-entry[data-section-id="${section.outline_node_id}"]`);
+ await entry.scrollIntoViewIfNeeded();
+ await page.screenshot({path:'.tmp/guide-section-entry.png'});
+ const entryPosition=()=>entry.evaluate(button=>{
+  const page=button.closest('.page'), r=page.getBoundingClientRect(), b=button.getBoundingClientRect();
+  return {y:(b.top-r.top)/r.height, right:r.right-b.right, width:r.width};
+ });
+ assert.ok(Math.abs((await entryPosition()).y-section.start_y)<.002);
+ await page.locator('#zoom-in').click();
+ await entry.waitFor();
+ assert.ok(Math.abs((await entryPosition()).y-section.start_y)<.002);
+ await page.locator('#zoom-out').click();
+ await entry.waitFor();
+ assert.equal(await entry.count(),1);
+ await entry.click();await page.locator('.guide-text').first().waitFor();
  const width=()=>page.locator('#guide-panel').evaluate(el=>el.getBoundingClientRect().width);
  const pdfVisible=async()=>{const pdf=await page.locator('#viewer').boundingBox(),guide=await page.locator('#guide-panel').boundingBox();assert.ok(pdf.width>=319);assert.ok(pdf.x+pdf.width<=guide.x+1);};
  await pdfVisible();const original=await width();
