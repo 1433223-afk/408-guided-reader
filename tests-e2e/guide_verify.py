@@ -39,7 +39,7 @@ with sqlite3.connect(Path(data_dir) / "state.sqlite3") as connection:
         expected_fields = {"model", "messages", "temperature", "max_tokens", "stream"}
         if call["provider"] == "openrouter" and "candidate" not in payload:
             expected_fields.add("reasoning_effort")
-            assert call["body"]["reasoning_effort"] == "high"
+            assert call["body"]["reasoning_effort"] == "low"
         assert set(call["body"]) == expected_fields
         assert "Authorization" not in json.dumps(call["body"])
         assert "test-loopback-key" not in json.dumps(call["body"])

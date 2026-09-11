@@ -383,7 +383,7 @@ def test_guide_reasoning_does_not_change_review_call(guide, monkeypatch):
     selected = TeachingService(g.database, runtime)
     selected.request(rev, section, str(uuid4()))
     drain(selected)
-    assert runtime.options[0]['reasoning_effort'] == 'high'
+    assert runtime.options[0]['reasoning_effort'] == 'low'
     assert runtime.options[1]['reasoning_effort'] is None
 
 

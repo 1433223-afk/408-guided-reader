@@ -123,7 +123,7 @@ class TeachingService:
                 [{"role": "system", "content": system + feedback}, {"role": "user", "content": encoded(payload)}],
                 interaction_id=f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 max_tokens=16384 if role == "GENERATE" else 8192,
-                reasoning_effort="high" if role == "GENERATE" and self.provider == "openrouter" else None)
+                reasoning_effort="low" if role == "GENERATE" and self.provider == "openrouter" else None)
             self._update(asset["id"], **{("generator_json" if role == "GENERATE" else "reviewer_json"): encoded({
                 "effective_config": completion.effective_config, "latency_ms": completion.latency_ms,
                 "usage": completion.usage, "response_metadata": completion.response_metadata})})

@@ -334,3 +334,27 @@ Final ignored artifacts: `.tmp/guide-framework-gemini-ready-20260911/`; generati
 script `.tmp/generate-framework-gemini-ready.py` (paid request, no Review/publication). Full body SHA-256:
 `fe6251d50b7f47c10aca1a79d862f42c90359f1adaadb8d186b08e661a540da4`.
 The checkpoint containing this amendment is an implementation/human-retest checkpoint, not acceptance.
+
+
+## Simpler reading assistance / low reasoning — 2026-09-11
+
+User rejected the previous Gemini framework sample and explicitly requested low reasoning and fewer
+writing rules. Simplified GENERATOR and the trailing task to plain teaching prose: chapter purpose,
+connections, small examples and practical reading help. Removed the long editorial prescription and
+length target. Existing JSON/source constraints remain for Reader compatibility. OpenRouter Guide
+calls now request `reasoning_effort=low`; Review and other agents remain unchanged.
+
+Real 2.1 generation uses Gemini 3.8 Flash with low reasoning and the same 748 evidence items. First
+response used a JSON fence and failed parsing. Second passed format validation but still had excessive
+procedures and overgeneralizations. Two implementer-authored editing calls simplified/corrected it;
+no live AI Review, publication or manual rewriting of model output. This is not first-call quality
+acceptance. The source Library was opened read-only; Teaching assets remained unchanged. Prior user
+FAIL stands. The deliverable is an unpublished manuscript for user retest, not Phase closure.
+
+Validation: 241 Python PASS, 2 unchanged optional OCR skips; git diff --check PASS. Existing test and
+E2E wire expectation updated for low effort. Frontend/UI E2E INTENTIONALLY_NOT_RUN: no UI change and
+no authorized Review/publication flow in this content task. Prior prompting-example research is
+reused; no new framework, dependency or external code. Service not restarted.
+
+Artifacts: `.tmp/guide-simple-gemini-low-final-20260911/` (exact messages, input, raw model response,
+metadata, candidate and full Markdown); reproduction `.tmp/generate-simple-gemini-low-final.py`.
