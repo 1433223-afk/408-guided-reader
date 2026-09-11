@@ -358,3 +358,27 @@ reused; no new framework, dependency or external code. Service not restarted.
 
 Artifacts: `.tmp/guide-simple-gemini-low-final-20260911/` (exact messages, input, raw model response,
 metadata, candidate and full Markdown); reproduction `.tmp/generate-simple-gemini-low-final.py`.
+
+
+## Problem-led explanation correction — 2026-09-11
+
+User rejected the low-reasoning manuscript: headings and paragraphs still classified knowledge
+rather than explaining why it becomes necessary. Replaced the writing prompt with a demonstration
+of reasoning from a concrete need and simple constraints, trying an intuitive representation,
+then encountering its limits. Headings follow the unresolved question, not textbook categories.
+Reused the recorded Cornell problem-based learning and Nand2Tetris functional-dependency research;
+no framework/code/dependency adopted. The worked 5-minus-7 passage demonstrates explanatory sequence,
+not a required topic for other Sections or an invented history.
+
+Only generation prompts changed; Gemini 3.8 Flash remains low reasoning. Real 2.1 first generation
+still over-explained procedures and exceeded the source-ID count. An editorial rewrite improved the
+causal line but added an extra output field and a prohibited word. A second editorial call corrected
+format and overstatements. Final exact model response passes format/source validation, Teaching assets
+unchanged using read-only Library access. No manual rewrite, live AI Review, publication or service
+restart. Human acceptance remains FAIL pending retest; no first-call reliability claim.
+
+Validation: 241 Python PASS / 2 unchanged optional OCR skips; git diff --check PASS. UI/frontend E2E
+INTENTIONALLY_NOT_RUN because this is prompt-only unpublished content work. Final manuscript and
+exact input/messages/metadata: `.tmp/guide-problem-origin-final-20260911/`. Reproduction (paid,
+generation-only): `.tmp/generate-problem-origin-final.py`. This is a human-retest checkpoint,
+not user acceptance or Phase closure.
