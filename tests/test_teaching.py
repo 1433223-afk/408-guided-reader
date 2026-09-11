@@ -7,7 +7,7 @@ import pytest
 
 from reader_service.agent_runtime import ProviderCompletion, ProviderFailure, ProviderFailureKind
 from reader_service.jobs import JobRepository
-from reader_service.teaching import evidence
+from reader_service.teaching import evidence, writing_context
 from reader_service.teaching.contracts import (GENERATOR, FORMATTER, draft_messages, validate_guide, validate_review,
                                               validate_draft, validate_formatted)
 from reader_service.teaching.service import TeachingService
@@ -366,9 +366,12 @@ def test_editorial_instruction_preserves_source_and_review_boundary(guide):
     g.request(rev, section, str(uuid4()))
     drain(g)
     written, generated, reviewed = runtime.messages
-    assert written == draft_messages(GENERATOR, packet)
+    with g.database.connect() as c:
+        _, ledger, _ = evidence.build(c, rev, section)
+        context, _, _ = writing_context.build(c, rev, packet, ledger)
+    assert written == draft_messages(GENERATOR, context)
     assembly = json.loads(generated[1]['content'])
-    assert assembly['source'] == packet
+    assert assembly['source'] == writing_context.formatter_source(packet, context)
     assert assembly['draft'] == '\n\n'.join(m['text'] for m in candidate(packet)['modules'])
     assert generated[0]['content'] == FORMATTER
     assert len(generated) == 3 and generated[2]['role'] == 'user'
@@ -379,6 +382,68 @@ def test_editorial_instruction_preserves_source_and_review_boundary(guide):
     review_payload = json.loads(reviewed[1]['content'])
     assert set(review_payload) == {'source', 'candidate'}
     assert review_payload['source'] == packet
+    assert g.snapshot(rev, section)['published'] is not None
+
+
+def test_author_context_separates_appendices_furniture_and_exam_notes():
+    lines = [('26', .07), ('26', .5), ('第2章 数据', .07),
+             ('2.1.1 正文', .2), ('【例2.1】正文例题', .4), ('解：保留解答', .5),
+             ('命题追踪', .5), ('编码比较（2024）', .5),
+             ('统考大纲要求分析C', .9), ('第2章 数据', .07), ('语言转换。', .2),
+             ('注意：不要死记。', .5), ('2.1.5 本节习题精选', .5), ('不要发送习题', .5),
+             ('2.1.6 答案与解析', .5), ('不要发送答案', .5)]
+    packet = {'parent': {'title': '第2章 数据'}, 'evidence': [
+        {'source_id': str(i), 'text': t} for i, (t, _) in enumerate(lines)]}
+    ledger = {str(i): {'quad': [[0, y]] * 4} for i, (_, y) in enumerate(lines)}
+    body, notes, removed = writing_context.clean_body(packet, ledger)
+    assert body == '26\n2.1.1 正文\n【例2.1】正文例题\n解：保留解答\n\n注意：不要死记。'
+    assert notes == ['编码比较（2024）', '统考大纲要求分析C语言转换。']
+    assert len(removed) == 9
+
+
+def test_author_context_uses_only_directory_titles_outside_section(guide):
+    _, _, g, rev, section = guide
+    with g.database.connect() as c:
+        packet, ledger, _ = evidence.build(c, rev, section)
+        context, _, _ = writing_context.build(c, rev, packet, ledger)
+    assert context['current_section'] == packet['section']['title']
+    assert context['previous_section'] is None
+    assert context['next_section'] == context['chapter_contents'][1]
+    assert not {'kp_ledger', 'chapter_structure_version', 'evidence'} & context.keys()
+    assert not any(e['source_id'] in draft_messages(GENERATOR, context)[1]['content'] for e in packet['evidence'])
+
+
+def test_directory_title_dependency_does_not_read_neighbor_body(guide):
+    fixture, _, g, rev, section = guide
+    g.request(rev, section, str(uuid4()))
+    drain(g)
+    sibling = fixture['sections'][1]['outline_node_id']
+    with g.database.connect() as c:
+        row = c.execute('SELECT dependencies_json FROM teaching_assets WHERE section_node_id=?', (section,)).fetchone()
+        deps = json.loads(row[0])
+        dep = next(n for n in deps['outline_nodes_used'] if n['outline_node_id'] == sibling)
+        assert set(dep) == {'outline_node_id', 'identity_revision'}
+        c.execute('UPDATE outline_nodes SET identity_revision=identity_revision+1 WHERE outline_node_id=?', (sibling,))
+    assert g.snapshot(rev, section)['published']['stale']
+
+
+def test_writer_contract_retry_keeps_clean_system_and_context(guide):
+    _, runtime, g, rev, section = guide
+    original = runtime.complete_for_with_metadata
+    count = 0
+    def complete(provider, messages, **kwargs):
+        nonlocal count
+        result = original(provider, messages, **kwargs)
+        if messages[0]['content'] == GENERATOR:
+            count += 1
+            if count == 1:
+                return ProviderCompletion('高频', 1, None, {'provider': provider})
+        return result
+    runtime.complete_for_with_metadata = complete
+    g.request(rev, section, str(uuid4()))
+    drain(g)
+    assert count == 2
+    assert runtime.messages[0] == runtime.messages[1]
     assert g.snapshot(rev, section)['published'] is not None
 
 

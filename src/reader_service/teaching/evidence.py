@@ -77,7 +77,7 @@ def current(connection, deps):
             return False
     for node in deps["outline_nodes_used"]:
         row = connection.execute("SELECT identity_revision,physical_revision FROM outline_nodes WHERE book_source_revision_id=? AND outline_node_id=?", (deps["book_source_revision_id"], node["outline_node_id"])).fetchone()
-        if row is None or any(row[k] != node[k] for k in ("identity_revision", "physical_revision")):
+        if row is None or any(row[k] != node[k] for k in ("identity_revision", "physical_revision") if k in node):
             return False
     for page in deps["pages_used"]:
         rows = [dict(r) for r in connection.execute("SELECT line_ordinal,text,quad_json FROM ocr_lines WHERE book_source_revision_id=? AND pdf_page_index=? ORDER BY line_ordinal", (deps["book_source_revision_id"], page["pdf_page_index"]))]

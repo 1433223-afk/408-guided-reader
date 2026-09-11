@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from reader_service.agent_runtime import ProviderFailure
 from reader_service.jobs.repository import now
-from . import evidence
+from . import evidence, writing_context
 from .contracts import (GENERATOR, REVIEWER, FORMATTER, draft_messages, generation_messages, encoded,
                         strict_json, validate_guide, validate_review, validate_draft, validate_formatted)
 
@@ -121,7 +121,7 @@ class TeachingService:
             packet = payload["source"]
             draft = self._call(asset, "WRITE", GENERATOR, payload,
                                lambda text: validate_draft(text, packet))
-            payload = {"source": packet, "draft": draft}
+            payload = {"source": writing_context.formatter_source(packet, payload["writing_context"]), "draft": draft}
             system = FORMATTER
         feedback = ""
         generating = role in {"WRITE", "GENERATE"}
@@ -132,7 +132,7 @@ class TeachingService:
         for attempt in range(2):
             completion = self.runtime.complete_for_with_metadata(
                 selected,
-                draft_messages(system + feedback, payload["source"]) if role == "WRITE" else
+                draft_messages(system, payload["writing_context"]) if role == "WRITE" else
                 generation_messages(system + feedback, payload) if role == "GENERATE" else
                 [{"role": "system", "content": system + feedback}, {"role": "user", "content": encoded(payload)}],
                 interaction_id=f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
@@ -163,11 +163,21 @@ class TeachingService:
             return
         try:
             packet, ledger, deps = self._packet(asset)
+            author_context = None
+            if asset["stage"] == "GENERATE" and not asset["content_json"]:
+                with self.database.connect() as c:
+                    c.execute("BEGIN")
+                    author_context, positioning, _ = writing_context.build(
+                        c, asset["book_source_revision_id"], packet, ledger)
+                known = {n["outline_node_id"] for n in deps["outline_nodes_used"]}
+                deps["outline_nodes_used"].extend(n for n in positioning if n["outline_node_id"] not in known)
             if not asset["dependencies_json"]:
                 self._update(asset["id"], dependencies_json=encoded(deps), sources_json=encoded(ledger))
                 asset = self._asset(job["id"])
             if asset["stage"] == "GENERATE":
                 payload = {"source": packet}
+                if author_context is not None:
+                    payload["writing_context"] = author_context
                 previous = json.loads(asset["content_json"]) if asset["content_json"] else None
                 issues = json.loads(asset["issues_json"]) if asset["issues_json"] else []
                 affected = {x["module_id"] for x in issues}

@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from reader_service.teaching.evidence import build
+from reader_service.teaching import writing_context
 from reader_service.teaching.contracts import GENERATOR, draft_messages, validate_draft
 
 data_dir, ready_section, no_kp_section = sys.argv[1:4]
@@ -24,8 +25,9 @@ with sqlite3.connect(Path(data_dir) / "state.sqlite3") as connection:
                 matches = []
                 for sid in (ready_section, no_kp_section):
                     rev = connection.execute('SELECT book_source_revision_id FROM outline_nodes WHERE outline_node_id=?', (sid,)).fetchone()[0]
-                    packet, _, _ = build(connection, rev, sid)
-                    matches.append(draft_messages(GENERATOR, packet)[1]['content'])
+                    packet, ledger, _ = build(connection, rev, sid)
+                    context, _, _ = writing_context.build(connection, rev, packet, ledger)
+                    matches.append(draft_messages(GENERATOR, context)[1]['content'])
                 assert call['body']['messages'][1]['content'] in matches
                 assert call['body']['stream'] is False
                 if call['provider'] == 'openrouter':
@@ -38,23 +40,25 @@ with sqlite3.connect(Path(data_dir) / "state.sqlite3") as connection:
         section_id = payload["source"]["section"]["id"]
         assert section_id in {ready_section, no_kp_section}
         revision_id = connection.execute("SELECT book_source_revision_id FROM outline_nodes WHERE outline_node_id=?", (section_id,)).fetchone()[0]
-        fresh, _, _ = build(connection, revision_id, section_id, use_kp="kp_ledger" in payload["source"])
+        fresh, fresh_ledger, _ = build(connection, revision_id, section_id, use_kp="kp_ledger" in payload["source"])
         # Persisted ledgers remain authoritative for older published versions, even
         # after a source-ID implementation refinement. IDs cannot be client-authored.
         supplied = payload["source"]
         if 'draft' in payload:
+            context, _, _ = writing_context.build(connection, revision_id, fresh, fresh_ledger)
             author_texts = []
             for prior in calls:
-                if prior['body']['messages'][0]['content'].startswith(GENERATOR) and prior['body']['messages'][1]['content'] == draft_messages(GENERATOR, fresh)[1]['content']:
+                if prior['body']['messages'][0]['content'].startswith(GENERATOR) and prior['body']['messages'][1]['content'] == draft_messages(GENERATOR, context)[1]['content']:
                     try:
                         author_texts.append(validate_draft(prior['answer'], fresh))
                     except ValueError:
                         pass  # Rejected author output must not become the assembly input.
             assert payload['draft'] in author_texts
         assert {k: v for k, v in supplied.items() if k != 'evidence'} == {k: v for k, v in fresh.items() if k != 'evidence'}
-        assert [e['text'] for e in supplied['evidence']] == [e['text'] for e in fresh['evidence']]
+        expected_source = writing_context.formatter_source(fresh, context) if 'draft' in payload else fresh
+        assert supplied['evidence'] == expected_source['evidence']
         ledgers = [json.loads(r['sources_json']) for r in connection.execute('SELECT sources_json FROM teaching_assets WHERE section_node_id=? AND sources_json IS NOT NULL', (section_id,))]
-        assert any(set(ledger) == {e['source_id'] for e in supplied['evidence']}
+        assert any({e['source_id'] for e in supplied['evidence']} <= set(ledger)
                    and all(ledger[e['source_id']]['quote'] == e['text'] for e in supplied['evidence']) for ledger in ledgers)
         assert call["body"]["stream"] is False
         expected_fields = {"model", "messages", "temperature", "max_tokens", "stream"}

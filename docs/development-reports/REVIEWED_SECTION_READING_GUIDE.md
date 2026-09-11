@@ -435,3 +435,53 @@ model/timeout override isolation and explicit configuration. Wire verifier updat
 plain-text author inputs and source-preserving formatter inputs. UI/live Review-publication E2E is
 INTENTIONALLY_NOT_RUN: this task requests an unpublished manuscript and no UI change; the final
 formatter's real-run blocker above remains explicit. No further live calls after quota exhaustion.
+
+## Author-context separation — 2026-09-11
+
+User explicitly authorized chapter/adjacent-Section title context and body-only Guide input.
+Replaced GENERATOR with the user's supplied System text, without additional writing rules.
+The latest raw 2.1 sample is for human inspection; content acceptance remains FAIL/pending retest.
+No live Review, formatting call, publication, service restart or UI change occurred.
+
+- Added a local textbook-context adapter: book/chapter titles, the chapter's real Section directory,
+  current/previous/next Section titles, cleaned current-Section OCR, and separate explicit textbook
+  exam notes. Neighbor content is never read. KP titles are omitted from author input; the existing
+  optional ledger remains in the source-aware formatter/Review packet, without coverage instructions.
+- Recognizable exercise/answer headings exclude those blocks; recognized margin titles/page numbers
+  and publishing furniture are removed using geometry. Body examples, worked solutions, learning
+  notes, and numeric/formula lines remain. Exam sidebars and explicit inline exam commentary are
+  separated. This is a bounded adapter for the current textbook conventions, not a generic document
+  parser or OCR correction engine; an ambiguous exam sidebar fails instead of swallowing body text.
+- Writer contract retries resend the same System/context, without injecting failure instructions.
+  The formatter receives only unchanged body source lines; partially filtered lines are not assigned
+  fabricated source IDs. Review retains its original full evidence and prompt. Source IDs, source
+  geometry, schema, publication and semantic rework are unchanged.
+- Newly consumed directory titles record identity-only dependencies in the existing dependency list.
+  They do not depend on neighboring physical ranges/OCR. The initial over-broad physical dependency
+  failed the sibling-scope regression and was corrected; tests prove physical-only neighbor changes
+  do not stale this Guide, whereas a consumed title's identity revision does. No migration added.
+
+Real 2.1: 748 source lines -> 8,490 body characters, 12 separate exam notes, 397 untouched body lines
+available to the formatter. Removed 304 exercise/answer lines, 26 margin-furniture lines and 18 exam
+sidebar lines; inline exam commentary is separately extracted. Previous Section is the actual
+`1.5 常见问题和易混淆知识点`, next is `2.2 运算方法和运算电路`; all five Chapter 2 Section titles
+are included. Exact saved author messages match final code. No hand-written textbook replacement.
+
+OpenRouter `openai/gpt-6-astra`, low reasoning, generated a raw 3,210-character manuscript after one
+network failure and the runtime's transport retry. No editorial rewrite or post-generation retry.
+The output still contains many headings, detailed formulas and procedural advice; no claim that it
+meets the user's teaching-style goal. Existing restrictive exam-word/quotation checks were not changed;
+this raw manuscript is not a validated/publishable candidate. Read-only Library access and before/after
+comparison confirmed Teaching assets unchanged.
+
+Validation: 250 Python tests PASS / 2 unchanged optional OCR skips in the broad run; then 33 targeted
+Guide tests PASS including the added title dependency test. Tests cover body/example retention,
+exercise/answer exclusion, cross-page exam-note separation, no author source IDs, clean retry messages,
+original Review payload and safe failed regeneration. `git diff --check` PASS. Frontend and live UI/
+Review-publication E2E INTENTIONALLY_NOT_RUN: this is unpublished context/content work with no UI change.
+The existing E2E request verifier was adapted to the new author context and formatter subset but was
+not run against a live publication. No external code, dependency, generic parser or pipeline added.
+
+Ignored personal-material artifacts: `.tmp/guide-clean-context-20260911/` contains `AI完整输入.md`,
+exact messages, context, removal audit, formatter source, provider metadata and `2.1-导读.md`.
+Reproduction: `.tmp/generate-clean-context.py` (paid author-only call, no Review/publication).
