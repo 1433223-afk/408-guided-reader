@@ -5,7 +5,8 @@ from uuid import UUID, uuid4
 from reader_service.agent_runtime import ProviderFailure
 from reader_service.jobs.repository import now
 from . import evidence
-from .contracts import GENERATOR, REVIEWER, generation_messages, encoded, strict_json, validate_guide, validate_review
+from .contracts import (GENERATOR, REVIEWER, FORMATTER, draft_messages, generation_messages, encoded,
+                        strict_json, validate_guide, validate_review, validate_draft, validate_formatted)
 
 
 class TeachingService:
@@ -14,6 +15,9 @@ class TeachingService:
         self.runtime = runtime
         self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "openrouter").strip().lower()
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
+        self.generator_model = os.environ.get("GUIDED_READER_GUIDE_MODEL") or (
+            "openai/gpt-6-astra" if self.provider == "openrouter"
+            and not os.environ.get("GUIDED_READER_OPENROUTER_MODEL") else None)
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
         try:
@@ -112,25 +116,42 @@ class TeachingService:
                                   use_kp=not deps or "chapter_structure_version" in deps)
 
     def _call(self, asset, role, system, payload, validator):
+        draft = None
+        if role == "GENERATE" and "rework" not in payload:
+            packet = payload["source"]
+            draft = self._call(asset, "WRITE", GENERATOR, payload,
+                               lambda text: validate_draft(text, packet))
+            payload = {"source": packet, "draft": draft}
+            system = FORMATTER
         feedback = ""
-        selected = self.provider if role == "GENERATE" else self.reviewer
+        generating = role in {"WRITE", "GENERATE"}
+        selected = self.provider if generating else self.reviewer
         provider, model = self.runtime.provider_identity(selected)
-        self._update(asset["id"], **{("generator_json" if role == "GENERATE" else "reviewer_json"): encoded({"provider": provider, "model": model, "stage": role})})
+        model_override = self.generator_model if generating else None
+        self._update(asset["id"], **{("generator_json" if generating else "reviewer_json"): encoded({"provider": provider, "model": model_override or model, "stage": role})})
         for attempt in range(2):
             completion = self.runtime.complete_for_with_metadata(
-                self.provider if role == "GENERATE" else self.reviewer,
+                selected,
+                draft_messages(system + feedback, payload["source"]) if role == "WRITE" else
                 generation_messages(system + feedback, payload) if role == "GENERATE" else
                 [{"role": "system", "content": system + feedback}, {"role": "user", "content": encoded(payload)}],
                 interaction_id=f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 max_tokens=16384 if role == "GENERATE" else 8192,
-                reasoning_effort="low" if role == "GENERATE" and self.provider == "openrouter" else None)
-            self._update(asset["id"], **{("generator_json" if role == "GENERATE" else "reviewer_json"): encoded({
+                reasoning_effort="low" if generating and self.provider == "openrouter" else None,
+                model=model_override,
+                timeout_seconds=120 if generating and self.provider == "openrouter" else None)
+            self._update(asset["id"], **{("generator_json" if generating else "reviewer_json"): encoded({
                 "effective_config": completion.effective_config, "latency_ms": completion.latency_ms,
                 "usage": completion.usage, "response_metadata": completion.response_metadata})})
             try:
                 if (completion.response_metadata or {}).get("finish_reason") == "length":
                     raise ValueError("模型输出被长度预算截断，未接受不完整导读。")
-                return validator(strict_json(completion.answer))
+                if role == "WRITE":
+                    return validator(completion.answer)
+                value = strict_json(completion.answer)
+                if draft is not None:
+                    validate_formatted(value, draft, payload["source"])
+                return validator(value)
             except ValueError as exc:
                 feedback = "\n上次契约验证失败：" + str(exc) + " 请严格修正格式和来源约束。"
                 if attempt:

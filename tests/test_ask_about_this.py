@@ -2018,3 +2018,25 @@ def test_incomplete_provider_response_is_retried_without_accepting_partial_text(
         assert failure.value.code == 'network'
     assert len(calls) == 2
     assert 'private partial provider content' not in caplog.text
+
+
+def test_model_override_is_per_call_and_reported_without_changing_provider():
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    default_model = providers.provider_identity("openrouter")[1]
+    messages = [{"role": "user", "content": "bounded"}]
+    events = []
+    changed = providers.complete_for_with_metadata(
+        "openrouter", messages, model="openai/gpt-6-astra", timeout_seconds=120, attempt_observer=events.append)
+    ordinary = providers.complete_for_with_metadata("openrouter", messages)
+    assert [c["body"]["model"] for c in adapters["openrouter"].calls] == [
+        "openai/gpt-6-astra", default_model]
+    assert changed.effective_config["request_parameters"]["timeout_seconds"] == 120
+    assert ordinary.effective_config["request_parameters"]["timeout_seconds"] != 120
+    assert changed.effective_config["model"] == "openai/gpt-6-astra"
+    assert ordinary.effective_config["model"] == default_model
+    assert providers.provider_identity("openrouter")[1] == default_model
+    assert all(e["model"] == "openai/gpt-6-astra" for e in events)
+    for invalid in ("", " ", "x" * 121, 123):
+        with pytest.raises(ValueError, match="model is invalid"):
+            providers.complete_for_with_metadata("openrouter", messages, model=invalid)
+    assert len(adapters["openrouter"].calls) == 2

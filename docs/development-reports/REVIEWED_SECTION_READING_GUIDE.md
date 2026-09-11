@@ -382,3 +382,56 @@ INTENTIONALLY_NOT_RUN because this is prompt-only unpublished content work. Fina
 exact input/messages/metadata: `.tmp/guide-problem-origin-final-20260911/`. Reproduction (paid,
 generation-only): `.tmp/generate-problem-origin-final.py`. This is a human-retest checkpoint,
 not user acceptance or Phase closure.
+
+
+## Author prose before serialization — 2026-09-11
+
+User repeatedly rejected both topic summaries and prescribed question chains, then authorized changes
+to prompts, context and code to achieve natural teaching prose. Current content manuscript is
+READY_FOR_USER_RETEST; prior USER_ACCEPTANCE FAIL remains. Phase is not closed.
+
+Adopted a short author instruction and two operations inside the existing GENERATE stage. The author
+receives the complete current Section OCR in order, plus supplied parent/Section titles, and writes
+plain prose without KP identifiers, source IDs or JSON slots. A formatter then receives the unchanged
+original source packet and the draft, supplies existing source IDs and serializes the article into
+the unchanged schema. Exact paragraph/text comparison rejects additions, deletions, reordering or
+rewriting during assembly. Short drafts that fit one text field must stay in one storage fragment.
+CJK quotation delimiters are removed as typography before the existing prose validator; ASCII/code
+quotation marks are preserved. Both raw and normalized real draft remain in ignored evidence.
+
+Guide author/formatter default to OpenRouter `openai/gpt-6-astra`, low reasoning, with a bounded
+120-second transport timeout. Added per-call model/timeout overrides to the existing runtime without
+mutating provider defaults, credentials, endpoints or other calls. Explicit GUIDE_MODEL takes
+precedence; an existing OPENROUTER_MODEL is respected when GUIDE_MODEL is absent. Review retains its
+original prompt, full source packet, selected provider/model and parameters. No source ledger,
+dependency, schema, durable stage, regeneration/publication or UI change. Failure keeps the old Guide.
+
+Experiments with Gemini, Sonnet and Opus, reduced context, style demonstrations and a temporary
+read-then-write preparation step did not produce sufficient improvement. Those experiments are not
+production features. The preparation pipeline was removed. The final author again sees **all 748
+original Section evidence lines**, including exercises, with no invented context or handwritten
+teaching plan. Official OpenRouter model listings verified the tested slugs; existing recorded
+example-prompting/Section-writing prior art was reused. No external code or dependency adopted.
+
+Real 2.1 evidence: `.tmp/guide-author-draft-20260911/2.1-导读.md`, 1342 characters including paragraph
+separators; SHA-256 of `draft.md`:
+`2f6c60afcbaa809b20f79a583dfac229f949d3fa5ca1a28c84e07912add26fd1`.
+The first author response failed the existing exam-word check; the bounded second attempt produced
+the manuscript. Initial formatter output exceeded the existing fragment limit; retry preserved the
+complete prose but used five fragments. Tightened the short-draft storage rule to avoid artificial
+headings. One later model response still violated it; the next attempt returned OpenRouter **quota**.
+Thus final single-fragment real-model validation is **BLOCKED_OPENROUTER_QUOTA**, not PASS. The old
+candidate.json is retained as evidence, not a publishable final candidate. The final Markdown is the
+completed author draft, not a hand-edited replacement. No reliability or cross-Section quality claim.
+
+The Library was read-only and Teaching assets remained unchanged. No live AI Review, publication,
+service restart, or user acceptance occurred. Reproduction: `.tmp/generate-author-draft.py`;
+final formatting-only attempt: `.tmp/format-author-draft-final-2.py` (paid calls).
+
+Validation: broad **247 Python PASS / 2 unchanged optional OCR skips**, **30 frontend PASS**. Affected
+Guide/runtime suite **97 PASS** after the short-draft guard. Tests cover unchanged Review context,
+exact prose preservation, failed assembly retaining the old Guide and retry, source-ID rejection,
+model/timeout override isolation and explicit configuration. Wire verifier updated for complete
+plain-text author inputs and source-preserving formatter inputs. UI/live Review-publication E2E is
+INTENTIONALLY_NOT_RUN: this task requests an unpublished manuscript and no UI change; the final
+formatter's real-run blocker above remains explicit. No further live calls after quota exhaustion.

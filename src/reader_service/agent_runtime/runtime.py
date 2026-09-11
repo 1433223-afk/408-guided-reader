@@ -9,7 +9,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, Protocol
 from urllib.parse import urlparse
@@ -301,8 +301,19 @@ class AgentRuntime:
         retain_request_body: bool = True,
         thinking_mode: str | None = None,
         reasoning_effort: str | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> ProviderCompletion:
-        effective_max_tokens = self.config.max_tokens if max_tokens is None else max_tokens
+        config = self.config
+        if model is not None:
+            if not isinstance(model, str) or not model.strip() or len(model) > 120:
+                raise ValueError("provider call model is invalid")
+            config = replace(config, model=model.strip())
+        if timeout_seconds is not None:
+            if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 1 <= timeout_seconds <= 180:
+                raise ValueError("provider call timeout is invalid")
+            config = replace(config, timeout_seconds=timeout_seconds)
+        effective_max_tokens = config.max_tokens if max_tokens is None else max_tokens
         if isinstance(effective_max_tokens, bool) or not 1 <= effective_max_tokens <= 16384:
             raise ValueError("provider call max_tokens must be between 1 and 16384")
         allowed_thinking_modes = {
@@ -310,7 +321,7 @@ class AgentRuntime:
             "zhipu": {"enabled", "disabled"},
         }
         if thinking_mode is not None and thinking_mode not in allowed_thinking_modes.get(
-            self.config.provider, set()
+            config.provider, set()
         ):
             raise ValueError("thinking mode is invalid for the selected provider")
         allowed_reasoning_efforts = {
@@ -318,21 +329,21 @@ class AgentRuntime:
             "openrouter": {"low", "medium", "high"},
         }
         if reasoning_effort is not None and reasoning_effort not in allowed_reasoning_efforts.get(
-            self.config.provider, set()
+            config.provider, set()
         ):
             raise ValueError("reasoning effort is invalid for the selected provider")
         if not self._configuration_valid:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,
                 "invalid_configuration",
-                f"{self.config.provider} 配置无效；Reader 其余能力仍可正常使用。",
+                f"{config.provider} 配置无效；Reader 其余能力仍可正常使用。",
             )
         api_key = self._read_key()
         if not api_key:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,
                 "unconfigured",
-                f"尚未配置 {self.config.provider} API 密钥；Reader 其余能力仍可正常使用。",
+                f"尚未配置 {config.provider} API 密钥；Reader 其余能力仍可正常使用。",
             )
         with self._lock:
             now = self.clock()
@@ -340,12 +351,12 @@ class AgentRuntime:
                 raise ProviderFailure(
                     ProviderFailureKind.COOLING,
                     "cooling",
-                    f"{self.config.provider} 连续失败，正在短暂冷却；教材阅读功能不受影响。",
+                    f"{config.provider} 连续失败，正在短暂冷却；教材阅读功能不受影响。",
                 )
         body = {
-            "model": self.config.model,
+            "model": config.model,
             "messages": copy.deepcopy(messages),
-            "temperature": self.config.temperature,
+            "temperature": config.temperature,
             "max_tokens": effective_max_tokens,
             "stream": False,
         }
@@ -356,20 +367,20 @@ class AgentRuntime:
         call_id = interaction_id or str(uuid4())
         started = time.perf_counter()
         last_failure: ProviderFailure | None = None
-        for attempt in range(1, self.config.max_attempts + 1):
+        for attempt in range(1, config.max_attempts + 1):
             transport_started = time.perf_counter()
             if retain_request_body:
                 self.inspector.record(
-                    provider=self.config.provider,
-                    endpoint=self.config.endpoint,
+                    provider=config.provider,
+                    endpoint=config.endpoint,
                     request_body=body,
                     interaction_id=call_id,
                     attempt=attempt,
                 )
             logger.info(
                 "assistant_provider_call provider=%s model=%s attempt=%d interaction_id=%s",
-                self.config.provider,
-                self.config.model,
+                config.provider,
+                config.model,
                 attempt,
                 call_id,
             )
@@ -377,15 +388,15 @@ class AgentRuntime:
                 attempt_observer,
                 {
                     "status": "STARTED",
-                    "provider": self.config.provider,
-                    "model": self.config.model,
+                    "provider": config.provider,
+                    "model": config.model,
                     "interaction_id": call_id,
                     "transport_attempt": attempt,
                 },
             )
             try:
                 response = self.adapter.complete(
-                    self.config.endpoint, api_key, body, self.config.timeout_seconds
+                    config.endpoint, api_key, body, config.timeout_seconds
                 )
             except ProviderFailure as failure:
                 last_failure = failure
@@ -393,8 +404,8 @@ class AgentRuntime:
                     attempt_observer,
                     {
                         "status": "FAILED",
-                        "provider": self.config.provider,
-                        "model": self.config.model,
+                        "provider": config.provider,
+                        "model": config.model,
                         "interaction_id": call_id,
                         "transport_attempt": attempt,
                         "latency_ms": max(
@@ -407,7 +418,7 @@ class AgentRuntime:
                 )
                 logger.warning(
                     "assistant_provider_failure provider=%s code=%s attempt=%d interaction_id=%s",
-                    self.config.provider,
+                    config.provider,
                     failure.code,
                     attempt,
                     call_id,
@@ -417,7 +428,7 @@ class AgentRuntime:
                     raise
                 if failure.kind is not ProviderFailureKind.TRANSIENT:
                     raise
-                if attempt < self.config.max_attempts:
+                if attempt < config.max_attempts:
                     self.sleeper(0.35 * (2 ** (attempt - 1)))
                     continue
                 self._start_cooling()
@@ -435,8 +446,8 @@ class AgentRuntime:
                     attempt_observer,
                     {
                         "status": "SUCCEEDED",
-                        "provider": self.config.provider,
-                        "model": self.config.model,
+                        "provider": config.provider,
+                        "model": config.model,
                         "interaction_id": call_id,
                         "transport_attempt": attempt,
                         "latency_ms": max(
@@ -450,7 +461,7 @@ class AgentRuntime:
                     answer=normalized.answer,
                     latency_ms=max(0, round((time.perf_counter() - started) * 1000)),
                     usage=copy.deepcopy(normalized.usage),
-                    effective_config=self.config.effective_config(
+                    effective_config=config.effective_config(
                         max_tokens=effective_max_tokens,
                         thinking_mode=thinking_mode,
                         reasoning_effort=reasoning_effort,
@@ -602,6 +613,8 @@ class ProviderRuntimeSet:
         retain_request_body: bool = True,
         thinking_mode: str | None = None,
         reasoning_effort: str | None = None,
+        model: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> ProviderCompletion:
         runtime = self.runtimes.get(provider)
         if runtime is None:
@@ -618,6 +631,8 @@ class ProviderRuntimeSet:
             retain_request_body=retain_request_body,
             thinking_mode=thinking_mode,
             reasoning_effort=reasoning_effort,
+            model=model,
+            timeout_seconds=timeout_seconds,
         )
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:
