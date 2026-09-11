@@ -26,7 +26,7 @@ const state = {
   currentPage: 0, generation: 0, renderTasks: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
-  annotationData: new Map(), selection: null, selecting: false, selectionMenuPoint: null,
+  annotationData: new Map(), guideSelection: null, selection: null, selecting: false, selectionMenuPoint: null,
   searchRequest: 0, searchMatch: null,
   outlineRequest: 0, outlineNodes: [], pageLabels: new Map(), mapTimer: 0,
   knowledgeRequest: 0, knowledgeChapterId: null, knowledgeMap: null,
@@ -58,6 +58,14 @@ const ASSISTANT_DOCK_MAX_WIDTH = 760;
 const ASSISTANT_READER_MIN_WIDTH = 280;
 
 const guide = createGuideUI({ state, api, goToPage,
+  hideContextMenu: hideSelectionActions,
+  contextMenu: (x, y, text, explain) => {
+    hideSelectionActions();
+    state.selection = null;
+    document.querySelectorAll(".selection-quad").forEach(node => node.remove());
+    state.guideSelection = { text, explain };
+    syncAskEligibility(); showSelectionActions(x, y);
+  },
   layout: change => { const anchor = captureZoomAnchor(); change(); if (state.revision) relayoutPages(anchor); },
   closeDock: () => setAssistantPanelOpen(false, { relayout: false }),
   explain: (selectedText, request) => {
@@ -1287,7 +1295,7 @@ function selectedProviderUnavailableMessage(selected) {
 
 function syncAskEligibility() {
   const hasSelection = Boolean(
-    state.selection?.resolved.length && state.revision?.id && state.readerSessionId
+    (state.selection?.resolved.length || state.guideSelection) && state.revision?.id && state.readerSessionId
   );
   const anyProviderSelectable = state.assistantProviderStatuses.some(providerSelectable);
   const ask = elements["ask-selection"];
@@ -1643,7 +1651,8 @@ function renderAssistantDraft() {
     return;
   }
   elements["assistant-title"].textContent = "问 AI";
-  elements["assistant-scope"].textContent = `准备解释 PDF 第 ${draft.request.pdf_page_index + 1} 页选区`;
+  elements["assistant-scope"].textContent = draft.request.source_kind === "READING_GUIDE"
+    ? "准备解释导读选区" : `准备解释 PDF 第 ${draft.request.pdf_page_index + 1} 页选区`;
   elements["assistant-draft-text"].textContent = draft.selectedText;
   elements["assistant-first-turn"].hidden = false;
   elements["assistant-follow-up"].hidden = true;
@@ -1672,6 +1681,10 @@ function showAssistantError(error) {
 }
 
 function stageAssistantSelection() {
+  if (state.guideSelection) {
+    const { explain } = state.guideSelection;
+    hideSelectionActions(); explain(); return;
+  }
   const selection = state.selection;
   const revisionId = state.revision?.id;
   const readerSessionId = state.readerSessionId;
@@ -2367,18 +2380,20 @@ function renderSelection() {
 }
 
 function showSelectionActions(clientX, clientY) {
+  for (const id of ["save-highlight", "add-note"]) elements[id].hidden = Boolean(state.guideSelection);
+  elements["selection-actions"].querySelector(".highlight-styles").hidden = Boolean(state.guideSelection);
   state.selectionMenuPoint = { x: clientX, y: clientY };
   elements["selection-actions"].hidden = false;
   positionSelectionActions();
 }
 
 function positionSelectionActions() {
-  if (!state.selection?.resolved.length || !state.selectionMenuPoint
+  if (!(state.selection?.resolved.length || state.guideSelection) || !state.selectionMenuPoint
       || elements["selection-actions"].hidden) return;
   const point = state.selectionMenuPoint;
   const menu = elements["selection-actions"];
   requestAnimationFrame(() => {
-    if (menu.hidden || !state.selection) return;
+    if (menu.hidden || !(state.selection || state.guideSelection)) return;
     const width = menu.offsetWidth;
     const height = menu.offsetHeight;
     const below = point.y + 5;
@@ -2390,6 +2405,7 @@ function positionSelectionActions() {
 }
 
 function hideSelectionActions() {
+  state.guideSelection = null;
   elements["selection-actions"].hidden = true;
   elements["note-editor"].hidden = true;
   elements["add-note"].setAttribute("aria-expanded", "false");
@@ -2492,7 +2508,7 @@ async function saveAnnotation(body = null) {
 }
 
 async function copySelection() {
-  const text = resolvedText(state.selection?.resolved || []);
+  const text = state.guideSelection?.text || resolvedText(state.selection?.resolved || []);
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
@@ -2799,6 +2815,8 @@ elements.viewer.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("copy", (event) => {
+  const native = window.getSelection();
+  if (native?.anchorNode?.parentElement?.closest(".guide-text")) return;
   const text = resolvedText(state.selection?.resolved || []);
   if (!text) return;
   event.preventDefault();

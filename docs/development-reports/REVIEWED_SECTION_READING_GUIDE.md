@@ -548,3 +548,32 @@ The real manuscript now passes draft validation; 35 targeted Guide tests PASS in
 reading emphasis versus actual exam claims. No new style iteration or UI code changes.
 
 Activation regression: 253 Python PASS / 2 unchanged optional OCR skips; git diff --check PASS. Frontend suite INTENTIONALLY_NOT_RUN (no frontend changes); real open/collapse/reopen checks above passed.
+
+## Markdown rendering and shared selection menu — 2026-09-11
+
+User reported visible Markdown delimiters and requested the same right-click Assistant interaction as
+PDF selections. Guide now renders through the existing approved marked/DOMPurify/KaTeX renderer;
+paragraphs are block containers with scoped heading/list/table/quote/code styling. No new dependency,
+parser, source change, generation, Review or publication. Existing published Guides update on reload.
+
+Removed the separate footer explanation button. Guide right-click opens the existing selection toolbar
+with Copy / Ask AI; PDF-only annotation controls are hidden for Guide selections and restored for PDF.
+The common menu now layers above the Guide panel. Real pointer testing caught and corrected the former
+menu z-index hiding it behind the Guide. Right-click Ask AI opens the original Assistant model-choice/
+Send draft, not a new UI. Draft scope now says Guide selection instead of PDF page NaN. Native Guide copy
+is not intercepted by stale PDF selection state. Rendered text maps to stored Markdown Unicode offsets;
+visible draft text uses the rendered selection, while the server retains its original raw source contract.
+Math/code continue to use the shared renderer's existing direct-selection restriction.
+
+Real 348-page 2.1: headings, bold spans and lists appeared as DOM formatting instead of literal markers.
+Pointer drag over bold Chinese text -> right-click -> shared menu -> Ask AI produced the exact selected
+text in the existing Assistant draft. Collapse/reopen and final refresh recovered the published Guide.
+No paid Assistant send or Guide generation occurred. The old raw-offset / footer-button E2E entry was
+updated to right-click; full live generation/Review E2E was not run for this presentation-only change.
+
+Validation: 253 Python PASS / 2 unchanged optional OCR skips; 30 frontend unit PASS; JS syntax and
+`git diff --check` PASS. These suites are not claimed as new formula visual acceptance. An isolated
+formula/selection browser fixture did not finish loading its module graph in the in-app browser and
+remained RUNNING, so it is not PASS; diagnostics remain ignored under `.tmp/guide-rendering-fixture.*`.
+The temporary port 8767 helper was stopped. Actual 2.1 has no formula to visually validate; formula support
+uses the unchanged shared KaTeX implementation and stylesheet. User retest remains the next step.

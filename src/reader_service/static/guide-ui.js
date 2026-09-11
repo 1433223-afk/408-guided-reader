@@ -1,4 +1,6 @@
-export function createGuideUI({ state, api, goToPage, explain, layout, closeDock }) {
+import { renderAssistantAnswer, renderedSelectionToRaw } from "./assistant-render.js";
+
+export function createGuideUI({ state, api, goToPage, explain, layout, closeDock, contextMenu, hideContextMenu }) {
   const panel = document.createElement("aside");
   panel.id = "guide-panel";
   panel.className = "guide-panel";
@@ -7,16 +9,14 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   panel.innerHTML = `<div id="guide-divider" role="separator" tabindex="0" aria-label="导读宽度" aria-orientation="vertical" aria-controls="guide-panel"></div>
     <div class="guide-heading"><strong id="guide-title">本节导读</strong><button id="guide-expand" type="button">展开导读</button><button id="guide-close" type="button">收起</button></div>
     <div class="guide-meta"><p id="guide-status" role="status"></p><div id="guide-actions"></div></div>
-    <div id="guide-scroll"><div id="guide-content"></div></div>
-    <button id="guide-explain" type="button" hidden>解释所选导读</button>`;
+    <div id="guide-scroll"><div id="guide-content"></div></div>`;
   document.getElementById("reader").append(panel);
   const title = panel.querySelector("#guide-title");
   const status = panel.querySelector("#guide-status");
   const actions = panel.querySelector("#guide-actions");
   const content = panel.querySelector("#guide-content");
-  const explainButton = panel.querySelector("#guide-explain");
   let sectionId = null, revisionId = null, snapshot = null, timer = 0, epoch = 0, pending = false;
-  let selection = null, renderedId = null, intent = null;
+  let renderedId = null, intent = null;
   const reader = document.getElementById("reader"), scroll = panel.querySelector("#guide-scroll");
   const divider = panel.querySelector("#guide-divider"), expand = panel.querySelector("#guide-expand");
   const reopen = document.createElement("button");
@@ -64,7 +64,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   }
   function close(collapsed = false) {
     if (panel.hidden && reopen.hidden) return;
-    savePosition(); clearTimeout(timer); epoch++;
+    hideContextMenu(); savePosition(); clearTimeout(timer); epoch++;
     layout(() => { panel.hidden = true; reader.classList.remove("guide-open"); });
     reopen.hidden = !collapsed;
   }
@@ -116,9 +116,9 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
       renderedId = published?.id || null;
       content.replaceChildren();
       for (const module of published?.content.modules || []) {
-        const block = document.createElement("section"), heading = document.createElement("h3"), text = document.createElement("p");
+        const block = document.createElement("section"), heading = document.createElement("h3"), text = document.createElement("div");
         heading.textContent = module.title;
-        text.textContent = module.text;
+        renderAssistantAnswer(text, module.text);
         text.dataset.moduleId = module.id;
         text.className = "guide-text";
         block.append(heading, text);
@@ -175,25 +175,34 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     } finally { if (stamp === epoch) pending = false; }
     if (stamp === epoch) render();
   }
-  content.addEventListener("mouseup", () => {
+  scroll.addEventListener("scroll", hideContextMenu, { passive: true });
+  content.addEventListener("contextmenu", event => {
     const selected = window.getSelection();
-    selection = null; explainButton.hidden = true;
+    hideContextMenu();
     if (!selected || selected.isCollapsed || selected.rangeCount !== 1) return;
     const range = selected.getRangeAt(0);
     const parent = range.startContainer.parentElement?.closest(".guide-text");
     if (!parent || !parent.contains(range.endContainer)) return;
-    const prefix = document.createRange(); prefix.selectNodeContents(parent); prefix.setEnd(range.startContainer, range.startOffset);
-    // Server Python offsets count Unicode code points, not JavaScript UTF-16 units.
-    const start = Array.from(prefix.toString()).length, end = start + Array.from(range.toString()).length;
-    selection = { source_kind: "READING_GUIDE", section_id: sectionId, asset_id: snapshot.published.id,
-      module_id: parent.dataset.moduleId, start_offset: start, end_offset: end, text: range.toString() };
-    explainButton.hidden = false;
+    const mapped = renderedSelectionToRaw(range, parent);
+    if (!mapped || mapped.blocked) return;
+    const start = mapped.startOffset, end = mapped.endOffset;
+    const module = snapshot.published.content.modules.find(m => m.id === parent.dataset.moduleId);
+    // The server validates offsets against stored Markdown, not rendered DOM text.
+    const rawSelection = Array.from(module.text).slice(start, end).join("");
+    const rects = [...range.getClientRects()];
+    if ((event.clientX || event.clientY) && !rects.some(r => event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom)) return;
+    event.preventDefault();
+    const selection = { source_kind: "READING_GUIDE", section_id: sectionId, asset_id: snapshot.published.id,
+      module_id: parent.dataset.moduleId, start_offset: start, end_offset: end };
+    const rect = rects[0];
+    contextMenu(event.clientX || rect?.left || 0, event.clientY || rect?.bottom || 0,
+      mapped.selectedText, () => {
+        close(); explain(mapped.selectedText, selection);
+      });
   });
-  explainButton.onmousedown = (event) => event.preventDefault();
-  explainButton.onclick = () => { if (selection) { const { text, ...request } = selection; close(); explain(text, request); } };
   async function open(id) {
     close(); sectionId = id; revisionId = state.revision.id; snapshot = null; renderedId = null; pending = false;
-    content.replaceChildren(); actions.replaceChildren(); explainButton.hidden = true; intent = null;
+    content.replaceChildren(); actions.replaceChildren(); intent = null;
     closeDock(); reopen.hidden = true;
     layout(() => { panel.hidden = false; reader.classList.add("guide-open"); });
     setWidth(width || reader.clientWidth * .45);

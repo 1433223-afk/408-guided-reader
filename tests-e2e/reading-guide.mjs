@@ -88,7 +88,8 @@ try {
   const rect = await text.boundingBox();
   await page.mouse.move(rect.x + 3, rect.y + 13); await page.mouse.down();
   await page.mouse.move(rect.x + 180, rect.y + 13, { steps: 15 }); await page.mouse.up();
-  await page.locator('#guide-explain').click();
+  await page.mouse.click(rect.x + 60, rect.y + 13, { button: 'right' });
+  await page.locator('#selection-actions #ask-selection').click();
   await page.locator('#assistant-draft-text').waitFor();
   await page.locator('#assistant-start').click();
   await page.locator('#assistant-turns .assistant-answer-bubble').first().waitFor({ timeout: 180000 });
