@@ -5,14 +5,14 @@ from uuid import UUID, uuid4
 from reader_service.agent_runtime import ProviderFailure
 from reader_service.jobs.repository import now
 from . import evidence
-from .contracts import GENERATOR, REVIEWER, encoded, strict_json, validate_guide, validate_review
+from .contracts import GENERATOR, REVIEWER, generation_messages, encoded, strict_json, validate_guide, validate_review
 
 
 class TeachingService:
     def __init__(self, database, runtime):
         self.database = database
         self.runtime = runtime
-        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "deepseek").strip().lower()
+        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "zhipu").strip().lower()
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
@@ -119,6 +119,7 @@ class TeachingService:
         for attempt in range(2):
             completion = self.runtime.complete_for_with_metadata(
                 self.provider if role == "GENERATE" else self.reviewer,
+                generation_messages(system + feedback, payload) if role == "GENERATE" else
                 [{"role": "system", "content": system + feedback}, {"role": "user", "content": encoded(payload)}],
                 interaction_id=f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 max_tokens=16384 if role == "GENERATE" else 8192)

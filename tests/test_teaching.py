@@ -26,11 +26,13 @@ class Runtime:
 
     def __init__(self):
         self.calls = []
+        self.messages = []
         self.fail_stage = None
         self.reject = False
         self.invalid = False
 
     def complete_for_with_metadata(self, provider, messages, **kwargs):
+        self.messages.append(copy.deepcopy(messages))
         payload = json.loads(messages[1]['content'])
         self.calls.append((provider, payload))
         review = 'candidate' in payload
@@ -340,3 +342,34 @@ def test_article_contract_has_no_route_exit_or_kp_checklist(guide):
     value['modules'][0]['text'] = '文' * 1401
     with pytest.raises(ValueError):
         validate_guide(value, packet)
+
+
+def test_editorial_instruction_preserves_source_and_review_boundary(guide):
+    from reader_service.teaching.contracts import GENERATION_REQUEST, REVIEWER
+    fixture, runtime, g, rev, section = guide
+    with g.database.connect() as c:
+        packet, _, _ = evidence.build(c, rev, section)
+    g.request(rev, section, str(uuid4()))
+    drain(g)
+    generated, reviewed = runtime.messages
+    assert json.loads(generated[1]['content']) == {'source': packet}
+    assert generated[2:] == [{'role': 'user', 'content': GENERATION_REQUEST}]
+    assert len(reviewed) == 2
+    assert reviewed[0] == {'role': 'system', 'content': REVIEWER}
+    review_payload = json.loads(reviewed[1]['content'])
+    assert set(review_payload) == {'source', 'candidate'}
+    assert review_payload['source'] == packet
+    assert g.snapshot(rev, section)['published'] is not None
+
+
+@pytest.mark.parametrize('configured,expected', [(None, 'zhipu'), ('deepseek', 'deepseek')])
+def test_guide_generator_route_respects_explicit_configuration(guide, monkeypatch, configured, expected):
+    fixture, runtime, g, rev, section = guide
+    if configured is None:
+        monkeypatch.delenv('GUIDED_READER_SYSTEM_PROVIDER', raising=False)
+    else:
+        monkeypatch.setenv('GUIDED_READER_SYSTEM_PROVIDER', configured)
+    monkeypatch.setenv('GUIDED_READER_REVIEW_PROVIDER', 'openrouter')
+    selected = TeachingService(g.database, runtime)
+    assert selected.provider == expected
+    assert selected.reviewer == 'openrouter'
