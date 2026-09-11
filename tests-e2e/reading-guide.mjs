@@ -175,5 +175,6 @@ async function stop() {
 }
 
 async function action(page, name, operation) {
+  await page.locator('#guide-more > summary').click();
   await Promise.all([page.waitForResponse(r => r.url().endsWith('/guide/' + operation) && r.request().method() === 'POST'), page.getByRole('button', { name, exact: true }).click()]);
 }

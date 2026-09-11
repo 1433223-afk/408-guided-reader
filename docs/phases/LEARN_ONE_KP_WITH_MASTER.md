@@ -138,8 +138,10 @@ No external code, framework or dependency is adopted.
   navigation authority, Master source context and learning records remain unchanged. With no usable
   OCR body line, retain the published endpoint rather than invent a location. This corrects the
   real PDF 39–40 case where an old KP span ends at the following page's running header.
-- User-approved lightweight layout refinement (2026-09-10): individual KP learning entries remain
-  in the side gutter. Section/Subsection batch controls are non-floating light cards below the PDF
+- User-authorized placement refinement (2026-09-11): individual KP learning entries are compact
+  controls inside the PDF page margin, using the existing display endpoint; expanded operations
+  appear in a dismissible card. This supersedes the former side-gutter placement and reserved gutter.
+  Section/Subsection batch controls remain non-floating light cards below the PDF
   page containing their last contained KP's end, aligned with the reading column. The user accepted
   this page-footer placement instead of splitting the PDF to insert controls between paragraphs.
   Each card names its owner, shows total / UNDERSTOOD / NOT_FULLY_CLEAR counts, offers the compact

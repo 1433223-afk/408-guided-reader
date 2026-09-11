@@ -4,6 +4,11 @@ const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", U
 const REVIEW = { NOT_REQUESTED: "快速 · 未独立审查", PENDING: "审查中", PASS: "审查通过", FAIL: "审查未通过", TECHNICAL_FAILURE: "审查技术失败" };
 
 export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout }) {
+  document.addEventListener("pointerdown", event => {
+    for (const marker of pages.querySelectorAll(".kp-learning-marker[open]")) {
+      if (!marker.contains(event.target)) marker.open = false;
+    }
+  });
   let entries = { points: [], sections: [] };
   let current = null;
   let poll = 0;
@@ -227,14 +232,27 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       marker.className = "learning-marker kp-learning-marker";
       marker.dataset.sourceY = String(y);
       const summary = document.createElement("summary");
-      summary.textContent = "知识点 · 学习";
+      summary.textContent = "学习";
+      summary.title = "知识点 · 学习";
+      summary.setAttribute("aria-label", "知识点 · 学习");
       marker.append(summary);
+      const popover = document.createElement("div");
+      popover.className = "learning-marker-content";
       for (const point of points) {
         const title = document.createElement("p");
         title.textContent = `${point.title} · ${STATUS[point.status]}`;
-        marker.append(title, button("这里没完全懂", () => open(point, true)));
-        if (point.thread_id) marker.append(button("继续 Master 对话", () => open(point)));
+        popover.append(title, button("这里没完全懂", () => open(point, true)));
+        if (point.thread_id) popover.append(button("继续 Master 对话", () => open(point)));
       }
+      marker.append(popover);
+      marker.addEventListener("toggle", () => {
+        if (marker.open) for (const other of pages.querySelectorAll(".kp-learning-marker[open]")) {
+          if (other !== marker) other.open = false;
+        }
+      });
+      marker.addEventListener("keydown", event => {
+        if (event.key === "Escape") { marker.open = false; summary.focus(); }
+      });
       page.append(marker);
     }
     const footer = document.createElement("div");

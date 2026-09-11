@@ -7,20 +7,30 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   panel.hidden = true;
   panel.setAttribute("aria-label", "本节导读");
   panel.innerHTML = `<div id="guide-divider" role="separator" tabindex="0" aria-label="导读宽度" aria-orientation="vertical" aria-controls="guide-panel"></div>
-    <div class="guide-heading"><strong id="guide-title">本节导读</strong><button id="guide-expand" type="button">展开导读</button><button id="guide-close" type="button">收起</button></div>
-    <div class="guide-meta"><p id="guide-status" role="status"></p><div id="guide-actions"></div></div>
+    <div class="guide-heading"><strong id="guide-title">本节导读</strong><div class="guide-tools"><button id="guide-expand" type="button">展开</button><details id="guide-more"><summary aria-label="导读更多操作">更多</summary><div id="guide-actions"></div></details><button id="guide-close" type="button" aria-label="收起导读">×</button></div></div>
+    <div class="guide-meta"><p id="guide-status" role="status"></p></div>
     <div id="guide-scroll"><div id="guide-content"></div></div>`;
   document.getElementById("reader").append(panel);
   const title = panel.querySelector("#guide-title");
   const status = panel.querySelector("#guide-status");
   const actions = panel.querySelector("#guide-actions");
+  document.addEventListener("pointerdown", event => {
+    const more = panel.querySelector("#guide-more");
+    if (!more.contains(event.target)) more.open = false;
+  });
+  panel.addEventListener("keydown", event => {
+    const more = panel.querySelector("#guide-more");
+    if (event.key === "Escape" && more.open) { more.open = false; more.querySelector("summary").focus(); }
+  });
   const content = panel.querySelector("#guide-content");
   let sectionId = null, revisionId = null, snapshot = null, timer = 0, epoch = 0, pending = false;
   let renderedId = null, intent = null;
   const reader = document.getElementById("reader"), scroll = panel.querySelector("#guide-scroll");
   const divider = panel.querySelector("#guide-divider"), expand = panel.querySelector("#guide-expand");
   const reopen = document.createElement("button");
-  reopen.id = "guide-reopen"; reopen.textContent = "展开导读"; reopen.hidden = true; reader.append(reopen);
+  reopen.id = "guide-reopen"; reopen.className = "toolbar-button";
+  reopen.textContent = "导读"; reopen.title = "重新打开上次阅读的导读"; reopen.hidden = true;
+  document.getElementById("knowledge-toggle").after(reopen);
   const positions = new Map();
   let width = 0, normalWidth = 0, expanded = false, dragging = false;
   const locationKey = () => `${revisionId}:${sectionId}:${renderedId}`;
@@ -58,7 +68,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     if (value === expanded) return;
     if (value) normalWidth = width;
     expanded = value;
-    expand.textContent = value ? "恢复双栏" : "展开导读";
+    expand.textContent = value ? "恢复双栏" : "展开";
     expand.setAttribute("aria-pressed", String(value));
     setWidth(value ? reader.clientWidth * .65 : normalWidth);
   }
@@ -94,7 +104,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   function base() { return `/api/revisions/${revisionId}/sections/${sectionId}/guide`; }
   function button(label, action) {
     const b = document.createElement("button"); b.type = "button"; b.textContent = label;
-    b.disabled = pending; b.onclick = () => send(action); actions.append(b);
+    b.disabled = pending; b.onclick = () => { panel.querySelector("#guide-more").open = false; send(action); }; actions.append(b);
   }
   function render() {
     title.textContent = `${snapshot.section.title} · 导读`;
@@ -106,11 +116,17 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     if (published?.stale) status.textContent += " 教材依赖已变化，保留原导读，可重新生成。";
     if (task?.state === "FAILED" && task.failure_detail) status.textContent += ` ${task.failure_detail}`;
     if (published && task?.state === "FAILED") status.textContent += " 原导读仍可使用。";
+    status.title = status.textContent;
+    if (task?.state === "FAILED" && published) {
+      status.textContent = task.terminal ? "本次导读未通过审查，原导读仍可阅读。" : "本次生成失败，原导读仍可阅读。可在“更多”中重试。";
+      status.setAttribute("aria-label", status.title);
+    } else status.removeAttribute("aria-label");
     actions.replaceChildren();
     if (!busy) {
       if (task?.state === "FAILED" && !task.terminal) button("重试", "retry");
       button(published ? "重新生成" : "生成本节导读", published || task?.terminal ? "regenerate" : "generate");
     }
+    panel.querySelector("#guide-more").hidden = Boolean(busy);
     // Polling must not destroy a live native selection or the old published Guide.
     if (renderedId !== (published?.id || null)) {
       renderedId = published?.id || null;
@@ -121,7 +137,9 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
         renderAssistantAnswer(text, module.text);
         text.dataset.moduleId = module.id;
         text.className = "guide-text";
-        block.append(heading, text);
+        // Storage fragments need no second heading when the article already supplies one.
+        if (!text.firstElementChild?.matches("h1,h2,h3,h4,h5,h6")) block.append(heading);
+        block.append(text);
         const references = document.createElement("div"); references.className = "guide-references";
         for (const [i, sourceId] of module.source_ids.entries()) {
           const source = published.sources[sourceId], b = document.createElement("button");

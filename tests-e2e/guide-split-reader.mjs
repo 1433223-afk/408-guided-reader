@@ -31,6 +31,10 @@ try {
  await entry.waitFor();
  assert.equal(await entry.count(),1);
  await entry.click();await page.locator('.guide-text').first().waitFor();
+ await page.locator('#guide-more > summary').click();
+ assert.ok(await page.getByRole('button',{name:'重新生成',exact:true}).isVisible());
+ await page.locator('#guide-more > summary').click();
+ assert.ok(!await page.getByRole('button',{name:'重新生成',exact:true}).isVisible());
  const width=()=>page.locator('#guide-panel').evaluate(el=>el.getBoundingClientRect().width);
  const pdfVisible=async()=>{const pdf=await page.locator('#viewer').boundingBox(),guide=await page.locator('#guide-panel').boundingBox();assert.ok(pdf.width>=319);assert.ok(pdf.x+pdf.width<=guide.x+1);};
  await pdfVisible();const original=await width();
@@ -41,7 +45,9 @@ try {
  const before=await pos();assert.ok(before.scroll>0);
  const resized=await width();await page.locator('#guide-expand').click();await pdfVisible();assert.ok(await width()>=resized);await page.locator('#guide-expand').click();assert.ok(Math.abs(await width()-resized)<2);
  let after=await pos();assert.equal(after.id,before.id);assert.ok(Math.abs(after.fraction-before.fraction)<.025);
- await page.locator('#guide-close').click();await page.locator('#guide-reopen').click();await page.locator('.guide-text').first().waitFor();after=await pos();assert.equal(after.id,before.id);assert.ok(Math.abs(after.fraction-before.fraction)<.025);
+ await page.locator('#guide-close').click();
+ assert.ok(await page.locator('.reader-controls #guide-reopen').isVisible());
+ await page.locator('#guide-reopen').click();await page.locator('.guide-text').first().waitFor();after=await pos();assert.equal(after.id,before.id);assert.ok(Math.abs(after.fraction-before.fraction)<.025);
  // A source near the current reading position must move only the PDF, keeping Guide open.
  const ref=page.locator(`.guide-text[data-module-id="${after.id}"]`).locator('..').locator('.guide-source').first();
  await ref.scrollIntoViewIfNeeded();const sourceBefore=await pos();await ref.click();await page.waitForTimeout(500);assert.ok(await page.locator('#guide-panel').isVisible());const sourceAfter=await pos();assert.equal(sourceBefore.id,sourceAfter.id);assert.ok(Math.abs(sourceBefore.scroll-sourceAfter.scroll)<2);

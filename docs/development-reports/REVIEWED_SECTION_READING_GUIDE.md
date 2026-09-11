@@ -598,3 +598,30 @@ Validation: 253 Python PASS / 2 unchanged optional OCR skips; 30 frontend unit P
 diff checks PASS. Generation/Review E2E INTENTIONALLY_NOT_RUN: this changes frontend entry/layout only;
 its entry selector is updated, and no paid generation or publication was requested. READY_FOR_USER_RETEST,
 not USER_ACCEPTANCE PASS; previous Phase review/closure status is unchanged.
+
+## Reader control cleanup / page-contained KP entries — 2026-09-11
+
+User authorized cleaning the crowded Guide header, moving collapsed Guide reopening into the main
+toolbar, and bringing individual KP controls inside the PDF like the Guide entry. Guide header now
+has a single action row; retry/regenerate live under native More disclosure. Failure status is concise
+when an old Guide remains available, with full details retained in title/accessibility text. Storage
+fragment headings are omitted when the rendered article already starts with a heading. No stored
+Markdown or source-selection offsets change. Collapsed reopening sits beside the learning-map toolbar
+button; no floating reopen control remains above the PDF.
+
+KP entries use the existing display-endpoint layout in the page margin. A compact learning control
+opens an inward card; only one card opens at a time, Escape/outside pointer dismisses it. Removed
+reserved outer gutter width/padding so the PDF occupies the reading column. Section/Subsection batch
+cards remain below pages. Existing Master actions, attribution, persistence and confirmation semantics
+are unchanged. Synchronized the user-authorized placement amendment in the Master brief. Native
+details and existing local positioning are reused; no generic layout system or external dependency.
+
+Validation: 253 Python PASS / 2 optional OCR skips; 30 frontend unit PASS; syntax/diff checks PASS.
+Real 348-page split-reader E2E PASS including More visibility, toolbar reopen, zoom, resize, source
+retention and PDF visibility. Actual in-app Reader opened at 2.1; screenshot visually inspected for
+page-contained controls and reduced gutter. Master E2E PASS twice on isolated copies of the real book
+with loopback model responses: KP/batch placement, operable learning controls, conversations, retry,
+restart, AI-off history, scope isolation and explicit confirmations. This is not live model quality
+acceptance. No paid Guide generation, Review or publication ran; Guide generation E2E is
+INTENTIONALLY_NOT_RUN for this presentation change, with its More-menu selector adapted.
+READY_FOR_USER_RETEST; no USER_ACCEPTANCE PASS or Phase closure claimed.

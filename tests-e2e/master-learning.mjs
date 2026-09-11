@@ -82,7 +82,7 @@ try {
   await page.mouse.wheel(0, 250);
   await page.waitForTimeout(250);
   assert.equal(await page.locator('.page[data-index="39"] .kp-learning-marker').filter({ hasText: boundaryPoint.title }).count(), 0);
-  await assertLearningControlsOutsidePdf(page);
+  await assertLearningControlPlacement(page);
   await mkdir("test-results", { recursive: true });
   await page.screenshot({ path: "test-results/learning-boundary-39-40.png", fullPage: true });
   assert.deepEqual(await json(page, base), entries, "Display navigation must not write source ranges or learning state");
@@ -117,7 +117,7 @@ try {
   await learningTag.locator("summary").click();
   assert.ok(await learningTag.getByRole("button", { name: "这里没完全懂", exact: true }).first().isVisible());
   await learningTag.locator("summary").click();
-  await assertLearningControlsOutsidePdf(page);
+  await assertLearningControlPlacement(page);
   await mkdir("test-results", { recursive: true });
   await page.screenshot({ path: "test-results/kp-learning-tags.png", fullPage: true });
   await subMarker.getByRole("button", { name: "确认本小节", exact: true }).click();
@@ -145,19 +145,19 @@ try {
   });
   assert.equal(confirmationPlacement.page, subsectionLast.display_end_page);
   assert.ok(confirmationPlacement.belowPdf && confirmationPlacement.aligned, "Batch card belongs below its ending PDF page, aligned with the reading column");
-  await assertLearningControlsOutsidePdf(page);
+  await assertLearningControlPlacement(page);
   await page.locator("#assistant-toggle").click();
   await page.waitForTimeout(250);
   await subMarker.scrollIntoViewIfNeeded();
-  await assertLearningControlsOutsidePdf(page);
+  await assertLearningControlPlacement(page);
   await page.locator("#zoom-in").click();
   await page.waitForTimeout(250);
   await subMarker.scrollIntoViewIfNeeded();
-  await assertLearningControlsOutsidePdf(page);
+  await assertLearningControlPlacement(page);
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.waitForTimeout(250);
   await subMarker.scrollIntoViewIfNeeded();
-  await assertLearningControlsOutsidePdf(page);
+  await assertLearningControlPlacement(page);
   await page.locator(".dock-tabs").getByRole("button", { name: "收起", exact: true }).click();
   await page.locator("#zoom-out").click();
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -298,7 +298,7 @@ try {
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ status: "PASS", liveInitialConversation: live, liveSectionConversation: liveSection, sectionReviews, realPages: 348, kp: point.title,
     restartAndAIoffHistory: true, retryNoDuplicates: true, explicitConfirmation: true, sectionIsolation: true,
-    payloadAllowlist: true, subsectionIsolationAndRestart: true, controlsOutsidePdf: true, sectionMasterRestartAndClear: true, subsection: subsection.title,
+    payloadAllowlist: true, subsectionIsolationAndRestart: true, kpEntriesInsidePdf: true, batchCardsBelowPdf: true, sectionMasterRestartAndClear: true, subsection: subsection.title,
     dataDir, screenshot: "test-results/master-learning.png" }));
 } finally {
   if (browser) await browser.close();
@@ -309,10 +309,10 @@ try {
 async function json(page, url) {
   return page.evaluate(async (url) => { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }, url);
 }
-async function assertLearningControlsOutsidePdf(page) {
+async function assertLearningControlPlacement(page) {
   const violations = await page.evaluate(() => {
     const pages = [...document.querySelectorAll(".page:has(canvas)")];
-    const controls = [...document.querySelectorAll(".learning-marker, .learning-batch-card")];
+    const controls = [...document.querySelectorAll(".learning-batch-card")];
     return controls.flatMap((control) => {
       const box = control.getBoundingClientRect();
       return pages.filter((page) => {
@@ -322,7 +322,12 @@ async function assertLearningControlsOutsidePdf(page) {
       }).map(() => control.textContent);
     });
   });
-  assert.deepEqual(violations, [], "Learning controls must never overlap original PDF pixels");
+  assert.deepEqual(violations, [], "Batch cards remain below the PDF");
+  const inside = await page.locator('.kp-learning-marker').evaluateAll(markers => markers.every(marker => {
+    const box=marker.getBoundingClientRect(), pdf=marker.closest('.page').getBoundingClientRect();
+    return box.left>=pdf.left && box.right<=pdf.right && box.top>=pdf.top && box.bottom<=pdf.bottom+1;
+  }));
+  assert.ok(inside, 'Compact KP entries stay inside their PDF page');
 }
 async function openBook(page) {
   await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).click();
