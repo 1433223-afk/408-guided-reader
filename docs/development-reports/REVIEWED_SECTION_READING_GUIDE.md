@@ -485,3 +485,43 @@ not run against a live publication. No external code, dependency, generic parser
 Ignored personal-material artifacts: `.tmp/guide-clean-context-20260911/` contains `AI完整输入.md`,
 exact messages, context, removal audit, formatter source, provider metadata and `2.1-导读.md`.
 Reproduction: `.tmp/generate-clean-context.py` (paid author-only call, no Review/publication).
+
+## Published-KP-only author experiment — 2026-09-11
+
+User requested replacing Section body input with the published Section knowledge skeleton to reduce
+teaching depth. Only the author context and necessary GENERATOR instructions changed; formatter,
+Review, UI, persistence, runtime and publication code are untouched in this increment.
+
+The writer receives chapter title/directory, current/previous/next Section titles, and only `title`
+plus `one_sentence_meaning` from the current Section's READY published KP version. The semantic
+meaning is stored as `knowledge_points.one_sentence_definition`; it is mapped verbatim, without
+rewriting KP data. Stale/unready versions, other Sections' KPs and other KP fields are excluded.
+No OCR body, examples, exercise/answer content, source IDs, program snippets or OCR-derived exam
+notes enter the author messages. No independent reliable exam/pitfall asset was supplied, so that
+optional input is omitted. If the declared packet has no published KP version, the writer receives
+an explicitly empty skeleton, never an OCR fallback or invented KP list. This experiment does not
+establish quality for that empty-input case.
+
+GENERATOR asks for motivation, chapter/book positioning, connections, study methods and conceptual
+pitfalls, with natural organization and no mandatory KP coverage. It explicitly excludes formulas,
+conversion procedures, worked examples and program detail, and prohibits unsupported textbook facts.
+The existing formatter still uses the prior body-source allowlist for source-aware serialization;
+its context and the original Review packet are unchanged. Neither was invoked for this experiment.
+
+Real 2.1: published Chapter structure version 2, 16 KPs; complete writer User message 1,890 characters.
+OpenRouter `openai/gpt-6-astra`, low reasoning, produced one unedited 1,680-character raw manuscript.
+No editorial retry, Review, formatting call, publication or service restart. Exact saved messages
+match final code. Library was opened read-only, and before/after Teaching rows matched. The manuscript
+has no worked arithmetic/formulas or C code; its remaining sectioned organization is for the user to
+judge. No user acceptance or publishable-candidate claim; existing output validators remain unchanged.
+
+Targeted: 34 Guide tests PASS. New checks cover exact published meaning mapping, READY/version filtering,
+and a closed author-field allowlist even when OCR/exam/source-ID fields are present internally.
+Frontend/live UI/Review-publication E2E INTENTIONALLY_NOT_RUN: no UI changes and this request is an
+unpublished content experiment. No external dependency/code or new pipeline.
+
+Ignored artifacts: `.tmp/guide-kp-context-20260911/` contains the raw `2.1-导读.md`, `AI完整输入.md`, exact
+messages, provider metadata and verification. Reproduction `.tmp/generate-kp-context.py` makes a paid
+author-only call. Draft SHA-256: `b74279b51d26dccde575cae5ef4e1f7fcd1ea8d3d0a17ce2d0ab76dd3f3ae879`.
+
+Broad Python regression: 252 PASS / 2 unchanged optional OCR skips; git diff --check PASS.

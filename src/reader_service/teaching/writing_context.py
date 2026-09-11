@@ -65,21 +65,29 @@ def build(connection, revision_id, packet, ledger):
     siblings = [r for r in rows if r["parent_id"] == rows[current]["parent_id"]]
     previous = rows[current - 1] if current else None
     following = rows[current + 1] if current + 1 < len(rows) else None
-    body, exam, removed = clean_body(packet, ledger)
+    body, _, removed = clean_body(packet, ledger)
+    # The published semantic meaning is stored under its original database name.
+    # Match the already-declared READY version; never pick unpublished/stale rows.
+    points = [dict(r) for r in connection.execute("""SELECT k.title,
+        k.one_sentence_definition AS one_sentence_meaning FROM knowledge_points k
+        JOIN chapter_preparations p ON p.book_source_revision_id=k.book_source_revision_id
+          AND p.chapter_outline_node_id=k.chapter_outline_node_id
+          AND p.structure_version=k.chapter_structure_version
+        WHERE k.book_source_revision_id=? AND k.primary_section_id=?
+          AND p.status='READY' AND k.chapter_structure_version=? ORDER BY k.order_index""",
+        (revision_id, packet["section"]["id"], packet.get("chapter_structure_version")))]
     context = {"book_title": book[0], "chapter_title": packet.get("parent", {}).get("title"),
                "chapter_contents": [r["title"] for r in siblings],
                "current_section": packet["section"]["title"],
                "previous_section": previous["title"] if previous else None,
                "next_section": following["title"] if following else None,
-               "body": body}
-    if exam:
-        context["textbook_exam_notes"] = exam
+               "published_kps": points}
     excluded = {e["source_id"] for e in removed}
     lines = set(body.splitlines())
     # Internal formatter allowlist; draft_messages never sends these IDs to the author.
     context["body_source_ids"] = [e["source_id"] for e in packet["evidence"]
                                   if e["source_id"] not in excluded and e["text"].strip() in lines]
-    # KP titles are deliberately omitted: they are optional, not a coverage requirement.
+    # No OCR-derived exam notes: this experiment uses the published skeleton only.
     used = {r["outline_node_id"]: r for r in siblings + [r for r in (previous, following) if r]}
     dependencies = [{k: r[k] for k in ("outline_node_id", "identity_revision")} for r in used.values()]
     return context, dependencies, removed

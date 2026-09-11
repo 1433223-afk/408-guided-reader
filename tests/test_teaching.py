@@ -413,6 +413,31 @@ def test_author_context_uses_only_directory_titles_outside_section(guide):
     assert not any(e['source_id'] in draft_messages(GENERATOR, context)[1]['content'] for e in packet['evidence'])
 
 
+def test_kp_author_input_uses_published_meanings_without_ocr(guide):
+    fixture, _, g, rev, section = guide
+    fixture['knowledge'].request_prepare(rev, fixture['chapter']['outline_node_id'])
+    claim_and_run(fixture)
+    with g.database.connect() as c:
+        packet, ledger, _ = evidence.build(c, rev, section)
+        context, _, _ = writing_context.build(c, rev, packet, ledger)
+        expected = [dict(r) for r in c.execute('''SELECT title,
+            one_sentence_definition AS one_sentence_meaning FROM knowledge_points
+            WHERE book_source_revision_id=? AND primary_section_id=?
+              AND chapter_structure_version=? ORDER BY order_index''',
+            (rev, section, packet['chapter_structure_version']))]
+        assert expected and context['published_kps'] == expected
+        c.execute("UPDATE chapter_preparations SET status='FAILED' WHERE book_source_revision_id=?", (rev,))
+        unavailable, _, _ = writing_context.build(c, rev, packet, ledger)
+        assert unavailable['published_kps'] == []
+    # A closed field allowlist must hold even if raw material is accidentally present.
+    messages = draft_messages(GENERATOR, {**context, 'body': 'OCR_SECRET',
+        'textbook_exam_notes': ['EXAM_NOISE'], 'body_source_ids': ['SOURCE_SECRET']})
+    wire = json.dumps(messages, ensure_ascii=False)
+    assert all(word not in wire for word in ('OCR_SECRET', 'EXAM_NOISE', 'SOURCE_SECRET'))
+    supplied = json.loads(messages[1]['content'].split('当前节已发布知识骨架（仅供理解，不要求逐项覆盖）：\n')[1])
+    assert supplied == expected
+
+
 def test_directory_title_dependency_does_not_read_neighbor_body(guide):
     fixture, _, g, rev, section = guide
     g.request(rev, section, str(uuid4()))
