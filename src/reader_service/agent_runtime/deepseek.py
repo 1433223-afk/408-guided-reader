@@ -5,6 +5,7 @@ import ipaddress
 import os
 import socket
 import sys
+from http.client import IncompleteRead
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import (
@@ -53,7 +54,7 @@ class OpenAICompatibleAdapter:
                 "invalid_response",
                 "AI 服务返回了无法读取的结果，请稍后再试。",
             ) from error
-        except (TimeoutError, socket.timeout, URLError, OSError) as error:
+        except (TimeoutError, socket.timeout, URLError, OSError, IncompleteRead) as error:
             raise ProviderFailure(
                 ProviderFailureKind.TRANSIENT,
                 "network",

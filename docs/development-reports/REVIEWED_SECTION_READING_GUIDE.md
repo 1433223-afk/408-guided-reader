@@ -1,5 +1,8 @@
 # Reviewed Section Reading Guide Development Report
 
+Latest content status (2026-09-11): the single-example essay was rejected by the user. The
+Gemini framework manuscript below is ready for human retest only; no publication or user PASS.
+
 ## Result
 
 `IMPLEMENTATION_READY / READY_FOR_USER_RETEST` — 2026-09-10.
@@ -281,3 +284,53 @@ raw response, candidate, exact messages/input, provider metadata and verificatio
 Earlier experiment artifacts and bounded research notes remain under `.tmp/guide-editorial-*`.
 The narrow reproduction script is `.tmp/generate-editorial-ready.py`; it makes a paid generation-only
 rework call, never Review/publication. The Markdown is the human-review deliverable.
+
+
+## Whole-Section framework correction / Gemini — 2026-09-11
+
+The user rejected the 1250-character single-example approach: it omitted the overall learning
+framework. Removed the one-title/one-example/short-essay restrictions. The Guide now explains the
+whole Section's problem, why its main ideas are needed, how they connect, how to study them and what
+they support later. Short teaching-style examples calibrate tone and explanatory depth; they are not
+fixed headings or a per-KP coverage template. Target length is editorial (1800–2600), with unchanged
+1–6-part / 1400-per-part / 4500-total technical bounds.
+
+Per the user's Gemini 3.8 preference, Guide generation defaults to the existing OpenRouter route
+(`google/gemini-3.8-flash`) and requests `reasoning_effort=high`. Explicit provider/model configuration
+still wins. Assistant, Master and Review parameters/defaults are unchanged. Added bounded OpenRouter
+reasoning-effort support to the existing runtime; request metadata records it and default calls do
+not inherit it. The public models API listed this exact model and the supported parameter. Official
+OpenRouter documentation requests returned 403 and were not treated as read evidence. No dependency,
+new pipeline, proxy bypass, streaming, extra source context, UI or persistence change.
+
+Real runs revealed two local defects, fixed at their existing boundaries:
+- `http.client.IncompleteRead` now becomes the existing transient network failure, so transport retries
+  remain bounded and never accept partial content. Tests cover recovery, exhaustion and no partial
+  text leakage. The first high-reasoning request failed this way; a later separate request succeeded.
+- Locator detection mistook `代表255` for an authored table reference. Exclude only the `代表` verb
+  from the table-number pattern. Genuine `表1`, `教材表1` and `图1` still fail. No source-ID or locator
+  authority was relaxed.
+
+**Unpublished final manuscript READY_FOR_USER_RETEST; prior USER_ACCEPTANCE FAIL remains.** Five parts,
+2509 body characters, same real 2.1 source (748 items and existing optional KP ledger). It connects
+physical representation, symbol/position conventions, encoding purposes, type interpretation and
+later arithmetic, with learning methods in context. Gemini produced the framework, followed by two
+explicit implementer-authored editorial rework calls. This is not a claim of first-call consistency.
+No AI Review, user acceptance, application publication or Phase closure occurred. Earlier candidates
+were rejected for excessive technical restatement, unsupported quotations, operand mistakes and
+unqualified C claims. The final response is saved unchanged, with its input/messages/metadata; no
+manual rewrite after generation. Final request latency was about 41 seconds.
+
+Validation: source/format validation PASS; source Library opened read-only and Teaching assets unchanged.
+Saved system and trailing task match current prompts. Guide/Assistant runtime affected tests PASS;
+final broad suite **241 Python PASS / 2 unchanged optional OCR skips**, **30 frontend PASS**.
+Coverage includes per-call reasoning isolation, unchanged Review parameters, explicit route overrides,
+partial-response recovery and legitimate numeric prose versus actual table/figure references.
+The E2E wire verifier now expects the additional parameter only on OpenRouter generation calls.
+UI/Review-publication E2E is `INTENTIONALLY_NOT_RUN` for this unpublished content task: no UI change,
+no requested live Review/publication; those Phase acceptance gates remain open. Service not restarted.
+
+Final ignored artifacts: `.tmp/guide-framework-gemini-ready-20260911/`; generation-only reproduction
+script `.tmp/generate-framework-gemini-ready.py` (paid request, no Review/publication). Full body SHA-256:
+`fe6251d50b7f47c10aca1a79d862f42c90359f1adaadb8d186b08e661a540da4`.
+The checkpoint containing this amendment is an implementation/human-retest checkpoint, not acceptance.

@@ -36,7 +36,11 @@ with sqlite3.connect(Path(data_dir) / "state.sqlite3") as connection:
         assert any(set(ledger) == {e['source_id'] for e in supplied['evidence']}
                    and all(ledger[e['source_id']]['quote'] == e['text'] for e in supplied['evidence']) for ledger in ledgers)
         assert call["body"]["stream"] is False
-        assert set(call["body"]) == {"model", "messages", "temperature", "max_tokens", "stream"}
+        expected_fields = {"model", "messages", "temperature", "max_tokens", "stream"}
+        if call["provider"] == "openrouter" and "candidate" not in payload:
+            expected_fields.add("reasoning_effort")
+            assert call["body"]["reasoning_effort"] == "high"
+        assert set(call["body"]) == expected_fields
         assert "Authorization" not in json.dumps(call["body"])
         assert "test-loopback-key" not in json.dumps(call["body"])
         checked += 1

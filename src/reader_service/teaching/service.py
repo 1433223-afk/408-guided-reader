@@ -12,7 +12,7 @@ class TeachingService:
     def __init__(self, database, runtime):
         self.database = database
         self.runtime = runtime
-        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "zhipu").strip().lower()
+        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "openrouter").strip().lower()
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
@@ -122,7 +122,8 @@ class TeachingService:
                 generation_messages(system + feedback, payload) if role == "GENERATE" else
                 [{"role": "system", "content": system + feedback}, {"role": "user", "content": encoded(payload)}],
                 interaction_id=f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
-                max_tokens=16384 if role == "GENERATE" else 8192)
+                max_tokens=16384 if role == "GENERATE" else 8192,
+                reasoning_effort="high" if role == "GENERATE" and self.provider == "openrouter" else None)
             self._update(asset["id"], **{("generator_json" if role == "GENERATE" else "reviewer_json"): encoded({
                 "effective_config": completion.effective_config, "latency_ms": completion.latency_ms,
                 "usage": completion.usage, "response_metadata": completion.response_metadata})})

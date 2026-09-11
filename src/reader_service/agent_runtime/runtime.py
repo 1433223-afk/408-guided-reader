@@ -313,9 +313,12 @@ class AgentRuntime:
             self.config.provider, set()
         ):
             raise ValueError("thinking mode is invalid for the selected provider")
-        if reasoning_effort is not None and (
-            self.config.provider != "zhipu"
-            or reasoning_effort not in {"low", "high", "max"}
+        allowed_reasoning_efforts = {
+            "zhipu": {"low", "high", "max"},
+            "openrouter": {"low", "medium", "high"},
+        }
+        if reasoning_effort is not None and reasoning_effort not in allowed_reasoning_efforts.get(
+            self.config.provider, set()
         ):
             raise ValueError("reasoning effort is invalid for the selected provider")
         if not self._configuration_valid:

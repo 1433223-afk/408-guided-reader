@@ -1974,3 +1974,47 @@ def test_reader_close_cancels_inflight_root_and_reclaims_session_slot(assistant_
     assert assistant.conversation_count() == 0
     assert session_id not in assistant._sessions
     assert not hasattr(assistant, "_session_locks")
+
+
+def test_openrouter_reasoning_effort_is_per_call_and_reported():
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    messages = [{"role": "user", "content": "bounded"}]
+    result = providers.complete_for_with_metadata("openrouter", messages, reasoning_effort="high")
+    assert adapters['openrouter'].calls[-1]['body']['reasoning_effort'] == 'high'
+    assert result.effective_config['request_parameters']['reasoning_effort'] == 'high'
+    providers.complete_for_with_metadata("openrouter", messages)
+    assert 'reasoning_effort' not in adapters['openrouter'].calls[-1]['body']
+    for provider, effort in [('deepseek', 'high'), ('openrouter', 'max')]:
+        before = len(adapters[provider].calls)
+        with pytest.raises(ValueError, match='invalid for the selected provider'):
+            providers.complete_for_with_metadata(provider, messages, reasoning_effort=effort)
+        assert len(adapters[provider].calls) == before
+
+
+@pytest.mark.parametrize('recovers', [True, False])
+def test_incomplete_provider_response_is_retried_without_accepting_partial_text(monkeypatch, caplog, recovers):
+    from dataclasses import replace
+    from http.client import IncompleteRead
+    class Broken(BytesIO):
+        def read(self, *args):
+            raise IncompleteRead(b'private partial provider content')
+    complete = BytesIO(json.dumps({'choices': [{'message': {'content': 'complete answer'}, 'finish_reason': 'stop'}]}).encode())
+    responses = iter([Broken(), complete if recovers else Broken()])
+    calls = []
+    class Opener:
+        def open(self, request, **kwargs):
+            calls.append(request)
+            return next(responses)
+    monkeypatch.setattr(provider_adapter, 'build_opener', lambda *args: Opener())
+    config = replace(ProviderConfig.from_environment('openrouter'), endpoint='http://127.0.0.1:9999/chat', max_attempts=2)
+    runtime = AgentRuntime(OpenAICompatibleAdapter('openrouter'), config=config,
+                           credential_loader=lambda: 'test-key', sleeper=lambda _: None)
+    if recovers:
+        assert runtime.complete([{'role': 'user', 'content': 'bounded'}]) == 'complete answer'
+    else:
+        with pytest.raises(ProviderFailure) as failure:
+            runtime.complete([{'role': 'user', 'content': 'bounded'}])
+        assert failure.value.kind == ProviderFailureKind.TRANSIENT
+        assert failure.value.code == 'network'
+    assert len(calls) == 2
+    assert 'private partial provider content' not in caplog.text
