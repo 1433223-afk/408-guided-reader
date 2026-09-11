@@ -37,7 +37,7 @@ def prose(text, limit, evidence):
     if not isinstance(text, str) or not text.strip() or len(text) > limit:
         raise ValueError("导读文字为空或超过长度限制。")
     normalized = unicodedata.normalize("NFKC", text)
-    if re.search(r"重点|高频|常考|必考|考频|命题|考纲|真题|考试权重|high.yield|frequently.tested", normalized, re.I):
+    if re.search(r"(?:考试|考研|考查|复习)重点|重点(?:考查|考察|考点|题型)|高频|常考|必考|考频|命题|考纲|真题|考试权重|high.yield|frequently.tested", normalized, re.I):
         raise ValueError("导读包含未经支持的考试权重声明。")
     if re.search(r"https?://|www\.|[<>]|\]\(|第?\s*[\d一二三四五六七八九十百千万]+\s*页|(?:PDF|pages?|pp?\.)\s*(?:第\s*)?\d+|页码|坐标|(?:图|(?<!代)表|fig(?:ure)?\.?|table)\s*\d", normalized, re.I):
         raise ValueError("导读不得自写页码、链接或定位。")
@@ -138,7 +138,7 @@ def validate_formatted(value, draft, packet):
 
 GENERATION_REQUEST = """请按接口返回结果。
 接口输出说明：只返回JSON对象，不加代码围栏：{"modules":[{"id":"m1","kind":"article","title":"文章标题或自然小标题","text":"正文，段落用空行分隔","source_ids":["相关的所附ID"]}]}。modules只是文章的存储分段，不是必填教学栏目，不预定部分数量。id依次使用m1、m2等；每部分title最多32字、text最多1400字，全文text最多4500字；每部分source_ids选1–8个不重复的相关ID。不加其他字段。
-来源只放source_ids，正文不显示来源编号、链接、页码或图表编号。为兼容现有文字校验，不使用引号；不用重点、高频、常考、必考、考频、命题、考纲、真题、考试权重这些受限词。若输入有rework，仅修改反馈指定部分并保留id/kind。"""
+来源只放source_ids，正文不显示来源编号、链接、页码或图表编号。为兼容现有文字校验，不使用引号；不用高频、常考、必考、考频、命题、考纲、真题、考试权重等考试声明；普通阅读重点不属于考试权重声明。若输入有rework，仅修改反馈指定部分并保留id/kind。"""
 
 
 def generation_messages(system, payload):

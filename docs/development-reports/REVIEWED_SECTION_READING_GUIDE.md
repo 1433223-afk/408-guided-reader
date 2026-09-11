@@ -525,3 +525,26 @@ messages, provider metadata and verification. Reproduction `.tmp/generate-kp-con
 author-only call. Draft SHA-256: `b74279b51d26dccde575cae5ef4e1f7fcd1ea8d3d0a17ce2d0ab76dd3f3ae879`.
 
 Broad Python regression: 252 PASS / 2 unchanged optional OCR skips; git diff --check PASS.
+
+## User accepted content direction / live Reader activation — 2026-09-11
+
+User accepted the current Reading Guide content direction, deferred style/detail refinement, and
+requested activation in the actual project for hands-on generation. This is acceptance of the content
+direction, not a declaration that the complete Phase or live generation/publication UAT passed.
+
+Started current code on `http://127.0.0.1:8766/` with the real `var/manual-browser` Library. No jobs were
+queued/running before startup; SQLite backup is `state.sqlite3.pre-kp-guide-live-20260911.bak`.
+Opened the actual 348-page book, expanded Chapter 2, opened 2.1 Guide, verified the enabled regeneration
+button, collapsed and reopened it, and left the panel available for the user. Original PDF and old
+published Guide remain readable. The agent did not click regeneration or invoke a paid model/Review;
+the user will exercise generation, existing independent Review, and atomic publication.
+
+Activation reproduced one blocking local false positive: the accepted manuscript's ordinary heading
+`阅读时怎样抓重点` triggered the old bare `重点` exam-weight regex. Narrowed that term to explicit
+exam-weight phrases while retaining high-frequency/mandatory-exam and other existing restrictions.
+Adjusted the formatter compatibility instruction accordingly, so it does not demand removing ordinary
+reading emphasis. Source/quotation/locator validators and Review/publication semantics are unchanged.
+The real manuscript now passes draft validation; 35 targeted Guide tests PASS including ordinary
+reading emphasis versus actual exam claims. No new style iteration or UI code changes.
+
+Activation regression: 253 Python PASS / 2 unchanged optional OCR skips; git diff --check PASS. Frontend suite INTENTIONALLY_NOT_RUN (no frontend changes); real open/collapse/reopen checks above passed.

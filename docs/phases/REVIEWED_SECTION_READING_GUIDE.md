@@ -224,3 +224,12 @@ source-ID/locator authority, actual dependency recording and staleness, Review-g
 semantic/technical retry separation, atomic replacement, ownership/cascade, and egress/secret
 isolation. Stop at `READY_FOR_USER_RETEST`; user acceptance, independent acceptance and Phase closure
 remain separate approval gates.
+
+## Accepted content direction / live activation — 2026-09-11
+
+The user accepted the current KP-based Guide content direction and requested activation for hands-on
+Reader generation; further prose/detail refinement is deferred. Fresh author input uses chapter
+positioning and current published Section KP titles/one-sentence meanings, not OCR body or exercises.
+Existing source-aware formatting, independent Review and atomic publication remain mandatory. The
+previously generated sample is not imported as a published Guide. Overall Phase/user-flow acceptance
+remains pending the user's real application test.

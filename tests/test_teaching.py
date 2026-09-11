@@ -562,3 +562,10 @@ def test_guide_model_selection_respects_explicit_configuration(guide, monkeypatc
         else:
             monkeypatch.setenv(key, value)
     assert TeachingService(g.database, runtime).generator_model == expected
+
+
+def test_reading_emphasis_is_not_exam_weight():
+    assert validate_draft('阅读时怎样抓重点：重点在于理解知识的联系。', {'evidence': []})
+    for phrase in ('考试重点', '考研重点', '重点考查', '高频常考', '必考'):
+        with pytest.raises(ValueError, match='考试权重'):
+            validate_draft(phrase, {'evidence': []})
