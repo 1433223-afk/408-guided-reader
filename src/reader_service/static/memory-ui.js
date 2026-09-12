@@ -10,8 +10,8 @@ export function createMemoryUI({ api, announce, returnToSource }) {
   const dialog = document.createElement('dialog');
   dialog.id = 'learning-memory';
   dialog.setAttribute('aria-labelledby', 'memory-title');
-  dialog.innerHTML = `<header><h2 id="memory-title">学习记忆</h2><button type="button" id="memory-close">关闭</button></header>
-    <p>仅收录你明确选择的回答。收录不代表教材事实、审查通过或已经掌握；移出不删除原内容。</p>
+  dialog.innerHTML = `<header class="memory-heading"><h2 id="memory-title">学习记忆</h2><button type="button" id="memory-close" aria-label="关闭学习记忆" title="关闭学习记忆">×</button></header>
+    <p class="memory-intro">仅收录你明确选择的回答。收录不代表教材事实、审查通过或已经掌握；移出不删除原内容。</p>
     <div class="memory-filters"><label>教材 <select id="memory-book"></select></label><label>Section <select id="memory-section"></select></label><label>知识点 <select id="memory-kp"></select></label><button id="memory-refresh" type="button">刷新</button></div>
     <p id="memory-status" role="status"></p><div id="memory-list"></div><div id="memory-detail" hidden></div>`;
   document.body.append(dialog);
@@ -50,6 +50,7 @@ export function createMemoryUI({ api, announce, returnToSource }) {
       } catch (error) { announce(error.message, true); }
       finally { node.disabled = false; }
     });
+    node.className = 'memory-source-control';
     entry.node = node; controls.add(entry);
     queueMicrotask(() => refresh().catch(error => announce(error.message, true)));
     return node;
@@ -74,9 +75,10 @@ export function createMemoryUI({ api, announce, returnToSource }) {
       const card = document.createElement('article'); card.className = 'memory-card'; card.dataset.memoryId = item.id;
       const source = item.source;
       card.append(text('p', `${item.book_title} / ${item.section?.title || '未关联 Section'} / ${item.knowledge_point?.title || '未关联知识点'}`, 'memory-meta'));
-      card.append(text('strong', item.source_kind === 'MASTER' ? 'Master 回答' : 'Assistant · 已保存笔记'));
-      card.append(text('p', source.question || source.provenance?.answer_question || source.provenance?.child_focus || source.provenance?.root_focus || '原问题未记录'));
-      card.append(text('p', REVIEW[source.review_state || source.verification_state] || '审查状态未知'));
+      card.append(text('strong', item.source_kind === 'MASTER' ? 'Master 回答' : 'Assistant · 已保存笔记', `memory-source-label memory-source-${item.source_kind.toLowerCase()}`));
+      card.append(text('p', source.question || source.provenance?.answer_question || source.provenance?.child_focus || source.provenance?.root_focus || '原问题未记录', 'memory-card-question'));
+      const review = source.review_state || source.verification_state;
+      card.append(text('p', REVIEW[review] || '审查状态未知', `memory-trust mark-verification-${review?.toLowerCase()}`));
       card.append(button('查看原回答', () => detail(item)));
       return card;
     }));
@@ -90,21 +92,22 @@ export function createMemoryUI({ api, announce, returnToSource }) {
       const panel = el('detail'); panel.replaceChildren(); el('list').hidden = true; panel.hidden = false;
       panel.append(button('返回列表', () => { ++version; render(); }));
       panel.append(text('h3', item.source_kind === 'MASTER' ? 'Master 原回答' : 'Assistant 已保存解释'));
-      panel.append(text('p', `${item.book_title} / ${item.section?.title || '未关联 Section'} / ${item.knowledge_point?.title || '未关联知识点'}`));
-      panel.append(text('p', `审查：${REVIEW[s.review_state || s.verification_state] || '未知'}。这不是掌握证明。`));
-      if (s.detail || s.review_summary) panel.append(text('p', s.detail || s.review_summary));
+      panel.append(text('p', `${item.book_title} / ${item.section?.title || '未关联 Section'} / ${item.knowledge_point?.title || '未关联知识点'}`, 'memory-meta'));
+      const review = s.review_state || s.verification_state;
+      panel.append(text('p', `审查：${REVIEW[review] || '未知'}。这不是掌握证明。`, `memory-trust mark-verification-${review?.toLowerCase()}`));
+      if (s.detail || s.review_summary) panel.append(text('p', s.detail || s.review_summary, 'memory-review-summary'));
       const reviewer = s.reviewer_provider || s.review_provider;
-      if (reviewer) panel.append(text('p', `审查模型：${reviewer} / ${s.reviewer_model || s.review_model || '未记录'}`));
-      if (s.review_failure_kind || s.review_code) panel.append(text('p', `审查失败信息：${s.review_failure_kind || ''} ${s.review_code || ''}`));
+      if (reviewer) panel.append(text('p', `审查模型：${reviewer} / ${s.reviewer_model || s.review_model || '未记录'}`, 'memory-meta'));
+      if (s.review_failure_kind || s.review_code) panel.append(text('p', `审查失败信息：${s.review_failure_kind || ''} ${s.review_code || ''}`, 'memory-meta'));
       panel.append(text('h4', '原问题 / 解释焦点'));
       panel.append(text('p', s.question || s.provenance?.answer_question || s.provenance?.child_focus || s.provenance?.root_focus || '原问题未记录', 'memory-question'));
       if (item.source_kind === 'AI_SAVED') {
         panel.append(text('h4', '教材来源（SOURCE）'), text('p', `PDF 第 ${s.pdf_page_index + 1} 页 · ${s.anchor_state === 'OK' ? '原始锚点' : '锚点需检查'}`), text('blockquote', s.quote));
         panel.append(text('h4', '解释路径（PROVENANCE）'), text('p', (s.provenance?.concept_path || []).join(' › ')));
       } else {
-        panel.append(text('p', `原话题：${s.topic?.state === 'RESOLVED' ? '已解决' : s.topic?.state === 'ACTIVE' ? '待解决' : '状态未记录'} · 回答时间：${new Date(s.created_at).toLocaleString('zh-CN')}`));
-        panel.append(text('p', '来源为持久 Master 学习上下文；没有精确 PDF 选区锚点。'));
-        if (s.provider) panel.append(text('p', `回答模型：${s.provider} / ${s.model}`));
+        panel.append(text('p', `原话题：${s.topic?.state === 'RESOLVED' ? '已解决' : s.topic?.state === 'ACTIVE' ? '待解决' : '状态未记录'} · 回答时间：${new Date(s.created_at).toLocaleString('zh-CN')}`, 'memory-meta'));
+        panel.append(text('p', '来源为持久 Master 学习上下文；没有精确 PDF 选区锚点。', 'memory-meta'));
+        if (s.provider) panel.append(text('p', `回答模型：${s.provider} / ${s.model}`, 'memory-meta'));
       }
       panel.append(text('h4', 'AI 正文（AI CONTENT）'));
       const answer = document.createElement('div'); answer.className = 'memory-answer assistant-answer-bubble';
@@ -125,6 +128,7 @@ export function createMemoryUI({ api, announce, returnToSource }) {
     } catch (error) { el('status').textContent = error.message; }
   }
   async function open() {
+    el('list').replaceChildren(); el('detail').hidden = true;
     dialog.showModal(); el('status').textContent = '正在读取学习记忆…';
     try { await refresh(); render(); } catch (error) { el('status').textContent = error.message; }
   }
@@ -133,7 +137,9 @@ export function createMemoryUI({ api, announce, returnToSource }) {
   el('refresh').onclick = async () => { ++version; try { await refresh(); render(); } catch (error) { el('status').textContent = error.message; } };
   for (const id of ['book', 'section', 'kp']) el(id).onchange = () => { ++version; render(); };
   for (const host of [document.querySelector('.home-toolbar'), document.querySelector('.reader-controls')]) {
-    const entry = button('学习记忆', open); entry.className = 'memory-open'; host.append(entry);
+    const entry = button('学习记忆', open);
+    entry.className = host.matches('.reader-controls') ? 'memory-open outline-toggle' : 'memory-open';
+    host.insertBefore(entry, host.querySelector('#knowledge-toggle'));
   }
   return { control, refresh };
 }

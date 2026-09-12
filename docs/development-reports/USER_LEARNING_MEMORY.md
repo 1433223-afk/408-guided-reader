@@ -13,6 +13,29 @@ saved note/PDF. Removing membership preserves its source. No automatic enrolment
 
 ## Implemented
 
+### Same-Phase visual consistency refinement (2026-09-12)
+
+User requested strict continuity with the existing UI. Learning Memory now uses the established
+Marks/Dock paper surface, warm borders, gold-brown controls, compact metadata and serif heading
+hierarchy. Reader entry reuses `outline-toggle` beside navigation; the Library entry sits with the
+existing toolbar actions. Source collect/remove controls follow the lightweight saved-answer action
+style. Review colors reuse existing PASS/FAIL/technical-failure classes with unchanged labels.
+
+- Changes are local presentation/classes/entry placement. A real close/reopen check also exposed a
+  local stale-list race; opening now clears old interactive cards until its fresh list is rendered.
+  No schema, source content, provider, membership or learning-state boundary changed.
+- TARGETED: the existing two Memory browser regressions PASS, retaining explicit retry intent and
+  complete original access. AGENT REAL USE / affected path: `test:e2e:memory` PASS on an isolated
+  real 348-page copy, including 1600px and 1000px collection views, close/reopen, both source returns,
+  restart and removal/cascade checks. No horizontal overflow in the narrow collection. Visually
+  inspected Library, list, narrow list and both source-detail screenshots under `test-results/memory-*`.
+- BROAD: `test-results/memory-style-closure.xml`, **278 PASS / 2 unchanged optional OCR skips**;
+  `npm test`, **35 PASS**. The original narrow review still covers unchanged durable/security behavior;
+  this local visual change adds no independent-review trigger. No live provider calls or user-data
+  test writes. Remains **READY_FOR_USER_RETEST**, not USER_ACCEPTANCE PASS.
+
+### Original implementation
+
 - Additive migration 16: one five-field relation (ID, owning source revision, source kind/ID,
   collection time). Unique source identity, transactional eligibility/ownership checks and replay,
   immutable relationship identity, source-deletion hooks and owning-revision cascade. Cross-context

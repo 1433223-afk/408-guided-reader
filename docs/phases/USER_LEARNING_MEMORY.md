@@ -96,6 +96,9 @@ substantive external code or new dependency is adopted.
 - Master remains durable under its existing lifecycle; Assistant conversations remain temporary.
   Collecting one answer never persists an Assistant Root/tree or duplicates a Master thread.
 - All new user-visible UI defaults to Simplified Chinese.
+- User clarification (2026-09-12): Learning Memory UI must follow the established Library,
+  Reader, Marks and Master visual style; reuse their typography, colors, control scale and
+  interaction styling so the feature does not feel like a separate application.
 
 ## Build
 
