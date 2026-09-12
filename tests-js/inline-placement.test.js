@@ -2,18 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { placeInline } from '../src/reader_service/static/inline-placement.js';
 const target = { available: true, quad: [[.1,.3],[.8,.3],[.8,.32],[.1,.32]] };
-test('source-relative gutter remains outside PDF at two zoom levels', () => {
-  for (const scale of [.67, 1.5]) {
-    const page = { left: 32, top: 100, width: 600*scale, height: 900*scale, bottom: 100+900*scale };
-    const p = placeInline(target, page, {left:0,right:1000}, []);
-    assert.ok(p.right < page.left); assert.equal(p.top+12, page.top+page.height*.31);
+const viewport={left:0,right:1000};
+const page={left:32,top:100,width:600,height:900,bottom:1000};
+test('marker stays inside PDF margins at two zoom levels, retaining source y',()=>{
+  for(const scale of [.67,1.5]) {
+    const bounds={...page,width:600*scale,height:900*scale,bottom:100+900*scale};
+    const p=placeInline(target,bounds,viewport,[]);
+    assert.ok(p.left>=bounds.left && p.right<=bounds.left+bounds.width);
+    assert.equal(p.top+12,bounds.top+bounds.height*.31);
   }
 });
-test('occluded or unresolvable placement is omitted instead of shifted', () => {
-  const page = {left:32,top:0,height:900,bottom:900};
-  const p = placeInline(target,page,{left:0,right:900},[]);
-  assert.equal(placeInline(target,page,{left:20,right:900},[]),null);
-  assert.equal(placeInline(target,page,{left:0,right:900},[p]),null);
-  assert.equal(placeInline(target,page,{left:0,right:900},[],[p]),null);
-  assert.equal(placeInline({...target,available:false},page,{left:0,right:900},[]),null);
+test('learning control or OCR collision uses opposite margin without changing source',()=>{
+  const right=placeInline(target,page,viewport,[]);
+  const left=placeInline(target,page,viewport,[right]);
+  assert.ok(left.right<right.left); assert.equal(left.y,right.y);
+  assert.equal(placeInline(target,page,viewport,[right,left]),null);
+  assert.equal(placeInline(target,page,viewport,[],[right,left]),null);
+});
+test('unsafe targets and margins fail closed, horizontal scrolling does not change identity',()=>{
+  assert.equal(placeInline({...target,available:false},page,viewport,[]),null);
+  assert.equal(placeInline({...target,quad:[[NaN,0],[0,0],[0,0],[0,0]]},page,viewport,[]),null);
+  assert.equal(placeInline({...target,quad:[[0,0],[1,0],[1,0],[0,0]]},page,viewport,[]),null);
+  assert.equal(placeInline(target,{...page,width:20},viewport,[]),null);
+  assert.deepEqual(placeInline(target,page,{left:500,right:700},[]),placeInline(target,page,viewport,[]));
 });

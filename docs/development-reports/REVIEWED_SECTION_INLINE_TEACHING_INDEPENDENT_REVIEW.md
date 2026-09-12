@@ -52,3 +52,18 @@ did not execute tests and does not replace the prior independently executed inva
 Rechecked the final implementation delta after the initial audit: provider/model/stage metadata is recorded before invocation without credential or payload persistence; the normal completion metadata replaces it only after success. UI uses existing control styling, chooses its initial Section by the physical half-open reading anchor, waits for the publication snapshot before choosing generate/replacement, and retains request failure text. These changes introduce no new source, publication or learning authority.
 
 Independently reran the final **20 permanent Inline cases: PASS**, including consumed title/parent freshness, ambiguous-target omission and worker dispatch/recovery/cascade. JavaScript syntax check PASS. No additional findings; narrow code audit remains **PASS (P0=0 / P1=0 / P2=0)**. Implementer-reported final Inline and Guide controlled real-book E2E results are separate evidence, not independently rerun by this reviewer.
+
+
+## Same-Phase margin-card UI rework — Gemini 3.8 review
+
+The subsequent user-requested UI rework replaces the original outside-page gutter and bottom-row
+presentation described above. A fresh `google/gemini-3.8-flash` context independently reviewed the
+actual `inline-ui.js`, placement, CSS, app integration, JS/E2E tests and diff, with the user's layout
+constraints and source/no-learning-write invariants. It received no implementer reasoning. Final
+verdict **PASS; findings empty**. Exact source hashes and raw verdict are retained locally in
+`test-results/inline-ui-gemini-audit.json`.
+
+The first invocation failed with `empty_response`; it was not a PASS. One bounded retry using the
+same authorized model returned valid PASS JSON. This reviewer did not run tests or operate the UI;
+real-material and machine evidence in the Development Report belongs to the implementer. No other
+live model was used. User acceptance and Phase closure remain pending.

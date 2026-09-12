@@ -14,12 +14,18 @@ state = {t: hashlib.sha256(json.dumps(sorted([tuple(r) for r in c.execute(f'SELE
 state['locks'] = [tuple(r) for r in c.execute('SELECT book_source_revision_id,chapter_outline_node_id,learning_state_ever_at FROM chapter_preparations ORDER BY book_source_revision_id,chapter_outline_node_id')]
 baseline = root / 'inline-baseline.json'
 if sys.argv[-1] == '--baseline':
+    state['_inline_assets'] = {r['id']: list(r) for r in c.execute("SELECT * FROM inline_teaching_assets WHERE state='PUBLISHED'")}
     baseline.write_text(json.dumps(state), encoding='utf-8')
     sys.exit(0)
-assert json.loads(json.dumps(state)) == json.loads(baseline.read_text(encoding='utf-8')), 'Learning, Guide or permanent lock mutated'
+saved = json.loads(baseline.read_text(encoding='utf-8'))
+existing = saved.pop('_inline_assets', {})
+assert json.loads(json.dumps(state)) == saved, 'Learning, Guide or permanent lock mutated'
+for asset_id, original in existing.items():
+    assert list(c.execute('SELECT * FROM inline_teaching_assets WHERE id=?', (asset_id,)).fetchone()) == original, 'Existing published Inline asset changed'
 rows = c.execute("SELECT * FROM inline_teaching_assets WHERE state='PUBLISHED'").fetchall()
-assert len(rows) == 3
-for row in rows:
+new_rows = [r for r in rows if r['id'] not in existing]
+assert len(new_rows) == 3
+for row in new_rows:
     assert row['review_verdict'] == 'PASS'
     assert 'chapter_structure_version' not in json.loads(row['dependencies_json'])
 assert not c.execute('PRAGMA foreign_key_check').fetchall()

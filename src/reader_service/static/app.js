@@ -326,8 +326,10 @@ function displayedRatio(geometry) {
   return geometry.rotation % 180 === 0 ? height / width : width / height;
 }
 
+function inlineReserve() { return elements.reader.classList.contains("inline-open") ? 332 : 0; }
+
 function pageWidth() {
-  return Math.max(240, Math.min(920, elements.viewer.clientWidth - 72)) * state.zoom;
+  return Math.max(240, Math.min(920, elements.viewer.clientWidth - inlineReserve() - 72)) * state.zoom;
 }
 
 function snappedPageSize(ratio) {
@@ -366,8 +368,9 @@ function alignedCssDimension(target, pixelRatio) {
 function applyPageSize(wrapper, size) {
   wrapper.style.width = `${size.cssWidth}px`;
   wrapper.style.height = `${size.cssHeight}px`;
-  const fits = size.cssWidth <= elements.viewer.clientWidth - 64;
-  const naturalLeft = fits ? (elements.viewer.clientWidth - size.cssWidth) / 2 : 32;
+  const available = elements.viewer.clientWidth - inlineReserve();
+  const fits = size.cssWidth <= available - 64;
+  const naturalLeft = fits ? (available - size.cssWidth) / 2 : 32;
   const alignedLeft = alignedCssDimension(naturalLeft, size.pixelRatio).css;
   wrapper.style.marginLeft = `${Math.max(0, alignedLeft - 32)}px`;
   wrapper.style.marginRight = "0";
@@ -2176,6 +2179,7 @@ async function ensureOverlay(index) {
   overlay.addEventListener("pointercancel", finishSelection);
   overlay.addEventListener("contextmenu", openSelectionContextMenu);
   wrapper.append(overlay);
+  inline.renderPage(index);
   renderAnnotations(index, overlay);
   renderSearchMatch(index, overlay);
   if (index === state.currentPage) updateMarksPanel();

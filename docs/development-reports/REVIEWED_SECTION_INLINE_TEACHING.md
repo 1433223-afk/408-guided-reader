@@ -6,7 +6,7 @@
 affected regression and broad regression are complete. Independent narrow code review has no
 outstanding findings. **USER_ACCEPTANCE remains PENDING; this is not Phase closure.**
 
-The Reader can explicitly generate sparse Section Teaching, show/hide published page-side `✦`,
+The Reader can explicitly generate sparse Section Teaching, show/hide published in-page `✦`,
 open Guidance and unscored Recall, explain selected Teaching in a new temporary Assistant Root,
 and recover published content across navigation/restart. Failed replacement preserves the old result.
 
@@ -24,9 +24,12 @@ and recover published content across navigation/restart. Failed replacement pres
 - This slice uses no KP identities/boundaries and therefore sends no KP ledger or learner state and
   records no Chapter structure version. Staleness covers consumed pages, Section range/identity and
   actual Section/parent titles; unused parent physical revisions do not invalidate the asset.
-- `✦` occupies a checked gutter outside the PDF media box. Insufficient room/collisions omit a marker.
-  Opened content occupies a separate bottom row, preserving PDF reading and existing Guide/Dock use.
-  Visibility preference is local presentation state, independent of provider readiness.
+- Per the user's same-Phase UI request, `✦` now sits inside a blank PDF margin, checked against the
+  actual OCR overlay and learning/Guide controls. One 316px paper-like card attaches to its source page
+  in reserved space beside the PDF, scrolls with it, and switches when another marker is clicked.
+  The bottom Guidance row is removed. The toolbar has one Section visibility switch and a secondary
+  management menu for Section selection, generation, retry and status. Visibility remains local and
+  independent of provider readiness. Direct “继续问 Assistant” supplements native text selection.
 - Recall reveal/skip/reopen is local UI only. Guidance selection retains Teaching asset/item/field
   lineage and no fake PDF anchor; its Assistant explanation cannot be saved as a PDF-anchored note.
 - Following the user's model restriction, new Inline generation/Review defaults use OpenRouter
@@ -39,6 +42,9 @@ Rechecked [Hypothesis issue 7571](https://github.com/hypothesis/client/issues/75
 [Readium DecorationController](https://github.com/readium/kotlin-toolkit/blob/develop/readium/navigators/common/src/main/java/org/readium/navigator/common/DecorationController.kt):
 keep stable source identity separate from visual placement; fail locally rather than re-anchor a
 lookalike. No annotation SDK/framework, fuzzy matching, substantial external code or dependency added.
+For the UI rework, checked Floating UI's [autoUpdate documentation](https://github.com/floating-ui/floating-ui/blob/master/website/pages/docs/autoUpdate.mdx).
+Borrowed scroll/resize/lifecycle anchoring principles only; page-relative DOM and existing relayout
+handle positioning without a floating-element library, generic layout framework or animation loop.
 
 Real Gemini Review sometimes returned fenced JSON. These responses failed strict validation and
 never published. Checked the official OpenRouter SDK's
@@ -48,6 +54,28 @@ recorded in metadata and defaults off; deterministic validation remains mandator
 The direct documentation endpoint returned 403; GitHub's official SDK supplied the checked definition.
 
 ## Acceptance evidence
+
+**Final same-Phase UI rework, 2026-09-12:**
+- **TARGETED:** 55 Inline/Guide Python cases and 3 margin-placement JS cases PASS.
+- **AGENT REAL USE:** controlled-provider flow on an isolated copy of the real 348-page textbook
+  PASS at `C:/Users/26389/AppData/Local/Temp/guided-reader-inline-uDUgLK/data`. Verified markers inside
+  the page with no OCR/control overlap, one 316px card, switching, scroll-relative position, close/reopen,
+  Recall reveal/skip, source jump, direct Assistant draft and actual selection-to-Assistant Root,
+  zoom, 1000px viewport, Guide/Dock, visibility, restart and failed regeneration/retry/replacement.
+  Existing published Inline rows and Guide/Learning/Annotation/lock hashes remained unchanged.
+- **AFFECTED:** Reading Guide real-book E2E PASS at `C:/Users/26389/AppData/Local/Temp/guided-reader-guide-8QWV2n/data`.
+- **BROAD:** `inline-ui-closure.xml`: **274 PASS / 2 optional real-OCR skips**; `npm test`: **33 PASS**.
+  JS syntax and diff checks PASS. Independent Gemini 3.8 UI delta review PASS; details in the review report.
+- **SCREENSHOTS:** `test-results/inline-real-guidance-1.png` and `inline-real-guidance-2.png` show the
+  actual served textbook pages 13–14 with prior live-Gemini publication
+  `348dfc52-6761-493f-a1e3-c3fa985177d0`. Visually inspected; no regenerated/mock screenshot content.
+  Recall/narrow/Dock screenshots come from the separately identified controlled-provider run.
+  This UI rework made no live generation/Assistant calls; only the independent review called Gemini 3.8.
+- Initial UI checks exposed reset recursion and loss of the open card when a shrunken page could no
+  longer fit its marker; both were fixed before the complete passing rerun. A verifier assumed an empty
+  Inline baseline; it now preserves and checks existing published rows before counting new publications.
+
+**Original implementation baseline (before the UI rework):**
 
 - **TARGETED:** 20 Inline tests PASS; 35 existing Guide tests PASS; explicit JSON-mode boundary test
   PASS; gutter placement/omission tests 2 PASS. Coverage includes replay/concurrency, no-KP evidence,
@@ -90,7 +118,10 @@ provider body, screenshot or temporary Assistant history is committed.
 User retest and user acceptance are pending. Live pedagogical quality remains subject to that retest;
 Review PASS is not user acceptance. No forced Recall or per-page/KP quota, scoring/attempt storage,
 memory, Vision/formula understanding, RAG, new dependency or Guide content redesign was introduced.
-An unplaceable marker is omitted; a stale/unsafe target is not moved to different text.
+An unplaceable marker is omitted; a stale/unsafe target is not moved to different text. An already
+opened card can remain safely beside the source when a smaller page cannot fit its marker. At high
+zoom or with a narrow Reader plus Dock, horizontal scrolling exposes the reserved card space; cards
+never overlay PDF text. Layout does not change durable source geometry or publication semantics.
 
 ## Reproduction and entry points
 
@@ -103,9 +134,10 @@ $env:GUIDE_E2E_REAL='1' # Live initial publication + Assistant only; Gemini-only
 node tests-e2e/inline-teaching.mjs
 ```
 
-Retest service: `http://127.0.0.1:8766/`. Open the textbook, choose **✦ 行间教学**, select a resolved
-Section and generate. Toggle **显示 ✦**, open a page-side marker, inspect its source, and select its
-text for Assistant. Recall appears only if the reviewed result finds it useful. Regeneration and
+Retest service: `http://127.0.0.1:8766/` (refresh the browser to load the UI rework). Open the textbook,
+use **行间教学** to show/hide this Section's markers; use its **⋯** menu to select a resolved Section
+and generate/regenerate. Open an in-page marker, inspect its source, and use **继续问 Assistant** or
+select its text for Assistant. Recall appears only if the reviewed result finds it useful. Regeneration and
 technical retry remain explicit. The main library has not been populated with controlled test output.
 
 Core entry points: `teaching/inline_{contracts,evidence,service}.py`, migration 15 in `teaching/schema.py`,
@@ -114,5 +146,6 @@ Core entry points: `teaching/inline_{contracts,evidence,service}.py`, migration 
 
 ## Git checkpoint
 
-The checkpoint containing this report is titled `Implement reviewed Section Inline Teaching for user retest`.
-Its hash is reported after committing. The commit is implementation-ready, not user acceptance or closure.
+Original implementation checkpoint: `1a3e38a`. The UI rework checkpoint is titled
+`Move inline teaching into page margins and anchored guidance cards`; its hash is reported after
+committing. This is implementation-ready, not user acceptance or closure.

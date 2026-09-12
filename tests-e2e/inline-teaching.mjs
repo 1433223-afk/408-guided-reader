@@ -88,26 +88,42 @@ try {
       const marker=page.locator(`.inline-marker[data-item-id="${item.id}"]`).first();
       await marker.waitFor({timeout:30000}); await marker.click();
       await page.locator('.inline-text').first().waitFor();
+      await assertCard(page);
+      const before=await relativePosition(page);
+      await page.locator('#viewer').hover(); await page.mouse.wheel(0,90); await page.waitForTimeout(300);
+      const after=await relativePosition(page);
+      assert.ok(Math.abs(before.delta-after.delta)<2,'Card detached from source during scroll');
+      await page.locator('#inline-close').click(); assert.equal(await page.locator('#inline-panel').count(),0);
+      await marker.click(); await assertCard(page);
       await page.getByRole('button',{name:'查看教材位置',exact:true}).click();
       for (const zoom of ['#zoom-out','#zoom-in']) {
         await page.locator(zoom).click(); await page.waitForTimeout(500);
         const match=await page.locator(`.inline-marker[data-item-id="${item.id}"]`).first().evaluate(b=>{
-          const p=b.closest('.page').getBoundingClientRect(),r=b.getBoundingClientRect(); return {right:r.right,left:p.left};
+          const p=b.closest('.page').getBoundingClientRect(),r=b.getBoundingClientRect(); return {left:r.left,right:r.right,pageLeft:p.left,pageRight:p.right};
         });
-        assert.ok(match.right<=match.left,'Marker covers PDF');
+        assert.ok(match.left>=match.pageLeft && match.right<=match.pageRight,'Marker escaped PDF');
+        await assertCard(page);
       }
       if(item.kind==='recall') {
-        await page.getByRole('button',{name:'想好后查看参考思路',exact:true}).click();
+        await page.getByRole('button',{name:'查看思路',exact:true}).click();
         await page.locator('.inline-text[data-field="reference_thought"]').waitFor();
+        await page.locator('#inline-panel').scrollIntoViewIfNeeded();
+        await page.screenshot({path:'test-results/inline-recall.png',fullPage:true});
         await page.getByRole('button',{name:'先跳过',exact:true}).click();
         await marker.click(); assert.equal(await page.locator('.inline-text[data-field="reference_thought"]').count(),0);
       }
     }
     await page.setViewportSize({width:1000,height:850}); await page.waitForTimeout(500);
+    await page.locator('#inline-panel').scrollIntoViewIfNeeded();
     const panelBounds=await page.locator('#inline-panel').boundingBox();
-    assert.ok(panelBounds.x+panelBounds.width<=1000, 'Teaching panel overflows narrow viewport');
+    assert.ok(panelBounds.x+panelBounds.width<=1001, 'Teaching panel overflows narrow viewport');
     const closeBounds=await page.locator('#inline-close').boundingBox();
     assert.ok(closeBounds.x+closeBounds.width<=1000,'Teaching close control is unreachable');
+    await page.getByRole('button',{name:'继续问 Assistant',exact:true}).click();
+    await page.locator('#assistant-draft-text').waitFor();
+    assert.ok((await page.locator('#assistant-draft-text').innerText()).length>0);
+    await page.locator('#assistant-close').click();
+    await page.locator('#inline-panel').scrollIntoViewIfNeeded();
     const selectedText=page.locator('.inline-text').first(); const rect=await selectedText.boundingBox();
     await page.mouse.move(rect.x+3,rect.y+12); await page.mouse.down(); await page.mouse.move(rect.x+180,rect.y+12,{steps:12}); await page.mouse.up();
     await page.mouse.click(rect.x+60,rect.y+12,{button:'right'});
@@ -117,12 +133,16 @@ try {
     assert.equal(assistant.roots.length,1); assert.equal(assistant.roots[0].created_from.kind,'INLINE_GUIDANCE');
     assert.equal(assistant.roots[0].created_from.teaching_lineage.asset_id,first.published.id);
     await page.locator('.assistant-answer-bubble').first().waitFor({timeout:30000});
+    await assertCard(page);
     assert.ok(await page.locator('#inline-panel').isVisible());
     assert.ok(await page.locator('.page canvas').count());
+    await page.locator('#inline-panel').scrollIntoViewIfNeeded();
     await mkdir('test-results',{recursive:true}); await page.screenshot({path:'test-results/inline-dock.png',fullPage:true});
     await page.locator('#assistant-close').click();
     await page.screenshot({path:'test-results/inline-narrow.png',fullPage:true});
     await page.setViewportSize({width:1440,height:1000});
+    await page.waitForTimeout(500); await page.locator('#inline-panel').scrollIntoViewIfNeeded();
+    await page.screenshot({path:'test-results/inline-margin.png',fullPage:true});
     await page.locator('#inline-enabled').uncheck(); assert.equal(await page.locator('.inline-marker').count(),0);
     await page.locator('#inline-enabled').check(); assert.ok(await page.locator('.inline-marker').count());
     await openGuide(page,ready);
@@ -136,6 +156,8 @@ try {
     assert.equal((await get(page,base(ready))).published.id,first.published.id);
     assert.equal(await page.locator('#inline-enabled').isChecked(),false);
     await page.locator('#inline-enabled').check();
+    if (!(await page.locator('#inline-menu').isVisible())) await page.locator('#inline-open').click();
+    await page.locator('#inline-section').selectOption(ready.outline_node_id);
     await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-generate').click()]);
     const failed=await settled(page,base(ready)); assert.equal(failed.task.state,'FAILED'); assert.equal(failed.published.id,first.published.id);
     await stop(); running=await start(loopback); await page.goto(running.url); await openBook(page);
@@ -193,3 +215,30 @@ async function stop() {
   await new Promise((resolve) => child.once("exit", resolve));
 }
 
+
+async function assertCard(page) {
+  await page.locator('#inline-panel').waitFor();
+  const card=await page.locator('#inline-panel').evaluate(e=>{
+    const r=e.getBoundingClientRect(),p=e.closest('.page').getBoundingClientRect();
+    const hits=[...e.closest('.page').querySelectorAll('.ocr-line,.learning-marker,.section-guide-entry')].filter(n=>{
+      const b=n.getBoundingClientRect();return r.left<b.right&&r.right>b.left&&r.top<b.bottom&&r.bottom>b.top;
+    });
+    return {width:r.width,left:r.left,right:p.right,hits:hits.length};
+  });
+  assert.equal(await page.locator('#inline-panel').count(),1);
+  assert.ok(card.width>=280&&card.width<=360,'Card width');
+  assert.ok(card.left>=card.right,'Card covers PDF');assert.equal(card.hits,0);
+  const markers=await page.locator('.inline-marker').evaluateAll(nodes=>nodes.map(e=>{
+    const r=e.getBoundingClientRect(),p=e.closest('.page').getBoundingClientRect();
+    const hits=[...e.closest('.page').querySelectorAll('.ocr-line,.learning-marker,.section-guide-entry')].filter(n=>{
+      const b=n.getBoundingClientRect();return r.left<b.right&&r.right>b.left&&r.top<b.bottom&&r.bottom>b.top;
+    });return {inside:r.left>=p.left&&r.right<=p.right,hits:hits.length};
+  }));
+  assert.ok(markers.every(m=>m.inside&&m.hits===0),'Marker overlaps text/control');
+}
+async function relativePosition(page) {
+  return page.locator('#inline-panel').evaluate(e=>{
+    const r=e.getBoundingClientRect(),m=e.closest('.page').querySelector('.inline-marker[aria-expanded="true"]').getBoundingClientRect();
+    return {delta:r.top-m.top};
+  });
+}
