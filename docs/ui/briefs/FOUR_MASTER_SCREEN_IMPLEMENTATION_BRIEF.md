@@ -4,6 +4,24 @@
 
 **Status: PLANNER HANDOFF — READY FOR IMPLEMENTER**
 
+### User-directed Reader restoration — 2026-09-13 (controlling scope override)
+
+The user rejected the redesigned Reader in manual UAT and confirmed selective restoration
+from `92febf6`. Reader-specific composition, unified Study Pane migration, navigation and
+responsive requirements below are deferred wherever they differ from that baseline.
+Restore the original toolbar, Guide container, Assistant/Master Dock, Outline/Search,
+Knowledge Map location, selection flow, open/close behavior and PDF layout geometry.
+Apply only a minimal Editorial / Swiss + Paper / E-ink visual skin: colors, material,
+border/radius and control states. No new Reader information architecture is authorized.
+Home, Book Overview and Learning Memory retain their implemented redesign. Retain the
+authorized Section-end backend/projection and Child retry contract; reading never writes
+mastery. The restored Reader uses no new Section-end notice or pane orchestration.
+
+The next gate is the user's seven-item Reader retest: PDF clarity; zoom/page navigation;
+Guide; Assistant/Master; Inline Teaching; Outline/Search/Marks; new color treatment.
+Stop at `READY_FOR_USER_RETEST`. Further interaction changes require individual user
+requests and retests. This override records the user's instruction, not agent acceptance.
+
 ### User-authorized implementation scope addition
 
 On 2026-09-12, the user explicitly selected “扩大范围，补齐节末阅读记录和投影”

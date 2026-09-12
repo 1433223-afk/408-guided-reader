@@ -408,8 +408,6 @@ try {
   assert.equal(providerCalls.length, antiBypassCalls);
 
   await page.locator("#back-to-library").click();
-  await page.locator("#book-overview").waitFor({state:"visible"});
-  await page.locator(".overview-back").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   const staleFollowStatus = await page.evaluate(async (payload) => {
     const response = await fetch("/api/assistant/follow-up", {
@@ -426,9 +424,7 @@ try {
   });
   assert.equal(staleFollowStatus, 404, "Reader close did not clear all temporary roots");
   await openBook(page, 348);
-  await page.locator(".reader-more > summary").click();
   await page.locator("#assistant-toggle").click();
-  await page.locator(".reader-more > summary").click();
   assert.equal(await page.locator("#assistant-root-switcher option").count(), 0,
     "Reader reopen retained stale Root options in the Assistant UI");
 
@@ -448,9 +444,7 @@ try {
   await page.keyboard.press("Escape");
   await page.locator("#outline-toggle").click();
   await page.locator("#outline-panel").waitFor({ state: "visible" });
-  await page.locator(".reader-more > summary").click();
   await page.locator("#search-toggle").click();
-  await page.locator(".reader-more > summary").click();
   await page.locator("#search-panel").waitFor({ state: "visible" });
 
   console.log(JSON.stringify({

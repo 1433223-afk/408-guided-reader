@@ -73,7 +73,6 @@ try {
   await open();
   await assertRestored(saved);
   await page.locator("#back-to-library").click();
-  await page.locator(".overview-back").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   await open();
   await assertRestored(saved);
@@ -81,7 +80,6 @@ try {
   // Learning entries can resize placeholders while PDF loading is still pending.
   // Neither debounce nor pagehide may persist those temporary coordinates.
   await page.locator("#back-to-library").click();
-  await page.locator(".overview-back").click();
   await page.reload();
   let releasePdf;
   let requestedPdf;
@@ -102,7 +100,6 @@ try {
   await page.unroute("**/pdf");
 
   await page.locator("#back-to-library").click();
-  await page.locator(".overview-back").click();
   await stop();
   running = await start();
   await page.goto(running.url);

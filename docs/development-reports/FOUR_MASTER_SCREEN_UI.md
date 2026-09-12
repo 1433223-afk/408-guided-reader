@@ -1,5 +1,75 @@
 # Four Master Screen UI — development report
 
+## Current result — Reader restoration, 2026-09-13
+
+`READY_FOR_USER_RETEST`: Reader now uses the stable `92febf6` interactions and PDF
+geometry with a minimal paper/ink/deep-green skin. The user rejected the redesigned
+Reader in manual UAT and confirmed selective restoration. Home, Book Overview and
+Learning Memory retain their redesign. No `USER_ACCEPTANCE PASS` is claimed.
+Retest: **http://127.0.0.1:8767/**, existing `var/manual-browser` Library.
+
+`92febf6` is the final pre-redesign handoff: its source/dependencies match `c702316`,
+with acceptance closure recorded at docs-only `1cc9439`. `c401718` introduced the redesign.
+Restoration changes only `static/app.js`, `static/index.html` and `static/screens.css`.
+Original toolbar, 920px PDF base width, rendering, center-based current-page calculation,
+Knowledge Map location, panel ownership, Outline/Search/Marks and responsive model are
+restored. New toolbar relocation, pane observers, Marks resizing and geometry overrides
+are removed. Original `styles.css`, Master and Inline modules are unchanged.
+
+The visual skin changes colors, border colors/radii, shadows and hover/focus paint.
+New-page typography is scoped away from Reader. Preserved fixes include independent
+child failure handling, page-input focus protection, reading-position timestamp and
+Guide Escape propagation. Migration 17, Section-end records/projection and Child retry
+remain. The new Reader Section-end notice is removed; the observer uses existing canvas
+geometry and error toast. No backend/API/schema/dependency or Frozen Blueprint changes.
+Reader Back returns to Library/Home; new Overview and Memory source entry remain available.
+
+### Restoration verification
+
+- `tests-e2e/reader-restoration.mjs`: PASS against the real 348-page Library copy with
+  providers disabled. Baseline and restored assets use the same served backend. Page 53
+  original canvas bitmap data is identical at the same scroll/zoom: canvas and CSS size
+  920 × 1282; toolbar height 68px at 1600px. Canvas/viewer geometry and Outline/Search/Marks
+  bounds match baseline at 1600/1280/1024px. No page errors. This is raw canvas equality,
+  not screenshot equality with recolored overlays.
+- Windows screenshots at all three widths inspected. At 1024px the old crowded toolbar
+  extends controls beyond the visible area; this inherited limitation is preserved under
+  the user's instruction not to change the responsive interaction model. Baseline equality
+  does not imply narrow-screen UX acceptance.
+- Adapted `four-master-screens.mjs`: PASS, including published Guide resize/close/reopen,
+  source return/replacement failure, both Memory source returns, membership-only removal,
+  restart, OCR-pending PDF and Section-end observation without mastery writes. Fixture
+  reading position normalized to page 53 only in a disposable copy, not the user Library.
+- `ask-about-this.mjs`: PASS, including real OCR pointer selection, depth 3, navigation,
+  cancellation/close, AI-off access and failed first Child retry with exact identity/context.
+- `inline-teaching.mjs`: PASS, including markers, zoom/narrow/source return, Assistant,
+  Guide coexistence, AI-off replacement failure/retry and non-KP generation.
+- `reading-position.mjs`: PASS, page 50 offset/zoom across refresh, Home reopen, slow PDF
+  + pagehide and restart; Learning unchanged.
+- `npm test`: **36 passed**. Python broad closure: **283 passed, 2 existing optional OCR
+  skips, 166.74 seconds**, `test-results/reader-restoration-closure.xml`.
+- Provider failure/generation paths use loopback mocks over real material. No external
+  model call during restoration; external answer quality is not retested.
+
+Run the entry points below plus `node tests-e2e/reader-restoration.mjs` using the same
+`READER_DATA_DIR`. Ignored visual evidence: `test-results/reader-restored.png` and
+`reader-restored-{1600,1280,1024}.png`. Textbooks/screenshots are not committed.
+Standalone overlapping old-topology harnesses are `INTENTIONALLY_NOT_RUN`: the five
+named served harnesses cover the changed surfaces, alongside broad invariant regression.
+
+The user-directed Brief override defers Reader master composition, unified Study Pane
+migration and new navigation/responsive requirements. Stop for the seven manual checks:
+PDF clarity; zoom/pages; Guide; Assistant/Master; Inline Teaching; Outline/Search/Marks;
+new color treatment. Further Reader interaction changes require individual user requests.
+The commit containing this update is the restoration checkpoint; user retest pending.
+
+## Historical implementation record — c401718 (superseded Reader claims)
+
+Everything below records the initial implementation and its pre-UAT checks. Its Reader
+fidelity, viewport-top current-page, unified-pane and reserved-width claims are not the
+current state or acceptance evidence for the restored Reader. The user subsequently
+reported Reader UAT FAIL; the current result and evidence above take precedence.
+
 ## Result
 
 `READY_FOR_USER_RETEST` — implemented against the four accepted visual masters.
