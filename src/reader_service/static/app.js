@@ -5,6 +5,7 @@ import {
 } from "/selection.js";
 import { renderAssistantAnswer, renderedSelectionToRaw } from "/assistant-render.js";
 import { createMasterUI } from "/master-ui.js";
+import { createMemoryUI } from "/memory-ui.js";
 import { createGuideUI } from "/guide-ui.js";
 import { createInlineUI } from "/inline-ui.js";
 
@@ -48,7 +49,28 @@ const state = {
 const master = createMasterUI({ api, revision: () => state.revision?.id,
   pages: elements.pages, dock: elements["assistant-panel"],
   openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
-  goToPage, announce, relayout: () => relayoutPages() });
+  goToPage, announce, relayout: () => relayoutPages(),
+  memoryControl: (...args) => memory.control(...args) });
+
+const memory = createMemoryUI({ api, announce, returnToSource: async item => {
+  const books = (await api('/api/books')).books;
+  const book = books.find(b => b.id === item.book_id && b.active_revision?.id === item.book_source_revision_id);
+  if (!book) throw new Error('原教材当前不可用。');
+  if (state.book?.id !== book.id) { if (state.book) closeReader(); await openBook(book); }
+  if (state.revision?.id !== item.book_source_revision_id || !state.pdf) throw new Error('请重新打开原教材。');
+  if (item.source_kind === 'MASTER') {
+    await master.openMemory(item.source.knowledge_point_id || item.source.section_outline_node_id, item.source_id);
+  } else {
+    setAssistantPanelOpen(false);
+    goToPage(item.source.pdf_page_index, Math.min(...item.source.quads.flat().map(p => p[1])));
+    await refreshAnnotationPage(item.source.pdf_page_index);
+    elements['marks-panel'].hidden = false;
+    elements['marks-toggle'].setAttribute('aria-expanded', 'true');
+    updateMarksPanel();
+    const card = [...elements['marks-list'].children].find(n => n.dataset.annotationId === item.source_id);
+    if (card) { card.scrollIntoView({ block: 'center' }); card.tabIndex = -1; card.focus({ preventScroll: true }); }
+  }
+} });
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 const ASSISTANT_PROVIDER_LABELS = {
@@ -2212,6 +2234,7 @@ function updateMarksPanel() {
   const cards = values.map((annotation) => {
     const card = document.createElement("article");
     card.className = `mark-card annotation-style-${annotation.highlight_style.toLowerCase()}`;
+    card.dataset.annotationId = annotation.id;
     if (annotation.source_kind === "AI_SAVED") {
       card.classList.add("mark-card-ai-saved");
       const heading = document.createElement("div");
@@ -2228,6 +2251,7 @@ function updateMarksPanel() {
       })[annotation.verification_state] || "审查状态未知";
       heading.append(badge, verification);
       card.append(heading);
+      card.append(memory.control(state.revision.id, 'AI_SAVED', annotation.id));
 
       const source = document.createElement("section");
       source.className = "mark-ai-section";

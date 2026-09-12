@@ -1,6 +1,11 @@
 # Phase / User Learning Memory — Curated V1
 
 > **Status: ACCEPTED — ready for implementation.**
+>
+> Implementation checkpoint (2026-09-12): **READY_FOR_USER_RETEST / IMPLEMENTATION_READY**.
+> Targeted, real-book golden path, affected and broad checks complete; independent narrow
+> implementation review PASS. User acceptance, independent product acceptance and Phase closure
+> remain pending. Evidence: [Development Report](../development-reports/USER_LEARNING_MEMORY.md).
 
 ## Goal
 

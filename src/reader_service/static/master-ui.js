@@ -3,7 +3,7 @@ import { renderAssistantAnswer } from "/assistant-render.js";
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 const REVIEW = { NOT_REQUESTED: "快速 · 未独立审查", PENDING: "审查中", PASS: "审查通过", FAIL: "审查未通过", TECHNICAL_FAILURE: "审查技术失败" };
 
-export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout }) {
+export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout, memoryControl }) {
   document.addEventListener("pointerdown", event => {
     for (const marker of pages.querySelectorAll(".kp-learning-marker[open]")) {
       if (!marker.contains(event.target)) marker.open = false;
@@ -114,6 +114,9 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
         ? ({ PENDING: "问题已保存 · 正在回答", FAILED: "发送未完成 · 问题已保留", COMPLETE: "" }[message.state])
         : `${message.provider} · ${message.model} · ${REVIEW[message.review_state]}${message.reviewer_provider ? ` · ${message.reviewer_provider} / ${message.reviewer_model}` : ""}`;
       row.append(metadata);
+      if (message.role === 'assistant' && message.state === 'COMPLETE') {
+        row.append(memoryControl(revision(), 'MASTER', message.id));
+      }
       if (message.detail) {
         const detail = document.createElement("p");
         detail.className = "master-message-status";
@@ -338,5 +341,10 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     el("form").hidden = true;
     el("confirm").hidden = true;
   }
-  return { refreshEntries, renderPage, decorateKnowledgeItem, reset, selectAssistant: () => select(false) };
+  return { refreshEntries, renderPage, decorateKnowledgeItem, reset, selectAssistant: () => select(false),
+    openMemory: async (scope, messageId) => {
+      await open({ scope_id: scope, title: 'Master 学习上下文' });
+      const row = [...el('history').children].find(node => node.dataset.messageId === messageId);
+      if (row) { row.scrollIntoView({ block: 'center' }); row.tabIndex = -1; row.focus({ preventScroll: true }); }
+    } };
 }

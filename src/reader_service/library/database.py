@@ -735,8 +735,9 @@ MIGRATIONS = (
 
 
 from reader_service.teaching.schema import TEACHING_SCHEMA, INLINE_TEACHING_SCHEMA
+from reader_service.memory_schema import SCHEMA as MEMORY_SCHEMA
 
-MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA))
+MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA))
 
 
 class Database:
@@ -765,6 +766,8 @@ class Database:
                     continue
                 if version == 7:
                     self._backup_durable_annotations(connection, version)
+                if version == 16:
+                    self._backup_learning_memory(connection)
                 if version == 13:
                     # SQLite's documented table-rebuild procedure: disable cascades outside
                     # the transaction, preserve IDs, and validate all FKs before committing.
@@ -788,6 +791,19 @@ class Database:
             raise
         finally:
             connection.close()
+
+    def _backup_learning_memory(self, connection):
+        backup_path = self.path.with_name(f"{self.path.name}.pre-migration-16.bak")
+        destination = sqlite3.connect(backup_path)
+        try:
+            connection.backup(destination)
+            if destination.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                raise RuntimeError('Learning Memory backup failed integrity verification')
+            if list(destination.iterdump()) != list(connection.iterdump()):
+                raise RuntimeError('Learning Memory backup differs from existing data')
+        finally:
+            destination.close()
+        print('数据升级：已验证备份；新增学习记忆收录关系，保留原对话、笔记和学习状态。', flush=True)
 
     def _backup_durable_annotations(
         self, connection: sqlite3.Connection, migration_version: int

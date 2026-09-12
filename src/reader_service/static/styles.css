@@ -598,3 +598,20 @@ button, label { -webkit-tap-highlight-color: transparent; }
 #inline-panel .inline-assistant-action { padding: 6px 10px; color: #5f4b28; background: #eee6d3; border: 1px solid #e0d3b8; border-radius: 3px; font-weight: 600; }
 #inline-panel .inline-assistant-action:hover { background: #e7dcc4; text-decoration: none; }
 #inline-panel .inline-source-action { color: #827b6e; font-size: 11px; }
+/* Explicit curation browser; full answers remain in their existing source records. */
+#learning-memory { width: min(900px, 92vw); max-height: 88vh; overflow: auto; border: 1px solid #d6d5ce; border-radius: 8px; padding: 24px; color: #292b27; background: #fbfaf6; }
+#learning-memory::backdrop { background: rgb(20 25 20 / 35%); }
+#learning-memory header { display: flex; align-items: center; justify-content: space-between; }
+#learning-memory h2 { margin: 0; }
+#learning-memory button { padding: 7px 12px; margin: 4px 8px 4px 0; cursor: pointer; }
+.memory-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.memory-filters label { display: flex; flex-direction: column; gap: 4px; }
+.memory-filters select { max-width: 240px; padding: 6px; }
+.memory-card { border-top: 1px solid #deded5; padding: 14px 0; }
+.memory-meta { color: #65695e; font-size: 13px; }
+.memory-question, .memory-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-answer { overflow-wrap: anywhere; }
+.memory-open { white-space: nowrap; }
+.memory-original pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+#learning-memory button, .memory-open { border: 1px solid #d6d5ce; border-radius: 4px; color: #374b3f; background: #f7f7f0; }
+#learning-memory button:hover, .memory-open:hover { background: #e8ede5; }

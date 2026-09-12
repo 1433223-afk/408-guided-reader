@@ -24,6 +24,7 @@ from reader_service.saved_explanations import (
     SavedExplanationError,
     SavedExplanationService,
 )
+from reader_service.memory import LearningMemory
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -101,12 +102,15 @@ def handler_factory(
     marked_root = root.joinpath("node_modules", "marked", "lib")
     dompurify_root = root.joinpath("node_modules", "dompurify", "dist")
     katex_root = root.joinpath("node_modules", "katex", "dist")
+    memory = LearningMemory(service.database)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._memory_request(parsed.path, 'GET'):
+                return
             guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/(guide|inline-teaching)", parsed.path)
             if guide:
                 if not self._authorized():
@@ -348,6 +352,8 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._memory_request(parsed.path, 'POST'):
+                return
             guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/(guide|inline-teaching)/(generate|regenerate|retry)", parsed.path)
             if guide:
                 if not self._authorized():
@@ -894,6 +900,8 @@ def handler_factory(
 
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._memory_request(parsed.path, 'DELETE'):
+                return
             annotation_match = _REVISION_ANNOTATION.fullmatch(parsed.path)
             if annotation_match:
                 if not self._authorized():
@@ -931,6 +939,35 @@ def handler_factory(
             self.send_response(HTTPStatus.NO_CONTENT)
             self.end_headers()
 
+        def _memory_request(self, path, method):
+            match = re.fullmatch(r'/api/revisions/([0-9a-f-]+)/memory(?:/([0-9a-f-]+))?', path)
+            if path != '/api/memory' and not match:
+                return False
+            if not self._authorized():
+                return True
+            try:
+                if method == 'GET' and path == '/api/memory':
+                    result = {'items': memory.list()}
+                elif match and method == 'GET' and match[2]:
+                    result = {'item': memory.get(match[1], match[2])}
+                elif match and method == 'POST' and not match[2]:
+                    payload = self._read_json()
+                    if not isinstance(payload, dict) or set(payload) != {'source_kind', 'source_id'}:
+                        raise ValueError('仅接受持久来源类型与标识。')
+                    result = {'item': memory.collect(match[1], payload['source_kind'], payload['source_id'])}
+                elif match and method == 'DELETE' and match[2]:
+                    memory.remove(match[1], match[2])
+                    result = {'removed': True}
+                else:
+                    self._json(HTTPStatus.METHOD_NOT_ALLOWED, {'error': '不支持此操作。'})
+                    return True
+                self._json(HTTPStatus.OK, result)
+            except (ValueError, TypeError) as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {'error': str(exc)})
+            except LookupError as exc:
+                self._json(HTTPStatus.NOT_FOUND, {'error': str(exc)})
+            return True
+
         def _authorized(self) -> bool:
             supplied = self.headers.get("X-Reader-Token", "")
             cookie = SimpleCookie()
@@ -967,7 +1004,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/app.js", "/assistant-render.js", "/master-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/app.js", "/assistant-render.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:
