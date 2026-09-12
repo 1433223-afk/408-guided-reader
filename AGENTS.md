@@ -133,6 +133,17 @@ test fixtures are committed, the way `docs/archive/transition/` and Phase briefs
 sample material by path and content hash rather than storing it. Missing user-supplied material a
 Phase brief needs is escalation condition 7 above.
 
+**OpenRouter model restriction — user instruction, 2026-09-12.** For this project, the only
+OpenRouter model authorized without a new explicit approval is Gemini 3.8 (the established model
+ID is `google/gemini-3.8-flash`). Never independently call any other OpenRouter model, including
+for experiments, diagnostics, tests, reviews, retries or automatic fallbacks. Before any exception,
+report the exact model, purpose, reason Gemini 3.8 is insufficient, and expected cost/call scope;
+wait for the user's explicit approval before calling it. Reporting alone is not approval.
+Existing defaults, environment settings, historical approvals and broad permission to work
+autonomously do not override this restriction. Check the resolved model before every real
+OpenRouter call; if it is not the allowed model or is uncertain, stop that call and report.
+This rule applies to all agents and scripts used on the project's behalf.
+
 **External reuse and major dependencies.** For a large, common or genuinely core capability — PDF
 rendering, OCR, virtualization, annotation geometry, job queues, storage, or comparable
 infrastructure — investigate mature OSS before building, autonomously; no approval needed just to
