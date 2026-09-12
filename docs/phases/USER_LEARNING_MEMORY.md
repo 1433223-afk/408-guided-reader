@@ -61,6 +61,10 @@ curation/index record separate from durable content, and metadata-led browsing. 
 extraction/vector/entity architecture or DeepTutor's account, Notebook or plugin platform. No
 substantive external code or new dependency is adopted.
 
+User-specified DeepTutor UI reference (2026-09-12): “内容是主体，导航和学习工具退到外围”.
+Apply only this content-first principle within the established visual style; do not copy DeepTutor
+code or UI.
+
 ## Hard rules
 
 - Membership is always an explicit user decision. Existing histories, messages, notes and saved
@@ -99,10 +103,14 @@ substantive external code or new dependency is adopted.
 - User clarification (2026-09-12): Learning Memory UI must follow the established Library,
   Reader, Marks and Master visual style; reuse their typography, colors, control scale and
   interaction styling so the feature does not feel like a separate application.
-- User information-architecture amendment (2026-09-12): the Library home provides the entry to
-  an independent Learning Memory page outside Reader. Reader offers collection and collected status
-  only. Browsing, full details, source return and membership removal belong to that independent
-  page. Do not build a Dashboard, global learning center or redesign the Library home.
+- User information-architecture amendment (2026-09-12): Reader is the current reading/learning
+  scene; Home / Learning Space is for learning management and review across chapters and Books.
+  For Learning Memory, Reader offers only “收入学习记忆” and necessary status feedback.
+  Library home provides a “学习记忆” entry opening an independent Learning Memory page outside
+  Reader. Browsing, organization by Book → Section / KP, full-content viewing, return to the
+  corresponding PDF / Master / AI_SAVED, and membership removal belong to that page.
+  This Phase only places Learning Memory at that boundary; do not build a Dashboard or global
+  learning center, or restructure the overall Library home or Reader.
 
 ## Build
 
@@ -217,7 +225,8 @@ every edit.
 ## Autonomy
 
 Ordinary naming, schema/endpoint detail, file/component layout, helper placement, local algorithms,
-collection placement, grouping presentation, copy, CSS, test organization and small local refactors
+control placement within the specified page boundaries, grouping presentation, copy, CSS,
+test organization and small local refactors
 are delegated. Reuse the existing Master, Annotation, navigation and ownership boundaries with the
 smallest solution that satisfies the hard rules; no approval is needed for those loose edges.
 
