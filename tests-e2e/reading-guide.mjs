@@ -33,8 +33,7 @@ const provider = createServer(async (req, res) => {
   else if (payload?.source?.evidence) {
     const refs = [payload.source.evidence[0].source_id];
     answer = JSON.stringify({ modules: [
-      { id: 'm1', kind: 'article', title: '从问题出发', text: '表示需要回应真实的限制。已有约定不足以表达变化，因此新的方式引入了不同的解释。', source_ids: refs },
-      { id: 'm2', kind: 'article', title: '理解约定的作用', text: '这些约定连接起条件与结果，让新的问题也有了可以理解的起点。', source_ids: refs }] });
+      { id: 'm1', kind: 'article', title: '阅读导读', text: payload.draft, source_ids: refs }] });
   }
   await new Promise(r => setTimeout(r, 200));
   res.writeHead(200, { 'Content-Type': 'application/json' });

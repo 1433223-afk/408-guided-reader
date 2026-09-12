@@ -1,10 +1,13 @@
 # Phase / Reviewed Section Reading Guide
 
-> **Status: ACCEPTED — former user UAT FAIL; article / split-reader rework READY_FOR_USER_RETEST.**
+> **Status: CLOSED / COMPLETE — USER_ACCEPTANCE PASS; independent narrow acceptance PASS (2026-09-12).**
 
-The former checklist implementation failed user acceptance. The user accepted continuous articles and
-split PDF/Guide reading on 2026-09-10; rework is READY_FOR_USER_RETEST. Independent narrow code acceptance and
-closure remain pending; see the [Development Report](../development-reports/REVIEWED_SECTION_READING_GUIDE.md).
+The user explicitly accepted the current Reading Guide on 2026-09-12 and requested closure only.
+Independent narrow acceptance: P0=0 / P1=0 / P2=0, recommendation CLOSE; broad and real-book
+regression passed. Accepted product baseline is `0eb18fb`; no product behavior changes in closure.
+See the [Development Report](../development-reports/REVIEWED_SECTION_READING_GUIDE.md) and
+[independent audit](../development-reports/REVIEWED_SECTION_READING_GUIDE_INDEPENDENT_REVIEW.md).
+Earlier UAT failures and intermediate retest states are superseded by this explicit user PASS.
 
 ## Goal
 
@@ -222,8 +225,8 @@ suite; record honest evidence in a concise Development Report and create a clean
 independent narrow review is required before closure and must attack persistent Guide identity,
 source-ID/locator authority, actual dependency recording and staleness, Review-gated publication,
 semantic/technical retry separation, atomic replacement, ownership/cascade, and egress/secret
-isolation. Stop at `READY_FOR_USER_RETEST`; user acceptance, independent acceptance and Phase closure
-remain separate approval gates.
+isolation. User acceptance, independent acceptance and Phase closure are separate gates; all were
+satisfied on 2026-09-12. The earlier implementation stop at `READY_FOR_USER_RETEST` is complete.
 
 ## Accepted content direction / live activation — 2026-09-11
 
@@ -232,4 +235,5 @@ Reader generation; further prose/detail refinement is deferred. Fresh author inp
 positioning and current published Section KP titles/one-sentence meanings, not OCR body or exercises.
 Existing source-aware formatting, independent Review and atomic publication remain mandatory. The
 previously generated sample is not imported as a published Guide. Overall Phase/user-flow acceptance
-remains pending the user's real application test.
+was subsequently explicitly reported PASS by the user on 2026-09-12. Content, context and UI are
+accepted as implemented; further refinement remains deferred and is not part of closure.
