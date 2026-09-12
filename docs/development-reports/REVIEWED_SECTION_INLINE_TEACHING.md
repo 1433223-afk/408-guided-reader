@@ -2,9 +2,11 @@
 
 ## Result
 
-**READY_FOR_USER_RETEST — 2026-09-12.** Implementation, targeted tests, real-book UI validation,
-affected regression and broad regression are complete. Independent narrow code review has no
-outstanding findings. **USER_ACCEPTANCE remains PENDING; this is not Phase closure.**
+**CLOSED / COMPLETE — 2026-09-12. USER_ACCEPTANCE: PASS**, explicitly reported by the user.
+Implementation, machine acceptance, real-book validation and required independent narrow review are
+complete. Final closure delta review: **PASS, P0=0 / P1=0 / P2=0, recommendation CLOSE**.
+The user authorized closure only and prohibited further product changes; accepted code at `58e3c3d`
+is unchanged by the documentation-only closure.
 
 The Reader can explicitly generate sparse Section Teaching, show/hide published in-page `✦`,
 open Guidance and unscored Recall, explain selected Teaching in a new temporary Assistant Root,
@@ -33,8 +35,9 @@ and recover published content across navigation/restart. Failed replacement pres
 - Recall reveal/skip/reopen is local UI only. Guidance selection retains Teaching asset/item/field
   lineage and no fake PDF anchor; its Assistant explanation cannot be saved as a PDF-anchored note.
 - Following the user's model restriction, new Inline generation/Review defaults use OpenRouter
-  `google/gemini-3.8-flash`. The running retest service routes Assistant/System/Review to Gemini and
-  disables DeepSeek/Zhipu. All subsequent **live** model calls used Gemini 3.8.
+  `google/gemini-3.8-flash`. The later user-authorized native DeepSeek V4.1 Flash enablement uses
+  `deepseek-flash` for Assistant on port 8767; Teaching/System/Review remain Gemini and Zhipu is disabled.
+  See [DeepSeek enablement](DEEPSEEK_V41_FLASH_ENABLEMENT.md) for its separate runtime evidence.
 
 ## Important decisions and prior art
 
@@ -54,6 +57,17 @@ recorded in metadata and defaults off; deterministic validation remains mandator
 The direct documentation endpoint returned 403; GitHub's official SDK supplied the checked definition.
 
 ## Acceptance evidence
+
+**Final closure, 2026-09-12:**
+- **USER ACCEPTANCE: PASS**, from the user's explicit acceptance of this Phase; not inferred from tests.
+- **INDEPENDENT NARROW: PASS / CLOSE**. Prior core and margin-card audits plus a fresh Gemini 3.8
+  closure delta review cover the final accepted code at `58e3c3d`. No outstanding findings or waivers.
+  The final reviewer inspected code/diffs only; it did not rerun tests or claim independent UI use.
+- Latest broad run on that code: `deepseek41-closure.xml`, **274 PASS / 2 optional real-OCR skips**;
+  `npm test`, **33 PASS**. The real-book Inline, selection, Guide and Assistant evidence below remains
+  applicable. No repeated broad suite or content regeneration for this documentation-only closure.
+- Closure diff is restricted to this report, its independent review report, the Phase brief/status
+  and Phase index. No product code, tests, runtime, user data or deferred item is changed.
 
 **Selection visual consistency refinement, 2026-09-12:**
 - PDF selection quads and Guidance native selection now share the same translucent blue CSS token;
@@ -137,10 +151,10 @@ The source library's existing Guide/Learning/Annotation hashes were verified unc
 migration 15. Test publication and payload capture stayed in disposable copies. No textbook, secret,
 provider body, screenshot or temporary Assistant history is committed.
 
-## Boundaries / remaining acceptance
+## Boundaries / deferred scope
 
-User retest and user acceptance are pending. Live pedagogical quality remains subject to that retest;
-Review PASS is not user acceptance. No forced Recall or per-page/KP quota, scoring/attempt storage,
+User acceptance was explicitly granted for the current Phase. Content Review and independent code
+review remain distinct from that user decision. No acceptance gate is pending for this closure. No forced Recall or per-page/KP quota, scoring/attempt storage,
 memory, Vision/formula understanding, RAG, new dependency or Guide content redesign was introduced.
 An unplaceable marker is omitted; a stale/unsafe target is not moved to different text. An already
 opened card can remain safely beside the source when a smaller page cannot fit its marker. At high
@@ -171,6 +185,8 @@ Core entry points: `teaching/inline_{contracts,evidence,service}.py`, migration 
 
 ## Git checkpoint
 
-Original implementation checkpoint: `1a3e38a`; margin-card UI checkpoint: `1e24717`.
-Wording/action hierarchy checkpoint: `0ba13e7`. The selection-style checkpoint is titled
-`Match guidance text selection to PDF reader highlighting`; its hash is reported after committing. This is implementation-ready, not user acceptance or closure.
+- Original implementation: `1a3e38a`; margin-card UI: `1e24717`.
+- Wording/action hierarchy: `0ba13e7`; selection consistency: `969e5af`.
+- Accepted closure baseline, including user-authorized DeepSeek configuration: `58e3c3d`.
+- Documentation-only closure: `Close reviewed Section Inline Teaching after user acceptance`;
+  its final commit hash is reported to the user after committing.

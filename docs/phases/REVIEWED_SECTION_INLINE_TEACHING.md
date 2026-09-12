@@ -1,6 +1,7 @@
 # Phase / Reviewed Section Inline Teaching
 
-> **Status: ACCEPTED — ready for implementation.**
+> **Status: CLOSED / COMPLETE — 2026-09-12.**
+> User acceptance PASS explicitly reported by the user; independent narrow review PASS (P0/P1/P2=0), recommendation CLOSE.
 
 ## Goal
 
@@ -242,3 +243,16 @@ Guide preservation, Inline Teaching identity/ownership, PDF anchor authority, pl
 Review/rework transitions, atomic replacement, idempotency, cascade, AI egress and the absolute
 no-Recall-to-Mastery boundary. Stop at `READY_FOR_USER_RETEST`; user acceptance, independent
 acceptance and Phase closure remain separate approval gates.
+
+
+## Closure record — 2026-09-12
+
+The user explicitly reported **REVIEWED_SECTION_INLINE_TEACHING human acceptance: PASS**, requested
+closure, and prohibited further changes to Inline Teaching UI, anchors, generated content or interactions.
+Machine/real-material evidence and prior independent core review are recorded in the
+[Development Report](../development-reports/REVIEWED_SECTION_INLINE_TEACHING.md). A fresh Gemini 3.8
+independent closure delta review of accepted code at `58e3c3d` returned **PASS**, no findings,
+recommendation **CLOSE**; see the [review report](../development-reports/REVIEWED_SECTION_INLINE_TEACHING_INDEPENDENT_REVIEW.md).
+
+All required gates are satisfied. This closure changes documentation only; accepted product code,
+content, source authority and interactions are unchanged. Deferred work remains outside this Phase.

@@ -66,4 +66,30 @@ verdict **PASS; findings empty**. Exact source hashes and raw verdict are retain
 The first invocation failed with `empty_response`; it was not a PASS. One bounded retry using the
 same authorized model returned valid PASS JSON. This reviewer did not run tests or operate the UI;
 real-material and machine evidence in the Development Report belongs to the implementer. No other
-live model was used. User acceptance and Phase closure remain pending.
+live model was used during that review. User acceptance and closure were pending at that checkpoint;
+the final closure disposition follows.
+
+
+## Final closure disposition — 2026-09-12
+
+**PASS; outstanding P0=0 / P1=0 / P2=0; recommendation CLOSE.** The user explicitly reported human
+acceptance PASS and requested documentation-only closure without changing accepted product behavior.
+
+A fresh independent `google/gemini-3.8-flash` context inspected the code and material deltas from
+reviewed margin-card commit `1e24717` to accepted baseline `58e3c3d`, alongside the accepted brief and
+prior independent evidence. It found no new defect. Natural type labels, action hierarchy and shared
+selection color do not change contracts or source authority. The user-authorized native DeepSeek
+alias change preserves provider routing/validation; Inline generation and Review remain on Gemini.
+
+The earlier independently executed core tests/audit continue to cover additive migration, Guide
+preservation, identity/ownership, source anchors, Review/rework, atomic replacement, idempotency,
+cascade, AI egress and the absolute no-Recall-to-Mastery boundary: those core modules have no diff
+since their audited implementation checkpoint. The reviewed margin-card placement remains unchanged
+by subsequent refinements. No finding was waived and no product fix was made for closure.
+
+This final reviewer performed static source/diff inspection only, not tests or live UI acceptance.
+Its fresh invocation returned valid PASS JSON with an empty findings array and CLOSE recommendation.
+Exact accepted HEAD, inspected file hashes and raw verdict are retained locally in
+`test-results/inline-closure-independent.json`; source hashes were checked before this docs-only update.
+Machine and agent real-material acceptance are separately documented in the Development Report;
+user acceptance comes from the user's explicit statement. All required closure gates are now satisfied.
