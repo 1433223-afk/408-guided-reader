@@ -99,6 +99,10 @@ substantive external code or new dependency is adopted.
 - User clarification (2026-09-12): Learning Memory UI must follow the established Library,
   Reader, Marks and Master visual style; reuse their typography, colors, control scale and
   interaction styling so the feature does not feel like a separate application.
+- User information-architecture amendment (2026-09-12): the Library home provides the entry to
+  an independent Learning Memory page outside Reader. Reader offers collection and collected status
+  only. Browsing, full details, source return and membership removal belong to that independent
+  page. Do not build a Dashboard, global learning center or redesign the Library home.
 
 ## Build
 
@@ -112,8 +116,9 @@ substantive external code or new dependency is adopted.
 - The minimum source/context display needed to understand each item: originating question or focus,
   exact underlying answer, current Review/verification state, and an honest return action to the PDF,
   saved note or Master learning context that actually exists.
-- Minimal collect/remove affordances on the relevant completed Master and durable AI_SAVED surfaces.
-  Exact placement and wording are implementation-autonomous; the interaction must remain explicit.
+- Minimal collect/status affordances on the relevant completed Master and durable AI_SAVED surfaces.
+  Removal is available only in the independent Learning Memory page entered from Library home.
+  Exact wording is implementation-autonomous; the interaction must remain explicit.
 
 ## Not now
 
@@ -174,7 +179,8 @@ Using the real 348-page textbook:
 1. Open one real completed Master answer and explicitly add it to Learning Memory.
 2. Use one completed Assistant answer through the existing AI_SAVED path, then explicitly collect
    that durable note.
-3. Open Learning Memory and verify both entries show distinct sources, the actual question/focus,
+3. Leave Reader and open the independent Learning Memory page from Library home. Verify Reader has
+   no collection browser or removal control, and both entries show distinct sources, the actual question/focus,
    exact content, honest Review/verification state and correct Book/Section/KP grouping where known.
 4. Return from the Master entry to its real learning context and from the Assistant entry to its real
    saved note/PDF source; verify no fake Master PDF anchor or guessed KP appears.

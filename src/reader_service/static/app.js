@@ -52,7 +52,10 @@ const master = createMasterUI({ api, revision: () => state.revision?.id,
   goToPage, announce, relayout: () => relayoutPages(),
   memoryControl: (...args) => memory.control(...args) });
 
-const memory = createMemoryUI({ api, announce, returnToSource: async item => {
+const memory = createMemoryUI({ api, announce,
+  enterView: () => { elements['library-home'].hidden = true; elements.reader.hidden = true; },
+  leaveView: () => { elements['library-home'].hidden = false; },
+  returnToSource: async item => {
   const books = (await api('/api/books')).books;
   const book = books.find(b => b.id === item.book_id && b.active_revision?.id === item.book_source_revision_id);
   if (!book) throw new Error('原教材当前不可用。');

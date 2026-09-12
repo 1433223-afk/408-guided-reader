@@ -598,27 +598,28 @@ button, label { -webkit-tap-highlight-color: transparent; }
 #inline-panel .inline-assistant-action { padding: 6px 10px; color: #5f4b28; background: #eee6d3; border: 1px solid #e0d3b8; border-radius: 3px; font-weight: 600; }
 #inline-panel .inline-assistant-action:hover { background: #e7dcc4; text-decoration: none; }
 #inline-panel .inline-source-action { color: #827b6e; font-size: 11px; }
-/* Learning Memory follows the existing Marks/Dock paper, typography and actions. */
+/* A Library-level learning space; the Reader only exposes collection actions. */
 #learning-memory {
-  width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 64px); overflow: auto;
-  padding: 20px 28px; color: #292720; background: #faf8f2;
-  border: 1px solid #cdc5b4; border-radius: 10px; box-shadow: 0 10px 32px rgb(52 46 34 / 22%);
+  width: 100%; height: 100%; overflow: auto; color: #292720; background: #ece9e1;
   font-size: 13px; line-height: 1.6; scrollbar-color: #c9c3b7 transparent;
 }
-#learning-memory::backdrop { background: rgb(42 39 31 / 28%); }
-.memory-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-#learning-memory h2 { margin: 0; font: 600 20px/1.35 Georgia, serif; }
+.memory-page-content { width: min(1040px, calc(100% - 48px)); margin: 0 auto; padding: 42px 0; }
+#memory-title { margin: 8px 0 7px; color: #272c29; font: 600 36px/1.15 Georgia, serif; letter-spacing: -.025em; }
+.memory-collection { margin-top: 28px; padding: 20px 28px; background: #faf8f2; border: 1px solid #d3cec1; border-radius: 10px; }
+#memory-detail { max-width: 760px; margin: 0 auto; }
 #learning-memory button {
   padding: 5px 9px; margin: 4px 8px 4px 0; cursor: pointer; color: #6c604c;
   background: #f4f0e7; border: 1px solid #d8d0c0; border-radius: 6px; font-size: 11px;
 }
 #learning-memory button:hover { color: #4f3b1e; background: #eee4d1; border-color: #cbbb9c; }
 #learning-memory #memory-close {
-  width: 28px; height: 28px; padding: 0; margin: 0; color: #756d60;
-  background: transparent; border: 0; font-size: 20px; line-height: 1;
+  min-height: 36px; padding: 0 14px; margin: 0; color: #eee9df;
+  background: transparent; border: 1px solid rgb(255 255 255 / 18%); border-radius: 7px; font-size: 12px;
 }
-#learning-memory #memory-close:hover { background: #eee8dc; }
-.memory-intro, #memory-status { margin: 10px 0 14px; color: #7b7365; font-size: 11px; line-height: 1.6; }
+#learning-memory #memory-close:hover { background: rgb(255 255 255 / 8%); }
+.memory-intro { margin: 0; color: #716d64; font: 15px/1.5 Georgia, serif; }
+.memory-boundary, #memory-status { margin: 0 0 14px; color: #7b7365; font-size: 11px; line-height: 1.6; }
+#memory-status { margin-top: 14px; }
 .memory-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; padding: 12px 0; border-block: 1px solid #e4ddcf; }
 .memory-filters label { display: flex; flex: 1; min-width: 120px; flex-direction: column; gap: 4px; color: #7b7365; font-size: 10px; }
 .memory-filters select {
@@ -648,7 +649,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
   font-size: 11px; font-weight: 750;
 }
 .memory-source-control:hover, #master-workspace .memory-source-control:hover { text-decoration: underline; }
-.memory-source-control:disabled { cursor: wait; color: #8b857b; }
+.memory-source-control:disabled, #master-workspace .memory-source-control:disabled { cursor: default; color: #8b857b; opacity: 1; text-decoration: none; }
 .memory-open { white-space: nowrap; }
 .home-toolbar:has(.memory-open) { gap: 12px; }
 .home-toolbar:has(.memory-open) .brand { margin-right: auto; }
@@ -660,6 +661,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .home-toolbar .memory-open:hover { background: rgb(255 255 255 / 8%); }
 #learning-memory :is(button, select, summary):focus-visible, .memory-source-control:focus-visible, .memory-open:focus-visible { outline: 2px solid #977b43; outline-offset: 2px; }
 @media (max-width: 600px) {
-  #learning-memory { max-height: calc(100dvh - 24px); padding: 16px; }
+  .memory-page-content { width: calc(100% - 30px); padding-top: 28px; }
+  .memory-collection { padding: 16px; }
   .memory-filters label:first-child { flex-basis: 100%; }
 }

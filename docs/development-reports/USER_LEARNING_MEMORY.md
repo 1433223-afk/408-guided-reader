@@ -6,30 +6,32 @@
 User acceptance and Phase closure remain pending. Independent narrow implementation review PASS;
 this is separate from independent product acceptance and the user's retest.
 
-Completed Master answers and durable AI_SAVED notes now offer explicit collect/remove controls.
-Library and Reader expose one Learning Memory collection with Book/Section/KP filters, original
+Completed Master answers and durable AI_SAVED notes offer explicit collection and collected status.
+Library home opens an independent Learning Memory page outside Reader with Book/Section/KP filters, original
 question/focus, exact answer, current trust metadata, and return to the actual Master message or
 saved note/PDF. Removing membership preserves its source. No automatic enrolment or learning update.
+Reader contains no Learning Memory browser or removal action; management belongs to the independent page.
 
 ## Implemented
 
-### Same-Phase visual consistency refinement (2026-09-12)
+### Same-Phase independent learning space and visual consistency (2026-09-12)
 
-User requested strict continuity with the existing UI. Learning Memory now uses the established
-Marks/Dock paper surface, warm borders, gold-brown controls, compact metadata and serif heading
-hierarchy. Reader entry reuses `outline-toggle` beside navigation; the Library entry sits with the
-existing toolbar actions. Source collect/remove controls follow the lightweight saved-answer action
-style. Review colors reuse existing PASS/FAIL/technical-failure classes with unchanged labels.
+User requested strict visual continuity and then explicitly moved browsing/management outside Reader.
+The Library toolbar entry opens a sibling full-page view with the existing brand header, paper
+background, warm borders, gold-brown controls, compact metadata and serif heading hierarchy.
+Reader offers only collection and a disabled collected indication; removal remains in Memory details.
+Source return reuses existing book/Master/Marks navigation. Review colors retain existing trust classes.
 
 - Changes are local presentation/classes/entry placement. A real close/reopen check also exposed a
   local stale-list race; opening now clears old interactive cards until its fresh list is rendered.
   No schema, source content, provider, membership or learning-state boundary changed.
 - TARGETED: the existing two Memory browser regressions PASS, retaining explicit retry intent and
   complete original access. AGENT REAL USE / affected path: `test:e2e:memory` PASS on an isolated
-  real 348-page copy, including 1600px and 1000px collection views, close/reopen, both source returns,
+  real 348-page copy, including 1600px and 1000px independent views, home/Reader isolation,
+  collect-only Reader controls, close/reopen, both source returns,
   restart and removal/cascade checks. No horizontal overflow in the narrow collection. Visually
   inspected Library, list, narrow list and both source-detail screenshots under `test-results/memory-*`.
-- BROAD: `test-results/memory-style-closure.xml`, **278 PASS / 2 unchanged optional OCR skips**;
+- BROAD: `test-results/memory-space-closure.xml`, **278 PASS / 2 unchanged optional OCR skips**;
   `npm test`, **35 PASS**. The original narrow review still covers unchanged durable/security behavior;
   this local visual change adds no independent-review trigger. No live provider calls or user-data
   test writes. Remains **READY_FOR_USER_RETEST**, not USER_ACCEPTANCE PASS.
@@ -117,7 +119,7 @@ npm run test:e2e:memory
 
 Manual retest: open a completed Master answer → **收入学习记忆**. In **本页标记**, collect an
 **AI 保存的解释** (save an Assistant answer to Notes first if needed). Open **学习记忆** from the
-Reader or Library, filter by Book/Section/KP, inspect original content/trust, return to source, close
+Library home after leaving Reader, filter by Book/Section/KP, inspect original content/trust, return to source, close
 and reopen, then remove and confirm original content remains. Restart recovery is agent-tested.
 
 Core files: `memory.py`, `memory_schema.py`, `static/memory-ui.js`; integrations in `server.py`,

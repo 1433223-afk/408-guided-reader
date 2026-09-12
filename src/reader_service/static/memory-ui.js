@@ -2,20 +2,22 @@ import { renderAssistantAnswer } from '/assistant-render.js';
 
 const REVIEW = { NOT_REQUESTED: '未独立审查', PENDING: '待 AI 审查', PASS: '通过有界 AI 审查', FAIL: 'AI 审查未通过', TECHNICAL_FAILURE: 'AI 审查技术失败' };
 
-export function createMemoryUI({ api, announce, returnToSource }) {
+export function createMemoryUI({ api, announce, returnToSource, enterView = () => {}, leaveView = () => {} }) {
   let items = [];
   let loading = null;
   let version = 0;
   const controls = new Set();
-  const dialog = document.createElement('dialog');
-  dialog.id = 'learning-memory';
-  dialog.setAttribute('aria-labelledby', 'memory-title');
-  dialog.innerHTML = `<header class="memory-heading"><h2 id="memory-title">学习记忆</h2><button type="button" id="memory-close" aria-label="关闭学习记忆" title="关闭学习记忆">×</button></header>
-    <p class="memory-intro">仅收录你明确选择的回答。收录不代表教材事实、审查通过或已经掌握；移出不删除原内容。</p>
+  const view = document.createElement('section');
+  view.id = 'learning-memory'; view.hidden = true;
+  view.setAttribute('aria-labelledby', 'memory-title');
+  view.innerHTML = `<header class="home-toolbar"><div class="brand"><div class="brand-mark" aria-hidden="true">408</div><div><strong>Guided Reader</strong><span>始终阅读原始 PDF。</span></div></div><button type="button" id="memory-close">← 书库</button></header>
+    <main class="memory-page-content"><div class="memory-heading"><p class="eyebrow">保留有用的回答，回到当时的学习。</p><h1 id="memory-title" tabindex="-1">学习记忆</h1></div>
+    <p class="memory-intro">这里汇集你主动收入的 Master 回答和已保存的 Assistant 解释。</p>
+    <div class="memory-collection"><p class="memory-boundary">收录不代表教材事实、审查通过或已经掌握；移出不删除原内容。</p>
     <div class="memory-filters"><label>教材 <select id="memory-book"></select></label><label>Section <select id="memory-section"></select></label><label>知识点 <select id="memory-kp"></select></label><button id="memory-refresh" type="button">刷新</button></div>
-    <p id="memory-status" role="status"></p><div id="memory-list"></div><div id="memory-detail" hidden></div>`;
-  document.body.append(dialog);
-  const el = id => dialog.querySelector(`#memory-${id}`);
+    <p id="memory-status" role="status"></p><div id="memory-list"></div><div id="memory-detail" hidden></div></div></main>`;
+  document.body.append(view);
+  const el = id => view.querySelector(`#memory-${id}`);
   const button = (text, action) => {
     const node = document.createElement('button'); node.type = 'button'; node.textContent = text;
     node.addEventListener('click', action); return node;
@@ -28,7 +30,9 @@ export function createMemoryUI({ api, announce, returnToSource }) {
     for (const entry of controls) {
       if (!entry.node.isConnected) { controls.delete(entry); continue; }
       entry.item = items.find(i => i.source_kind === entry.kind && i.source_id === entry.id && i.book_source_revision_id === entry.revision);
-      entry.node.textContent = entry.item ? '移出学习记忆' : '收入学习记忆';
+      entry.node.textContent = entry.item ? '已收入学习记忆' : '收入学习记忆';
+      entry.node.disabled = Boolean(entry.item);
+      entry.node.title = entry.item ? '可在首页的学习记忆中查看和管理' : '';
     }
   }
   async function refresh() {
@@ -38,17 +42,16 @@ export function createMemoryUI({ api, announce, returnToSource }) {
   function control(revision, kind, id) {
     const entry = { revision, kind, id, item: null };
     const node = button('收入学习记忆', async () => {
-      // Bind intent to the affordance actually clicked. A lost POST response or
-      // another tab's collection must never turn a collect retry into deletion.
-      const removal = entry.item;
+      // Reader is collect-only. Lost responses retry the same POST; management
+      // belongs exclusively to the independent Library-level view.
+      if (entry.item) return;
       node.disabled = true;
       try {
-        if (removal) await api(base(removal), { method: 'DELETE' });
-        else await api(`/api/revisions/${revision}/memory`, { method: 'POST', body: JSON.stringify({ source_kind: kind, source_id: id }) });
+        await api(`/api/revisions/${revision}/memory`, { method: 'POST', body: JSON.stringify({ source_kind: kind, source_id: id }) });
         await refresh();
-        announce(removal ? '已移出学习记忆，原内容保留。' : '已收入学习记忆。');
+        announce('已收入学习记忆。');
       } catch (error) { announce(error.message, true); }
-      finally { node.disabled = false; }
+      finally { node.disabled = Boolean(entry.item); }
     });
     node.className = 'memory-source-control';
     entry.node = node; controls.add(entry);
@@ -87,7 +90,7 @@ export function createMemoryUI({ api, announce, returnToSource }) {
     const request = ++version;
     try {
       item = (await api(base(item))).item;
-      if (request !== version || !dialog.open) return;
+      if (request !== version || view.hidden) return;
       const s = item.source;
       const panel = el('detail'); panel.replaceChildren(); el('list').hidden = true; panel.hidden = false;
       panel.append(button('返回列表', () => { ++version; render(); }));
@@ -118,8 +121,8 @@ export function createMemoryUI({ api, announce, returnToSource }) {
       fullText.append(text('summary', '查看完整原文（含 Markdown 标记）'), text('pre', original));
       panel.append(fullText);
       panel.append(button(item.source_kind === 'MASTER' ? '回到 Master 上下文' : '回到笔记 / PDF 来源', async () => {
-        try { const fresh = (await api(base(item))).item; dialog.close(); await returnToSource(fresh); }
-        catch (error) { if (!dialog.open) dialog.showModal(); el('status').textContent = error.message; }
+        try { const fresh = (await api(base(item))).item; close(false); await returnToSource(fresh); }
+        catch (error) { enterView(); view.hidden = false; el('status').textContent = error.message; }
       }));
       panel.append(button('移出学习记忆', async () => {
         try { await api(base(item), { method: 'DELETE' }); await refresh(); render(); announce('已移出，原内容保留。'); }
@@ -128,18 +131,21 @@ export function createMemoryUI({ api, announce, returnToSource }) {
     } catch (error) { el('status').textContent = error.message; }
   }
   async function open() {
+    const request = ++version;
     el('list').replaceChildren(); el('detail').hidden = true;
-    dialog.showModal(); el('status').textContent = '正在读取学习记忆…';
-    try { await refresh(); render(); } catch (error) { el('status').textContent = error.message; }
+    enterView(); view.hidden = false; view.scrollTop = 0;
+    el('title').focus(); el('status').textContent = '正在读取学习记忆…';
+    try { await refresh(); if (request === version && !view.hidden) render(); }
+    catch (error) { if (request === version) el('status').textContent = error.message; }
   }
-  el('close').onclick = () => dialog.close();
-  dialog.addEventListener('close', () => { ++version; });
+  function close(focus = true) {
+    ++version; view.hidden = true; leaveView();
+    if (focus) entry.focus();
+  }
+  el('close').onclick = () => close();
   el('refresh').onclick = async () => { ++version; try { await refresh(); render(); } catch (error) { el('status').textContent = error.message; } };
   for (const id of ['book', 'section', 'kp']) el(id).onchange = () => { ++version; render(); };
-  for (const host of [document.querySelector('.home-toolbar'), document.querySelector('.reader-controls')]) {
-    const entry = button('学习记忆', open);
-    entry.className = host.matches('.reader-controls') ? 'memory-open outline-toggle' : 'memory-open';
-    host.insertBefore(entry, host.querySelector('#knowledge-toggle'));
-  }
+  const entry = button('学习记忆', open); entry.className = 'memory-open';
+  document.querySelector('.home-toolbar').append(entry);
   return { control, refresh };
 }

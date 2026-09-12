@@ -26,18 +26,21 @@ test('memory collect retry preserves displayed intent after committed response l
       const ui = createMemoryUI({ api, announce: () => {}, returnToSource: () => {} });
       const button = ui.control('revision', 'MASTER', 'answer'); document.body.append(button);
       await ui.refresh();
-      const click = async () => { button.click(); while (button.disabled) await new Promise(resolve => setTimeout(resolve, 0)); };
+      const click = async () => { button.click(); while (button.disabled && button.textContent !== '已收入学习记忆') await new Promise(resolve => setTimeout(resolve, 0)); };
       await click();
       const afterLost = { label: button.textContent, stored: Boolean(stored) };
       await click();
       const afterRetry = { label: button.textContent, stored: Boolean(stored) };
       await click();
-      return { afterLost, afterRetry, actions, afterExplicitRemove: Boolean(stored) };
+      return { afterLost, afterRetry, actions, afterCollectedClick: Boolean(stored), disabled: button.disabled,
+        readerEntries: document.querySelectorAll('.reader-controls .memory-open').length };
     });
     assert.deepEqual(result.afterLost, { label: '收入学习记忆', stored: true });
-    assert.deepEqual(result.afterRetry, { label: '移出学习记忆', stored: true });
-    assert.deepEqual(result.actions, ['POST', 'POST', 'DELETE']);
-    assert.equal(result.afterExplicitRemove, false);
+    assert.deepEqual(result.afterRetry, { label: '已收入学习记忆', stored: true });
+    assert.deepEqual(result.actions, ['POST', 'POST']);
+    assert.equal(result.afterCollectedClick, true);
+    assert.equal(result.disabled, true);
+    assert.equal(result.readerEntries, 0);
   } finally { await browser.close(); }
 });
 
