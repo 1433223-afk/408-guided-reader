@@ -2,9 +2,10 @@
 
 ## Result
 
-**IMPLEMENTATION_READY / READY_FOR_USER_RETEST — 2026-09-12.**
-User acceptance and Phase closure remain pending. Independent narrow implementation review PASS;
-this is separate from independent product acceptance and the user's retest.
+**CLOSED / COMPLETE — 2026-09-12.**
+User acceptance explicitly confirmed **PASS** by the user. Final independent narrow review **PASS**
+(P0=0 / P1=0 / P2=0, recommendation **CLOSE**); machine and real-use acceptance PASS.
+Closure is docs-only; accepted product code `c702316` is unchanged.
 
 Completed Master answers and durable AI_SAVED notes offer explicit collection and collected status.
 Library home opens an independent Learning Memory page outside Reader with Book/Section/KP filters, original
@@ -55,7 +56,8 @@ Source return reuses existing book/Master/Marks navigation. Review colors retain
 - BROAD: `test-results/memory-space-closure.xml`, **278 PASS / 2 unchanged optional OCR skips**;
   `npm test`, **35 PASS**. The original narrow review still covers unchanged durable/security behavior;
   this local visual change adds no independent-review trigger. No live provider calls or user-data
-  test writes. Remains **READY_FOR_USER_RETEST**, not USER_ACCEPTANCE PASS.
+  test writes. This refinement checkpoint was **READY_FOR_USER_RETEST**; final user acceptance
+  is recorded above.
 
 ### Original implementation
 
@@ -86,6 +88,16 @@ AI_SAVED Marks card, never on a temporary Assistant tree.
 
 ## Acceptance evidence
 
+- **FINAL CLOSURE:** on accepted `c702316`, reran Memory targeted tests **4 PASS**
+  (`test-results/memory-final-targeted.xml`), real 348-page `test:e2e:memory` **PASS**, full Python
+  suite **278 PASS / 2 unchanged optional OCR skips** (`test-results/memory-final-closure.xml`),
+  and `npm test` **35 PASS**. The real-use run used an isolated backup of the now-populated user
+  Library, with providers disabled, source returns/restart/removal/recollection/cascades verified
+  and protected state unchanged. No new external calls or test writes to the user's Library.
+  Final independent reviewer separately ran **42 Python tests**, **2 browser regressions** and a
+  disposable page/trust/recovery probe, all PASS; details and scope are in the review report.
+  No new findings or deferred closure defects. Prior affected Master/save/Assistant regression
+  evidence below remains applicable; closure introduced no code change. Diff whitespace check PASS.
 - **TARGETED:** `tests/test_memory.py`, **4 PASS**. Real-thread concurrent repeats, replay, exact
   content/source identity, current Review states, failed/pending/user-role exclusion, owner/auth
   checks, restart, remove/recollect, Annotation/Book cascade and populated migration preservation.
@@ -115,7 +127,7 @@ AI_SAVED Marks card, never on a temporary Assistant tree.
   file; a serial rerun passed. These failed invocations were not treated as PASS.
 - Retest service **http://127.0.0.1:8767/** uses the existing `var/manual-browser` Library. Before
   startup, no pending jobs/messages/reviews existed. Migration 16 backup and FK checks passed;
-  **every pre-existing table's row hash matched before/after startup**. Memory is initially empty;
+  **every pre-existing table's row hash matched before/after startup**. Memory was empty at that startup;
   no test enrolment/deletion or generated content entered the user's Library. Existing approved
   runtime routing is retained: native DeepSeek `deepseek-flash`; OpenRouter routes explicitly
   `google/gemini-3.8-flash`; Zhipu disabled. Startup made no generation or Review call.
@@ -126,8 +138,9 @@ No scope deviation. The Memory golden path reuses genuine already-saved source c
 Save-to-Notes promotion is proven separately by the existing controlled-provider real-book save
 regression. No live generation is needed for this provider-free feature. Optional real-OCR external
 fixtures remain unavailable and unchanged; the required full 348-page material was available.
-No user-acceptance or independent-product-acceptance PASS is claimed. Full formatted rendering keeps
-its existing bound; the complete unmodified original is always available in the detail disclosure.
+User acceptance is the user's explicit PASS, distinct from the independent implementation review.
+Full formatted rendering keeps its existing bound; the complete unmodified original is always
+available in the detail disclosure.
 
 ## Reproduction and entry points
 
@@ -148,4 +161,6 @@ Core files: `memory.py`, `memory_schema.py`, `static/memory-ui.js`; integrations
 
 ## Git checkpoint
 
-Implementation checkpoint: the commit containing this report, reported by hash in the handoff.
+Accepted implementation: `c702316` (original implementation `5f03c06`; independent-page amendment
+`9d5d7b1`; final brief clarification `14b2172`). Closure commit is the commit containing the final
+report/status/review update, reported by hash in the handoff.

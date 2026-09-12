@@ -1,20 +1,70 @@
-# User Learning Memory — independent narrow implementation review
+# User Learning Memory — independent narrow closure review
 
 Date: 2026-09-12. Reviewer: independent `memory_audit` agent, separate from the implementation
 author and not involved in its design. Authority: accepted `USER_LEARNING_MEMORY` brief and its
 specified Product/Implementation constraints, AGENTS.md, and the named Master, AI_SAVED and Inline
 Teaching development baselines.
 
-## Result
+## Final closure review — c702316
+
+**PASS — P0=0 / P1=0 / P2=0; recommendation: CLOSE.**
+
+The user has explicitly reported USER_ACCEPTANCE PASS and authorized closure. That user decision
+is supplied by the current task, not inferred from this review or automated results. This final
+review independently covers implementation checkpoint `5f03c06`, subsequent visual/independent-page
+changes through `9d5d7b1`, the accepted information-architecture amendment `14b2172`, and the
+content-first implementation at **`c702316`**. The reviewer has not designed or changed product code.
+
+Re-read current AGENTS.md, the complete amended brief and current development report; re-inspected
+the full Memory service/schema, migration/backup, authenticated routes, source-return integration,
+and current UI rather than treating the original review as acceptance of the later changes.
+The backend, provider and durable ownership paths are unchanged from the original reviewed
+implementation. No new actionable finding was identified and no finding was waived.
+
+Current independently executed evidence:
+
+- `python -m pytest tests/test_memory.py tests/test_saved_explanations.py tests/test_learning.py tests/test_section_learning.py -q -o addopts= --basetemp=test-results/memory-independent-closure-pytest`:
+  **42 PASS**. Disposable databases and controlled test providers only. Includes current migration,
+  idempotency, source eligibility, ownership/cascade, durable-source preservation, save-first and
+  Master/Section learning authority regressions.
+- `node --test tests-js/memory-ui.test.js`: **2 PASS** on current code. Response-loss replay stays
+  POST; Reader shows disabled collected status and cannot remove; full original text beyond 50,000
+  characters remains exact and literal HTML inert.
+- Independently authored disposable Chrome probe
+  `test-results/memory-independent-closure-ui.mjs`: **PASS**. Exercises all five distinct trust
+  states, the Library-only entry and sibling page, Reader exclusion, visible answer with peripheral
+  filters/provenance, no fabricated Master PDF anchor, preserved Section filter on return to list,
+  failed-source recovery, one precisely scoped membership DELETE, and successful source return.
+  This uses the actual Memory module and styles with browser-local fake API/source callbacks;
+  it does not claim a separate real-PDF end-to-end run. Its first run incorrectly used geometric
+  visibility for an empty mocked Reader; checking the explicit hidden state corrected the fixture,
+  and the full rerun passed. No product fix was needed.
+
+The amended boundaries are satisfied: Library home alone offers browsing; Reader source controls
+are collect/status-only; removal exists in the independent page; content and trust remain visible
+while complete provenance and exact original text remain accessible. Source return retains existing
+Book/revision, Master message and AI_SAVED/PDF identity. No new provider call, egress context,
+learning-state/Topic-resolution/Teaching write, persistent Assistant tree, answer duplication or
+independent orphan snapshot was introduced. Migration remains additive with verified backup and
+source/revision-scoped cascades. The original two P2 fixes remain effective under the amended UX.
+
+This is the final independent narrow implementation acceptance and CLOSE recommendation. The
+implementer's real 348-page golden path and broad closure results belong to the development report;
+they were not independently rerun here. No external provider call or user-Library write occurred
+during this closure review. Final Phase closure/checkpoint is performed separately by the implementer
+under the user's authorization.
+
+## Historical implementation review — before user retest
 
 **Independent narrow code review: PASS. Outstanding P0=0 / P1=0 / P2=0.**
 
 Two P2 findings were fixed by the implementer and independently reproduced/rechecked below. This is
 an implementation review, not USER_ACCEPTANCE, independent product acceptance or Phase closure.
 The reviewer did not independently run the 348-page real-book golden path or the broad closure suite;
-those remain the implementer's separately recorded evidence. User retest remains pending.
+those remained the implementer's separately recorded evidence. User retest was pending at that
+historical checkpoint; the final closure assessment above supersedes that pending status.
 
-## Scope and evidence
+## Historical scope and evidence
 
 Inspected migration 16 and backup integration, `memory_schema.py`, `memory.py`, authenticated server
 routes, `memory-ui.js`, app/Master/Marks return and collect integration, and relevant underlying
@@ -43,7 +93,9 @@ review. Tests used disposable fixtures and browser-local fake API responses only
    displayed “收入学习记忆” retry discovered the existing relation and issued DELETE. An independent
    Chrome probe reproduced `[POST, DELETE]` with the membership disappearing. The implementer now
    captures the displayed intent before asynchronous work; the regression proves `[POST, POST]`
-   retains one membership and a subsequent explicit displayed remove produces DELETE. **Fixed.**
+   retained one membership and a subsequent explicit displayed remove produced DELETE. **Fixed.**
+   The later accepted collect-only Reader amendment removes that local DELETE entirely; final tests
+   prove repeat collect remains POST and removal belongs only to the independent page.
 2. **P2 — full eligible answer tail unavailable in Memory.** AI_SAVED accepts up to 100,000 characters,
    but the shared formatted renderer displays only 50,000. The original Memory detail offered no
    way to inspect the rest of an eligible answer. The implementer added a Memory-local expandable

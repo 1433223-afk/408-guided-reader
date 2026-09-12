@@ -1,11 +1,12 @@
 # Phase / User Learning Memory — Curated V1
 
-> **Status: ACCEPTED — ready for implementation.**
+> **Status: CLOSED / COMPLETE — 2026-09-12.**
 >
-> Implementation checkpoint (2026-09-12): **READY_FOR_USER_RETEST / IMPLEMENTATION_READY**.
-> Targeted, real-book golden path, affected and broad checks complete; independent narrow
-> implementation review PASS. User acceptance, independent product acceptance and Phase closure
-> remain pending. Evidence: [Development Report](../development-reports/USER_LEARNING_MEMORY.md).
+> User acceptance explicitly confirmed **PASS**. Final independent narrow review **PASS**
+> (P0=0 / P1=0 / P2=0; recommendation **CLOSE**); targeted, real-book golden path, affected and
+> broad checks complete. Accepted product code `c702316` unchanged in docs-only closure.
+> Evidence: [Development Report](../development-reports/USER_LEARNING_MEMORY.md) and
+> [independent review](../reviews/USER_LEARNING_MEMORY.md).
 
 ## Goal
 
@@ -250,5 +251,6 @@ preservation, membership identity/idempotency, source ownership, Annotation and 
 Master/Assistant provenance, no-copy/no-fake-anchor behavior, trust-state presentation, AI-off
 operation, provider no-egress, and the absolute no-Mastery/Learning/Teaching-write boundary.
 
-Stop at `READY_FOR_USER_RETEST`; user acceptance, independent acceptance and Phase closure remain
-separate approval gates.
+Implementation stops at `READY_FOR_USER_RETEST` until the user accepts and authorizes closure;
+user acceptance, independent review and Phase closure are separate gates. Those gates are now
+complete as recorded in the status and linked evidence above.
