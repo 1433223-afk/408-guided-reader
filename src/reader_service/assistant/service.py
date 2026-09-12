@@ -103,6 +103,7 @@ class AssistantNode:
     pending_child_id: str | None = None
     pending_turn_id: str | None = None
     error: str | None = None
+    first_user_content: str | None = None
 
     def __post_init__(self) -> None:
         if not 2 <= self.depth <= MAX_DEPTH:
@@ -191,6 +192,7 @@ class ReaderAssistantState:
             "child_pending": node.pending_child_id is not None,
             "pending": node.pending_turn_id is not None,
             "error": node.error,
+            "can_retry": bool(node.error and not node.turns and node.first_user_content and node.pending_turn_id is None),
             "turns": [turn.public() for turn in node.turns],
         }
 
@@ -428,12 +430,49 @@ class AssistantService:
                     child_depth,
                     selected_text,
                     pending_turn_id=interaction_id,
+                    first_user_content=user_content,
                 )
                 root.nodes[requested_node_id] = child
                 parent.active_child_id = requested_node_id
                 root.focused_node_id = requested_node_id
                 state.focus_version += 1
                 state.state_version += 1
+        return self._finish_child(session_id, slot, generation, clean_root_id,
+                                  clean_node_id, requested_node_id, interaction_id,
+                                  provider, selected_text, user_content)
+
+    def retry_child(self, reader_session_id: str, root_id: str, node_id: str) -> dict:
+        """Retry only the retained failed first turn, with its original private grounding."""
+        session_id = self._validate_session_id(reader_session_id)
+        clean_root_id = self._validate_id(root_id, "Root id")
+        clean_node_id = self._validate_id(node_id, "Node id")
+        slot = self._existing_slot(session_id)
+        interaction_id = str(uuid4())
+        with self._state_lock:
+            if self._sessions.get(session_id) is not slot:
+                raise self._request_cancelled()
+            with slot.lock:
+                generation = slot.generation
+                root = self._root(slot.state, clean_root_id)
+                child = self._level(root, clean_node_id)
+                parent = self._level(root, child.parent_node_id)
+                if child.pending_turn_id or parent.pending_child_id:
+                    raise AssistantStateError("TURN_ALREADY_PENDING", "这一层正在生成，请稍候。")
+                if child.turns or not child.error or not child.first_user_content:
+                    raise AssistantStateError("CHILD_NOT_RETRYABLE", "只有首次生成失败的解释可以重试。")
+                child.pending_turn_id = interaction_id
+                parent.pending_child_id = interaction_id
+                slot.state.state_version += 1
+                provider, selected_text, user_content = root.provider, child.selected_text, child.first_user_content
+                parent_id = child.parent_node_id
+        # Completion never steals focus after the user navigates elsewhere.
+        return self._finish_child(session_id, slot, generation, clean_root_id,
+                                  parent_id, clean_node_id, interaction_id,
+                                  provider, selected_text, user_content)
+
+    def _finish_child(self, session_id, slot, generation, clean_root_id,
+                      clean_node_id, requested_node_id, interaction_id,
+                      provider, selected_text, user_content):
         try:
             answer = self._complete(
                 provider,
@@ -477,6 +516,7 @@ class AssistantService:
                 parent.pending_child_id = None
                 child.pending_turn_id = None
                 child.error = None
+                child.first_user_content = None
                 child.turns.append(Turn(interaction_id, selected_text, answer, user_content))
                 slot.state.state_version += 1
                 return slot.state.public()

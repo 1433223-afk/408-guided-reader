@@ -99,7 +99,14 @@ class LearningRepository:
                     section["thread_id"] = thread["id"] if thread else None
                     section["status"] = self._status(c, scoped)
             add_display_ends(c, revision_id, points)
-            return {"points": points, "sections": sections}
+            section_counts = {}
+            chapter_counts = {}
+            for point in points:
+                for groups, key in ((section_counts, point['primary_section_id']), (chapter_counts, point['chapter_outline_node_id'])):
+                    counts = groups.setdefault(key, {'UNDERSTOOD': 0, 'NOT_FULLY_CLEAR': 0, 'UNCONFIRMED': 0})
+                    counts[point['status']] += 1
+            return {"points": points, "sections": sections,
+                    "section_counts": section_counts, "chapter_counts": chapter_counts}
 
     @staticmethod
     def _in_confirmation_scope(point, node):

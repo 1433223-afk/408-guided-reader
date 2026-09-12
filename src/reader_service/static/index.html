@@ -7,6 +7,7 @@
     <title>408 Guided Reader</title>
     <link rel="stylesheet" href="/vendor/katex.css">
     <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/screens.css">
   </head>
   <body>
     <section id="library-home" class="library-home" aria-label="书库">
@@ -19,17 +20,13 @@
         <input id="import-input" type="file" accept="application/pdf,.pdf" hidden>
       </header>
       <main class="home-content">
-        <div class="home-intro">
-          <p class="eyebrow">原始页面，不重构教材。</p>
-          <h1>我的书库</h1>
-          <p>选择教材，从上次读到的位置继续。</p>
-        </div>
+        <section id="home-continue" hidden></section>
         <section class="library-shelf">
-          <div class="library-heading"><span>教材</span><span id="book-count">0</span></div>
+          <div class="library-heading"><span><small class="eyebrow">LIBRARY</small>　你的教材</span><span><span id="book-count">0</span> 本教材 · 本地保存</span></div>
           <div id="book-list" class="book-list"></div>
           <div id="library-empty" class="library-empty">
             <p>还没有教材。</p>
-            <label class="primary-action" for="import-input">选择 PDF</label>
+            <button class="primary-action" type="button" onclick="document.getElementById('import-input').click()">选择 PDF</button>
           </div>
         </section>
         <p class="local-note">仅保存在这台电脑上</p>
@@ -39,8 +36,8 @@
     <section id="reader" class="reader" hidden>
       <header class="toolbar">
         <div class="book-heading">
-          <button id="back-to-library" class="back-button" type="button">← 书库</button>
-          <div><span class="eyebrow">正在阅读</span><h1 id="reader-title"></h1></div>
+          <button id="back-to-library" class="back-button" type="button">←</button>
+          <div><h1 id="reader-title"></h1><small id="reader-chapter"></small></div>
         </div>
         <div class="reader-controls" aria-label="阅读器控制">
           <button id="previous-page" class="icon-button" aria-label="上一页">←</button>
@@ -60,6 +57,7 @@
           <button id="zoom-in" class="icon-button" aria-label="放大">＋</button>
         </div>
       </header>
+      <div id="reader-context" class="reader-context"></div>
       <div id="viewer" class="viewer" tabindex="0" aria-label="PDF 页面">
         <div id="pages" class="pages"></div>
       </div>

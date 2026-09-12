@@ -109,6 +109,8 @@ def handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._reading_request(parsed.path, 'GET'):
+                return
             if self._memory_request(parsed.path, 'GET'):
                 return
             guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/(guide|inline-teaching)", parsed.path)
@@ -146,6 +148,31 @@ def handler_factory(
                 if not self._authorized():
                     return
                 self._json(HTTPStatus.OK, {"status": "ok"})
+                return
+            context_match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/reading-context", parsed.path)
+            if context_match:
+                if not self._authorized():
+                    return
+                try:
+                    revision = service.revision(context_match[1])
+                    params = parse_qs(parsed.query)
+                    page = int(_first(params, 'page') or 0)
+                    y = float(_first(params, 'y') or 0)
+                    if not 0 <= page < revision['page_count'] or not 0 <= y <= 1:
+                        raise ValueError('阅读位置无效。')
+                    result = outline.reading_context(context_match[1], page, y) if outline else {'chapter': None, 'section': None, 'subsection': None}
+                    result['learning_counts'] = None
+                    if learning and result.get('chapter'):
+                        points = learning.repository.entries(context_match[1])['points']
+                        chapter_points = [p for p in points if p['chapter_outline_node_id'] == result['chapter']['outline_node_id']]
+                        if chapter_points:
+                            result['learning_counts'] = {state: sum(p['status'] == state for p in chapter_points)
+                                                         for state in ('UNDERSTOOD', 'NOT_FULLY_CLEAR', 'UNCONFIRMED')}
+
+                except (LookupError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {'error': str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
                 return
             if parsed.path == "/api/books":
                 if not self._authorized():
@@ -352,6 +379,8 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if self._reading_request(parsed.path, 'POST'):
+                return
             if self._memory_request(parsed.path, 'POST'):
                 return
             guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/(guide|inline-teaching)/(generate|regenerate|retry)", parsed.path)
@@ -635,6 +664,31 @@ def handler_factory(
                     return
                 self._json(HTTPStatus.OK, {"assistant": state})
                 return
+            if parsed.path == "/api/assistant/retry-child":
+                if not self._authorized():
+                    return
+                if assistant is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {
+                        "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
+                    })
+                    return
+                try:
+                    payload = self._read_json()
+                    state = assistant.retry_child(payload["reader_session_id"], payload["root_id"], payload["node_id"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_CHILD", "error": str(exc)})
+                    return
+                except AssistantStateError as exc:
+                    self._assistant_state_failure(exc)
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_LEVEL_GONE", "error": str(exc)})
+                    return
+                except ProviderFailure as exc:
+                    self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, {"assistant": state})
+                return
             if parsed.path == "/api/assistant/close-child":
                 if not self._authorized():
                     return
@@ -898,6 +952,27 @@ def handler_factory(
                 return
             self._json(HTTPStatus.OK, {"position": position})
 
+        def _reading_request(self, path, method):
+            match = re.fullmatch(r'/api/revisions/([0-9a-f-]+)/section-reading', path)
+            if not match:
+                return False
+            if not self._authorized():
+                return True
+            from reader_service.learning import reading
+            try:
+                service.revision(match[1])
+                if method == 'GET':
+                    result = reading.snapshot(service.database, match[1])
+                else:
+                    payload = self._read_json()
+                    result = reading.observe(service.database, match[1], payload['pdf_page_index'],
+                                             float(payload['top']), float(payload['bottom']))
+            except (LookupError, KeyError, ValueError, TypeError) as exc:
+                self._json(HTTPStatus.BAD_REQUEST, {'error': str(exc)})
+                return True
+            self._json(HTTPStatus.OK, result)
+            return True
+
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             if self._memory_request(parsed.path, 'DELETE'):
@@ -1004,7 +1079,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/app.js", "/assistant-render.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/assistant-render.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

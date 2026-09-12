@@ -74,7 +74,7 @@ try {
   const noKp=nodes.find(n=>n.kind==='SECTION' && n.title.startsWith('6.1'));
   const base=s=>`/api/revisions/${rev}/sections/${s.outline_node_id}/inline-teaching`;
   await openBook(page);
-  await page.locator('#inline-open').click();
+  await (await toolbarControl(page,'#inline-open')).click();
   await page.locator('#inline-section').selectOption(ready.outline_node_id);
   await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-generate').click()]);
   assert.ok(await page.locator('.page canvas').count());
@@ -143,25 +143,25 @@ try {
     await page.setViewportSize({width:1440,height:1000});
     await page.waitForTimeout(500); await page.locator('#inline-panel').scrollIntoViewIfNeeded();
     await page.screenshot({path:'test-results/inline-margin.png',fullPage:true});
-    await page.locator('#inline-enabled').uncheck(); assert.equal(await page.locator('.inline-marker').count(),0);
-    await page.locator('#inline-enabled').check(); assert.ok(await page.locator('.inline-marker').count());
+    await (await toolbarControl(page,'#inline-enabled')).uncheck(); assert.equal(await page.locator('.inline-marker').count(),0);
+    await (await toolbarControl(page,'#inline-enabled')).check(); assert.ok(await page.locator('.inline-marker').count());
     await openGuide(page,ready);
     await page.locator('#guide-expand').click(); await page.waitForTimeout(300);
     await page.locator('#guide-expand').click(); await page.locator('#guide-close').click();
-    await page.locator('#inline-enabled').uncheck();
+    await (await toolbarControl(page,'#inline-enabled')).uncheck();
     await page.locator('#back-to-library').click();
     await stop(); running=await start({...loopback,GUIDED_READER_DEEPSEEK_DISABLED:'1',GUIDED_READER_ZHIPU_DISABLED:'1'});
-    await page.goto(running.url); await openBook(page); await page.locator('#inline-open').click();
+    await page.goto(running.url); await openBook(page); await (await toolbarControl(page,'#inline-open')).click();
     await page.locator('#inline-section').selectOption(ready.outline_node_id);
     assert.equal((await get(page,base(ready))).published.id,first.published.id);
     assert.equal(await page.locator('#inline-enabled').isChecked(),false);
-    await page.locator('#inline-enabled').check();
-    if (!(await page.locator('#inline-menu').isVisible())) await page.locator('#inline-open').click();
+    await (await toolbarControl(page,'#inline-enabled')).check();
+    if (!(await page.locator('#inline-menu').isVisible())) await (await toolbarControl(page,'#inline-open')).click();
     await page.locator('#inline-section').selectOption(ready.outline_node_id);
     await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-generate').click()]);
     const failed=await settled(page,base(ready)); assert.equal(failed.task.state,'FAILED'); assert.equal(failed.published.id,first.published.id);
     await stop(); running=await start(loopback); await page.goto(running.url); await openBook(page);
-    await page.locator('#inline-open').click(); await page.locator('#inline-section').selectOption(ready.outline_node_id);
+    await (await toolbarControl(page,'#inline-open')).click(); await page.locator('#inline-section').selectOption(ready.outline_node_id);
     await Promise.all([page.waitForResponse(r => r.url().endsWith('/inline-teaching/retry') && r.request().method()==='POST'), page.locator('#inline-retry').click()]); const replacement=await settled(page,base(ready));
     assert.equal(replacement.published.version,2);
     await page.locator('#inline-section').selectOption(noKp.outline_node_id); await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-generate').click()]);
@@ -174,7 +174,8 @@ try {
 } finally { if(browser) await browser.close(); await stop(); await new Promise(r=>provider.close(r)); }
 async function get(page, url) { return page.evaluate(async url => { const r = await fetch(url); if (!r.ok) throw new Error(await r.text()); return r.json(); }, url); }
 async function openBook(page) {
-  await page.locator('.book-card').filter({ hasText: '348 个 PDF 页面' }).click();
+  await page.locator('.book-card').filter({ hasText: '348 个 PDF 页面' }).getByRole('button',{name:'打开',exact:true}).click();
+  await page.locator('.overview-book-heading .primary-action').click();
   await page.locator('.page canvas').first().waitFor({ timeout: 30000 });
   await page.waitForTimeout(1000);
 }
@@ -241,4 +242,9 @@ async function relativePosition(page) {
     const r=e.getBoundingClientRect(),m=e.closest('.page').querySelector('.inline-marker[aria-expanded="true"]').getBoundingClientRect();
     return {delta:r.top-m.top};
   });
+}
+
+async function toolbarControl(page, selector) {
+  if(!await page.locator(selector).isVisible()) await page.locator('.reader-more>summary').click();
+  return page.locator(selector);
 }

@@ -2055,3 +2055,60 @@ def test_model_override_is_per_call_and_reported_without_changing_provider():
         with pytest.raises(ValueError, match="model is invalid"):
             providers.complete_for_with_metadata("openrouter", messages, model=invalid)
     assert len(adapters["openrouter"].calls) == 2
+
+
+def test_failed_child_explicit_retry_reuses_grounding_and_identity(assistant_fixture):
+    transient = ProviderFailure(ProviderFailureKind.TRANSIENT, 'network', '暂不可用')
+    adapter = MockAdapter(['父回答含失败概念', transient, transient, '已恢复'])
+    assistant = AssistantService(assistant_fixture['contexts'], runtime(adapter, max_attempts=1))
+    assistant.runtime.clock = lambda: 0
+    sid = 'explicit-child-retry'
+    parent = assistant.ask_selection(sid, assistant_fixture['revision_id'], 3, **selection(3))
+    with pytest.raises(ProviderFailure): create_child_for_text(assistant, sid, parent, '失败概念')
+    child = focused(assistant.state(sid)); rid, nid = child['root_id'], child['node_id']
+    assert child['can_retry'] and 'first_user_content' not in child
+    assistant.runtime.clock = lambda: 31
+    with pytest.raises(ProviderFailure): assistant.retry_child(sid, rid, nid)
+    assistant.runtime.clock = lambda: 62
+    assert focused(assistant.state(sid))['can_retry']
+    # A changed parent must not alter the original first-turn grounding.
+    assistant.focus(sid, rid)
+    assistant._sessions[sid].state.roots[rid].turns.append(Turn('later', 'later', '不同父回答', 'later'))
+    result = assistant.retry_child(sid, rid, nid)
+    assert result['current']['node_id'] is None  # completion never steals focus
+    restored = focused(assistant.focus(sid, rid, node_id=nid))
+    assert restored['node_id'] == nid and restored['root_id'] == rid
+    assert restored['error'] is None and not restored['can_retry']
+    assert len(restored['turns']) == 1 and len(result['roots'][0]['nodes']) == 1
+    assert adapter.calls[1]['body'] == adapter.calls[2]['body'] == adapter.calls[3]['body']
+    with pytest.raises(AssistantStateError, match='首次生成失败'): assistant.retry_child(sid, rid, nid)
+    assert len(adapter.calls) == 4
+
+
+def test_retry_child_duplicate_and_close_cannot_resurrect(assistant_fixture):
+    transient = ProviderFailure(ProviderFailureKind.TRANSIENT, 'network', '暂不可用')
+    entered, release = threading.Event(), threading.Event()
+    class Adapter(MockAdapter):
+        def complete(self, endpoint, api_key, body, timeout):
+            if len(self.calls) < 2: return super().complete(endpoint, api_key, body, timeout)
+            self.calls.append({'body':body})
+            entered.set(); assert release.wait(3)
+            return '已恢复'
+    adapter = Adapter(['父回答含失败概念', transient])
+    assistant = AssistantService(assistant_fixture['contexts'], runtime(adapter,max_attempts=1))
+    assistant.runtime.clock = lambda: 0
+    sid = 'retry-child-cancel'
+    parent = assistant.ask_selection(sid, assistant_fixture['revision_id'], 3, **selection(3))
+    with pytest.raises(ProviderFailure): create_child_for_text(assistant,sid,parent,'失败概念')
+    child = focused(assistant.state(sid)); rid,nid = child['root_id'],child['node_id']
+    assistant.runtime.clock = lambda: 31
+    outcome=[]
+    thread=threading.Thread(target=lambda:_capture_result(outcome,lambda:assistant.retry_child(sid,rid,nid)))
+    thread.start(); assert entered.wait(3)
+    with pytest.raises(AssistantStateError) as error: assistant.retry_child(sid,rid,nid)
+    assert error.value.code == 'TURN_ALREADY_PENDING'
+    assistant.close_child_subtree(sid,rid,nid)
+    release.set(); thread.join(3)
+    assert isinstance(outcome[0],AssistantStateError) and outcome[0].code == 'REQUEST_CANCELLED'
+    assert assistant.state(sid)['roots'][0]['nodes'] == []
+    with pytest.raises(LookupError): assistant.retry_child(sid,rid,nid)

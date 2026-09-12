@@ -4,6 +4,23 @@
 
 **Status: PLANNER HANDOFF — READY FOR IMPLEMENTER**
 
+### User-authorized implementation scope addition
+
+On 2026-09-12, the user explicitly selected “扩大范围，补齐节末阅读记录和投影”
+after the Implementer reported that existing code did not record Section-end reading.
+This authorizes the bounded reading observation and server projection needed for
+`已阅读 · 待确认`, including additive storage. It does not authorize mastery writes,
+historical backfill, or changes to Assistant/Master lifecycle. Blueprint authority remains higher.
+
+On 2026-09-13, the user also explicitly authorized “补齐 Assistant Child 首次生成失败后的
+retry contract”. This permits retrying the original failed temporary Child using its
+existing identity and original grounding, without new durable Assistant history or a
+change to the established destructive lifecycle boundaries.
+
+Implementer status: `READY_FOR_USER_RETEST`; evidence and checklist mapping are in
+`docs/development-reports/FOUR_MASTER_SCREEN_UI.md`. The reported retry handoff gap has
+been resolved under that authorization. This note does not claim user acceptance.
+
 This Brief is downstream implementation guidance for the four visually validated master screens. It
 does not replace or amend `PRODUCT_BLUEPRINT.md` or `IMPLEMENTATION_BLUEPRINT.md`. If this Brief or a
 visual master conflicts with either Blueprint, stop and report the concrete conflict; do not repair

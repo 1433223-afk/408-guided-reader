@@ -1,3 +1,4 @@
+import {createScreens, header, action} from "/screens.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
 import {
   lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
@@ -52,8 +53,8 @@ const master = createMasterUI({ api, revision: () => state.revision?.id,
   goToPage, announce, relayout: () => relayoutPages(),
   memoryControl: (...args) => memory.control(...args) });
 
-const memory = createMemoryUI({ api, announce,
-  enterView: () => { elements['library-home'].hidden = true; elements.reader.hidden = true; },
+const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: async () => { await loadBooks(); const b = state.books.filter(b => b.active_revision?.position.updated_at).sort((a,b) => b.active_revision.position.updated_at.localeCompare(a.active_revision.position.updated_at))[0]; if(b) await enterReader(b); else await showHome(); },
+  enterView: () => { screens.close(); elements['library-home'].hidden = true; elements.reader.hidden = true; },
   leaveView: () => { elements['library-home'].hidden = false; },
   returnToSource: async item => {
   const books = (await api('/api/books')).books;
@@ -67,7 +68,7 @@ const memory = createMemoryUI({ api, announce,
     setAssistantPanelOpen(false);
     goToPage(item.source.pdf_page_index, Math.min(...item.source.quads.flat().map(p => p[1])));
     await refreshAnnotationPage(item.source.pdf_page_index);
-    elements['marks-panel'].hidden = false;
+    guide.close(); elements['marks-panel'].hidden = false;
     elements['marks-toggle'].setAttribute('aria-expanded', 'true');
     updateMarksPanel();
     const card = [...elements['marks-list'].children].find(n => n.dataset.annotationId === item.source_id);
@@ -129,56 +130,38 @@ function announce(message, error = false) {
 }
 
 async function loadBooks() {
-  const payload = await api("/api/books");
-  state.books = payload.books;
-  elements["book-count"].textContent = String(state.books.length);
-  renderLibrary();
-  elements["library-empty"].hidden = state.books.length > 0;
+  try {
+    const payload = await api('/api/books');
+    state.books = payload.books;
+    elements['book-count'].textContent = String(state.books.length);
+    renderLibrary();
+    elements['library-empty'].hidden = state.books.length > 0;
+  } catch(error) {
+    const message = document.createElement('p'); message.className = 'local-error'; message.textContent = error.message;
+    elements['book-list'].replaceChildren(message, action('重试读取书库', loadBooks));
+    elements['library-empty'].hidden = true;
+  }
 }
 
-function renderLibrary() {
-  const cards = state.books.map((book) => {
-    const active = book.status === "ACTIVE" && book.active_revision;
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = `book-card${state.book?.id === book.id ? " active" : ""}`;
-    const title = document.createElement("span");
-    title.className = "book-card-title";
-    title.textContent = book.title;
-    const meta = document.createElement("span");
-    meta.className = "book-card-meta";
-    const pages = document.createElement("span");
-    pages.textContent = active ? `${book.active_revision.page_count} 个 PDF 页面` : "删除未完成";
-    const actions = document.createElement("span");
-    actions.className = "book-actions";
-    if (active) {
-      const revision = document.createElement("button");
-      revision.type = "button";
-      revision.className = "book-action";
-      revision.textContent = book.revision_count > 1 ? `${book.revision_count} 个版本 · 添加` : "添加新版本";
-      revision.title = "为本书导入另一份 PDF，作为不可变的新版本";
-      revision.addEventListener("click", (event) => {
-        event.stopPropagation();
-        chooseRevision(book);
-      });
-      actions.append(revision);
-    }
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "book-action danger";
-    remove.textContent = active ? "删除" : "重试删除";
-    remove.addEventListener("click", (event) => {
-      event.stopPropagation();
-      removeBook(book);
-    });
-    actions.append(remove);
-    meta.append(pages, actions);
-    card.append(title, meta);
-    if (active) card.addEventListener("click", () => openBook(book));
-    return card;
-  });
-  elements["book-list"].replaceChildren(...cards);
+function renderLibrary() { screens.library(state.books).catch(error => announce(error.message, true)); }
+
+async function enterReader(book, target) {
+  screens.close();
+  await openBook(book);
+  if (target && state.pdf) goToPage(target.page, target.y);
 }
+async function showHome() {
+  screens.close();
+  elements['library-home'].hidden = false;
+  await loadBooks();
+}
+const screens = createScreens({api, home: showHome, memory: () => memory.open(), read: enterReader,
+  remove: removeBook, revision: chooseRevision, announce, isAuxiliary:isAuxiliaryOutlineRoot});
+const homeHeader = header('home', showHome, () => memory.open(), action('＋ 导入教材', () => elements['import-input'].click(), 'primary-action'));
+elements['library-home'].querySelector('.home-toolbar').replaceWith(homeHeader);
+homeHeader.querySelector('.space-navigation button:last-child').classList.add('memory-open');
+// The hidden file input remains owned by the intake flow.
+elements['library-home'].append(elements['import-input']);
 
 function chooseRevision(book) {
   const input = document.createElement("input");
@@ -193,6 +176,7 @@ async function importPdf(file, bookId = null) {
     announce("请选择 PDF 文件。", true);
     return;
   }
+  document.getElementById('import-status')?.remove();
   announce(bookId ? "正在验证新来源版本……" : "正在验证并导入 PDF……");
   const parameters = new URLSearchParams();
   if (bookId) parameters.set("book_id", bookId);
@@ -208,7 +192,11 @@ async function importPdf(file, bookId = null) {
     await openBook(refreshed);
     announce(result.duplicate ? "书库中已有这份文件，没有重复导入。" : (bookId ? "已添加新来源版本。" : "PDF 已导入，可以开始阅读。"));
   } catch (_error) {
-    announce("导入失败，请检查 PDF 后重试。", true);
+    const message = _error.message || "导入失败，请检查 PDF 后重试。";
+    let status = document.getElementById('import-status');
+    if(!status) { status = document.createElement('p'); status.id = 'import-status'; status.className = 'local-error'; elements['library-home'].querySelector('main').prepend(status); }
+    status.textContent = message;
+    announce(message, true);
   } finally {
     elements["import-input"].value = "";
   }
@@ -280,8 +268,8 @@ async function openBook(book) {
     applyRestoredPosition();
     state.pdf = pdf;
     scheduleViewportUpdate();
-    await startPreparation();
-    await loadBookMap();
+    startPreparation().catch(error => { elements['preparation-status'].textContent = '文字准备暂时不可用'; announce(error.message, true); });
+    loadBookMap();
   } catch (_error) {
     announce("无法打开这份 PDF，请重试。", true);
   }
@@ -341,7 +329,10 @@ async function returnToLibrary() {
     announce("临时 AI 对话未能清除，请重试关闭 Reader。", true);
     return;
   }
+  const book = state.book;
   closeReader();
+  await loadBooks();
+  await screens.open(state.books.find(b => b.id === book.id) || book);
 }
 
 function displayedRatio(geometry) {
@@ -354,7 +345,7 @@ function displayedRatio(geometry) {
 function inlineReserve() { return elements.reader.classList.contains("inline-open") ? 332 : 0; }
 
 function pageWidth() {
-  return Math.max(240, Math.min(920, elements.viewer.clientWidth - inlineReserve() - 72)) * state.zoom;
+  return Math.max(240, Math.min(640, elements.viewer.clientWidth - inlineReserve() - 72)) * state.zoom;
 }
 
 function snappedPageSize(ratio) {
@@ -438,14 +429,15 @@ function updateViewport() {
   let last = 0;
   let bestIndex = 0;
   let bestDistance = Infinity;
-  const viewportCenter = top + elements.viewer.clientHeight / 2;
   for (const page of elements.pages.children) {
     const index = Number(page.dataset.index);
     const pageTop = page.offsetTop;
     const pageBottom = pageTop + page.offsetHeight + parseFloat(page.style.marginBottom || "20");
     if (pageBottom >= top && first === null) first = index;
     if (pageTop <= bottom) last = index;
-    const distance = Math.abs((pageTop + pageBottom) / 2 - viewportCenter);
+    // The reading anchor is the top of the viewport, also used by savePosition.
+    // At smaller PDF scale the center can already be on the next page.
+    const distance = Math.max(pageTop - top, top - (pageTop + page.offsetHeight), 0);
     if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
   }
   setCurrentPage(bestIndex);
@@ -498,7 +490,9 @@ async function renderPage(index) {
     await task.promise;
     if (generation === state.generation) {
       state.rendered.add(index);
-      master.renderPage(index);
+      const learningAnchor = captureZoomAnchor();
+    master.renderPage(index);
+    restoreZoomAnchor(learningAnchor);
       renderGuideEntries(index);
       syncPagePreparationUi(index);
       ensureOverlay(index);
@@ -529,7 +523,9 @@ function cancelRenders() {
 
 function setCurrentPage(index) {
   state.currentPage = Math.max(0, Math.min(index, (state.revision?.page_count || 1) - 1));
-  elements["page-number"].value = String(state.currentPage + 1);
+  if (document.activeElement !== elements['page-number']) {
+    elements["page-number"].value = String(state.currentPage + 1);
+  }
   updateMarksPanel();
   updatePrintedPageLabel();
 }
@@ -635,7 +631,7 @@ async function savePosition() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom: state.zoom }),
     });
-    state.revision.position = { pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom: state.zoom };
+    state.revision.position = { pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom: state.zoom, updated_at: new Date().toISOString() };
   } catch (error) {
     announce("阅读位置未保存，请稍后重试。", true);
   }
@@ -881,159 +877,11 @@ function chapterForCurrentPage() {
 }
 
 async function openKnowledgePanel(chapterId = null) {
-  const chapter = state.outlineNodes.find((node) => node.outline_node_id === chapterId)
-    || chapterForCurrentPage();
-  if (!chapter) {
-    announce("教材目录中还没有可准备的章节。", true);
-    return;
-  }
-  state.knowledgeChapterId = chapter.outline_node_id;
-  elements["knowledge-panel"].hidden = false;
-  elements["knowledge-toggle"].setAttribute("aria-expanded", "true");
-  elements["outline-panel"].hidden = true;
-  elements["outline-toggle"].setAttribute("aria-expanded", "false");
-  elements["search-panel"].hidden = true;
-  elements["search-toggle"].setAttribute("aria-expanded", "false");
-  elements["marks-panel"].hidden = true;
-  elements["marks-toggle"].setAttribute("aria-expanded", "false");
-  setAssistantPanelOpen(false);
-  await loadKnowledgeMap();
-}
-
-async function loadKnowledgeMap() {
-  const revisionId = state.revision?.id;
-  const chapterId = state.knowledgeChapterId;
-  if (!revisionId || !chapterId) return;
-  const request = ++state.knowledgeRequest;
-  clearTimeout(state.knowledgePollTimer);
-  try {
-    const payload = await api(`/api/revisions/${revisionId}/chapters/${chapterId}/knowledge-map`);
-    if (request !== state.knowledgeRequest || state.revision?.id !== revisionId
-        || state.knowledgeChapterId !== chapterId) return;
-    state.knowledgeMap = payload;
-    await master.refreshEntries();
-    renderKnowledgeMap(payload);
-    if (payload.status === "PREPARING" || payload.regeneration_state === "RUNNING") {
-      state.knowledgePollTimer = setTimeout(loadKnowledgeMap, 700);
-    }
-  } catch (_error) {
-    if (request !== state.knowledgeRequest) return;
-    elements["knowledge-status"].textContent = "学习地图状态暂时无法读取，阅读不受影响。";
-    elements["knowledge-prepare"].hidden = true;
-  }
-}
-
-function renderKnowledgeMap(payload) {
-  elements["knowledge-title"].textContent = payload.chapter_title || "章节学习地图";
-  elements["knowledge-map"].replaceChildren();
-  elements["knowledge-empty"].hidden = payload.status === "READY";
-  const replacementRunning = payload.status === "READY" && payload.regeneration_state === "RUNNING";
-  elements["knowledge-prepare"].hidden = payload.status === "PREPARING";
-  elements["knowledge-prepare"].disabled = payload.status === "PREPARING" || replacementRunning
-    || (payload.status === "READY" && !payload.regeneration_allowed);
-  const stages = {
-    QUEUED: "等待开始",
-    RESOLVING_SOURCE: "正在解析本章来源范围",
-    GENERATING: "正在按小节生成知识点",
-    REVIEWING: "正在进行整章结构审查",
-    VALIDATING: "正在校验整章学习地图",
-    PUBLISHING: "正在整体发布学习地图",
-  };
-  if (payload.status === "NOT_PREPARED") {
-    elements["knowledge-status"].textContent = "本章学习地图尚未准备；PDF 阅读和现有工具可继续使用。";
-    elements["knowledge-empty"].textContent = "尚未准备这个章节的学习地图。";
-    elements["knowledge-prepare"].textContent = "准备本章学习地图";
-    return;
-  }
-  if (payload.status === "PREPARING") {
-    const stage = stages[payload.prepare_stage] || "正在准备本章学习地图";
-    const total = Number(payload.sections_total) || 0;
-    const completed = Math.min(Number(payload.sections_completed) || 0, total);
-    const progress = total > 0 ? `；已完成 ${completed}/${total} 个小节` : "";
-    elements["knowledge-status"].textContent = `${stage}${progress}；地图会在整章通过后一次出现。`;
-    elements["knowledge-empty"].textContent = "准备期间不会显示部分草稿。";
-    return;
-  }
-  if (payload.status === "FAILED") {
-    const stage = payload.failure_stage ? `（${payload.failure_stage} / ${payload.failure_code || "失败"}）` : "";
-    elements["knowledge-status"].textContent = `本章学习地图准备失败${stage}；PDF 阅读和现有工具不受影响。`;
-    elements["knowledge-empty"].textContent = "没有发布任何部分草稿，可以明确重试。";
-    elements["knowledge-prepare"].textContent = "重试准备";
-    return;
-  }
-  const route = `${payload.generator_provider} / ${payload.generator_model} → ${payload.reviewer_provider} / ${payload.reviewer_model}`;
-  let replacementStatus = "";
-  if (replacementRunning) {
-    const total = Number(payload.sections_total) || 0;
-    const completed = Math.min(Number(payload.sections_completed) || 0, total);
-    const progress = total > 0 ? `，已完成 ${completed}/${total} 个小节` : "";
-    replacementStatus = `；${stages[payload.prepare_stage] || "正在重新生成"}${progress}，当前地图继续可用`;
-    elements["knowledge-prepare"].textContent = "正在重新生成知识点";
-  } else if (payload.regeneration_state === "FAILED") {
-    replacementStatus = `；上次重新生成失败（${payload.regeneration_failure_stage || "准备"} / ${payload.regeneration_failure_code || "失败"}），旧地图保持不变`;
-    elements["knowledge-prepare"].textContent = "重试重新生成知识点";
-  } else {
-    elements["knowledge-prepare"].textContent = "重新生成知识点";
-  }
-  if (payload.regeneration_block_code === "CHAPTER_PERMANENTLY_LOCKED") {
-    replacementStatus = "；已有学习状态，本章学习地图已永久冻结";
-    elements["knowledge-prepare"].textContent = "本章已永久冻结";
-  } else if (payload.regeneration_block_code === "CHAPTER_HAS_USER_ASSETS") {
-    replacementStatus = "；已有用户内容关联知识点，不能重新生成";
-    elements["knowledge-prepare"].textContent = "当前不能重新生成";
-  }
-  elements["knowledge-status"].textContent = `结构版本 ${payload.structure_version} · ${payload.knowledge_points.length} 个知识点 · ${route}${replacementStatus}`;
-  const groups = new Map();
-  for (const point of payload.knowledge_points) {
-    if (!groups.has(point.primary_section_id)) groups.set(point.primary_section_id, []);
-    groups.get(point.primary_section_id).push(point);
-  }
-  const rendered = [];
-  for (const points of groups.values()) {
-    const section = document.createElement("section");
-    section.className = "knowledge-section";
-    const title = document.createElement("h3");
-    title.textContent = points[0].primary_section_title;
-    const list = document.createElement("ol");
-    for (const point of points) {
-      const item = document.createElement("li");
-      const heading = document.createElement("strong");
-      heading.textContent = point.title;
-      const definition = document.createElement("p");
-      definition.textContent = point.one_sentence_definition;
-      const source = document.createElement("button");
-      source.type = "button";
-      source.textContent = `回到教材 · PDF 第 ${point.start_page + 1} 页`;
-      source.addEventListener("click", () => {
-        goToPage(point.start_page, point.start_y);
-        elements.viewer.focus({ preventScroll: true });
-      });
-      item.append(heading, definition, source);
-      master.decorateKnowledgeItem(item, point);
-      list.append(item);
-    }
-    section.append(title, list);
-    rendered.push(section);
-  }
-  elements["knowledge-map"].replaceChildren(...rendered);
-}
-
-async function prepareKnowledgeMap() {
-  if (!state.revision || !state.knowledgeChapterId) return;
-  elements["knowledge-prepare"].disabled = true;
-  try {
-    const action = state.knowledgeMap?.status === "READY" ? "regenerate" : "prepare";
-    const payload = await api(`/api/revisions/${state.revision.id}/chapters/${state.knowledgeChapterId}/knowledge-map/${action}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-    });
-    state.knowledgeMap = payload.chapter_map;
-    renderKnowledgeMap(payload.chapter_map);
-    clearTimeout(state.knowledgePollTimer);
-    state.knowledgePollTimer = setTimeout(loadKnowledgeMap, 350);
-  } catch (error) {
-    elements["knowledge-status"].textContent = `${error.message || "学习地图请求未能启动"}；当前地图与阅读不受影响。`;
-    elements["knowledge-prepare"].disabled = false;
-  }
+  const book = state.book;
+  await savePosition();
+  try { await clearAssistantSession(); } catch(error) { announce(error.message, true); return; }
+  closeReader(); await loadBooks();
+  await screens.open(state.books.find(b => b.id === book.id) || book, chapterId);
 }
 
 function isAuxiliaryOutlineRoot(node) {
@@ -1672,6 +1520,12 @@ function renderAssistantWorkspace() {
     const error = document.createElement("div");
     error.className = "assistant-error";
     error.textContent = current.error;
+    if(current.can_retry) {
+      const retry = document.createElement('button'); retry.type = 'button';
+      retry.textContent = '重试这层解释';
+      retry.onclick = () => retryAssistantChild(current.root_id, current.node_id, retry);
+      error.append(retry);
+    }
     turns.push(error);
   }
   elements["assistant-turns"].replaceChildren(...turns);
@@ -1916,6 +1770,21 @@ function markOptimisticChildError(rootId, nodeId, message) {
   }
 }
 
+async function retryAssistantChild(rootId, nodeId, button) {
+  const sessionId = state.readerSessionId;
+  button.disabled = true;
+  try {
+    const payload = await api('/api/assistant/retry-child', {method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({reader_session_id:sessionId,root_id:rootId,node_id:nodeId})});
+    if(state.readerSessionId === sessionId) applyAssistantState(payload.assistant);
+  } catch(error) {
+    if(state.readerSessionId === sessionId && error.code !== 'ASSISTANT_REQUEST_CANCELLED') {
+      announce(error.message, true);
+      if(state.assistantState.current?.root_id === rootId && state.assistantState.current?.node_id === nodeId) await focusAssistant(rootId, nodeId);
+    }
+  } finally { button.disabled = false; }
+}
+
 function assistantSubtreeIds(root, nodeId) {
   const removed = new Set([nodeId]);
   let changed = true;
@@ -2037,6 +1906,8 @@ async function sendAssistantChild() {
     if (state.readerSessionId === readerSessionId
         && error.code !== "ASSISTANT_REQUEST_CANCELLED") {
       markOptimisticChildError(childSelection.rootId, nodeId, error.message);
+      // Read the server-owned retry eligibility; a transport failure alone does not grant it.
+      if(state.assistantState.current?.node_id === nodeId) await focusAssistant(childSelection.rootId, nodeId);
     }
     if (error.code?.startsWith("AI_")) await refreshAssistantStatus();
   } finally {
@@ -2663,12 +2534,13 @@ elements["knowledge-close"].addEventListener("click", () => {
   elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
   clearTimeout(state.knowledgePollTimer);
 });
-elements["knowledge-prepare"].addEventListener("click", prepareKnowledgeMap);
+
 elements["search-toggle"].addEventListener("click", () => {
   const opening = elements["search-panel"].hidden;
   elements["search-panel"].hidden = !opening;
   elements["search-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    guide.close();
     setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
@@ -2707,6 +2579,7 @@ elements["marks-toggle"].addEventListener("click", async () => {
   elements["marks-panel"].hidden = !opening;
   elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    guide.close();
     setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
@@ -2895,3 +2768,100 @@ window.addEventListener("pagehide", () => {
 applyAssistantDockWidth(state.assistantDockWidth);
 renderAssistantViewportMode();
 loadBooks().catch(() => announce("书库加载失败，请刷新后重试。", true));
+
+const toolbar = elements.reader.querySelector('.toolbar');
+const tools = elements.reader.querySelector('.reader-controls');
+tools.classList.add('pdf-tools'); elements.reader.append(tools);
+const readerActions = document.createElement('nav'); readerActions.className = 'reader-actions'; toolbar.append(readerActions);
+elements['outline-toggle'].textContent = '来源';
+const currentGuide = action('本节导读', () => readerContext?.section && guide.open(readerContext.section.outline_node_id));
+currentGuide.id = 'current-guide'; currentGuide.hidden = true;
+readerActions.append(elements['outline-toggle'], currentGuide, elements['marks-toggle']);
+const more = document.createElement('details'); more.className = 'reader-more';
+const summary = document.createElement('summary'); summary.textContent = '···'; summary.setAttribute('aria-label', '更多阅读工具'); more.append(summary);
+for(const id of ['preparation-status','printed-page-edit','knowledge-toggle','search-toggle','assistant-toggle']) more.append(elements[id]);
+const oldReopen = document.getElementById('guide-reopen'); if(oldReopen) more.append(oldReopen);
+tools.append(more);
+more.append(document.querySelector('.inline-toolbar'));
+elements['knowledge-toggle'].textContent = '查看全书结构';
+elements['back-to-library'].setAttribute('aria-label', '返回教材总览');
+let readerContext = null, contextEpoch = 0, contextTimer;
+async function refreshReadingContext() {
+  if(!state.revision || !state.pdf) return;
+  const owner = state.revision.id, stamp = ++contextEpoch;
+  const page = elements.pages.children[state.currentPage];
+  try {
+    const value = await api(`/api/revisions/${owner}/reading-context?page=${state.currentPage}&y=${currentNormalizedOffset(page)}`);
+    if(stamp !== contextEpoch || owner !== state.revision?.id) return;
+    readerContext = value;
+    document.getElementById('reader-context').textContent = `${value.section?.title || ''}　PDF ${state.currentPage+1} / ${state.revision.page_count}`;
+    document.getElementById('reader-chapter').textContent = value.chapter?.title || '';
+    currentGuide.hidden = !value.section;
+  } catch { currentGuide.hidden = true; document.getElementById('reader-context').textContent = `PDF ${state.currentPage+1}`; }
+}
+elements.viewer.addEventListener('scroll', () => { clearTimeout(contextTimer); contextTimer = setTimeout(refreshReadingContext, 200); }, {passive:true});
+// Pane visibility is presentation; no lifecycle or durable mutation is dispatched here.
+let paneAnchor = null;
+const paneIds = ['outline-panel','search-panel','marks-panel','assistant-panel','guide-panel'];
+for(const id of paneIds) {
+  const panel = document.getElementById(id); let previous = panel.hidden, invoker;
+  new MutationObserver(() => {
+    if(previous === panel.hidden) return;
+    const anchor = paneAnchor || captureZoomAnchor(); previous = panel.hidden;
+    if(!panel.hidden) {
+      invoker = document.activeElement;
+      if(id === 'marks-panel') guide.close();
+      if(id === 'guide-panel' || id === 'assistant-panel') elements['marks-panel'].hidden = true;
+      requestAnimationFrame(() => panel.querySelector('button, input, select, [tabindex="0"]')?.focus({preventScroll:true}));
+    } else if(panel.contains(document.activeElement)) (invoker?.isConnected ? invoker : elements.viewer).focus({preventScroll:true});
+    elements.reader.classList.toggle('marks-open', !elements['marks-panel'].hidden);
+    elements.reader.classList.toggle('navigator-open', !elements['outline-panel'].hidden);
+    if(state.pdf) requestAnimationFrame(() => { relayoutPages(anchor); paneAnchor = captureZoomAnchor(); });
+  }).observe(panel, {attributes:true,attributeFilter:['hidden']});
+  panel.addEventListener('keydown', event => { if(event.key === 'Escape') { if(!elements['assistant-answer-actions'].hidden) { hideAssistantAnswerActions(true); event.stopPropagation(); return; } if(!elements['selection-actions'].hidden) { hideSelectionActions(); event.stopPropagation(); return; } const close = panel.querySelector('#outline-close,#search-close,#marks-close,#assistant-close,#guide-close'); close?.click(); event.stopPropagation(); } });
+}
+elements.viewer.addEventListener('scroll', () => { paneAnchor = captureZoomAnchor(); }, {passive:true});
+
+const marksDivider = document.createElement('div'); marksDivider.className = 'marks-divider';
+marksDivider.tabIndex = 0; marksDivider.setAttribute('role','separator'); marksDivider.setAttribute('aria-orientation','vertical'); marksDivider.setAttribute('aria-label','调整标记面板宽度');
+elements['marks-panel'].prepend(marksDivider);
+let marksDragging = false;
+function resizeMarks(width) {
+  const anchor = captureZoomAnchor();
+  const value = Math.round(Math.min(innerWidth*.65,Math.max(320,width)));
+  elements.reader.style.setProperty('--marks-width',`${value}px`);
+  marksDivider.setAttribute('aria-valuenow',String(value));
+  marksDivider.setAttribute('aria-valuemin','320'); marksDivider.setAttribute('aria-valuemax',String(Math.round(innerWidth*.65)));
+  if(state.pdf) relayoutPages(anchor);
+}
+marksDivider.onpointerdown = e => { if(e.button !== 0) return; e.preventDefault(); marksDragging = true; marksDivider.setPointerCapture(e.pointerId); };
+marksDivider.onpointermove = e => { if(marksDragging) resizeMarks(innerWidth-e.clientX); };
+marksDivider.onpointerup = marksDivider.onpointercancel = () => {marksDragging=false;};
+marksDivider.onkeydown = e => { if(['ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); resizeMarks(elements['marks-panel'].clientWidth+(e.key==='ArrowLeft'?24:-24)); } };
+
+const readingNotice = document.createElement('p'); readingNotice.className = 'section-reading-notice'; readingNotice.hidden = true;
+elements['outline-panel'].append(readingNotice);
+let readingTargets = [], readingOwner = null, readingTimer, readingBusy = false;
+async function refreshReadingProgress() {
+  const owner = state.revision?.id; if(!owner || !state.pdf || elements.reader.hidden || readingBusy) return;
+  readingBusy = true;
+  try {
+    if(readingOwner !== owner) { readingTargets = (await api(`/api/revisions/${owner}/section-reading`)).sections; readingOwner = owner; }
+    if(owner !== state.revision?.id || elements.reader.hidden) return;
+    const view = elements.viewer.getBoundingClientRect();
+    for(const target of readingTargets.filter(t => !t.reading_reached_end_at)) {
+      const page = elements.pages.children[target.pdf_page_index];
+      if(!page?.querySelector('canvas')) continue;
+      const rect = page.querySelector('canvas').getBoundingClientRect(), y = rect.top + target.y*rect.height;
+      if(y < view.top || y > view.bottom) continue;
+      const result = await api(`/api/revisions/${owner}/section-reading`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pdf_page_index:target.pdf_page_index,top:Math.max(0,(view.top-rect.top)/rect.height),bottom:Math.min(1,(view.bottom-rect.top)/rect.height)})});
+      if(owner !== state.revision?.id) return; readingTargets = result.sections;
+    }
+    const current = readingTargets.find(t => t.reading_reached_end_at && ['NOT_APPLICABLE_YET','AVAILABLE'].includes(t.mastery_check_state)
+      && (t.outline_node_id === readerContext?.section?.outline_node_id || t.pdf_page_index === state.currentPage));
+    readingNotice.hidden = !current;
+    readingNotice.textContent = current ? `${current.title} · 已阅读 · 待确认` : '';
+  } catch(error) { readingNotice.hidden = false; readingNotice.textContent = `节末阅读记录暂未保存：${error.message}。继续阅读不受影响。`; }
+  finally { readingBusy = false; }
+}
+elements.viewer.addEventListener('scroll', () => { clearTimeout(readingTimer); readingTimer = setTimeout(refreshReadingProgress,400); }, {passive:true});

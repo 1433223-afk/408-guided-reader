@@ -5,11 +5,12 @@ import { chromium } from 'playwright-core';
 
 test('memory collect retry preserves displayed intent after committed response loss', async () => {
   const source = fs.readFileSync(new URL('../src/reader_service/static/memory-ui.js', import.meta.url), 'utf8')
-    .replace(/^import .*;\r?\n/, '').replace('export function createMemoryUI', 'function createMemoryUI');
+    .replace(/^import .*;\r?\n/gm, '').replace('export function createMemoryUI', 'function createMemoryUI');
   const browser = await chromium.launch({ executablePath: process.env.READER_CHROMIUM || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   try {
     const page = await browser.newPage();
     await page.setContent('<div class="home-toolbar"></div><div class="reader-controls"></div>');
+    await page.addScriptTag({content: fs.readFileSync(new URL('../src/reader_service/static/screens.js', import.meta.url),'utf8').replaceAll('export ', '')});
     await page.addScriptTag({ content: source + '\nwindow.createMemoryUI=createMemoryUI;' });
     const result = await page.evaluate(async () => {
       let stored = null, fail = true; const actions = [];
@@ -46,11 +47,12 @@ test('memory collect retry preserves displayed intent after committed response l
 
 test('memory exposes the entire durable original beyond the formatted rendering limit', async () => {
   const source = fs.readFileSync(new URL('../src/reader_service/static/memory-ui.js', import.meta.url), 'utf8')
-    .replace(/^import .*;\r?\n/, '').replace('export function createMemoryUI', 'function createMemoryUI');
+    .replace(/^import .*;\r?\n/gm, '').replace('export function createMemoryUI', 'function createMemoryUI');
   const browser = await chromium.launch({ executablePath: process.env.READER_CHROMIUM || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
   try {
     const page = await browser.newPage();
     await page.setContent('<div class="home-toolbar"></div><div class="reader-controls"></div>');
+    await page.addScriptTag({content: fs.readFileSync(new URL('../src/reader_service/static/screens.js', import.meta.url),'utf8').replaceAll('export ', '')});
     await page.addScriptTag({ content: 'function renderAssistantAnswer(node, body) { node.textContent = body.slice(0, 50000); }\n' + source + '\nwindow.createMemoryUI=createMemoryUI;' });
     await page.evaluate(() => {
       const item = { id: 'membership', book_id: 'book', book_title: '教材', book_source_revision_id: 'revision', source_kind: 'AI_SAVED', source_id: 'answer',
@@ -66,4 +68,31 @@ test('memory exposes the entire durable original beyond the formatted rendering 
     assert.equal(await page.locator('#memory-detail script').count(), 0);
     assert.match(await page.locator('#memory-detail').textContent(), /AI 审查未通过/);
   } finally { await browser.close(); }
+});
+
+test('switching Memory detail immediately removes stale destructive actions', async () => {
+  const source = fs.readFileSync(new URL('../src/reader_service/static/memory-ui.js', import.meta.url), 'utf8')
+    .replace(/^import .*;\r?\n/gm, '').replace('export function createMemoryUI', 'function createMemoryUI');
+  const browser = await chromium.launch({executablePath: process.env.READER_CHROMIUM || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true});
+  try {
+    const page=await browser.newPage(); await page.setContent('<div class="home-toolbar"></div>');
+    await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
+    await page.addScriptTag({content:'function renderAssistantAnswer(n,s){n.textContent=s;}\n'+source+'\nwindow.createMemoryUI=createMemoryUI;'});
+    await page.evaluate(()=>{
+      const items=['a','b'].map(id=>({id,book_id:'book',book_title:'教材',book_source_revision_id:'revision',source_kind:'MASTER',source_id:id,source:{question:id,content:'原回答 '+id}}));
+      window.deletes=[];
+      createMemoryUI({announce:()=>{},returnToSource:()=>{},api:async(path,options={})=>{
+        if(options.method==='DELETE'){window.deletes.push(path);return {};}
+        if(path==='/api/memory')return {items};
+        if(path.endsWith('/b'))await new Promise(resolve=>{window.resolveSecond=resolve;});
+        return {item:items.find(i=>path.endsWith('/'+i.id))};
+      }});
+    });
+    await page.locator('.memory-open').click();await page.locator('#memory-detail[data-detail-id="a"]').waitFor();
+    await page.locator('[data-memory-id="b"] button').click();
+    assert.equal(await page.locator('#memory-detail button').count(),0);
+    await page.evaluate(()=>window.resolveSecond());await page.locator('#memory-detail[data-detail-id="b"]').waitFor();
+    await page.getByRole('button',{name:'移出学习记忆',exact:true}).click();
+    assert.deepEqual(await page.evaluate(()=>window.deletes),['/api/revisions/revision/memory/b']);
+  } finally {await browser.close();}
 });

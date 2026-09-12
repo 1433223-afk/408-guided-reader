@@ -20,7 +20,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   });
   panel.addEventListener("keydown", event => {
     const more = panel.querySelector("#guide-more");
-    if (event.key === "Escape" && more.open) { more.open = false; more.querySelector("summary").focus(); }
+    if (event.key === "Escape" && more.open) { more.open = false; more.querySelector("summary").focus(); event.stopImmediatePropagation(); }
   });
   const content = panel.querySelector("#guide-content");
   let sectionId = null, revisionId = null, snapshot = null, timer = 0, epoch = 0, pending = false;

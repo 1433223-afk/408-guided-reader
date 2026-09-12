@@ -37,7 +37,8 @@ try {
   assert.ok(learning.points.length, "Exercise the learning-gutter restoration race");
 
   async function open() {
-    await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).click();
+    await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).getByRole("button",{name:"打开",exact:true}).click();
+    await page.locator(".overview-book-heading .primary-action").click();
     await page.locator(".page canvas").first().waitFor({ timeout: 30_000 });
     await page.waitForTimeout(1200);
   }
@@ -72,6 +73,7 @@ try {
   await open();
   await assertRestored(saved);
   await page.locator("#back-to-library").click();
+  await page.locator(".overview-back").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   await open();
   await assertRestored(saved);
@@ -79,6 +81,7 @@ try {
   // Learning entries can resize placeholders while PDF loading is still pending.
   // Neither debounce nor pagehide may persist those temporary coordinates.
   await page.locator("#back-to-library").click();
+  await page.locator(".overview-back").click();
   await page.reload();
   let releasePdf;
   let requestedPdf;
@@ -86,7 +89,8 @@ try {
   const requested = new Promise((resolve) => { requestedPdf = resolve; });
   await page.route("**/pdf", async (route) => { requestedPdf(); await held; await route.continue(); });
   const beforeLoading = writes.length;
-  await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).click();
+  await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).getByRole("button",{name:"打开",exact:true}).click();
+    await page.locator(".overview-book-heading .primary-action").click();
   await requested;
   await page.waitForTimeout(1000);
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
@@ -98,6 +102,7 @@ try {
   await page.unroute("**/pdf");
 
   await page.locator("#back-to-library").click();
+  await page.locator(".overview-back").click();
   await stop();
   running = await start();
   await page.goto(running.url);

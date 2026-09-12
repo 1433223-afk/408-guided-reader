@@ -23,6 +23,7 @@ const artifacts = path.resolve("test-results");
 await mkdir(artifacts, { recursive: true });
 await cp(sourceDataDir, dataDir, { recursive: true });
 const providerCalls = [];
+let controlledChildFailure = false;
 const mockProvider = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -32,6 +33,7 @@ const mockProvider = createServer(async (request, response) => {
   const currentFocus = latest.startsWith("【当前解释焦点（用户所选）】\n")
     ? latest.split("\n")[1] : "";
   const isChild = latest.includes("【直接上一轮】");
+  if (controlledChildFailure) { response.writeHead(500, {'Content-Type':'application/json'}); response.end(JSON.stringify({error:{message:'controlled child failure'}})); return; }
   let answer;
   if (latest === "延迟回答") {
     await new Promise((resolve) => setTimeout(resolve, 800));
@@ -369,6 +371,29 @@ try {
   assert.equal(providerCalls[6].body.model, "deepseek-flash");
   assert.equal(providerCalls.at(-1).body.model, "GLM-5.3-Flash");
 
+  controlledChildFailure = true;
+  await selectAssistantAnswerText(page, "总线仲裁");
+  const failedRequest = page.waitForRequest(r=>r.url().endsWith('/assistant/child'));
+  const failedResponse = page.waitForResponse(r=>r.url().endsWith('/assistant/child'));
+  await page.locator('#assistant-ask-deeper').click();
+  const failedPayload = (await failedRequest).postDataJSON();
+  assert.equal((await failedResponse).status(),503);
+  const retryButton = page.getByRole('button',{name:'重试这层解释',exact:true});
+  await retryButton.waitFor();
+  assert.ok(await page.locator('#viewer').isVisible());
+  const failedBody=providerCalls.at(-1).body;
+  controlledChildFailure = false;
+  await page.waitForTimeout(31000); // Existing provider cooldown remains enforced.
+  const recoveredResponse=page.waitForResponse(r=>r.url().endsWith('/assistant/retry-child'));
+  await retryButton.click();
+  const recovered=(await (await recoveredResponse).json()).assistant.current;
+  assert.equal(recovered.node_id,failedPayload.node_id);
+  assert.equal(recovered.root_id,failedPayload.root_id);
+  assert.equal(recovered.turns.length,1);
+  assert.equal(recovered.error,null);
+  assert.deepEqual(providerCalls.at(-1).body,failedBody);
+  await page.locator('.assistant-error').waitFor({state:'detached'});
+
   const antiBypassCalls = providerCalls.length;
   const antiBypass = await page.evaluate(async ({ revisionId, request }) => {
     const response = await fetch(`/api/revisions/${revisionId}/assistant/ask`, {
@@ -383,6 +408,8 @@ try {
   assert.equal(providerCalls.length, antiBypassCalls);
 
   await page.locator("#back-to-library").click();
+  await page.locator("#book-overview").waitFor({state:"visible"});
+  await page.locator(".overview-back").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   const staleFollowStatus = await page.evaluate(async (payload) => {
     const response = await fetch("/api/assistant/follow-up", {
@@ -399,7 +426,9 @@ try {
   });
   assert.equal(staleFollowStatus, 404, "Reader close did not clear all temporary roots");
   await openBook(page, 348);
+  await page.locator(".reader-more > summary").click();
   await page.locator("#assistant-toggle").click();
+  await page.locator(".reader-more > summary").click();
   assert.equal(await page.locator("#assistant-root-switcher option").count(), 0,
     "Reader reopen retained stale Root options in the Assistant UI");
 
@@ -419,11 +448,13 @@ try {
   await page.keyboard.press("Escape");
   await page.locator("#outline-toggle").click();
   await page.locator("#outline-panel").waitFor({ state: "visible" });
+  await page.locator(".reader-more > summary").click();
   await page.locator("#search-toggle").click();
+  await page.locator(".reader-more > summary").click();
   await page.locator("#search-panel").waitFor({ state: "visible" });
 
   console.log(JSON.stringify({
-    status: "PASS",
+    status: "PASS", failedChildRetrySameIdentityAndGrounding: true,
     depthReached: 3,
     sameLevelDepthStable: true,
     multipleRootsRetained: true,
@@ -442,6 +473,9 @@ try {
     aiOffPreservedReaderSelectionOutlineSearch: true,
     screenshot: path.join(artifacts, "ask-deeper-depth-3.png"),
   }));
+ } catch(error) {
+  for(const [i,p] of (browser?.contexts().flatMap(c=>c.pages()) || []).entries()) { await p.screenshot({path:`test-results/ask-failure-${i}.png`}); console.log(await p.evaluate(()=>({page:document.querySelector('#page-number').value,readerHidden:document.querySelector('#reader').hidden, status:document.querySelector('#status').textContent,canvases:[...document.querySelectorAll('.page canvas')].map(n=>n.parentElement.dataset.index),scroll:document.querySelector('#viewer').scrollTop}))); }
+  throw error;
 } finally {
   if (browser) await browser.close();
   if (running?.child) await stopService(running.child);
@@ -519,7 +553,8 @@ async function currentRevisionId(page) {
 }
 
 async function openBook(page, pageCount) {
-  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).getByRole("button", {name:"打开",exact:true}).click();
+  await page.locator(".overview-book-heading .primary-action").click();
   await page.locator("#reader").waitFor({ state: "visible" });
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
 }

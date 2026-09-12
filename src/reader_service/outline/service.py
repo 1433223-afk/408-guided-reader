@@ -50,6 +50,18 @@ class OutlineService:
         self._lock = threading.Lock()
         self._bookmarks: dict[str, list[dict]] = {}
 
+    def reading_context(self, revision_id: str, page: int, y: float) -> dict:
+        """Read-only UI projection of the anchor against resolved physical ranges."""
+        nodes = self.repository.list(revision_id)
+        containing = [n for n in nodes if n.get('resolution_state') == 'RESOLVED'
+                      and all(n.get(k) is not None for k in ('start_page', 'start_y', 'end_page', 'end_y'))
+                      and (n['start_page'], n['start_y']) <= (page, y) < (n['end_page'], n['end_y'])]
+        def unique(kind):
+            found = [n for n in containing if n['kind'] == kind]
+            return found[0] if len(found) == 1 else None
+        return {'chapter': unique('CHAPTER'), 'section': unique('SECTION'),
+                'subsection': unique('SUBSECTION')}
+
     def bootstrap(self, revision_id: str) -> dict:
         with self._lock:
             self.library.revision(revision_id)
