@@ -66,6 +66,7 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
     if ([...select.options].some(o => o.value === previous)) select.value = previous;
   }
   function render() {
+    view.classList.remove('memory-reading');
     el('detail').hidden = true; el('list').hidden = false;
     options(el('book'), items.map(i => [i.book_id, i.book_title]), '全部教材');
     let shown = items.filter(i => !el('book').value || i.book_id === el('book').value);
@@ -92,30 +93,35 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
       item = (await api(base(item))).item;
       if (request !== version || view.hidden) return;
       const s = item.source;
+      el('status').textContent = '';
+      view.classList.add('memory-reading'); view.scrollTop = 0;
       const panel = el('detail'); panel.replaceChildren(); el('list').hidden = true; panel.hidden = false;
       panel.append(button('返回列表', () => { ++version; render(); }));
       panel.append(text('h3', item.source_kind === 'MASTER' ? 'Master 原回答' : 'Assistant 已保存解释'));
       panel.append(text('p', `${item.book_title} / ${item.section?.title || '未关联 Section'} / ${item.knowledge_point?.title || '未关联知识点'}`, 'memory-meta'));
       const review = s.review_state || s.verification_state;
       panel.append(text('p', `审查：${REVIEW[review] || '未知'}。这不是掌握证明。`, `memory-trust mark-verification-${review?.toLowerCase()}`));
-      if (s.detail || s.review_summary) panel.append(text('p', s.detail || s.review_summary, 'memory-review-summary'));
+      const provenance = document.createElement('details'); provenance.className = 'memory-original memory-provenance';
+      provenance.append(text('summary', '查看来源与审查详情'));
+      if (s.detail || s.review_summary) provenance.append(text('p', s.detail || s.review_summary, 'memory-review-summary'));
       const reviewer = s.reviewer_provider || s.review_provider;
-      if (reviewer) panel.append(text('p', `审查模型：${reviewer} / ${s.reviewer_model || s.review_model || '未记录'}`, 'memory-meta'));
-      if (s.review_failure_kind || s.review_code) panel.append(text('p', `审查失败信息：${s.review_failure_kind || ''} ${s.review_code || ''}`, 'memory-meta'));
+      if (reviewer) provenance.append(text('p', `审查模型：${reviewer} / ${s.reviewer_model || s.review_model || '未记录'}`, 'memory-meta'));
+      if (s.review_failure_kind || s.review_code) provenance.append(text('p', `审查失败信息：${s.review_failure_kind || ''} ${s.review_code || ''}`, 'memory-meta'));
       panel.append(text('h4', '原问题 / 解释焦点'));
       panel.append(text('p', s.question || s.provenance?.answer_question || s.provenance?.child_focus || s.provenance?.root_focus || '原问题未记录', 'memory-question'));
       if (item.source_kind === 'AI_SAVED') {
-        panel.append(text('h4', '教材来源（SOURCE）'), text('p', `PDF 第 ${s.pdf_page_index + 1} 页 · ${s.anchor_state === 'OK' ? '原始锚点' : '锚点需检查'}`), text('blockquote', s.quote));
-        panel.append(text('h4', '解释路径（PROVENANCE）'), text('p', (s.provenance?.concept_path || []).join(' › ')));
+        provenance.append(text('h4', '教材来源（SOURCE）'), text('p', `PDF 第 ${s.pdf_page_index + 1} 页 · ${s.anchor_state === 'OK' ? '原始锚点' : '锚点需检查'}`), text('blockquote', s.quote));
+        provenance.append(text('h4', '解释路径（PROVENANCE）'), text('p', (s.provenance?.concept_path || []).join(' › ')));
       } else {
-        panel.append(text('p', `原话题：${s.topic?.state === 'RESOLVED' ? '已解决' : s.topic?.state === 'ACTIVE' ? '待解决' : '状态未记录'} · 回答时间：${new Date(s.created_at).toLocaleString('zh-CN')}`, 'memory-meta'));
-        panel.append(text('p', '来源为持久 Master 学习上下文；没有精确 PDF 选区锚点。', 'memory-meta'));
-        if (s.provider) panel.append(text('p', `回答模型：${s.provider} / ${s.model}`, 'memory-meta'));
+        provenance.append(text('p', `原话题：${s.topic?.state === 'RESOLVED' ? '已解决' : s.topic?.state === 'ACTIVE' ? '待解决' : '状态未记录'} · 回答时间：${new Date(s.created_at).toLocaleString('zh-CN')}`, 'memory-meta'));
+        provenance.append(text('p', '来源为持久 Master 学习上下文；没有精确 PDF 选区锚点。', 'memory-meta'));
+        if (s.provider) provenance.append(text('p', `回答模型：${s.provider} / ${s.model}`, 'memory-meta'));
       }
       panel.append(text('h4', 'AI 正文（AI CONTENT）'));
       const answer = document.createElement('div'); answer.className = 'memory-answer assistant-answer-bubble';
       const original = item.source_kind === 'MASTER' ? s.content : s.body;
       renderAssistantAnswer(answer, original); panel.append(answer);
+      panel.append(provenance);
       const fullText = document.createElement('details');
       fullText.className = 'memory-original';
       fullText.append(text('summary', '查看完整原文（含 Markdown 标记）'), text('pre', original));
@@ -132,6 +138,7 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
   }
   async function open() {
     const request = ++version;
+    view.classList.remove('memory-reading');
     el('list').replaceChildren(); el('detail').hidden = true;
     enterView(); view.hidden = false; view.scrollTop = 0;
     el('title').focus(); el('status').textContent = '正在读取学习记忆…';

@@ -14,6 +14,27 @@ Reader contains no Learning Memory browser or removal action; management belongs
 
 ## Implemented
 
+### Content-first detail follow-through (2026-09-12)
+
+Checked the amended Accepted brief against current code: independent home entry, Reader collect-only
+behavior, Book/Section/KP browsing and source/removal boundaries already existed. The remaining
+presentation gap was that collection navigation and provenance pushed the answer below the first
+screen. Details now prioritize question, visible trust status and original answer; collection intro
+and filters return when leaving details. Source and review metadata remain available in an explicit
+disclosure after the answer, along with complete original text and source/removal actions.
+
+- TARGETED: both Memory browser regressions PASS. Real 348-page golden path PASS with AI disabled,
+  including answer position, opening/closing provenance, return-to-list filter preservation, both
+  source returns, restart and removal/cascades. Screenshots visually checked. No persistence or
+  provider changes; existing narrow review boundaries are unchanged.
+- The first real-use run failed because its fixture assumed the user's Memory was empty. The harness
+  now resets memberships only in its isolated SQLite backup before testing; original user content
+  and memberships are untouched. The complete rerun passed.
+- BROAD: `test-results/memory-content-closure.xml` **278 PASS / 2 unchanged optional OCR skips**;
+  `npm test` **35 PASS**. JS syntax and diff whitespace checks PASS.
+  This is a local application of the user's content-first principle, with no external code/UI reuse,
+  new dependency, homepage/Reader restructuring or new product capability.
+
 ### Same-Phase independent learning space and visual consistency (2026-09-12)
 
 User requested strict visual continuity and then explicitly moved browsing/management outside Reader.

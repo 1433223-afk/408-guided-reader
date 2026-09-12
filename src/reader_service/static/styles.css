@@ -607,6 +607,10 @@ button, label { -webkit-tap-highlight-color: transparent; }
 #memory-title { margin: 8px 0 7px; color: #272c29; font: 600 36px/1.15 Georgia, serif; letter-spacing: -.025em; }
 .memory-collection { margin-top: 28px; padding: 20px 28px; background: #faf8f2; border: 1px solid #d3cec1; border-radius: 10px; }
 #memory-detail { max-width: 760px; margin: 0 auto; }
+#learning-memory.memory-reading :is(.memory-heading, .memory-intro, .memory-boundary, .memory-filters) { display: none; }
+#learning-memory.memory-reading .memory-collection { margin-top: 0; }
+#learning-memory.memory-reading #memory-status { margin: 0; }
+#learning-memory.memory-reading #memory-status:empty { display: none; }
 #learning-memory button {
   padding: 5px 9px; margin: 4px 8px 4px 0; cursor: pointer; color: #6c604c;
   background: #f4f0e7; border: 1px solid #d8d0c0; border-radius: 6px; font-size: 11px;

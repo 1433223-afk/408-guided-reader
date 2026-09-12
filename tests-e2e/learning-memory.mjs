@@ -16,6 +16,13 @@ const sql = (code, args = []) => {
 };
 sql('import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()', [path.join(source, 'state.sqlite3'), path.join(dataDir, 'state.sqlite3')]);
 const db = path.join(dataDir, 'state.sqlite3');
+// Reset only memberships in the isolated fixture, even after the user starts collecting.
+assert.notEqual(path.resolve(dataDir), path.resolve(source));
+sql(`import sqlite3,sys
+c=sqlite3.connect(sys.argv[1])
+if c.execute("select 1 from sqlite_master where type='table' and name='learning_memory'").fetchone():
+    c.execute('delete from learning_memory'); c.commit()
+c.close()`, [db]);
 const protectedState = () => sql(`import sqlite3,sys,json,hashlib
 c=sqlite3.connect(sys.argv[1])
 tables=['master_threads','master_topics','master_messages','kp_status','section_learning_states','learning_events','knowledge_points','chapter_preparations','teaching_assets','section_guides','inline_teaching_assets','section_inline_teaching']
@@ -119,7 +126,15 @@ print(json.dumps({'master':dict(m),'annotation':dict(a)}))`, [db, rev]));
   await page.locator('#memory-section').selectOption('');
   await page.locator('#memory-kp').selectOption('');
   await openDetail(masterItem);
+  assert.equal(await page.locator('.memory-filters').isVisible(), false);
+  assert.ok(await page.locator('.memory-answer').evaluate(n => n.getBoundingClientRect().top < window.innerHeight / 2));
+  await page.getByText('查看来源与审查详情', { exact: true }).click();
   assert.ok((await page.locator('#memory-detail').innerText()).includes('没有精确 PDF'));
+  await page.getByText('查看来源与审查详情', { exact: true }).click();
+  await page.getByRole('button', { name: '返回列表', exact: true }).click();
+  assert.equal(await page.locator('.memory-filters').isVisible(), true);
+  assert.equal(await page.locator('#memory-book').inputValue(), book.id);
+  await openDetail(masterItem);
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/memory-master.png' });
   await page.getByRole('button', { name: '回到 Master 上下文', exact: true }).click();
@@ -128,7 +143,9 @@ print(json.dumps({'master':dict(m),'annotation':dict(a)}))`, [db, rev]));
   assert.ok(await masterRow.isVisible());
   await page.waitForFunction(id => document.activeElement?.dataset.messageId === id, sourceAnswer.id);
   await openMemory(); await openDetail(noteItem);
+  await page.getByText('查看来源与审查详情', { exact: true }).click();
   assert.ok((await page.locator('#memory-detail').innerText()).includes(originalNote.quote));
+  await page.getByText('查看来源与审查详情', { exact: true }).click();
   await page.screenshot({ path: 'test-results/memory-assistant.png' });
   await page.getByRole('button', { name: '回到笔记 / PDF 来源', exact: true }).click();
   await page.locator('#learning-memory').waitFor({ state: 'hidden' });
