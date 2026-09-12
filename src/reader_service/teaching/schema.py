@@ -120,3 +120,61 @@ CREATE TRIGGER teaching_pointer_update BEFORE UPDATE ON section_guides
 WHEN NOT EXISTS(SELECT 1 FROM teaching_assets WHERE id=NEW.asset_id AND state='PUBLISHED' AND review_verdict='PASS')
 BEGIN SELECT RAISE(ABORT,'Teaching must pass Review'); END;
 """
+
+# New Section-atomic asset kind. Existing Guide rows, jobs and pointers are untouched.
+INLINE_TEACHING_SCHEMA = r"""
+CREATE TABLE inline_teaching_assets (
+    id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    section_node_id TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'INLINE_GUIDANCE' CHECK(kind='INLINE_GUIDANCE'),
+    version INTEGER NOT NULL CHECK(version>=1),
+    state TEXT NOT NULL CHECK(state IN ('DRAFT','IN_REVIEW','REJECTED','FAILED','PUBLISHED')),
+    stage TEXT NOT NULL CHECK(stage IN ('GENERATE','REVIEW','COMPLETE')),
+    semantic_rework_count INTEGER NOT NULL DEFAULT 0 CHECK(semantic_rework_count BETWEEN 0 AND 3),
+    terminal INTEGER NOT NULL DEFAULT 0 CHECK(terminal IN (0,1)),
+    failure_code TEXT,
+    failure_detail TEXT,
+    intent_id TEXT NOT NULL,
+    job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+    content_json TEXT,
+    dependencies_json TEXT,
+    sources_json TEXT,
+    issues_json TEXT,
+    generator_json TEXT,
+    reviewer_json TEXT,
+    review_verdict TEXT CHECK(review_verdict IS NULL OR review_verdict IN ('PASS','FAIL')),
+    created_at TEXT NOT NULL,
+    published_at TEXT,
+    UNIQUE(book_source_revision_id, section_node_id, version),
+    UNIQUE(book_source_revision_id, section_node_id, intent_id),
+    UNIQUE(book_source_revision_id, section_node_id, id),
+    FOREIGN KEY(book_source_revision_id,section_node_id)
+        REFERENCES outline_nodes(book_source_revision_id,outline_node_id) ON DELETE CASCADE,
+    CHECK(state!='PUBLISHED' OR (review_verdict='PASS' AND content_json IS NOT NULL
+        AND dependencies_json IS NOT NULL AND sources_json IS NOT NULL
+        AND generator_json IS NOT NULL AND reviewer_json IS NOT NULL AND published_at IS NOT NULL))
+);
+CREATE UNIQUE INDEX ux_inline_teaching_inflight ON inline_teaching_assets(book_source_revision_id,section_node_id)
+    WHERE state IN ('DRAFT','IN_REVIEW','REJECTED');
+CREATE TABLE section_inline_teaching (
+    book_source_revision_id TEXT NOT NULL,
+    section_node_id TEXT NOT NULL,
+    asset_id TEXT NOT NULL,
+    PRIMARY KEY(book_source_revision_id,section_node_id),
+    FOREIGN KEY(book_source_revision_id,section_node_id,asset_id)
+        REFERENCES inline_teaching_assets(book_source_revision_id,section_node_id,id) ON DELETE CASCADE
+);
+CREATE TRIGGER inline_teaching_terminal BEFORE UPDATE ON inline_teaching_assets
+WHEN OLD.terminal=1 AND (NEW.state!=OLD.state OR NEW.terminal!=1)
+BEGIN SELECT RAISE(ABORT,'Terminal Teaching failure'); END;
+CREATE TRIGGER inline_teaching_published_immutable BEFORE UPDATE ON inline_teaching_assets
+WHEN OLD.state='PUBLISHED'
+BEGIN SELECT RAISE(ABORT,'Published Teaching is immutable'); END;
+CREATE TRIGGER inline_teaching_pointer_insert BEFORE INSERT ON section_inline_teaching
+WHEN NOT EXISTS(SELECT 1 FROM inline_teaching_assets WHERE id=NEW.asset_id AND state='PUBLISHED' AND review_verdict='PASS')
+BEGIN SELECT RAISE(ABORT,'Teaching must pass Review'); END;
+CREATE TRIGGER inline_teaching_pointer_update BEFORE UPDATE ON section_inline_teaching
+WHEN NOT EXISTS(SELECT 1 FROM inline_teaching_assets WHERE id=NEW.asset_id AND state='PUBLISHED' AND review_verdict='PASS')
+BEGIN SELECT RAISE(ABORT,'Teaching must pass Review'); END;
+"""

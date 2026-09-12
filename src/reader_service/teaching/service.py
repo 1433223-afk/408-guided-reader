@@ -1,5 +1,6 @@
 import json
 import os
+from functools import cached_property
 from uuid import UUID, uuid4
 
 from reader_service.agent_runtime import ProviderFailure
@@ -10,6 +11,14 @@ from .contracts import (GENERATOR, REVIEWER, FORMATTER, draft_messages, generati
 
 
 class TeachingService:
+    asset_table = "teaching_assets"
+    pointer_table = "section_guides"
+
+    @cached_property
+    def inline(self):
+        from .inline_service import InlineTeachingService
+        return InlineTeachingService(self.database, self.runtime)
+
     def __init__(self, database, runtime):
         self.database = database
         self.runtime = runtime
@@ -27,17 +36,17 @@ class TeachingService:
         with self.database.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             node = evidence.section(c, revision_id, section_id)
-            old = c.execute("SELECT id FROM teaching_assets WHERE book_source_revision_id=? AND section_node_id=? AND (intent_id=? OR state IN ('DRAFT','IN_REVIEW','REJECTED'))", (revision_id, section_id, intent_id)).fetchone()
-            published = c.execute("SELECT asset_id FROM section_guides WHERE book_source_revision_id=? AND section_node_id=?", (revision_id, section_id)).fetchone()
+            old = c.execute(f"SELECT id FROM {self.asset_table} WHERE book_source_revision_id=? AND section_node_id=? AND (intent_id=? OR state IN ('DRAFT','IN_REVIEW','REJECTED'))", (revision_id, section_id, intent_id)).fetchone()
+            published = c.execute(f"SELECT asset_id FROM {self.pointer_table} WHERE book_source_revision_id=? AND section_node_id=?", (revision_id, section_id)).fetchone()
             if not old and (regenerate or not published):
                 asset_id, job_id = str(uuid4()), str(uuid4())
-                version = c.execute("SELECT COALESCE(MAX(version),0)+1 FROM teaching_assets WHERE book_source_revision_id=? AND section_node_id=?", (revision_id, section_id)).fetchone()[0]
+                version = c.execute(f"SELECT COALESCE(MAX(version),0)+1 FROM {self.asset_table} WHERE book_source_revision_id=? AND section_node_id=?", (revision_id, section_id)).fetchone()[0]
                 foundation = c.execute("SELECT foundation_version FROM book_source_revisions WHERE id=?", (revision_id,)).fetchone()[0]
                 c.execute("""INSERT INTO jobs(id,job_type,book_source_revision_id,foundation_version,
                     chapter_outline_node_id,chapter_identity_revision,chapter_physical_revision,status,priority,
                     cancel_requested,attempts,created_at,updated_at) VALUES (?,'TEACHING_GENERATE',?,?,?, ?,?,'QUEUED',4000,0,0,?,?)""",
                     (job_id, revision_id, foundation, section_id, node["identity_revision"], node["physical_revision"], now(), now()))
-                c.execute("""INSERT INTO teaching_assets(id,book_source_revision_id,section_node_id,version,state,stage,intent_id,job_id,created_at)
+                c.execute(f"""INSERT INTO {self.asset_table}(id,book_source_revision_id,section_node_id,version,state,stage,intent_id,job_id,created_at)
                     VALUES (?,?,?,?,'DRAFT','GENERATE',?,?,?)""", (asset_id, revision_id, section_id, version, intent_id, job_id, now()))
         return self.snapshot(revision_id, section_id)
 
@@ -45,14 +54,14 @@ class TeachingService:
         with self.database.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             evidence.section(c, revision_id, section_id)
-            row = c.execute("SELECT * FROM teaching_assets WHERE id=? AND book_source_revision_id=? AND section_node_id=?", (asset_id, revision_id, section_id)).fetchone()
+            row = c.execute(f"SELECT * FROM {self.asset_table} WHERE id=? AND book_source_revision_id=? AND section_node_id=?", (asset_id, revision_id, section_id)).fetchone()
             if row is None:
                 raise LookupError("导读任务不存在。")
             if row["state"] == "FAILED" and not row["terminal"]:
-                newer = c.execute("SELECT 1 FROM teaching_assets WHERE book_source_revision_id=? AND section_node_id=? AND version>?", (revision_id, section_id, row["version"])).fetchone()
+                newer = c.execute(f"SELECT 1 FROM {self.asset_table} WHERE book_source_revision_id=? AND section_node_id=? AND version>?", (revision_id, section_id, row["version"])).fetchone()
                 if newer:
                     raise ValueError("已有更新的导读请求，请使用最新任务。")
-                c.execute("UPDATE teaching_assets SET state=?,failure_code=NULL,failure_detail=NULL WHERE id=?", ("IN_REVIEW" if row["stage"] == "REVIEW" else "DRAFT", asset_id))
+                c.execute(f"UPDATE {self.asset_table} SET state=?,failure_code=NULL,failure_detail=NULL WHERE id=?", ("IN_REVIEW" if row["stage"] == "REVIEW" else "DRAFT", asset_id))
                 c.execute("UPDATE jobs SET status='QUEUED',cancel_requested=0,updated_at=? WHERE id=?", (now(), row["job_id"]))
         return self.snapshot(revision_id, section_id)
 
@@ -77,7 +86,7 @@ class TeachingService:
 
     def _asset(self, job_id):
         with self.database.connect() as c:
-            row = c.execute("SELECT * FROM teaching_assets WHERE job_id=?", (job_id,)).fetchone()
+            row = c.execute(f"SELECT * FROM {self.asset_table} WHERE job_id=?", (job_id,)).fetchone()
             return dict(row) if row else None
 
     def selection_context(self, revision_id, section_id, asset_id, module_id, start, end):
@@ -104,7 +113,7 @@ class TeachingService:
         if not set(values) <= allowed:
             raise ValueError("Invalid Teaching update")
         with self.database.connect() as c:
-            c.execute(f"UPDATE teaching_assets SET {','.join(k+'=?' for k in values)} WHERE id=? AND terminal=0 AND state!='PUBLISHED'", (*values.values(), asset_id))
+            c.execute(f"UPDATE {self.asset_table} SET {','.join(k+'=?' for k in values)} WHERE id=? AND terminal=0 AND state!='PUBLISHED'", (*values.values(), asset_id))
 
     def _packet(self, asset):
         with self.database.connect() as c:
@@ -159,7 +168,10 @@ class TeachingService:
 
     def run_job(self, job):
         asset = self._asset(job["id"])
-        if not asset or asset["state"] in {"FAILED", "PUBLISHED"}:
+        if not asset:
+            self.inline.run_job(job)
+            return
+        if asset["state"] in {"FAILED", "PUBLISHED"}:
             return
         try:
             packet, ledger, deps = self._packet(asset)

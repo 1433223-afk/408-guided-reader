@@ -561,3 +561,24 @@ button, label { -webkit-tap-highlight-color: transparent; }
   .assistant-model span { display: none; }
   .assistant-model select { width: 165px; max-width: 44vw; }
 }
+
+/* Guidance occupies its own row, never a popover across PDF text. */
+.reader:has(#inline-open) { grid-template-columns: minmax(0, 1fr); }
+.reader:has(#inline-open) .reader-controls { min-width: 0; overflow-x: auto; }
+.reader:has(#inline-open) .reader-controls > * { flex-shrink: 0; }
+.reader.inline-open { grid-template-rows: 68px minmax(0, 1fr) 210px; }
+#inline-panel { grid-row: 3; min-width: 0; overflow: auto; padding: 10px 18px; background: #fffdf5; border-top: 1px solid #d4cbbb; }
+#inline-panel[hidden] { display: none; }
+.reader.guide-open #inline-panel { margin-right: var(--guide-width); }
+.reader.assistant-dock-open:not(.assistant-expanded) #inline-panel { margin-right: var(--assistant-dock-width, 410px); }
+.inline-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+#inline-section { max-width: min(230px, 55vw); }
+#inline-panel button, #inline-section { padding: 4px 7px; font-size: 12px; }
+#inline-close { margin-left: auto; }
+#inline-status { font-size: 12px; color: #6b6458; margin: 7px 0; }
+#inline-content { font-size: 14px; line-height: 1.65; }
+#inline-content p { margin: 5px 0; white-space: pre-wrap; }
+#inline-content button { margin: 3px 6px 3px 0; }
+.page:has(.inline-marker) { overflow: visible; }
+.inline-marker { position: absolute; left: -28px; width: 24px; height: 24px; transform: translateY(-50%); padding: 0; border: 1px solid #b5a480; border-radius: 50%; background: #fff9e9; color: #816437; font-size: 16px; line-height: 22px; cursor: pointer; z-index: 5; }
+.inline-marker:hover, .inline-marker:focus-visible { outline: 2px solid #977b43; outline-offset: 1px; }

@@ -1,0 +1,54 @@
+# Reviewed Section Inline Teaching — Independent Narrow Code Review
+
+Date: 2026-09-12. Reviewer: independent Codex subagent `inline_independent_audit`, uninvolved in the design or implementation. This reviewer is not ZCode.
+
+## Result
+
+**Narrow code audit PASS after fixes; outstanding P0=0 / P1=0 / P2=0.** Reviewed the current uncommitted implementation against the accepted brief, its listed Frozen authority and the latest Reading Guide report. No finding was waived. This is a code/security/contract audit, not the product's independent model content Review, user acceptance or Phase closure. Those gates remain separate.
+
+## Findings resolved and rechecked
+
+- **P2 — consumed dependency scope**, `src/reader_service/teaching/inline_evidence.py:14`. The initial packet inherited the parent's physical revision despite consuming only its logical positioning/title. A parent range change could spuriously stale or interrupt this Section's work; consumed cosmetic title changes also needed explicit freshness. The implementation now excludes the parent's physical revision and compares the exact consumed Section/parent titles. Independent attack confirmed parent-only range revision does not stale the published asset and a changed parent title does.
+- **P2 — ambiguous geometry before Review**, `src/reader_service/teaching/inline_evidence.py:21`. Different OCR text rows sharing one quad initially received distinct valid source IDs and could reach paid Review; only publication rejected the ambiguity. Independently reproduced the pre-fix failure. The packet builder now excludes nonunique page geometry before generation/Review. Independent retest confirmed ambiguous anchors are absent while remaining valid interventions can publish.
+
+## Scope and evidence
+
+- Additive migration 15 introduces separate Inline assets/pointers. Existing Guide schema and meaning are preserved; migration test compares populated Guide rows, jobs and pointers. Composite ownership foreign keys, publication checks and immutable published rows prevent cross-Section pointer adoption and mutation.
+- Inline publication and pointer replacement share one immediate transaction and recheck current evidence, anchors and running job authority. Failed/in-progress replacement keeps the old pointer. Request serialization, unique intent/version/inflight constraints and stage-local retry preserve logical attempt identity.
+- Candidate contracts accept supplied semantic IDs only. Durable page/quad/quote fingerprint/foundation/Section authority is server-derived; exact geometry uniqueness and quote checks suppress unresolved targets without fuzzy reattachment. Pure placement uses an outside-PDF gutter and omits collisions or insufficient room.
+- Mandatory fresh Review sees candidate plus allowlisted current-Section evidence, never generator reasoning or learner state; reviewer rewrite is invalid. Three blocking semantic verdicts terminate a candidate. Technical failure remains failure and retry retains its stage.
+- Inline does not consume Guide prose, KP ledger or learner history and records no fabricated KP version. Selection-to-Assistant creates Teaching lineage and an empty PDF anchor. Recall reveal/skip/close is local presentation; no scoring, attempts, Master, Learning, annotation or permanent-lock write path was found.
+- Independently executed Guide + Inline targeted tests: **52 PASS**. Re-executed with two temporary adversarial tests after fixes: **54 PASS**. Separately ran three final adversarial cases: **3 PASS** (ambiguous geometry filtering; interrupted-job recovery and owning-book cascade with sibling-book survival; parent range/title freshness). Independent gutter tests: **2 PASS**.
+- One initial cascade experiment used a nonexistent fixture helper and failed before exercising product code; correcting the experiment allowed the real cascade/recovery assertions to pass. The initial ambiguous-geometry failure is the genuine resolved finding above, not counted as PASS.
+
+Temporary attack tests were removed after review; durable implementation regression tests are maintained by the implementer. Audit changed no product code. Broad regression and the actual 348-page UI golden path belong to the implementer's evidence; this reviewer did not independently operate that UI or verify live model pedagogical quality. Any live-provider quota failure remains a failure, not content Review PASS.
+
+## Reproduction
+
+```powershell
+python -m pytest tests/test_inline_teaching.py tests/test_teaching.py -q
+node --test tests-js/inline-placement.test.js
+```
+
+This report applies to the working-tree implementation after the two findings' fixes; the enclosing checkpoint records the exact reviewed revision. Material subsequent changes require a corresponding review delta.
+
+## Gemini-only final runtime delta
+
+After the user restricted all further live model use to Gemini 3.8, a fresh
+`google/gemini-3.8-flash` code-review context checked the later per-call JSON mode,
+Inline generation/Review routing and narrow-layout/async UI delta. It received source code and
+constraints, not implementer reasoning. Final verdict **PASS; findings empty**. Exact source hashes
+and raw verdict are retained locally in `test-results/inline-gemini-delta-audit-final.json`.
+
+The first invocation returned invalid JSON and was not a PASS. A subsequent verdict alleged a P1
+default-provider problem while the base class source was missing from its packet. Supplying the
+actual `TeachingService` base class led the independent reviewer to explicitly refute that finding:
+the generator inherits `GUIDED_READER_SYSTEM_PROVIDER` with default `openrouter`, not the Assistant's
+active provider. No finding was waived and no unnecessary code change was made. This delta review
+did not execute tests and does not replace the prior independently executed invariant tests.
+
+## Final delta check
+
+Rechecked the final implementation delta after the initial audit: provider/model/stage metadata is recorded before invocation without credential or payload persistence; the normal completion metadata replaces it only after success. UI uses existing control styling, chooses its initial Section by the physical half-open reading anchor, waits for the publication snapshot before choosing generate/replacement, and retains request failure text. These changes introduce no new source, publication or learning authority.
+
+Independently reran the final **20 permanent Inline cases: PASS**, including consumed title/parent freshness, ambiguous-target omission and worker dispatch/recovery/cascade. JavaScript syntax check PASS. No additional findings; narrow code audit remains **PASS (P0=0 / P1=0 / P2=0)**. Implementer-reported final Inline and Guide controlled real-book E2E results are separate evidence, not independently rerun by this reviewer.

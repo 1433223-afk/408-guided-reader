@@ -148,6 +148,7 @@ class ProviderConfig:
         max_tokens: int | None = None,
         thinking_mode: str | None = None,
         reasoning_effort: str | None = None,
+        json_object: bool = False,
     ) -> dict:
         effective_max_tokens = self.max_tokens if max_tokens is None else max_tokens
         answer_mapping = (
@@ -165,6 +166,8 @@ class ProviderConfig:
             request_parameters["thinking"] = thinking_mode
         if reasoning_effort is not None:
             request_parameters["reasoning_effort"] = reasoning_effort
+        if json_object:
+            request_parameters["response_format"] = {"type": "json_object"}
         reasoning_mapping = (
             f"provider reasoning_effort {reasoning_effort}"
             if reasoning_effort is not None
@@ -303,8 +306,11 @@ class AgentRuntime:
         reasoning_effort: str | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        json_object: bool = False,
     ) -> ProviderCompletion:
         config = self.config
+        if type(json_object) is not bool or (json_object and config.provider != "openrouter"):
+            raise ValueError("JSON object mode is invalid for the selected provider")
         if model is not None:
             if not isinstance(model, str) or not model.strip() or len(model) > 120:
                 raise ValueError("provider call model is invalid")
@@ -364,6 +370,8 @@ class AgentRuntime:
             body["thinking"] = {"type": thinking_mode}
         if reasoning_effort is not None:
             body["reasoning_effort"] = reasoning_effort
+        if json_object:
+            body["response_format"] = {"type": "json_object"}
         call_id = interaction_id or str(uuid4())
         started = time.perf_counter()
         last_failure: ProviderFailure | None = None
@@ -465,6 +473,7 @@ class AgentRuntime:
                         max_tokens=effective_max_tokens,
                         thinking_mode=thinking_mode,
                         reasoning_effort=reasoning_effort,
+                        json_object=json_object,
                     ),
                     response_metadata=response_metadata,
                 )
@@ -615,6 +624,7 @@ class ProviderRuntimeSet:
         reasoning_effort: str | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        json_object: bool = False,
     ) -> ProviderCompletion:
         runtime = self.runtimes.get(provider)
         if runtime is None:
@@ -633,6 +643,7 @@ class ProviderRuntimeSet:
             reasoning_effort=reasoning_effort,
             model=model,
             timeout_seconds=timeout_seconds,
+            json_object=json_object,
         )
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:

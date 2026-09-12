@@ -70,7 +70,7 @@ def build(connection, revision_id, section_id, *, use_kp=True):
     return packet, ledger, deps
 
 
-def current(connection, deps):
+def current(connection, deps, *, skill_version=SKILL_VERSION):
     for event in connection.execute("SELECT page_start,page_end FROM foundation_events WHERE book_source_revision_id=? AND foundation_version>?",
                                     (deps["book_source_revision_id"], deps["foundation_version"])):
         if any(event["page_start"] <= page["pdf_page_index"] <= event["page_end"] for page in deps["pages_used"]):
@@ -87,7 +87,7 @@ def current(connection, deps):
         row = connection.execute("SELECT structure_version FROM chapter_preparations WHERE book_source_revision_id=? AND chapter_outline_node_id=?", (deps["book_source_revision_id"], deps["chapter_outline_node_id"])).fetchone()
         if row is None or row[0] != deps["chapter_structure_version"]:
             return False
-    return deps["skill_version"] == SKILL_VERSION
+    return deps["skill_version"] == skill_version
 
 
 def safe_anchor(connection, anchor):

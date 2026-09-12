@@ -60,6 +60,7 @@ class SelectionSource:
     revision_id: str
     pdf_page_index: int
     foundation_version: int
+    teaching_lineage: dict | None = None
 
     @property
     def label(self) -> str:
@@ -72,6 +73,7 @@ class SelectionSource:
             "revision_id": self.revision_id,
             "pdf_page_index": self.pdf_page_index,
             "foundation_version": self.foundation_version,
+            **({"teaching_lineage": copy.deepcopy(self.teaching_lineage)} if self.teaching_lineage else {}),
         }
 
 
@@ -167,6 +169,7 @@ class ReaderAssistantState:
             "created_from": {
                 "kind": root.created_from.kind.value,
                 "selected_text_preview": root.label,
+                **({"teaching_lineage": copy.deepcopy(root.created_from.teaching_lineage)} if root.created_from.teaching_lineage else {}),
             },
             "focused_node_id": root.focused_node_id,
             "active_child_id": root.active_child_id,
@@ -295,6 +298,10 @@ class AssistantService:
         return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
                                  context, SelectionSourceKind.READING_GUIDE, provider)
 
+    def ask_inline(self, reader_session_id, revision_id, context, provider=None):
+        return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
+                                 context, SelectionSourceKind.INLINE_GUIDANCE, provider)
+
     def _ask_context(self, reader_session_id, revision_id, page_index, context, kind, provider):
         session_id = self._validate_session_id(reader_session_id)
         slot = self._slot_for(session_id)
@@ -315,6 +322,7 @@ class AssistantService:
             revision_id,
             page_index,
             int(context["foundation_version"]),
+            copy.deepcopy(context.get("teaching_lineage")),
         )
         root = AssistantRoot(
             root_id,
@@ -656,7 +664,7 @@ class AssistantService:
                         "ANSWER_NOT_COMPLETED",
                         "只能保存一条已经完成的 Assistant 回答。",
                     )
-                if root.created_from.kind is SelectionSourceKind.READING_GUIDE:
+                if root.created_from.kind in {SelectionSourceKind.READING_GUIDE, SelectionSourceKind.INLINE_GUIDANCE}:
                     raise AssistantStateError("GUIDE_NOTE_SOURCE_UNAVAILABLE", "导读解释没有教材选区，不能保存为教材笔记。")
                 concept_path = [root.created_from.selected_text]
                 child_focus = None

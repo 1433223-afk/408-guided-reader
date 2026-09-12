@@ -107,7 +107,7 @@ def handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/guide", parsed.path)
+            guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/(guide|inline-teaching)", parsed.path)
             if guide:
                 if not self._authorized():
                     return
@@ -115,7 +115,9 @@ def handler_factory(
                     self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "导读服务不可用。"})
                     return
                 try:
-                    result = teaching.snapshot(*guide.groups())
+                    revision, section, kind = guide.groups()
+                    target = teaching.inline if kind == "inline-teaching" else teaching
+                    result = target.snapshot(revision, section)
                 except (LookupError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
@@ -346,7 +348,7 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/guide/(generate|regenerate|retry)", parsed.path)
+            guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/(guide|inline-teaching)/(generate|regenerate|retry)", parsed.path)
             if guide:
                 if not self._authorized():
                     return
@@ -355,8 +357,9 @@ def handler_factory(
                     return
                 try:
                     payload = self._read_json()
-                    revision, section, action = guide.groups()
-                    result = teaching.retry(revision, section, payload["asset_id"]) if action == "retry" else teaching.request(revision, section, payload["intent_id"], regenerate=action == "regenerate")
+                    revision, section, kind, action = guide.groups()
+                    target = teaching.inline if kind == "inline-teaching" else teaching
+                    result = target.retry(revision, section, payload["asset_id"]) if action == "retry" else target.request(revision, section, payload["intent_id"], regenerate=action == "regenerate")
                 except (KeyError, LookupError, TypeError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
@@ -558,7 +561,12 @@ def handler_factory(
                     return
                 try:
                     payload = self._read_json()
-                    if payload.get("source_kind") == "READING_GUIDE":
+                    if payload.get("source_kind") == "INLINE_GUIDANCE":
+                        if teaching is None:
+                            raise ValueError("行间教学服务不可用。")
+                        context = teaching.inline.selection_context(ask_match.group(1), payload["section_id"], payload["asset_id"], payload["item_id"], payload["field"], payload["start_offset"], payload["end_offset"])
+                        state = assistant.ask_inline(payload["reader_session_id"], ask_match.group(1), context, payload.get("provider"))
+                    elif payload.get("source_kind") == "READING_GUIDE":
                         if teaching is None:
                             raise ValueError("导读服务不可用。")
                         context = teaching.selection_context(ask_match.group(1), payload["section_id"], payload["asset_id"], payload["module_id"], payload["start_offset"], payload["end_offset"])
@@ -959,7 +967,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/app.js", "/assistant-render.js", "/master-ui.js", "/guide-ui.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/app.js", "/assistant-render.js", "/master-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

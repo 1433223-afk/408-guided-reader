@@ -6,6 +6,7 @@ import {
 import { renderAssistantAnswer, renderedSelectionToRaw } from "/assistant-render.js";
 import { createMasterUI } from "/master-ui.js";
 import { createGuideUI } from "/guide-ui.js";
+import { createInlineUI } from "/inline-ui.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -57,7 +58,8 @@ const ASSISTANT_DOCK_MIN_WIDTH = 320;
 const ASSISTANT_DOCK_MAX_WIDTH = 760;
 const ASSISTANT_READER_MIN_WIDTH = 280;
 
-const guide = createGuideUI({ state, api, goToPage,
+const teachingUiOptions = { state, api, goToPage,
+  readingAnchor: () => captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1),
   hideContextMenu: hideSelectionActions,
   contextMenu: (x, y, text, explain) => {
     hideSelectionActions();
@@ -72,7 +74,9 @@ const guide = createGuideUI({ state, api, goToPage,
   if (!state.readerSessionId || state.assistantPending) return;
   state.assistantDraft = { readerSessionId: state.readerSessionId, revisionId: state.revision.id, selectedText, request };
   openAssistantPanel(); renderAssistantDraft(); refreshAssistantStatus();
-} });
+} };
+const guide = createGuideUI(teachingUiOptions);
+const inline = createInlineUI(teachingUiOptions);
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -259,6 +263,7 @@ async function openBook(book) {
 }
 
 function closeReader() {
+  inline.reset();
   guide.close();
   state.generation += 1;
   cancelRenders();
@@ -696,6 +701,7 @@ async function loadBookMap() {
     const labels = outline.page_labels;
     if (request !== state.outlineRequest || state.revision?.id !== revisionId) return;
     state.outlineNodes = outline.nodes;
+    inline.sync();
     for (const index of state.rendered) renderGuideEntries(index);
     state.pageLabels = new Map(labels.labels.map((row) => [row.pdf_page_index, row]));
     renderOutline(outline);
@@ -725,6 +731,7 @@ function renderGuideEntries(index) {
     button.addEventListener("click", () => guide.open(node.outline_node_id));
     page.append(button);
   }
+  inline.renderPage(index);
 }
 
 function renderOutline(payload) {
@@ -1623,7 +1630,7 @@ function renderAssistantWorkspace() {
     const saved = state.assistantSavedTurns.has(saveKey);
     save.textContent = saved ? "已保存" : "保存到笔记";
     save.disabled = saved;
-    save.hidden = state.assistantState.roots.find((root) => root.root_id === current.root_id)?.created_from.kind === "READING_GUIDE";
+    save.hidden = ["READING_GUIDE", "INLINE_GUIDANCE"].includes(state.assistantState.roots.find((root) => root.root_id === current.root_id)?.created_from.kind);
     turnActions.append(save);
     article.append(question, answer, turnActions);
     return article;
@@ -1663,7 +1670,8 @@ function renderAssistantDraft() {
   }
   elements["assistant-title"].textContent = "问 AI";
   elements["assistant-scope"].textContent = draft.request.source_kind === "READING_GUIDE"
-    ? "准备解释导读选区" : `准备解释 PDF 第 ${draft.request.pdf_page_index + 1} 页选区`;
+    ? "准备解释导读选区" : draft.request.source_kind === "INLINE_GUIDANCE" ? "准备解释行间教学选区"
+    : `准备解释 PDF 第 ${draft.request.pdf_page_index + 1} 页选区`;
   elements["assistant-draft-text"].textContent = draft.selectedText;
   elements["assistant-first-turn"].hidden = false;
   elements["assistant-follow-up"].hidden = true;
@@ -2827,7 +2835,7 @@ elements.viewer.addEventListener("keydown", (event) => {
 });
 document.addEventListener("copy", (event) => {
   const native = window.getSelection();
-  if (native?.anchorNode?.parentElement?.closest(".guide-text")) return;
+  if (native?.anchorNode?.parentElement?.closest(".guide-text,.inline-text")) return;
   const text = resolvedText(state.selection?.resolved || []);
   if (!text) return;
   event.preventDefault();

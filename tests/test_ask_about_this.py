@@ -1991,6 +1991,21 @@ def test_openrouter_reasoning_effort_is_per_call_and_reported():
         assert len(adapters[provider].calls) == before
 
 
+def test_openrouter_json_object_mode_is_explicit_scoped_and_reported():
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    messages = [{"role": "user", "content": "Return a JSON object"}]
+    result = providers.complete_for_with_metadata("openrouter", messages, json_object=True)
+    assert adapters['openrouter'].calls[-1]['body']['response_format'] == {'type': 'json_object'}
+    assert result.effective_config['request_parameters']['response_format'] == {'type': 'json_object'}
+    providers.complete_for_with_metadata("openrouter", messages)
+    assert 'response_format' not in adapters['openrouter'].calls[-1]['body']
+    for provider, option in [('deepseek', True), ('zhipu', True), ('openrouter', 'true')]:
+        before = len(adapters[provider].calls)
+        with pytest.raises(ValueError):
+            providers.complete_for_with_metadata(provider, messages, json_object=option)
+        assert len(adapters[provider].calls) == before
+
+
 @pytest.mark.parametrize('recovers', [True, False])
 def test_incomplete_provider_response_is_retried_without_accepting_partial_text(monkeypatch, caplog, recovers):
     from dataclasses import replace
