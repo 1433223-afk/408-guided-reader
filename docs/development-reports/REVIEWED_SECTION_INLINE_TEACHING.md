@@ -55,6 +55,16 @@ The direct documentation endpoint returned 403; GitHub's official SDK supplied t
 
 ## Acceptance evidence
 
+**Selection visual consistency refinement, 2026-09-12:**
+- PDF selection quads and Guidance native selection now share the same translucent blue CSS token;
+  Guidance retains its normal text color instead of browser-default white-on-blue. CSS-only change,
+  without selection handlers, source lineage, menu actions or persistence changes; no live model calls.
+- Actual pointer selection across PDF and Guidance text on real pages 13–14 PASS; computed selection
+  backgrounds match, the shared right-click menu opens, and close/reopen works. Visually inspected
+  `test-results/inline-selection-{1,2}.png` using the existing live-Gemini publication.
+- **BROAD:** `npm test`: **33 PASS**; `inline-selection-closure.xml`: **274 PASS / 2 optional real-OCR skips**.
+  Diff check PASS. No new independent review required for this CSS-only delta.
+
 **Guidance wording/action hierarchy refinement, 2026-09-12:**
 - Natural type labels: lead-in “为什么这里重要”, bridge “接着这样看”, warning “这里注意”,
   connection “和前面连起来看”, Recall “先想一想”. Assistant is the first, lightly filled primary
@@ -161,5 +171,5 @@ Core entry points: `teaching/inline_{contracts,evidence,service}.py`, migration 
 ## Git checkpoint
 
 Original implementation checkpoint: `1a3e38a`; margin-card UI checkpoint: `1e24717`.
-The wording/action hierarchy checkpoint is titled `Refine guidance headings and action hierarchy`;
-its hash is reported after committing. This is implementation-ready, not user acceptance or closure.
+Wording/action hierarchy checkpoint: `0ba13e7`. The selection-style checkpoint is titled
+`Match guidance text selection to PDF reader highlighting`; its hash is reported after committing. This is implementation-ready, not user acceptance or closure.

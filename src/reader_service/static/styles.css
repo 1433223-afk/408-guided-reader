@@ -107,8 +107,10 @@ button, label { -webkit-tap-highlight-color: transparent; }
   user-select: text; line-height: 1; pointer-events: auto;
 }
 .ocr-line::selection { color: transparent; background: transparent; }
+.reader { --reader-selection-background: rgb(65 126 211 / 20%); }
+.inline-text::selection { background: var(--reader-selection-background); color: inherit; }
 .selection-quad {
-  z-index: 1; position: absolute; background: rgb(65 126 211 / 20%); border-radius: 2px;
+  z-index: 1; position: absolute; background: var(--reader-selection-background); border-radius: 2px;
   pointer-events: none;
 }
 .search-match-quad {
