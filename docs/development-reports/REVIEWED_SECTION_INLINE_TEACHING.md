@@ -55,6 +55,20 @@ The direct documentation endpoint returned 403; GitHub's official SDK supplied t
 
 ## Acceptance evidence
 
+**Guidance wording/action hierarchy refinement, 2026-09-12:**
+- Natural type labels: lead-in “为什么这里重要”, bridge “接着这样看”, warning “这里注意”,
+  connection “和前面连起来看”, Recall “先想一想”. Assistant is the first, lightly filled primary
+  action; source navigation is a quieter text action. Card/menu close glyphs are smaller and muted,
+  retaining 24px targets. No source, lifecycle, provider, selection or learning-state logic changed.
+- Targeted placement checks **3 PASS**; actual 348-page UI flow **PASS** at
+  `C:/Users/26389/AppData/Local/Temp/guided-reader-inline-9oDxoq/data`, including both card actions,
+  close/reopen, Recall, narrow/Dock, restart and replacement. Updated real-Gemini-publication screenshots
+  `test-results/inline-real-guidance-{1,2}.png` were visually inspected. No live model calls.
+- **BROAD:** `npm test`: **33 PASS**; `inline-labels-closure.xml`: **274 PASS / 2 optional real-OCR skips**.
+  JS syntax and diff checks PASS.
+- No new independent review: this delta is local copy/CSS/action order, without a high-risk boundary
+  change. The prior independent audit applies to the unchanged underlying behavior.
+
 **Final same-Phase UI rework, 2026-09-12:**
 - **TARGETED:** 55 Inline/Guide Python cases and 3 margin-placement JS cases PASS.
 - **AGENT REAL USE:** controlled-provider flow on an isolated copy of the real 348-page textbook
@@ -146,6 +160,6 @@ Core entry points: `teaching/inline_{contracts,evidence,service}.py`, migration 
 
 ## Git checkpoint
 
-Original implementation checkpoint: `1a3e38a`. The UI rework checkpoint is titled
-`Move inline teaching into page margins and anchored guidance cards`; its hash is reported after
-committing. This is implementation-ready, not user acceptance or closure.
+Original implementation checkpoint: `1a3e38a`; margin-card UI checkpoint: `1e24717`.
+The wording/action hierarchy checkpoint is titled `Refine guidance headings and action hierarchy`;
+its hash is reported after committing. This is implementation-ready, not user acceptance or closure.

@@ -1,6 +1,6 @@
 import { placeInline } from "./inline-placement.js";
 
-const labels = { lead_in: "读前引导", bridge: "过渡", warning: "留意条件", connection: "联系", recall: "先想一想" };
+const labels = { lead_in: "为什么这里重要", bridge: "接着这样看", warning: "这里注意", connection: "和前面连起来看", recall: "先想一想" };
 
 export function createInlineUI({ state, api, goToPage, readingAnchor, layout, explain, contextMenu, hideContextMenu }) {
   const reader = document.getElementById("reader"), viewer = document.getElementById("viewer");
@@ -125,7 +125,7 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       skip.onclick = close;
       content.append(reveal, skip);
     }
-    const jump = document.createElement("button"); jump.type = "button"; jump.textContent = "查看教材位置";
+    const jump = document.createElement("button"); jump.type = "button"; jump.className = "inline-source-action"; jump.textContent = "查看教材位置";
     jump.onclick = async () => {
       const id = selected, stamp = epoch;
       await load(id, true);
@@ -135,11 +135,11 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       if (!source?.available) { close(); refresh(); status.textContent = "教材位置已变化，未跳转。"; return; }
       goToPage(source.pdf_page_index, Math.min(...source.quad.map(p => p[1])));
     };
-    const ask = document.createElement("button"); ask.type = "button"; ask.textContent = "继续问 Assistant";
+    const ask = document.createElement("button"); ask.type = "button"; ask.className = "inline-assistant-action"; ask.textContent = "继续问 Assistant";
     ask.onclick = () => explain(item.text, { source_kind: "INLINE_GUIDANCE", section_id: selected,
       asset_id: pub.id, item_id: item.id, field: "text", start_offset: 0, end_offset: Array.from(item.text).length });
     const actions = document.createElement("div"); actions.className = "inline-actions";
-    actions.append(jump, ask); content.append(actions);
+    actions.append(ask, jump); content.append(actions);
   }
   async function load(id, force = false) {
     if (!id || !revision) return;
