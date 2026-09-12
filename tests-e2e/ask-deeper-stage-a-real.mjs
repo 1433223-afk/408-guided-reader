@@ -20,7 +20,7 @@ try {
   const status = await json(page, "/api/assistant/status");
   const deepseek = status.providers.find((provider) => provider.provider === "deepseek");
   assert.equal(deepseek?.configured, true, "DeepSeek is not callable for the authorized smoke");
-  assert.equal(deepseek.model, "deepseek-v4-flash");
+  assert.equal(deepseek.model, "deepseek-flash");
 
   await openBook(page, 348);
   const before = await json(page, "/api/assistant/inspection");

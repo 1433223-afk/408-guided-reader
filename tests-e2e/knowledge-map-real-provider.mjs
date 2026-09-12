@@ -11,7 +11,7 @@ const expectedHash = "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af80775116902
 const generatorProvider = process.env.READER_REAL_KP_GENERATOR || "deepseek";
 const reviewerProvider = process.env.READER_REAL_KP_REVIEWER || "zhipu";
 const providerModels = {
-  deepseek: "deepseek-v4-flash",
+  deepseek: "deepseek-flash",
   zhipu: "GLM-5.3-Flash",
   openrouter: "google/gemini-3.8-flash",
 };

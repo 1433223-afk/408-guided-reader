@@ -88,7 +88,7 @@ try {
   const unavailablePage = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   await unavailablePage.route("**/api/assistant/status", async (route) => {
     const profiles = [
-      ["deepseek", "deepseek-v4-flash"],
+      ["deepseek", "deepseek-flash"],
       ["zhipu", "GLM-5.3-Flash"],
       ["openrouter", "google/gemini-3.8-flash"],
     ];
@@ -148,7 +148,7 @@ try {
   assert.equal(readyStatus.configured, true);
   assert.equal(readyStatus.bakeoff_enabled, true);
   assert.deepEqual(readyStatus.providers.map((provider) => provider.model), [
-    "deepseek-v4-flash", "GLM-5.3-Flash", "google/gemini-3.8-flash",
+    "deepseek-flash", "GLM-5.3-Flash", "google/gemini-3.8-flash",
   ]);
   assert.ok(!JSON.stringify(readyStatus).includes("mock-secret-never-inspect"));
   assert.equal(await page.locator("#ask-selection").isDisabled(), true);
@@ -366,7 +366,7 @@ try {
   assert.ok(!JSON.stringify(inspection).includes("mock-secret-never-inspect"));
   assert.ok(!JSON.stringify(inspection).includes("Authorization"));
   assert.deepEqual(providerCalls.slice(0, 6).map((call) => call.body.model), Array(6).fill("GLM-5.3-Flash"));
-  assert.equal(providerCalls[6].body.model, "deepseek-v4-flash");
+  assert.equal(providerCalls[6].body.model, "deepseek-flash");
   assert.equal(providerCalls.at(-1).body.model, "GLM-5.3-Flash");
 
   const antiBypassCalls = providerCalls.length;

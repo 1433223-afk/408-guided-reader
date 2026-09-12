@@ -17,7 +17,7 @@ const executablePath = process.env.READER_CHROMIUM || chromeCandidates.find(requ
 if (!executablePath) throw new Error("Set READER_CHROMIUM to Chrome or Edge executable");
 
 const expectedModels = {
-  deepseek: "deepseek-v4-flash",
+  deepseek: "deepseek-flash",
   zhipu: "GLM-5.3-Flash",
   openrouter: "google/gemini-3.8-flash",
 };

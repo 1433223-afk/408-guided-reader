@@ -29,7 +29,7 @@ PROVIDER_NAMES = ("deepseek", "zhipu", "openrouter")
 PROVIDER_DEFAULTS = {
     "deepseek": {
         "endpoint": "https://api.deepseek.com/chat/completions",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-flash",
         "max_tokens": 4096,
         "timeout_seconds": 120.0,
     },

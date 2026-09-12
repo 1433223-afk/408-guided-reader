@@ -158,7 +158,8 @@ $env:GUIDE_E2E_REAL='1' # Live initial publication + Assistant only; Gemini-only
 node tests-e2e/inline-teaching.mjs
 ```
 
-Retest service: `http://127.0.0.1:8766/` (refresh the browser to load the UI rework). Open the textbook,
+Current enabled retest service: `http://127.0.0.1:8767/` (see [DeepSeek enablement](DEEPSEEK_V41_FLASH_ENABLEMENT.md));
+the old `8766` process retains its prior disabled-DeepSeek environment. Open the textbook,
 use **行间教学** to show/hide this Section's markers; use its **⋯** menu to select a resolved Section
 and generate/regenerate. Open an in-page marker, inspect its source, and use **继续问 Assistant** or
 select its text for Assistant. Recall appears only if the reviewed result finds it useful. Regeneration and

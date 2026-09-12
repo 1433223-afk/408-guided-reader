@@ -541,7 +541,7 @@ def test_materialization_and_compact_review_keep_source_authority_server_side(se
         partitions,
         candidates,
         semantic_provider="deepseek",
-        semantic_model="deepseek-v4-flash",
+        semantic_model="deepseek-flash",
         review_rubric=REVIEW_RUBRIC,
         overlap_warnings=[],
     )

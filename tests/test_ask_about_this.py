@@ -193,7 +193,7 @@ def focused(state: dict) -> dict:
 def runtime(adapter, *, key="dev-secret-key", **overrides):
     config = ProviderConfig(
         endpoint="https://api.deepseek.test/chat/completions",
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
         max_attempts=overrides.pop("max_attempts", 3),
         cooling_seconds=overrides.pop("cooling_seconds", 30),
         **overrides,
@@ -441,7 +441,7 @@ def test_credential_target_and_development_disable(monkeypatch):
 def test_named_provider_defaults_targets_and_environment_overrides(monkeypatch):
     expected = {
         "deepseek": (
-            "deepseek-v4-flash",
+            "deepseek-flash",
             "https://api.deepseek.com/chat/completions",
             "408-guided-reader-deepseek",
         ),
@@ -586,7 +586,7 @@ def test_selected_provider_is_the_only_call_and_follow_up_stays_pinned(assistant
     )
     replacement = focused(replacement_state)
     assert replacement["provider"] == "deepseek"
-    assert replacement["model"] == "deepseek-v4-flash"
+    assert replacement["model"] == "deepseek-flash"
     assert replacement["root_id"] != first["root_id"]
     assert len(replacement["turns"]) == 1
     assert len(replacement_state["roots"]) == 2
@@ -625,7 +625,7 @@ def test_bakeoff_fans_out_identical_controlled_input_and_records_effective_confi
     assert {body["temperature"] for body in bodies} == {0.2}
     assert [body["max_tokens"] for body in bodies] == [4096, 4096, 900]
     assert [body["model"] for body in bodies] == [
-        "deepseek-v4-flash", "GLM-5.3-Flash", "google/gemini-3.8-flash"
+        "deepseek-flash", "GLM-5.3-Flash", "google/gemini-3.8-flash"
     ]
     for result in results:
         effective = result["effective_config"]
@@ -976,7 +976,7 @@ def test_deepseek_adapter_refuses_redirect_to_second_endpoint():
             DeepSeekAdapter().complete(
                 f"http://127.0.0.1:{server.server_port}/chat/completions",
                 "secret",
-                {"model": "deepseek-v4-flash", "messages": []},
+                {"model": "deepseek-flash", "messages": []},
                 2,
             )
     finally:
@@ -1022,7 +1022,7 @@ def test_empty_response_attempt_observer_retains_only_safe_finish_usage_and_leng
         config=ProviderConfig(
             provider="deepseek",
             endpoint=f"http://127.0.0.1:{server.server_port}/chat/completions",
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             credential_target=DEEPSEEK_CREDENTIAL_TARGET,
             max_attempts=1,
         ),
@@ -1305,7 +1305,7 @@ def test_child_transport_body_is_allowlisted_and_metadata_canaries_never_egress(
         config=ProviderConfig(
             provider="deepseek",
             endpoint=f"http://127.0.0.1:{server.server_port}/chat/completions",
-            model="deepseek-v4-flash",
+            model="deepseek-flash",
             credential_target=DEEPSEEK_CREDENTIAL_TARGET,
             max_attempts=1,
         ),

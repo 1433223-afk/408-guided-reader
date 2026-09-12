@@ -144,6 +144,12 @@ autonomously do not override this restriction. Check the resolved model before e
 OpenRouter call; if it is not the allowed model or is uncertain, stop that call and report.
 This rule applies to all agents and scripts used on the project's behalf.
 
+**DeepSeek re-enabled — user instruction, 2026-09-12.** The user subsequently authorized enabling
+DeepSeek V4.1 Flash through the native DeepSeek provider. Its official API model ID is
+`deepseek-flash` (confirmed by the official documentation and authenticated model list). This is
+an exception to the earlier Gemini-only instruction for the native DeepSeek provider only; the
+OpenRouter restriction above and the disabled status of other unapproved providers remain in force.
+
 **External reuse and major dependencies.** For a large, common or genuinely core capability — PDF
 rendering, OCR, virtualization, annotation geometry, job queues, storage, or comparable
 infrastructure — investigate mature OSS before building, autonomously; no approval needed just to
