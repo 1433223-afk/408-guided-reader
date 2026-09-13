@@ -151,14 +151,55 @@ export function createScreens({api, home, memory, read, remove, revision, announ
 }
 
 // Current-chapter preparation only; the full map remains owned by Book Overview.
-export function createChapterEntry({api, revision, openOverview, published}) {
+export function createChapterEntry({api, revision, openOverview, published, goToPage}) {
   const entry = document.createElement('button');
   entry.id = 'reader-kp-action'; entry.type = 'button'; entry.hidden = true;
   document.getElementById('outline-toggle').after(entry);
+  const panel = node('section', '', 'reader-kp-list'); panel.id = 'reader-kp-list'; panel.hidden = true;
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', '本章知识点'); panel.tabIndex = -1;
+  (document.getElementById('reader') || document.body).append(panel);
+  entry.setAttribute('aria-controls', panel.id); entry.setAttribute('aria-expanded', 'false');
+  let listEpoch = 0;
+  function closeList(focus = false) { ++listEpoch; panel.hidden = true; entry.setAttribute('aria-expanded', 'false'); if(focus) entry.focus(); }
+  panel.addEventListener('keydown', e => { if(e.key === 'Escape') { e.stopPropagation(); closeList(true); } });
+  async function openList() {
+    const stamp = epoch, request = ++listEpoch, targetChapter = chapter;
+    const points = snapshot.knowledge_points;
+    panel.replaceChildren(); panel.hidden = false; entry.setAttribute('aria-expanded', 'true');
+    const heading = node('div', '', 'reader-kp-heading');
+    heading.append(node('strong', snapshot.chapter_title || '本章知识点'), action('关闭', () => closeList(true)));
+    const body = node('div', '', 'reader-kp-body'); body.append(node('p', '读取知识点状态…', 'muted'));
+    panel.append(heading, body, action('查看完整学习结构 ↗', () => { closeList(); return openOverview(targetChapter); }, 'reader-kp-footer'));
+    panel.focus();
+    const [outline, learning] = await Promise.allSettled([api(`/api/revisions/${owner}/outline`), api(`/api/revisions/${owner}/learning`)]);
+    if(stamp !== epoch || request !== listEpoch) return;
+    body.replaceChildren();
+    const nodes = outline.status === 'fulfilled' ? outline.value.nodes : [];
+    const states = learning.status === 'fulfilled' ? learning.value.points : [];
+    const ids = [...new Set([...nodes.filter(n => n.kind === 'SECTION' && n.parent_id === targetChapter).map(n => n.outline_node_id), ...points.map(p => p.primary_section_id)])];
+    for(const id of ids) {
+      const group = points.filter(p => p.primary_section_id === id); if(!group.length) continue;
+      const region = node('section'); region.dataset.sectionId = id;
+      region.append(node('h3', nodes.find(n => n.outline_node_id === id)?.title || '小节标题暂不可用'));
+      for(const kp of group) {
+        const row = node('div', '', 'reader-kp-row'); row.dataset.kpId = kp.knowledge_point_id;
+        const status = states?.find(p => p.knowledge_point_id === kp.knowledge_point_id)?.status;
+        const stateText = {UNDERSTOOD:'已理解',NOT_FULLY_CLEAR:'仍不清楚',UNCONFIRMED:'待确认'}[status] || '状态暂不可用';
+        const info = node('div'); info.append(node('span', kp.title), node('small', stateText, 'kp-state'));
+        row.append(info);
+        if(Number.isInteger(kp.start_page) && kp.start_page >= 0 && Number.isFinite(kp.start_y)) {
+          row.append(action(`PDF ${kp.start_page + 1} ↗`, () => { closeList(); goToPage(kp.start_page, kp.start_y); }, 'source-action'));
+        } else row.append(node('small', '来源暂不可用', 'muted'));
+        region.append(row);
+      }
+      body.append(region);
+    }
+    if(!points.length) body.append(node('p', '本章暂无已发布知识点', 'muted'));
+  }
   let owner = null, chapter = null, section = null, snapshot = null, epoch = 0, timer, pending = false, error = null;
   const stages = {QUEUED:'等待开始',RESOLVING_SOURCE:'来源准备中',GENERATING:'生成中',REVIEWING:'审查中',VALIDATING:'校验中',PUBLISHING:'发布中'};
   const base = () => `/api/revisions/${owner}/chapters/${chapter}/knowledge-map`;
-  function reset() { ++epoch; clearTimeout(timer); owner = chapter = snapshot = null; pending = false; error = null; entry.hidden = true; }
+  function reset() { ++epoch; closeList(); clearTimeout(timer); owner = chapter = snapshot = null; pending = false; error = null; entry.hidden = true; }
   function sync(id, sectionId) {
     if (owner === revision() && chapter === id) { if(section !== sectionId) {section = sectionId; render();} return; }
     reset(); owner = revision(); chapter = id; section = sectionId;
@@ -173,9 +214,9 @@ export function createChapterEntry({api, revision, openOverview, published}) {
     const count = snapshot?.sections_total ? ` ${snapshot.sections_completed || 0}/${snapshot.sections_total}` : '';
     entry.textContent = pending ? 'KP · 准备中' : error ? 'KP · 重试'
       : busy ? `KP · ${stages[snapshot.prepare_stage] || '准备中'}${count}`
-      : snapshot?.status === 'READY' ? (section ? `本节 ${snapshot.knowledge_points.filter(p=>p.primary_section_id === section).length} KP ↗` : '学习结构已就绪 ↗')
+      : snapshot?.status === 'READY' ? `${snapshot.knowledge_points.length} 个知识点`
       : snapshot?.status === 'FAILED' ? 'KP · 重试生成' : snapshot ? '生成本章 KP' : 'KP · 读取中';
-    entry.title = error || (snapshot?.status === 'READY' ? '当前 Section/KP 状态见页内学习入口；查看 Book Overview 完整结构'
+    entry.title = error || (snapshot?.status === 'READY' ? '查看本章知识点与学习状态'
       : `${snapshot?.chapter_title || '当前章'}：${entry.textContent}，PDF 阅读不受影响`);
   }
   async function load() {
@@ -192,7 +233,7 @@ export function createChapterEntry({api, revision, openOverview, published}) {
   entry.onclick = async () => {
     if (pending || !chapter || !owner || entry.disabled) return;
     if (!snapshot || error) { await load(); return; }
-    if (snapshot.status === 'READY') { openOverview(chapter); return; }
+    if (snapshot.status === 'READY') { if(panel.hidden) await openList(); else closeList(); return; }
     const stamp = epoch; pending = true; error = null; clearTimeout(timer); render();
     try {
       const result = await api(`${base()}/prepare`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});

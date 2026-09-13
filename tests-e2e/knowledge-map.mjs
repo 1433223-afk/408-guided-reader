@@ -11,7 +11,10 @@ if (!sourceDataDir) throw new Error("Set READER_DATA_DIR to the prepared real-bo
 const expectedHash = "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd";
 const acceptanceRoot = await mkdtemp(path.join(os.tmpdir(), "guided-reader-knowledge-"));
 const dataDir = path.join(acceptanceRoot, "data");
-await cp(sourceDataDir, dataDir, { recursive: true });
+await mkdir(dataDir);
+await cp(path.join(sourceDataDir,'blobs'),path.join(dataDir,'blobs'),{recursive:true});
+const backup=spawnSync(process.env.READER_PYTHON || 'python',['-c','import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()',path.join(sourceDataDir,'state.sqlite3'),path.join(dataDir,'state.sqlite3')],{windowsHide:true,encoding:'utf8'});
+assert.equal(backup.status,0,backup.stderr);
 resetCopiedKnowledgeState();
 
 const transports = [];
@@ -115,6 +118,41 @@ try {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.goto(running.url);
+  if(process.env.READER_KP_LIST_ONLY === '1') {
+    const books=(await json(page,'/api/books')).books;
+    const book=books.find(b=>b.active_revision?.page_count===348);
+    assert.equal(book.active_revision.blob_sha256,expectedHash);
+    await page.locator('.book-card').filter({hasText:'348 个 PDF 页面'}).getByRole('button',{name:'打开',exact:true}).click();
+    await page.locator('.overview-book-heading .primary-action').click();
+    const outline=await json(page,`/api/revisions/${book.active_revision.id}/outline`);
+    const chapter=outline.nodes.find(n=>n.title==='第6章 总线');
+    const section=outline.nodes.find(n=>n.kind==='SECTION' && n.parent_id===chapter.outline_node_id && n.start_page!==null);
+    await page.locator('#page-number').fill(String(section.start_page+1));
+    await page.locator('#page-number').press('Enter');
+    await page.locator(`.page[data-index="${section.start_page}"] canvas`).waitFor();
+    const entry=page.locator('#reader-kp-action');
+    await entry.filter({hasText:'生成本章 KP'}).waitFor();
+    await page.evaluate(()=>{
+      window.kpStages=[];
+      new MutationObserver(()=>window.kpStages.push(document.querySelector('#reader-kp-action').textContent)).observe(document.querySelector('#reader-kp-action'),{childList:true,subtree:true});
+    });
+    await entry.click();
+    await entry.filter({hasText:'重试生成'}).waitFor({timeout:180000});
+    await entry.click();
+    await entry.filter({hasText:'个知识点'}).waitFor({timeout:180000});
+    await entry.click();
+    await page.locator('.reader-kp-row').first().waitFor();
+    const count=await page.locator('.reader-kp-row').count();assert.ok(count>0);
+    await page.locator('.reader-kp-row button').first().click();
+    assert.equal(await page.locator('#reader-kp-list').isVisible(),false);
+    await entry.click();await page.locator('.reader-kp-row').first().waitFor();
+    await page.getByRole('button',{name:'查看完整学习结构 ↗'}).click();
+    await page.locator('#book-overview').waitFor();
+    const stages=await page.evaluate(()=>window.kpStages);
+    assert.ok(stages.some(s=>s.includes('生成中')));assert.ok(stages.some(s=>s.includes('审查中')));
+    assert.deepEqual(pageErrors,[]);
+    console.log(JSON.stringify({status:'PASS',flow:'real Chapter 6 preparation -> review failure -> retry -> READY -> Reader KP list -> PDF -> Overview',count,stages,externalProviderCalls:0}));
+  } else {
   const book = await openBook(page, 348);
   assert.equal(book.active_revision.blob_sha256, expectedHash);
   const siblingBooksBefore = (await json(page, "/api/books")).books
@@ -329,6 +367,7 @@ try {
     siblingBookPreserved: true,
     screenshot,
   }));
+}
 } finally {
   if (browser) await browser.close();
   if (running) await stopService(running.child);
@@ -504,7 +543,9 @@ function resetCopiedKnowledgeState() {
     "connection = sqlite3.connect(sys.argv[1])",
     "connection.execute(\"PRAGMA foreign_keys = ON\")",
     "connection.execute(\"DELETE FROM jobs WHERE job_type = 'CHAPTER_PREPARE'\")",
-    "connection.execute(\"DELETE FROM chapter_preparations\")",
+    process.env.READER_KP_LIST_ONLY === '1'
+      ? "connection.execute(\"DELETE FROM chapter_preparations WHERE status = 'FAILED'\")"
+      : "connection.execute(\"DELETE FROM chapter_preparations\")",
     "connection.commit()",
     "connection.close()",
   ].join("; ");

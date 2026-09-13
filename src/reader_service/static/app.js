@@ -157,7 +157,7 @@ async function showHome() {
 }
 const screens = createScreens({api, home: showHome, memory: () => memory.open(), read: enterReader,
   remove: removeBook, revision: chooseRevision, announce, isAuxiliary:isAuxiliaryOutlineRoot});
-const chapterEntry = createChapterEntry({api, revision: () => state.revision?.id,
+const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.revision?.id,
   published: () => master.refreshEntries().catch(() => {}),
   openOverview: async chapterId => {
     const book = state.book; if (!book) return;

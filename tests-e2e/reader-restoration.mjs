@@ -81,6 +81,9 @@ try {
   for(const width of [1600,1280,1024]) {
     await baseline.setViewportSize({width,height:1000});await restored.setViewportSize({width,height:1000});await restored.waitForTimeout(700);
     assert.deepEqual(await metrics(restored),await metrics(baseline));
+    const sizes=await restored.locator('#reader .toolbar button').evaluateAll(buttons=>buttons.filter(b=>!b.hidden && b.getBoundingClientRect().height).map(b=>({id:b.id,height:b.getBoundingClientRect().height,width:b.getBoundingClientRect().width,square:b.matches('.icon-button,.marks-toggle,#inline-more')})));
+    for(const b of sizes) {assert.equal(b.height,32,b.id);if(b.square)assert.equal(b.width,32,b.id);}
+    assert.equal(await restored.locator('#marks-toggle svg').count(),1);
     const navigation=await restored.locator('.reader-page-controls').boundingBox();
     assert.ok(Math.abs(navigation.x+navigation.width/2-width/2)<1,'Page navigation must be visually centered');
     for(const [toggle,panel,close] of [['outline-toggle','outline-panel','outline-close'],['search-toggle','search-panel','search-close'],['marks-toggle','marks-panel','marks-close']]) {
@@ -134,9 +137,19 @@ try {
   await kpEntry.filter({hasText:'重试生成'}).waitFor(); await kpEntry.click();
   assert.equal(requests,2);
   stage=chapterContext.snapshot;
-  await kpEntry.filter({hasText:'↗'}).waitFor();
+  await kpEntry.filter({hasText:'个知识点'}).waitFor();
   assert.equal(await restored.locator('#knowledge-panel').isVisible(),false);
   await kpEntry.click();
+  await restored.locator('.reader-kp-row').first().waitFor();
+  assert.equal(await restored.locator('#book-overview').isVisible(),false);
+  assert.equal(await restored.locator('.reader-kp-row').count(),stage.knowledge_points.length);
+  const target=stage.knowledge_points[0];
+  await restored.locator(`.reader-kp-row[data-kp-id="${target.knowledge_point_id}"] button`).click();
+  await restored.locator(`.page[data-index="${target.start_page}"] canvas`).waitFor();
+  assert.equal(await restored.locator('#reader-kp-list').isVisible(),false);
+  await kpEntry.click(); await restored.locator('.reader-kp-row').first().waitFor();
+  await restored.screenshot({path:'test-results/reader-kp-list.png'});
+  await restored.getByRole('button',{name:'查看完整学习结构 ↗'}).click();
   await restored.locator('#book-overview').waitFor();
   await restored.locator('.overview-section[open] .overview-kp').first().waitFor();
   assert.deepEqual(errors,[]);
