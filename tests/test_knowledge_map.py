@@ -1238,3 +1238,36 @@ def test_book_delete_cascades_and_knowledge_does_not_write_learning(service):
             "exam_evidence",
         }
     )
+
+def test_large_subsection_keeps_one_complete_bounded_semantic_judgment():
+    from reader_service.knowledge.semantic import SemanticOutputError
+    units = [{
+        'unit_id': f'u{i:04d}', 'text': '字' * size,
+        'primary_section_id': 'section', 'primary_section_title': 'Section',
+        'outline_subsection_id': 'subsection', 'outline_subsection_title': 'Subsection',
+    } for i, size in enumerate([900] * 7 + [185])]
+    windows = build_semantic_windows(units)
+    assert len(windows) == 1
+    assert windows[0]['character_count'] == 6485
+    assert windows[0]['units'] == units
+    assert windows[0]['outline_subsection_id'] == 'subsection'
+    units[-1]['text'] += '字' * (MAX_SEMANTIC_WINDOW_CHARACTERS - 6485)
+    assert build_semantic_windows(units)[0]['character_count'] == MAX_SEMANTIC_WINDOW_CHARACTERS
+    units[-1]['text'] += '字'
+    with pytest.raises(SemanticOutputError) as error:
+        build_semantic_windows(units)
+    assert error.value.code == 'semantic_window_source_limit'
+
+def test_source_capacity_failure_has_specific_code_and_never_calls_provider(service, monkeypatch):
+    from reader_service.knowledge.semantic import SemanticOutputError
+    fixture = build_fixture(service)
+    revision_id, chapter_id = fixture['revision']['id'], fixture['chapter']['outline_node_id']
+    def reject(_units):
+        raise SemanticOutputError('semantic_window_source_limit', 'Semantic window exceeds configured source bound')
+    monkeypatch.setattr('reader_service.knowledge.service.build_semantic_windows', reject)
+    fixture['knowledge'].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+    assert failed['failure_stage'] == 'SOURCE_CAPACITY'
+    assert failed['failure_code'] == 'semantic_window_source_limit'
+    assert failed['knowledge_points'] == []
+    assert fixture['repository'].pipeline_attempts(revision_id, chapter_id) == []

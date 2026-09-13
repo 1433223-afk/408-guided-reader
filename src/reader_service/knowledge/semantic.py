@@ -8,7 +8,9 @@ import re
 MAX_EVIDENCE_UNIT_CHARACTERS = 900
 SOFT_EVIDENCE_UNIT_CHARACTERS = 160
 MAX_SHORT_HEADING_CHARACTERS = 48
-MAX_SEMANTIC_WINDOW_CHARACTERS = 4_800
+# Invocation capacity, not a semantic splitting threshold. Real Chapter 4 subsection
+# 4.3.1 contains 6,485 characters; retain one complete judgment for that subsection.
+MAX_SEMANTIC_WINDOW_CHARACTERS = 9_600
 MAX_REVIEW_EXCERPT_CHARACTERS = 60
 MAX_PAGE_TOP_FURNITURE_Y = 0.10
 MIN_PAGE_BOTTOM_CONTINUATION_Y = 0.84
@@ -209,7 +211,7 @@ def build_semantic_windows(units: list[dict]) -> list[dict]:
     for window_order, (key, window_units) in enumerate(grouped):
         character_count = sum(len(unit["text"]) for unit in window_units)
         if character_count > MAX_SEMANTIC_WINDOW_CHARACTERS:
-            raise ValueError("Semantic window exceeds configured source bound")
+            raise SemanticOutputError("semantic_window_source_limit", "Semantic window exceeds configured source bound")
         first = window_units[0]
         subsection = next(
             (
@@ -577,7 +579,7 @@ def _validate_window_coverage(units: list[dict], windows: list[dict]) -> None:
         raise ValueError("Semantic windows changed evidence-unit accounting")
     for window in windows:
         if window["character_count"] > MAX_SEMANTIC_WINDOW_CHARACTERS:
-            raise ValueError("Semantic window exceeds configured source bound")
+            raise SemanticOutputError("semantic_window_source_limit", "Semantic window exceeds configured source bound")
         if any(
             unit["primary_section_id"] != window["primary_section_id"]
             for unit in window["units"]

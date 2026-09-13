@@ -215,8 +215,10 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     entry.textContent = pending ? 'KP · 准备中' : error ? 'KP · 重试'
       : busy ? `KP · ${stages[snapshot.prepare_stage] || '准备中'}${count}`
       : snapshot?.status === 'READY' ? `${snapshot.knowledge_points.length} 个知识点`
-      : snapshot?.status === 'FAILED' ? '生成失败 · 重试' : snapshot ? '＋ 生成本章知识点' : 'KP · 读取中';
-    entry.title = error || (snapshot?.status === 'READY' ? '查看本章知识点与学习状态'
+      : snapshot?.status === 'FAILED' ? (snapshot.failure_code === 'semantic_window_source_limit' ? '小节内容超出处理容量' : '生成失败 · 重试') : snapshot ? '＋ 生成本章知识点' : 'KP · 读取中';
+    const failureReason = snapshot?.failure_code === 'semantic_window_source_limit'
+      ? '当前小节原文超过单次处理容量；重复重试无法解决，需调整处理容量。' : null;
+    entry.title = error || failureReason || (snapshot?.status === 'READY' ? '查看本章知识点与学习状态'
       : `${snapshot?.chapter_title || '当前章'}：${entry.textContent}，PDF 阅读不受影响`);
   }
   async function load() {

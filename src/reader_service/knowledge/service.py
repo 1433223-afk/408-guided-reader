@@ -373,6 +373,10 @@ class KnowledgeService:
             error = KnowledgePipelineError(
                 "PUBLICATION", "DEPENDENCY_LOCK", failure.code, str(failure)
             )
+        except SemanticOutputError as failure:
+            error = KnowledgePipelineError(
+                "SOURCE_CAPACITY", "INPUT_LIMIT", failure.code, str(failure),
+            )
         except (ValueError, AssertionError) as failure:
             error = KnowledgePipelineError(
                 "DETERMINISTIC_VALIDATION", "INVALID_CANDIDATE",
