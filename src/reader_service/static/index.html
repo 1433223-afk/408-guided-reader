@@ -91,12 +91,12 @@
              aria-label="调整临时解释面板宽度" aria-orientation="vertical"></div>
         <div class="assistant-heading">
           <div class="assistant-heading-title">
-            <span class="eyebrow">临时解释</span><strong id="assistant-title" class="sr-only">问 AI</strong>
+            <span class="eyebrow" title="解释仅保留在当前 Reader 会话中；退出 Reader 或关闭主题会清除对应临时解释。">解释</span><strong id="assistant-title" class="sr-only">问 AI</strong>
           </div>
           <div class="assistant-heading-actions">
             <div class="assistant-model-control">
               <label class="assistant-model" for="assistant-model">
-                <span>模型</span>
+                <span class="sr-only">模型</span>
                 <select id="assistant-model" aria-label="当前 AI 模型">
                   <option value="deepseek">DeepSeek · deepseek-flash</option>
                   <option value="zhipu">Zhipu · GLM-5.3-Flash</option>
@@ -107,7 +107,7 @@
             </div>
             <button id="assistant-expand" class="assistant-expand" type="button" aria-pressed="false"
                     aria-label="展开临时解释面板" title="展开临时解释面板">展开</button>
-            <button id="assistant-close" type="button" aria-label="收起临时解释面板">×</button>
+            <button id="assistant-close" type="button" aria-label="收起临时解释面板" title="收起解释面板">收起</button>
           </div>
         </div>
         <div id="assistant-context-bar" class="assistant-context-bar" hidden>
@@ -124,7 +124,7 @@
         </section>
         <p id="assistant-scope" class="assistant-scope">等待教材选区</p>
         <form id="assistant-first-turn" class="assistant-first-turn" hidden>
-          <p><span>准备解释</span><q id="assistant-draft-text"></q></p>
+          <p><span class="sr-only">准备解释</span><q id="assistant-draft-text"></q></p>
           <button id="assistant-start" type="submit">发送</button>
           <p id="assistant-readiness" class="assistant-readiness" role="status" hidden></p>
         </form>

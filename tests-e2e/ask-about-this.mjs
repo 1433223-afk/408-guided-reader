@@ -195,6 +195,8 @@ try {
   const firstState = firstPayload.assistant;
   const firstRoot = firstState.current;
   await page.locator(".assistant-answer-bubble").getByText("总线仲裁", { exact: false }).waitFor();
+  await page.screenshot({path:'test-results/assistant-reading-panel.png'});
+  await page.locator('#assistant-panel').screenshot({path:'test-results/assistant-reading-panel-detail.png'});
   assert.equal(firstRoot.depth, 1);
   assert.equal(firstState.roots.length, 1);
   assert.equal(firstRoot.scope.key, "PAGE:302");

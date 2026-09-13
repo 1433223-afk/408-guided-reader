@@ -1312,6 +1312,8 @@ function syncModelSelector() {
     }
   }
   elements["assistant-model"].value = state.assistantActiveProvider;
+  elements["assistant-model"].closest('.assistant-model').dataset.shortName =
+    {deepseek:'DeepSeek',zhipu:'GLM-5.3',openrouter:'Gemini 3.8'}[state.assistantActiveProvider] || '选择模型';
   const rootLocked = Boolean(state.assistantState.current) && !state.assistantDraft;
   elements["assistant-model"].disabled = rootLocked || state.assistantPending;
   elements["assistant-model-lock"].hidden = !rootLocked;
@@ -1562,8 +1564,7 @@ function assistantScopeText(scope) {
   if (scope.kind === "SECTION") {
     return [scope.chapter_title, scope.section_title].filter(Boolean).join(" · ");
   }
-  const chapter = scope.chapter_title ? ` · 已安全确定 ${scope.chapter_title}` : "";
-  return `PDF 第 ${scope.pdf_page_index + 1} 页范围${chapter}`;
+  return [scope.chapter_title, `PDF ${scope.pdf_page_index + 1}`].filter(Boolean).join(" · ");
 }
 
 function applyAssistantState(nextState) {
@@ -1725,8 +1726,8 @@ function renderAssistantDraft() {
   }
   elements["assistant-title"].textContent = "问 AI";
   elements["assistant-scope"].textContent = draft.request.source_kind === "READING_GUIDE"
-    ? "准备解释导读选区" : draft.request.source_kind === "INLINE_GUIDANCE" ? "准备解释行间教学选区"
-    : `准备解释 PDF 第 ${draft.request.pdf_page_index + 1} 页选区`;
+    ? "正在解释：导读选区" : draft.request.source_kind === "INLINE_GUIDANCE" ? "正在解释：行间教学"
+    : `PDF ${draft.request.pdf_page_index + 1} · 教材选区`;
   elements["assistant-draft-text"].textContent = draft.selectedText;
   elements["assistant-first-turn"].hidden = false;
   elements["assistant-follow-up"].hidden = true;
