@@ -11,12 +11,12 @@ export function createMessageRail(scroller) {
   let messages = [], buttons = [], frame = 0, leaveTimer = 0, active = 0;
   function emphasize(position) {
     buttons.forEach((button,i) => {
-      const distance=Math.abs(i-position);
+      const distance=position===null ? Infinity : Math.abs(i-position);
       button.style.setProperty('--tick-scale',String(Math.max(4,26-distance*7)/26));
-      button.toggleAttribute('data-emphasis', i===Math.round(position));
+      button.toggleAttribute('data-emphasis', position!==null && i===Math.round(position));
     });
   }
-  function dismiss() { preview.hidden = true; buttons.forEach(b => b.removeAttribute('aria-describedby')); emphasize(active); }
+  function dismiss() { preview.hidden = true; buttons.forEach(b => b.removeAttribute('aria-describedby')); emphasize(null); }
   function show(index) {
     clearTimeout(leaveTimer);
     const message = messages[index]; if (!message) return;
@@ -37,7 +37,7 @@ export function createMessageRail(scroller) {
     active = 0;
     messages.forEach((message, i) => { if (message.question.getBoundingClientRect().top <= top) active = i; });
     buttons.forEach((button, i) => { button.setAttribute('aria-current', String(i === active)); });
-    if(preview.hidden) emphasize(active);
+    if(preview.hidden) emphasize(null);
   }
   function schedule() { if (!frame) frame = requestAnimationFrame(update); }
   function rebuild() {

@@ -378,3 +378,15 @@ instead of assuming the next-most-recent Topic is nonempty. No product workaroun
 Updated local screenshot: `test-results/master-message-rail.png`. Human screenshot/motion retest
 pending; no pixel-identical Codex claim. This is static-only; refresh 8767, no restart required.
 Broad regression: 287 Python PASS / 2 unchanged optional OCR skips.
+
+### Idle ruler correction (2026-09-14)
+
+User supplied the idle reference: all ticks must be equally short and light. Removed visual
+current-item emphasis on initial display, dismissal, and non-hover scrolling; `aria-current` still
+tracks the actual reading position. Idle ticks are all 4 px; hover/keyboard preview keeps the
+existing distance taper. No other presentation or conversation changes.
+43 JS tests PASS, with explicit idle/start/scroll/Escape checks; served real-library Composer
+browser path PASS. First browser attempt failed while copying a disappearing SQLite WAL file;
+unchanged harness rerun passed, no user-data or storage-code changes. Prior broad result above
+remains the baseline; this intermediate visual correction does not claim Phase/UAT closure.
+Static refresh only; user visual retest pending.
