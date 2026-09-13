@@ -105,6 +105,8 @@ try {
   await restored.locator('#search-toggle').click();
   await restored.locator('#search-query').fill('中断向量');
   await restored.locator('#search-form button').click();
+  await restored.locator('.search-result').first().waitFor();
+  if(process.env.READER_COLOR_CAPTURE) await restored.screenshot({path:`test-results/reader-colors-${process.env.READER_COLOR_CAPTURE}-search.png`});
   await restored.locator('.search-result').first().click();
   await restored.locator('.search-match-quad').first().waitFor();
   await restored.locator('#search-close').click();

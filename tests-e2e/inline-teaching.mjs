@@ -115,6 +115,7 @@ try {
     }
     await page.setViewportSize({width:1000,height:850}); await page.waitForTimeout(500);
     await page.locator('#inline-panel').scrollIntoViewIfNeeded();
+    if(process.env.READER_COLOR_CAPTURE) await page.screenshot({path:`test-results/reader-colors-${process.env.READER_COLOR_CAPTURE}-inline.png`});
     const panelBounds=await page.locator('#inline-panel').boundingBox();
     assert.ok(panelBounds.x+panelBounds.width<=1001, 'Teaching panel overflows narrow viewport');
     const closeBounds=await page.locator('#inline-close').boundingBox();

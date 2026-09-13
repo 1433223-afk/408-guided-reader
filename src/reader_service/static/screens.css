@@ -97,3 +97,68 @@
 .reader-kp-footer { flex-shrink:0;min-height:40px;border:0;border-top:1px solid #ccccc2;background:transparent;color:#3b5848; }
 #reader .reader-kp-list button { font:12px "Segoe UI","Microsoft YaHei UI",sans-serif;min-height:28px;padding:4px 8px;border:1px solid #c9cec3;background:#f1f2ea;color:#3b5848;cursor:pointer; }
 #reader .reader-kp-list .reader-kp-footer { min-height:40px;border-width:1px 0 0;background:transparent; }
+
+/* Reader color cleanup only: no sizing, positioning or interaction changes. */
+#reader { --reader-ink:#24352c; --reader-muted:#66756c; --reader-line:#cbd5cd; --reader-paper:#fafbf6; --reader-soft:#edf2ed; --reader-green:#315c46; --reader-active:#dceade; --reader-error:#b3313b; color:var(--reader-ink); }
+#reader :is(.search-panel,.marks-panel,.guide-panel,.assistant-panel,.reader-kp-list,.learning-marker-content,#inline-panel,#inline-menu) { color:var(--reader-ink);background-color:var(--reader-paper);border-color:var(--reader-line); }
+#reader :is(.search-form input,.assistant-follow-up textarea,.assistant-model select,.assistant-context-bar select,#master-question) { color:var(--reader-ink);background-color:var(--reader-paper);border-color:var(--reader-line); }
+#reader :is(.search-form button,.assistant-first-turn button,.assistant-follow-up button,.knowledge-prepare),#reader #inline-panel .inline-assistant-action { color:#fff;background-color:var(--reader-green);border-color:var(--reader-green); }
+#reader :is(.search-form button,.assistant-first-turn button,.assistant-follow-up button,.knowledge-prepare):hover,#reader #inline-panel .inline-assistant-action:hover { color:#fff;background-color:#254936; }
+#reader :is(.search-result,.assistant-first-turn,.assistant-pending,.learning-batch-card,.mark-card,.mark-review-summary,.assistant-question-bubble) { color:var(--reader-ink);background-color:var(--reader-soft);border-color:var(--reader-line); }
+#reader .search-result:hover { background-color:var(--reader-active);border-color:#8ba995; }
+#reader :is(.search-result strong,.mark-source-location,.assistant-save-note,.guide-source,.section-guide-entry,.memory-source-control),#reader #inline-panel button,#reader #inline-menu button,#reader #guide-actions button { color:var(--reader-green); }
+#reader :is(.dock-tabs button,.learning-marker button,.mark-review-retry,.assistant-child-list button,.assistant-context-bar button,.assistant-heading #assistant-expand),#reader #master-workspace button { color:var(--reader-green);background-color:var(--reader-soft);border-color:var(--reader-line); }
+#reader :is(.dock-tabs button,.learning-marker button,.mark-review-retry,.assistant-child-list button,.assistant-context-bar button,.assistant-heading #assistant-expand):hover,#reader #master-workspace button:hover { background-color:var(--reader-active);border-color:#8ba995; }
+#reader .dock-tabs button[aria-pressed="true"] { background-color:var(--reader-active);color:var(--reader-green);border-color:#8ba995; }
+#reader :is(.outline-target,.outline-other-toggle):hover { color:var(--reader-green);background-color:var(--reader-active); }
+#reader :is(.marks-panel-heading,.mark-quote,.mark-provenance,.assistant-heading strong,.assistant-answer-bubble,.assistant-answer-bubble h1,.assistant-answer-bubble h2,.assistant-answer-bubble h3,#inline-content) { color:var(--reader-ink); }
+#reader :is(.outline-status,.outline-target small,.outline-other-toggle,.outline-other-toggle small,.search-coverage,.marks-empty,.mark-note,.mark-provenance-question,.mark-reviewer,.mark-verification,.mark-ai-section>strong,.assistant-model,.assistant-model-lock,.assistant-context-bar label,.assistant-context-bar output,.assistant-breadcrumb,.assistant-children,.assistant-scope,.assistant-first-turn p,.assistant-first-turn p span,.assistant-empty,.assistant-lifetime,.master-lifetime,.master-message-status,.learning-batch-hint,#master-status,#guide-status,#guide-more,#inline-content>strong,#inline-close) { color:var(--reader-muted); }
+#reader :is(.inline-actions,.guide-meta,.assistant-scope,.assistant-first-turn,.assistant-follow-up,.mark-ai-section,.reader-kp-heading,.reader-kp-footer,.reader-kp-row,.outline-level .outline-level,.outline-level-0>li+li) { border-color:var(--reader-line); }
+#reader :is(.assistant-answer-bubble code,.assistant-answer-bubble pre,.guide-text code,.guide-text pre) { background-color:var(--reader-soft); }
+#reader :is(.assistant-answer-bubble td,.assistant-answer-bubble th,.guide-text td,.guide-text th) { border-color:var(--reader-line); }
+#reader #guide-more[open] #guide-actions { background-color:var(--reader-paper);border-color:var(--reader-line); }
+#reader #guide-actions button:hover { background-color:var(--reader-active); }
+#reader .assistant-resize-handle:hover::after { background-color:#8ba995; }
+#reader #guide-divider:hover,#reader #guide-divider:focus-visible { background-color:#8ba99566; }
+#reader :is(button,input,textarea,select,summary,[tabindex]):focus-visible { outline-color:#426f55; }
+#reader .toolbar button:hover,#reader .toolbar button[aria-expanded="true"],#reader .toolbar button[aria-pressed="true"] { color:var(--reader-green);background-color:var(--reader-active);border-color:#8ba995; }
+#reader .toolbar button:active { background-color:#cbded0; }
+#reader .marks-count { background-color:var(--reader-green);border-color:var(--reader-paper); }
+/* Warm yellow is reserved for small teaching/note accents, never the CTA fill. */
+#reader .inline-marker { color:var(--reader-green);background-color:#fff3b0;border-color:#ebd66a; }
+#reader .inline-marker:hover { color:var(--reader-green);background-color:#ffe77d;border-color:#d8bd43; }
+#reader .mark-card { border-left-color:#f2d65a; }
+#reader .mark-card.annotation-style-green,#reader .mark-card-ai-saved { border-left-color:#69967a; }
+#reader .mark-card.annotation-style-blue { border-left-color:#5793ce; }
+#reader .mark-card.annotation-style-none { border-left-color:var(--reader-line); }
+#reader .mark-ai-heading>strong,#reader .mark-verification-pass { color:var(--reader-green); }
+#reader .annotation-quad:not(.annotation-style-green):not(.annotation-style-blue):not(.annotation-style-none) { background-color:rgb(255 222 82 / 32%);border-bottom-color:rgb(224 190 42 / 40%); }
+/* Preserve transparent blue selection/source semantics. */
+#reader .search-match-quad { background-color:rgb(65 126 211 / 20%);box-shadow:0 0 5px rgb(65 126 211 / 16%); }
+@keyframes search-match-pulse { 45% { background-color:rgb(65 126 211 / 30%); } }
+#selection-actions { color:#f5faf5;background-color:#243b2e;border-color:#668473; }
+#selection-actions #save-highlight,#selection-actions #ask-selection,#selection-actions .note-editor button,#reader .assistant-answer-actions button { color:#fff;background-color:#315c46; }
+#selection-actions #save-highlight:hover,#selection-actions #ask-selection:hover,#selection-actions .note-editor button:hover,#reader .assistant-answer-actions button:hover { background-color:#426f55; }
+#selection-actions .style-swatch.yellow { background-color:#ffe052; }
+#reader .assistant-answer-actions { background-color:#243b2e; }
+/* Error/destructive red; waiting and unconfirmed states remain neutral. */
+#reader :is(.assistant-error,.assistant-readiness,.local-error,.mark-remove,.mark-verification-fail,.mark-verification-technical_failure,.preparation-retry,#assistant-close-root) { color:var(--reader-error); }
+#reader .assistant-error,#reader .preparation-retry { background-color:#fff0f1;border-color:#ecc1c6; }
+#reader #assistant-close-root:hover { background-color:#fff0f1;border-color:#ecc1c6; }
+#reader :is(.assistant-render-limit,.kp-state.NOT_FULLY_CLEAR) { color:var(--reader-muted); }
+body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
+
+#reader .inline-marker[aria-expanded="true"] { color:var(--reader-green);background-color:var(--reader-active);border-color:#8ba995; }
+#reader #reader-kp-action[data-status="FAILED"] { color:var(--reader-error);border-color:#ecc1c6; }
+#reader :is(.eyebrow,.reader-controls,.page-control,.preparation-status,.learning-batch-stats,.assistant-model select:disabled) { color:var(--reader-muted); }
+#reader .preparation-status.failed { color:var(--reader-error); }
+#reader .preparation-status.ready { color:var(--reader-green); }
+#reader .learning-batch-card button { color:var(--reader-green);background-color:var(--reader-soft);border-color:var(--reader-line); }
+#reader .learning-batch-card button:hover { background-color:var(--reader-active); }
+#reader .learning-marker summary,#reader .section-guide-entry { color:var(--reader-green);background-color:var(--reader-paper);border-color:var(--reader-line); }
+#reader .learning-marker summary:hover,#reader .learning-marker[open] summary { background-color:var(--reader-active); }
+#reader .assistant-breadcrumb button:last-child { color:var(--reader-green); }
+#reader #inline-panel #inline-close { color:var(--reader-muted); }
+#reader .marks-panel-heading button { color:var(--reader-muted); }
+
+#reader #marks-panel .mark-verification-pass { color:var(--reader-green); }
