@@ -9,7 +9,7 @@ export function createMessageRail(scroller) {
   preview.id = `${scroller.id}-preview`; preview.setAttribute('role', 'tooltip'); preview.hidden = true;
   shell.append(rail, preview);
   let messages = [], buttons = [], frame = 0, leaveTimer = 0;
-  function dismiss() { preview.hidden = true; buttons.forEach(b => b.removeAttribute('aria-describedby')); }
+  function dismiss() { preview.hidden = true; buttons.forEach(b => { b.removeAttribute('aria-describedby'); b.style.removeProperty('--tick-scale'); }); }
   function show(index) {
     clearTimeout(leaveTimer);
     const message = messages[index]; if (!message) return;
@@ -61,6 +61,13 @@ export function createMessageRail(scroller) {
     const i = buttons.indexOf(document.activeElement);
     const next = {ArrowDown: Math.min(i + 1, buttons.length - 1), ArrowUp: Math.max(0, i - 1), Home: 0, End: buttons.length - 1}[event.key];
     if (next !== undefined) { event.preventDefault(); buttons.forEach((b, n) => { b.tabIndex = n === next ? 0 : -1; }); buttons[next]?.focus(); }
+  };
+  rail.onpointermove = event => {
+    const centers = buttons.map(button => { const r=button.getBoundingClientRect(); return r.top+r.height/2; });
+    buttons.forEach((button,i) => {
+      const influence=Math.max(0,1-Math.abs(event.clientY-centers[i])/48);
+      button.style.setProperty('--tick-scale',String(1+influence*0.65));
+    });
   };
   shell.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
   shell.addEventListener('pointerleave', dismiss);
@@ -341,7 +348,7 @@ export function createComposerChoice(select, {id, label, names}) {
   select.closest('.assistant-model').hidden = true;
   function close(restore = false) { list.hidden = true; trigger.setAttribute('aria-expanded','false'); if(restore) trigger.focus(); }
   function sync() {
-    trigger.textContent = `${names[select.value] || label} ▾`;
+    trigger.textContent = names[select.value] || label;
     trigger.disabled = false; trigger.title = select.title;
     list.replaceChildren(...[...select.options].map(option => {
       const item = node('button', option.textContent); item.type = 'button'; item.tabIndex = -1;

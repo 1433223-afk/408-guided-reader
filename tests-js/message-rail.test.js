@@ -12,6 +12,9 @@ test('message ruler previews plain text, navigates locally by keyboard and drops
     await page.evaluate(()=>createMessageRail(document.querySelector('#history')));
     const ticks=page.locator('.message-rail button');
     assert.equal(await ticks.count(),2);
+    await ticks.first().hover();
+    assert.ok(Number(await ticks.first().evaluate(el=>el.style.getPropertyValue('--tick-scale')))>1);
+    assert.ok(Number(await ticks.nth(1).evaluate(el=>el.style.getPropertyValue('--tick-scale')))>1);
     await ticks.first().focus();
     assert.match(await page.locator('#history-preview').textContent(),/为什么/);
     assert.match(await page.locator('#history-preview').textContent(),/解释一/);

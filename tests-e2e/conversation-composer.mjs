@@ -45,8 +45,13 @@ try {
     } catch(error) { if(attempt===2) throw error; }
   }
   await page.locator('#master-form').waitFor({state:'visible'});
+  const compactHeight=await page.locator('#master-question').evaluate(el=>el.getBoundingClientRect().height);
+  await page.locator('#master-question').fill(Array(12).fill('输入框随内容增长').join('\n'));
+  assert.ok(await page.locator('#master-question').evaluate(el=>el.getBoundingClientRect().height)>compactHeight);
+  await page.locator('#master-question').fill('');
+  assert.equal(await page.locator('#master-question').evaluate(el=>el.getBoundingClientRect().height),compactHeight);
   assert.equal(await page.locator('#master-mode').isHidden(),true);
-  assert.equal(await page.locator('#master-review-trigger').textContent(),'标准 ▾');
+  assert.equal(await page.locator('#master-review-trigger').textContent(),'标准');
   await page.locator('#master-review-trigger').click();
   await page.locator('#master-review-options [data-value="Deep"]').click();
   assert.equal(await page.locator('#master-mode').inputValue(),'Deep');
@@ -110,12 +115,17 @@ try {
   const snapshot=await (await snapshotResponse).json();
   await page.locator(`#master-topic-list [data-topic-id="${otherId}"][aria-current="true"]`).waitFor();
   assert.deepEqual(await page.locator('#master-history .master-message').evaluateAll(items=>items.map(item=>item.dataset.messageId)),snapshot.messages.filter(message=>message.topic_id===otherId).map(message=>message.id));
-  const reviewDetails=page.locator('.master-message-details').first();
+  const reviewDetails=page.locator('.master-review-popover');
   assert.equal(await reviewDetails.getByText('测试审查暂不可用',{exact:true}).isHidden(),true);
-  await reviewDetails.locator('summary').click();
+  await page.locator('#master-history').getByRole('button',{name:'审查详情',exact:true}).first().click();
   assert.equal(await reviewDetails.getByText('测试审查暂不可用',{exact:true}).isVisible(),true);
-  assert.equal(await page.locator('#master-history').getByRole('button',{name:'重试审查',exact:true}).isVisible(),true);
-  await reviewDetails.locator('summary').click();
+  await page.screenshot({path:'test-results/master-review-popover.png'});
+  assert.equal(await page.locator('#master-history').getByRole('button',{name:'重试',exact:true}).isVisible(),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await reviewDetails.isHidden(),true);
+  await page.locator('#master-history').getByRole('button',{name:'审查详情',exact:true}).first().click();
+  await reviewDetails.getByRole('button',{name:'关闭',exact:true}).click();
+  assert.equal(await reviewDetails.isHidden(),true);
   await page.unroute('**/learning/*',reviewFixture);
   if(snapshot.topics.find(topic=>topic.id===otherId).state==='RESOLVED') {
     assert.equal(await page.locator('#master-form').isHidden(),true);
@@ -136,7 +146,12 @@ try {
   await rail.locator('button').first().focus();
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(()=>document.querySelector('#master-history').scrollTop<40);
+  await page.waitForFunction(()=>{
+    const history=document.querySelector('#master-history');
+    const target=[...history.querySelectorAll('.assistant-question-bubble')].at(-1);
+    const offset=target.getBoundingClientRect().top-history.getBoundingClientRect().top;
+    return Math.abs(offset-16)<3 || history.scrollTop+history.clientHeight>=history.scrollHeight-2;
+  });
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#master-history-preview').isHidden(),true);
   assert.equal(await page.locator('#master-history .assistant-answer-bubble').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');

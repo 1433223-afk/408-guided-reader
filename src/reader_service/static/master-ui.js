@@ -23,7 +23,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   tabs.setAttribute("aria-label", "AI 工作区");
   const assistantTab = button("解释 Assistant", () => select(false));
   const masterTab = button("学习 Master", () => select(true));
-  const close = button("收起", () => openDock(false));
+  const close = button("收起", () => { reviewPopover.hidePopover(); openDock(false); });
   const expand = button("展开", () => toggleExpanded());
   expand.id = 'master-expand'; expand.setAttribute('aria-pressed', 'false');
   expand.setAttribute('aria-label', '展开 Master 工作区');
@@ -67,6 +67,21 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   topicMenu.append(el('confirm'), unclearAction, topicMemory, resume);
   topicActions.append(el('title'), topicMenu); conversation.prepend(topicActions);
   createMessageRail(el('history'));
+  const reviewPopover=document.createElement('div'); reviewPopover.className='master-review-popover';
+  reviewPopover.setAttribute('popover','auto'); reviewPopover.setAttribute('role','dialog');
+  reviewPopover.setAttribute('aria-label','审查详情'); panel.append(reviewPopover);
+  function showReview(message, trigger) {
+    const heading=document.createElement('strong'); heading.textContent='审查详情';
+    const dismiss=button('关闭',()=>reviewPopover.hidePopover());
+    const metadata=document.createElement('p');
+    metadata.textContent=`${REVIEW[message.review_state]} · ${message.provider} / ${message.model}${message.reviewer_provider ? ` · ${message.reviewer_provider} / ${message.reviewer_model}` : ''}`;
+    const detail=document.createElement('p'); detail.textContent=message.detail || '';
+    reviewPopover.replaceChildren(heading,dismiss,metadata,detail);
+    reviewPopover.showPopover();
+    const rect=trigger.getBoundingClientRect();
+    reviewPopover.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-reviewPopover.offsetWidth-8))}px`;
+    reviewPopover.style.top=`${Math.max(8,Math.min(rect.bottom+8,innerHeight-reviewPopover.offsetHeight-8))}px`;
+  }
   createComposerChoice(el('mode'), {id:'master-review', label:'审查强度',
     names:{Fast:'快速', Standard:'标准', Deep:'深入'}});
   const post = (path, body = {}) => api(path, { method: "POST", body: JSON.stringify(body) });
@@ -74,6 +89,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   const base = (id = current && scopeId(current.point)) => `/api/revisions/${revision()}/learning/${id}`;
 
   function select(master) {
+    if(!master) reviewPopover.hidePopover();
     dock.classList.toggle("master-active", master);
     panel.hidden = !master;
     assistantTab.setAttribute("aria-pressed", String(!master));
@@ -117,6 +133,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     for (const page of pages.children) if (page.querySelector("canvas")) renderPage(Number(page.dataset.index));
   }
   async function open(point, unclear = false, topicId = null) {
+    reviewPopover.hidePopover();
     unclearAction.hidden=true; topicMemory.replaceChildren();
     if(current) topicDrafts.set(scopeId(current.point), {text:el('question').value,scroll:el('history').scrollTop,intent:sendIntent});
     const request = ++generation;
@@ -150,13 +167,11 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     if(!selectedTopicId && !composingNew) selectedTopicId=active?.id || current.topics.at(-1)?.id || null;
     const historical=expanded && !composingNew && selectedTopicId && current.topics.find(t=>t.id===selectedTopicId)?.state!=='ACTIVE';
     renderTopicList();
-    el("status").textContent = `${STATUS[current.status]} · ${active ? "当前话题待解决" : "当前没有未解决话题"}`;
-    if(historical) el('status').textContent='已解决的话题 · 历史记录';
-    if(expanded && composingNew) el('status').textContent='继续提问将开启新一轮话题，已有历史保留。';
+    el("status").textContent = '';
     const reviewing = current.messages.some(m => m.review_state === "PENDING");
     const generating = current.messages.some(m => m.state === "PENDING");
     el("status").classList.toggle("ai-progress", reviewing || generating);
-    if (reviewing || generating) el("status").textContent += reviewing ? " · 审查中" : " · 生成中";
+    if (generating) el("status").textContent = '正在回答…';
     const history = el("history");
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
     const visibleMessages=expanded ? current.messages.filter(message=>!composingNew && message.topic_id===selectedTopicId) : current.messages;
@@ -164,7 +179,6 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     topicMemory.replaceChildren();
     const latestAnswer=visibleMessages.findLast(message=>message.role==='assistant' && message.state==='COMPLETE');
     if(latestAnswer) topicMemory.append(memoryControl(revision(),'MASTER',latestAnswer.id));
-    const expandedDetails = new Set([...history.querySelectorAll('.master-message-details[open]')].map(detail=>detail.closest('[data-message-id]').dataset.messageId));
     const rendered = visibleMessages.map((message) => {
       const row = document.createElement("article");
       row.dataset.messageId = message.id;
@@ -179,27 +193,24 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       metadata.textContent = message.role === "user"
         ? ({ PENDING: "问题已保存 · 正在回答", FAILED: "发送未完成 · 问题已保留", COMPLETE: "" }[message.state])
         : `${message.provider} · ${message.model} · ${REVIEW[message.review_state]}${message.reviewer_provider ? ` · ${message.reviewer_provider} / ${message.reviewer_model}` : ""}`;
-      const disclosure = document.createElement('details'); disclosure.className='master-message-details';
-      disclosure.open = expandedDetails.has(message.id);
-      const summary = document.createElement('summary');
-      summary.textContent = message.review_state === 'FAIL' ? '内容审查未通过 · 详情'
-        : message.review_state === 'TECHNICAL_FAILURE' ? '审查暂未完成，可稍后重试'
-        : message.review_state === 'PENDING' ? '正在审查' : '回答详情与操作';
-      if (message.role === 'assistant') { disclosure.append(summary, metadata); row.append(disclosure); }
-      else if(metadata.textContent) row.append(metadata);
-      const secondary = message.role === 'assistant' ? disclosure : row;
-      if (message.role === 'assistant' && message.state === 'COMPLETE') {
-        secondary.append(memoryControl(revision(), 'MASTER', message.id));
-      }
-      if (message.detail) {
-        const detail = document.createElement("p");
-        detail.className = "master-message-status";
-        detail.textContent = message.detail;
-        secondary.append(detail);
+      const actions=document.createElement('div'); actions.className='master-answer-actions';
+      if(message.role==='assistant') {
+        const status=document.createElement('span');
+        status.textContent=message.review_state==='TECHNICAL_FAILURE' ? '审查暂未完成' : message.review_state==='FAIL' ? '内容审查未通过' : '';
+        if(status.textContent) actions.append(status);
+        if(message.review_state!=='NOT_REQUESTED') {
+          const more=button('审查详情',()=>showReview(message,more));
+          more.setAttribute('aria-haspopup','dialog'); actions.append(more);
+        }
+        if(message.state==='COMPLETE' && message.id!==latestAnswer?.id) actions.append(memoryControl(revision(),'MASTER',message.id));
+      } else {
+        if(metadata.textContent) row.append(metadata);
+        if(message.detail) { const detail=document.createElement('p'); detail.textContent=message.detail; row.append(detail); }
       }
       if (message.state === "FAILED" || ["FAIL", "TECHNICAL_FAILURE"].includes(message.review_state)) {
-        row.append(button(message.role === "user" ? "重试发送" : "重试审查", () => act("retry", { message_id: message.id })));
+        actions.append(button(message.role === "user" ? "重试发送" : "重试", () => act("retry", { message_id: message.id })));
       }
+      if(actions.childNodes.length) row.append(actions);
       return row;
     });
     history.replaceChildren(...rendered);
@@ -399,6 +410,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     if (saved?.thread_id) item.append(button("继续 Master 对话", () => open(point)));
   }
   function reset() {
+    reviewPopover.hidePopover();
     ++generation;
     clearTimeout(poll);
     current = null;

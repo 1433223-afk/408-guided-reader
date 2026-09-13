@@ -42,7 +42,7 @@ export function createAssistantNavigator(panel, focus) {
     for (const key of collapsed) if (!liveKeys.has(key)) collapsed.delete(key);
     snapshot = state;
     const current = state.current;
-    trigger.textContent = `${current?.label || '解释主题'} ▾`; trigger.title = current?.label || '解释主题';
+    trigger.textContent = current?.label || '解释主题'; trigger.title = current?.label || '解释主题';
     if (reveal) for (const crumb of current?.breadcrumb || []) collapsed.delete(`${crumb.root_id}:${crumb.node_id || ''}`);
     const fragment = document.createDocumentFragment();
     function row(root, node, depth) {
@@ -56,7 +56,7 @@ export function createAssistantNavigator(panel, focus) {
       if(children.length) item.setAttribute('aria-expanded', String(!collapsed.has(key)));
       item.style.paddingInlineStart = `${12 + (depth - 1) * 24}px`;
       item.style.setProperty('--branch-inset', `${12 + (depth - 2) * 24 + 5}px`);
-      const caret = document.createElement('span'); caret.textContent = children.length ? collapsed.has(key) ? '▸' : '▾' : '·'; caret.setAttribute('aria-hidden','true');
+      const caret = document.createElement('span'); caret.textContent = children.length ? collapsed.has(key) ? '+' : '−' : '·'; caret.setAttribute('aria-hidden','true');
       const label = document.createElement('span'); label.textContent = node?.label || root.label;
       item.title = label.textContent; item.append(caret, label);
       if(node?.pending) item.setAttribute('aria-busy','true');

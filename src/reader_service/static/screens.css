@@ -379,20 +379,12 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader.assistant-expanded #master-history .assistant-question-bubble { width:fit-content; max-width:80%; margin:8px 0 14px auto; padding:10px 14px; }
 #reader.assistant-expanded #master-history .master-message-status { font-size:11px; opacity:.8; }
 #reader.assistant-expanded .master-conversation #master-confirm { width:auto; margin-top:0; margin-bottom:0; }
-#reader.assistant-expanded .master-conversation .master-lifetime { font-size:11px; margin-bottom:8px; }
 @media (max-width:900px) { #reader.assistant-expanded #master-workspace > #master-topic-sidebar { flex-basis:200px; width:200px; } }
 
 /* Quiet conversation surfaces; the answer is prose, not a colored card. */
 .message-scroll-shell { display:contents; }
 .message-rail,.message-rail-preview { display:none; }
 .master-topic-actions { display:flex; align-items:center; justify-content:space-between; gap:16px; }
-.master-topic-menu { position:relative; flex-shrink:0; font-size:12px; }
-.master-topic-menu > summary { cursor:pointer; color:#657167; }
-.master-topic-menu[open] { padding:8px; border:1px solid #dce2dc; border-radius:8px; background:#fff; }
-.master-topic-menu .master-lifetime { max-width:240px; }
-.master-message-details { margin-top:12px; font-size:12px; color:#657167; }
-.master-message-details > summary { cursor:pointer; width:fit-content; }
-#reader .master-message-details button { background:transparent; font-size:12px; }
 #reader.assistant-expanded :is(.assistant-answer-bubble,.master-message) { background:transparent; border:0; box-shadow:none; }
 #reader.assistant-expanded .assistant-answer-bubble { padding:0; }
 #reader.assistant-expanded .assistant-question-bubble { background:#eef0ed; border:0; border-radius:16px; }
@@ -422,9 +414,6 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader.assistant-expanded #assistant-panel :is(#master-question,#assistant-question) { border:0; border-radius:0; background:transparent; box-shadow:none; }
 #reader.assistant-expanded #assistant-panel .message-rail button { background:transparent; border:0; }
 #reader.assistant-expanded .master-topic-actions { position:relative; padding-right:90px; min-height:28px; }
-#reader.assistant-expanded .master-topic-menu { position:absolute; right:0; top:0; z-index:7; }
-#reader.assistant-expanded .master-topic-menu[open] { width:260px; box-sizing:border-box; box-shadow:0 4px 18px #24352912; }
-#reader.assistant-expanded .master-topic-menu > :not(summary) { margin-top:12px; }
 #reader #master-workspace .assistant-answer-bubble { background:transparent; border:0; box-shadow:none; padding:0; }
 #reader #master-workspace .assistant-question-bubble { background:#eef0ed; border:0; border-radius:14px; }
 #reader #master-workspace .master-message > button { background:transparent; border:0; font-size:12px; padding:5px 0; }
@@ -436,3 +425,14 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 .message-tick::after { transition:width 130ms ease-out,background-color 130ms ease-out; }
 @keyframes conversation-preview-in { from { opacity:0; transform:translateX(-3px); } to { opacity:1; transform:translateX(0); } }
 @media (prefers-reduced-motion:reduce) { .message-rail-preview:not([hidden]) { animation:none; } .message-tick::after { transition:none; } }
+
+/* Compact composers and secondary actions, scoped to the two AI workspaces. */
+#reader #assistant-panel :is(#master-question,#assistant-question) { field-sizing:content; height:auto; min-height:28px; max-height:180px; overflow-y:auto; resize:none; }
+#reader #master-status:empty { display:none; }
+.master-answer-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; margin-top:10px; font-size:12px; color:#6a756c; }
+#reader #master-workspace .master-answer-actions button { border:0; background:transparent; padding:2px 0; font-size:12px; font-weight:400; }
+#reader #master-workspace .master-review-popover { position:fixed; margin:0; width:min(360px,calc(100vw - 32px)); max-height:60vh; overflow:auto; padding:16px; border:1px solid #dce2dc; border-radius:12px; background:#fff; color:#39443b; box-shadow:0 5px 24px #24352918; font-size:12px; }
+.master-review-popover > button { float:right; }
+.master-review-popover p { line-height:1.65; overflow-wrap:anywhere; }
+.message-tick::after { transform:scaleX(var(--tick-scale,1)); transition:transform 160ms cubic-bezier(.2,.7,.25,1),width 160ms ease-out,background-color 160ms ease-out; }
+@media (prefers-reduced-motion:reduce) { .message-tick::after { transition:none; } }

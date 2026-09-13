@@ -316,3 +316,44 @@ Screenshots: `test-results/master-narrow-quiet.png`, `master-message-rail.png` (
 8767 restarted with the original data path and unchanged default role configuration; original two
 books and static HTTP 200 verified. Temporary Assistant clears on restart by design. Human retest
 pending; if Zhipu fails again, its exact operation/error is still needed to diagnose that failure.
+
+## UI deletion pass / non-disclosure controls (2026-09-13)
+
+User explicitly retained Master's service-level fixed provider; no model selector, provider routing
+or request/persistence contract change was made. This correction is static UI only.
+
+Deleted the redundant Master status line in idle state, default PASS/not-requested review prose,
+the duplicated latest-answer memory action (title action remains), and unused topic/review
+disclosure CSS. Older answers retain their own memory action because they target different assets.
+Required send errors and generating feedback remain. Technical Review failures show only
+`审查暂未完成` and `重试`; content FAIL remains explicitly distinct. PASS has no status block.
+`审查详情` is a plain button opening a bounded native popover containing technical metadata/reason,
+with Escape, outside dismissal and Close. Topic/Reader changes dismiss it. No Review data is altered.
+Composer review strength and Assistant model triggers have no triangle suffix; Assistant tree
+collapse uses plus/minus, keeping hierarchy and keyboard semantics. No new toolbar/model label.
+
+Both composers use native content-sized textareas (28 px minimum, 180 px maximum before scrolling),
+which also size correctly when drafts are restored programmatically. Master narrow answers remain
+transparent prose and user questions remain light containers. Topic confirmation/unclear/memory
+actions remain next to the title with their existing authority.
+
+Additional public prior-art inspection: Magic UI `apps/www/registry/magicui/dock.tsx`,
+https://github.com/magicuidesign/magicui — distance-based neighboring magnification and return
+motion. The initial Aceternity source URL was unavailable, not treated as evidence. Borrowed only
+the distance-decay interaction concept; no React/Motion dependency or external code adopted.
+Ruler lines now scale according to pointer distance over 48 px with restrained 160 ms easing;
+neighbors participate, hit targets stay fixed, and reduced motion suppresses transitions.
+Paired question/answer excerpts, current-item state and container-local positioning are unchanged.
+UI/UX skill informed accessible dismissal, content sizing and non-hover-only operation.
+
+Validation: 43 frontend tests PASS (including neighbor scale and paired navigation checks);
+287 Python PASS / 2 existing optional OCR skips. Real 348-page isolated-library browser harnesses
+`conversation-composer.mjs`, `assistant-workspace.mjs`, `assistant-rendering.mjs` PASS. Tests cover
+textarea grow/shrink, actual detail button/Close/Escape, retained failure retry, narrow transparency,
+topic/recursive navigation, scroll/draft preservation, right-edge scroll and mode reversal.
+One harness assumption that a topic had only one question was corrected to verify positioning at
+the actual last question in the newer real-library copy. No production workaround for that test.
+Screenshots inspected: `test-results/master-review-popover.png`, `master-message-rail.png`.
+Mock/AI-off only, no real provider calls or original-library writes. 8767 static HTTP 200 and original
+two books verified; refresh only. No Frozen/KP-entry/other Reader structure changes, no independent
+review, no closure. READY_FOR_USER_RETEST.
