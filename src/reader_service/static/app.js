@@ -1,4 +1,4 @@
-import {createScreens, createChapterEntry, createAssistantModelMenu, header, action} from "/screens.js";
+import {createScreens, createChapterEntry, createAssistantModelMenu, createMessageRail, header, action} from "/screens.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
 import {
   lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
@@ -20,6 +20,7 @@ const elements = Object.fromEntries(
 
 const assistantModelMenu = createAssistantModelMenu(elements["assistant-model"]);
 const assistantNavigator = createAssistantNavigator(elements["assistant-panel"], (...args) => focusAssistant(...args));
+createMessageRail(elements['assistant-turns']);
 const modelControl = document.querySelector('.assistant-model-control');
 
 const query = new URLSearchParams(location.search);

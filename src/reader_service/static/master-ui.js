@@ -1,5 +1,5 @@
 import { renderAssistantAnswer } from "/assistant-render.js";
-import { createComposerChoice } from "/screens.js";
+import { createComposerChoice, createMessageRail } from "/screens.js";
 
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 const REVIEW = { NOT_REQUESTED: "快速 · 未独立审查", PENDING: "审查中", PASS: "审查通过", FAIL: "审查未通过", TECHNICAL_FAILURE: "审查技术失败" };
@@ -60,6 +60,12 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     composingNew=!selectedTopicId; render(); el('question').focus();
   });
   resume.id='master-resume-topic'; resume.hidden=true; el('form').before(resume);
+  const topicActions = document.createElement('div'); topicActions.className='master-topic-actions';
+  const topicMenu = document.createElement('details'); topicMenu.className='master-topic-menu';
+  const topicSummary = document.createElement('summary'); topicSummary.textContent='主题操作';
+  topicMenu.append(topicSummary, el('confirm'), resume, panel.querySelector('.master-lifetime'));
+  topicActions.append(el('title'), topicMenu); conversation.prepend(topicActions);
+  createMessageRail(el('history'));
   createComposerChoice(el('mode'), {id:'master-review', label:'审查强度',
     names:{Fast:'快速', Standard:'标准', Deep:'深入'}});
   const post = (path, body = {}) => api(path, { method: "POST", body: JSON.stringify(body) });
@@ -110,6 +116,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     for (const page of pages.children) if (page.querySelector("canvas")) renderPage(Number(page.dataset.index));
   }
   async function open(point, unclear = false, topicId = null) {
+    topicMenu.open = false;
     if(current) topicDrafts.set(scopeId(current.point), {text:el('question').value,scroll:el('history').scrollTop,intent:sendIntent});
     const request = ++generation;
     clearTimeout(poll);
@@ -152,6 +159,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     const history = el("history");
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
     const visibleMessages=expanded ? current.messages.filter(message=>!composingNew && message.topic_id===selectedTopicId) : current.messages;
+    const expandedDetails = new Set([...history.querySelectorAll('.master-message-details[open]')].map(detail=>detail.closest('[data-message-id]').dataset.messageId));
     const rendered = visibleMessages.map((message) => {
       const row = document.createElement("article");
       row.dataset.messageId = message.id;
@@ -166,24 +174,26 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       metadata.textContent = message.role === "user"
         ? ({ PENDING: "问题已保存 · 正在回答", FAILED: "发送未完成 · 问题已保留", COMPLETE: "" }[message.state])
         : `${message.provider} · ${message.model} · ${REVIEW[message.review_state]}${message.reviewer_provider ? ` · ${message.reviewer_provider} / ${message.reviewer_model}` : ""}`;
-      row.append(metadata);
+      const disclosure = document.createElement('details'); disclosure.className='master-message-details';
+      disclosure.open = expandedDetails.has(message.id);
+      const summary = document.createElement('summary');
+      summary.textContent = message.review_state === 'FAIL' ? '审查未通过 · 查看详情'
+        : message.review_state === 'TECHNICAL_FAILURE' ? '审查未完成 · 查看详情'
+        : message.review_state === 'PENDING' ? '正在审查' : '回答详情与操作';
+      if (message.role === 'assistant') { disclosure.append(summary, metadata); row.append(disclosure); }
+      else if(metadata.textContent) row.append(metadata);
+      const secondary = message.role === 'assistant' ? disclosure : row;
       if (message.role === 'assistant' && message.state === 'COMPLETE') {
-        row.append(memoryControl(revision(), 'MASTER', message.id));
+        secondary.append(memoryControl(revision(), 'MASTER', message.id));
       }
       if (message.detail) {
         const detail = document.createElement("p");
         detail.className = "master-message-status";
         detail.textContent = message.detail;
-        if (message.role === "assistant" && message.review_state === "PASS") {
-          const disclosure = document.createElement("details");
-          const summary = document.createElement("summary");
-          summary.textContent = "审查说明";
-          disclosure.append(summary, detail);
-          row.append(disclosure);
-        } else row.append(detail);
+        secondary.append(detail);
       }
       if (message.state === "FAILED" || ["FAIL", "TECHNICAL_FAILURE"].includes(message.review_state)) {
-        row.append(button(message.role === "user" ? "重试发送" : "重试审查", () => act("retry", { message_id: message.id })));
+        secondary.append(button(message.role === "user" ? "重试发送" : "重试审查", () => act("retry", { message_id: message.id })));
       }
       return row;
     });

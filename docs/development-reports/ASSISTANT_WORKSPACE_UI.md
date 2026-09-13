@@ -212,3 +212,48 @@ Port 8767 restarted with the same invocation/data directory to load the new read
 Original library still contains two books; Master module/CSS HTTP 200, Topic projection populated.
 Restart clears temporary Assistant state by design, not durable books/notes/Master history.
 No Frozen changes, independent review or human acceptance claimed. READY_FOR_USER_RETEST.
+
+## Quiet expanded UI and message ruler (2026-09-13, user retest pending)
+
+User confirmed the screenshot means a message-position ruler: hover preview, click to navigate,
+and scroll-following current position within the current Topic/Node. Implemented in
+`screens.js:createMessageRail`, mounted once for Assistant and Master. It observes only the
+mounted conversation, previews bounded plain text (240 characters, four visible lines), and
+scrolls only that conversation's existing scrollport. It neither fetches historical nodes nor
+calls providers or persists content. Current-node replacement rebuilds ticks and clears old previews.
+Arrow/Home/End navigation, Enter, Escape, focus preview and reduced-motion behavior are included.
+Ticks remain separate from the full Topic/Root/Child navigator; no new conversation semantics.
+
+Prior-art source inspection (patterns only, no code/dependencies adopted):
+- LobeChat `src/features/Conversation/ChatList/hooks/useConversationScroll.ts` and
+  `useTopicScrollPersist.ts` at https://github.com/lobehub/lobe-chat: container-scoped message
+  lookup and layout-aware scroll handling. Their React/virtua and localStorage approach was not adopted.
+- VS Code `src/vs/editor/browser/viewParts/overviewRuler/overviewRuler.ts` at
+  https://github.com/microsoft/vscode: separate overview presentation from scroll/content ownership.
+These are analogous implementations, not the screenshot's Codex source. No pixel-identical or
+internal-Codex implementation claim. UI/UX skill informed keyboard access, focus and reading measure.
+
+Expanded answers now use transparent backgrounds without card borders. Questions retain a quiet
+neutral bubble; Composer has one unified border with mode controls inside. Master topic confirmation,
+historical continuation and lifetime explanation move to `主题操作`; no action or authority is removed.
+Answer metadata, provider/reviewer chain, detailed diagnostics, learning-memory action and review
+retry live under a native disclosure. Failed/unfinished review retains an honest short visible label;
+user send failures and generating states remain actionable. Open answer disclosures survive polling.
+Other Reader regions, providers, durability, mastery, Frozen documents and source geometry unchanged.
+
+Validation: 43 JavaScript tests PASS, including new message-ruler keyboard/local-scroll/cleanup test;
+broad Python 286 PASS / 2 unchanged optional OCR skips. Real 348-page isolated-library browser paths:
+`conversation-composer.mjs` PASS (Topic isolation, pointer preview, keyboard positioning, transparent
+answer/single Composer border, controlled technical-review failure disclosure/retry visibility,
+draft preservation, right-edge scroll and expand/restore); `assistant-workspace.mjs` PASS
+(current-Node tick count/preview, recursive selection, sibling/Root isolation, draft/scroll recovery);
+`assistant-rendering.mjs` PASS (Markdown/math/sanitizer and selection mapping). Local mocks/AI-off
+only; no real provider calls or original-library writes. Test fixtures are not user conversation data.
+
+Visual evidence: `test-results/master-message-rail.png`, `master-topics-history.png`,
+`ask-deeper-expanded-chat-layout.png` (local only). Corrected an old max-width selector that
+initially constrained the new scroll wrapper; both outer edges now remain at the viewport edge.
+Limitations: previews are excerpts, not generated summaries; very long tick lists scroll locally;
+no pixel-level Codex parity or large-history performance benchmark is claimed. Human visual and
+interaction acceptance remains pending. No independent review or closure.
+8767 serves updated scripts/CSS HTTP 200 and original two books; static-only refresh, no restart.

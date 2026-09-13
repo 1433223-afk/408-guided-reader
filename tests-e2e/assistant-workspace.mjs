@@ -185,6 +185,13 @@ try {
   await page.locator('#assistant-turns').evaluate(el => { el.style.maxHeight=''; });
   await page.locator('#assistant-expand').click();
   assert.equal(await page.locator('#assistant-turns').evaluate(el => Math.round(el.getBoundingClientRect().right)), VIEWPORT_WIDTH);
+  const messageRail=page.locator('.assistant-conversation .message-rail');
+  assert.equal(await messageRail.locator('button').count(),reopened.current.turns.length*2);
+  await messageRail.locator('button').first().hover();
+  await page.locator('#assistant-turns-preview').waitFor({state:'visible'});
+  await messageRail.locator('button').first().focus();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#assistant-turns-preview').isHidden(),true);
   assert.ok(await page.locator('#assistant-turns').evaluate(el => el.scrollHeight>el.clientHeight));
   await page.locator('#assistant-turns').hover(); await page.mouse.wheel(0,350);
   await page.waitForFunction(()=>document.querySelector('#assistant-turns').scrollTop>0);

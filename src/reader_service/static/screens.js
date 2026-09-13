@@ -1,4 +1,74 @@
 // Reversible view state only. Source targets and learning state come from their owners.
+// A view-only ruler over the currently mounted conversation; never fetches history.
+export function createMessageRail(scroller) {
+  const shell = document.createElement('div'); shell.className = 'message-scroll-shell';
+  scroller.before(shell); shell.append(scroller);
+  const rail = document.createElement('nav'); rail.className = 'message-rail';
+  rail.setAttribute('aria-label', '当前会话消息定位');
+  const preview = document.createElement('div'); preview.className = 'message-rail-preview';
+  preview.id = `${scroller.id}-preview`; preview.setAttribute('role', 'tooltip'); preview.hidden = true;
+  shell.append(rail, preview);
+  let messages = [], buttons = [], frame = 0, leaveTimer = 0;
+  function dismiss() { preview.hidden = true; buttons.forEach(b => b.removeAttribute('aria-describedby')); }
+  function show(index) {
+    clearTimeout(leaveTimer);
+    const message = messages[index]; if (!message) return;
+    dismiss();
+    const title = document.createElement('strong'); title.textContent = message.matches('.assistant-question-bubble') ? '你的提问' : '回答';
+    const text = document.createElement('p'); text.textContent = message.textContent.trim().slice(0, 240) || '（空消息）';
+    preview.replaceChildren(title, text); preview.hidden = false;
+    buttons[index].setAttribute('aria-describedby', preview.id);
+    const y = buttons[index].getBoundingClientRect().top - shell.getBoundingClientRect().top;
+    preview.style.top = `${Math.max(0, Math.min(y, shell.clientHeight - preview.offsetHeight))}px`;
+  }
+  function update() {
+    frame = 0;
+    if (!scroller.clientHeight || !messages.length) return;
+    const top = scroller.getBoundingClientRect().top + 32;
+    let active = 0;
+    messages.forEach((message, i) => { if (message.getBoundingClientRect().top <= top) active = i; });
+    buttons.forEach((button, i) => { button.setAttribute('aria-current', String(i === active)); });
+  }
+  function schedule() { if (!frame) frame = requestAnimationFrame(update); }
+  function rebuild() {
+    const focused = buttons.indexOf(document.activeElement);
+    dismiss();
+    preview.replaceChildren();
+    messages = [...scroller.querySelectorAll('.assistant-question-bubble, .assistant-answer-bubble')];
+    buttons = messages.map((message, i) => {
+      const button = document.createElement('button'); button.type = 'button';
+      button.className = message.matches('.assistant-question-bubble') ? 'message-tick question-tick' : 'message-tick';
+      button.setAttribute('aria-label', `第 ${i + 1} 条${message.matches('.assistant-question-bubble') ? '提问' : '回答'}：${message.textContent.trim().slice(0, 60)}`);
+      button.tabIndex = i === Math.max(0, focused) ? 0 : -1;
+      button.onpointerenter = () => show(i); button.onfocus = () => show(i);
+      button.onclick = () => {
+        const top = message.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 16;
+        scroller.scrollTo({top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
+        dismiss();
+      };
+      return button;
+    });
+    rail.replaceChildren(...buttons); rail.hidden = !buttons.length;
+    if (focused >= 0) buttons[Math.min(focused, buttons.length - 1)]?.focus();
+    schedule();
+  }
+  rail.onkeydown = event => {
+    const i = buttons.indexOf(document.activeElement);
+    const next = {ArrowDown: Math.min(i + 1, buttons.length - 1), ArrowUp: Math.max(0, i - 1), Home: 0, End: buttons.length - 1}[event.key];
+    if (next !== undefined) { event.preventDefault(); buttons.forEach((b, n) => { b.tabIndex = n === next ? 0 : -1; }); buttons[next]?.focus(); }
+  };
+  shell.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
+  shell.addEventListener('pointerleave', dismiss);
+  rail.addEventListener('pointerleave', () => { leaveTimer = setTimeout(dismiss, 120); });
+  preview.addEventListener('pointerenter', () => clearTimeout(leaveTimer));
+  preview.addEventListener('pointerleave', dismiss);
+  rail.addEventListener('focusout', e => { if (!rail.contains(e.relatedTarget)) dismiss(); });
+  scroller.addEventListener('scroll', () => { dismiss(); schedule(); }, {passive: true});
+  new MutationObserver(rebuild).observe(scroller, {childList: true, subtree: true, characterData: true});
+  new ResizeObserver(() => { dismiss(); schedule(); }).observe(scroller);
+  rebuild();
+}
+
 export const node = (tag, text = '', className = '') => {
   const n = document.createElement(tag); n.textContent = text; n.className = className; return n;
 };
