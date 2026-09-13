@@ -54,6 +54,7 @@ const state = {
 };
 
 const master = createMasterUI({ api, revision: () => state.revision?.id,
+  toggleExpanded: () => setAssistantExpanded(!state.assistantExpanded),
   pages: elements.pages, dock: elements["assistant-panel"],
   openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
   goToPage, announce, relayout: () => relayoutPages(),
@@ -1484,6 +1485,12 @@ function renderAssistantViewportMode() {
   }
   context.hidden = !state.assistantState.roots.length || (expanded && (state.assistantState.current?.depth || 1) < 4);
   elements.reader.classList.toggle("assistant-expanded", expanded);
+  const masterExpand = document.getElementById('master-expand');
+  if (masterExpand) {
+    masterExpand.textContent = expanded ? '还原' : '展开';
+    masterExpand.setAttribute('aria-pressed', String(expanded));
+    masterExpand.setAttribute('aria-label', expanded ? '还原 Master 工作区' : '展开 Master 工作区');
+  }
   elements["assistant-expand"].setAttribute("aria-pressed", String(expanded));
   elements["assistant-expand"].textContent = expanded ? "还原" : "展开";
   elements["assistant-expand"].setAttribute(

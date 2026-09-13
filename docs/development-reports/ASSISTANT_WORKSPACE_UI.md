@@ -144,3 +144,33 @@ Updated screenshot: `test-results/ask-deeper-expanded-chat-layout.png`, visually
 Port 8767 serves updated CSS/module HTTP 200 and still returns the original two books.
 Static-only update: refresh, no service restart. Human visual acceptance remains pending.
 Final broad regression: 285 Python tests PASS, 2 unchanged optional external OCR skips.
+
+## Shared expansion and outer-edge scrolling (2026-09-13)
+
+User requested Master/Assistant expansion parity and GPT-like right-edge workspace scrolling.
+Master now has an explicit Expand/Restore action wired to the same `setAssistantExpanded` state,
+width restoration and application-area shell as Assistant. The existing Hide action still hides
+the Dock. Switching Assistant/Master does not reset expansion, draft or conversation state.
+Master provider readiness is not required to expand or restore.
+
+The cause of the middle scrollbar was that `#assistant-turns` itself had the prose max-width.
+Expanded scrollports now span the full workspace right edge; only their message children have
+the 1024 px prose limit. `#master-history` uses the same separation. Composer remains independently
+centered at 960 px. Existing scroll owners/IDs remain intact, preserving Assistant per-node
+scroll restoration and Master near-bottom handling. There is no extra nested vertical scroller.
+Local code/math horizontal overflow is unchanged. No PDF geometry, Root/Child/context model,
+provider, persistence, Reader toolbar, KP, Guide or Inline behavior changed.
+
+UI/UX skill informed focus/scroll separation; no dependency or external code adoption.
+Validation uses an isolated real 348-page library with localhost mocks/AI-off, not user data writes:
+`assistant-workspace.mjs` checks outer scrollport right = viewport right, inner prose/composer
+widths, recursive selection, historical navigation, scroll/draft restoration and mode reversal.
+`conversation-composer.mjs` opens a real retained Master, adds an explicitly synthetic DOM-only
+long-content fixture (not persisted), tests wheel scrolling at the right edge, Master expansion,
+cross-tab mode parity, restore-to-Dock width, retained draft and unchanged review strength.
+`assistant-rendering.mjs` PASS for sanitizer/Markdown/math and selection-to-source mapping.
+42 JavaScript tests PASS. No external provider call, Frozen change or independent review.
+Screenshots: `test-results/assistant-expanded-edge-scroll.png` and
+`test-results/master-expanded-edge-scroll.png`. Human visual acceptance pending.
+Final broad regression: 285 Python tests PASS, 2 unchanged optional external OCR skips.
+Current 8767 serves app/Master/CSS HTTP 200 and returns two books; refresh only, no restart needed.

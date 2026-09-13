@@ -340,3 +340,22 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader.assistant-expanded #assistant-panel .assistant-conversation > #assistant-turns { max-width:1024px; }
 #reader.assistant-expanded #assistant-panel #assistant-context-bar { max-width:1024px; }
 @media (max-width:800px) { #reader.assistant-expanded #assistant-panel .assistant-topic-sidebar { width:190px; flex-basis:190px; } }
+
+/* Shared expanded shell: edge-to-edge scrollport, constrained inner prose. */
+#reader #assistant-panel:not(.master-active) #master-expand { display:none; }
+#reader #assistant-panel.master-active #master-expand { margin-left:auto; }
+#reader #assistant-panel.master-active #master-expand[aria-pressed] { border-bottom-color:transparent; }
+#reader #assistant-panel.master-active .dock-tabs button:last-child { margin-left:0; }
+#reader.assistant-expanded #assistant-panel { padding-right:0; }
+#reader.assistant-expanded #assistant-panel > :is(.dock-tabs,.assistant-heading) { width:calc(100% - 18px); max-width:none; align-self:stretch; margin-left:0; margin-right:18px; }
+#reader.assistant-expanded #assistant-panel .assistant-conversation { padding:0; }
+#reader.assistant-expanded #assistant-panel .assistant-conversation > #assistant-turns { width:100%; max-width:none; margin:0; padding:4px 0 12px; }
+#reader.assistant-expanded #assistant-panel #assistant-turns > * { width:calc(100% - 56px); max-width:1024px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
+#reader.assistant-expanded #assistant-panel .assistant-conversation > :is(#assistant-context-bar,#assistant-follow-up,#assistant-first-turn,#assistant-empty) { width:calc(100% - 56px); }
+#reader.assistant-expanded #master-workspace { min-width:0; gap:12px; }
+#reader.assistant-expanded #master-workspace > :not(#master-history) { width:calc(100% - 56px); max-width:960px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
+#reader.assistant-expanded #master-history { width:100%; max-width:none; overflow:auto; padding:4px 0 16px; scrollbar-width:thin; scrollbar-color:#8a97834d transparent; }
+#reader.assistant-expanded #master-history > * { width:calc(100% - 56px); max-width:1024px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
+#reader.assistant-expanded #master-history::-webkit-scrollbar { width:6px; height:6px; }
+#reader.assistant-expanded #master-history::-webkit-scrollbar-thumb { background:#8a97834d; border-radius:6px; }
+#reader.assistant-expanded #master-workspace #master-confirm { width:auto; }

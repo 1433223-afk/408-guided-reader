@@ -4,7 +4,7 @@ import { createComposerChoice } from "/screens.js";
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 const REVIEW = { NOT_REQUESTED: "快速 · 未独立审查", PENDING: "审查中", PASS: "审查通过", FAIL: "审查未通过", TECHNICAL_FAILURE: "审查技术失败" };
 
-export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout, memoryControl }) {
+export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout, memoryControl, toggleExpanded }) {
   document.addEventListener("pointerdown", event => {
     for (const marker of pages.querySelectorAll(".kp-learning-marker[open]")) {
       if (!marker.contains(event.target)) marker.open = false;
@@ -21,7 +21,10 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   const assistantTab = button("解释 Assistant", () => select(false));
   const masterTab = button("学习 Master", () => select(true));
   const close = button("收起", () => openDock(false));
-  tabs.append(assistantTab, masterTab, close);
+  const expand = button("展开", () => toggleExpanded());
+  expand.id = 'master-expand'; expand.setAttribute('aria-pressed', 'false');
+  expand.setAttribute('aria-label', '展开 Master 工作区');
+  tabs.append(assistantTab, masterTab, expand, close);
   dock.prepend(tabs);
   const panel = document.createElement("section");
   panel.id = "master-workspace";

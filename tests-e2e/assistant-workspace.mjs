@@ -182,6 +182,14 @@ try {
   assert.deepEqual(reopened.current.children.map((child) => child.label), ["高低电平变化"]);
   const reopenProviderCalls = providerCalls.length - callsBeforeReopen;
   assert.equal(reopenProviderCalls, 0);
+  await page.locator('#assistant-turns').evaluate(el => { el.style.maxHeight=''; });
+  await page.locator('#assistant-expand').click();
+  assert.equal(await page.locator('#assistant-turns').evaluate(el => Math.round(el.getBoundingClientRect().right)), VIEWPORT_WIDTH);
+  assert.ok(await page.locator('#assistant-turns').evaluate(el => el.scrollHeight>el.clientHeight));
+  await page.locator('#assistant-turns').hover(); await page.mouse.wheel(0,350);
+  await page.waitForFunction(()=>document.querySelector('#assistant-turns').scrollTop>0);
+  await page.screenshot({path:'test-results/assistant-expanded-edge-scroll.png'});
+  await page.locator('#assistant-expand').click();
 
   const closeChildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/close-child"));
   assert.equal(await page.locator("#assistant-close-root").textContent(), "关闭本层解释");
@@ -253,6 +261,7 @@ try {
   assert.ok(expandedLayout.headerWidth > 1800);
   assert.ok(expandedLayout.rootSwitcherWidth <= 220);
   assert.equal(expandedLayout.turnsWidth, 1024);
+  assert.equal(await page.locator('#assistant-turns').evaluate(el => Math.round(el.getBoundingClientRect().right)), VIEWPORT_WIDTH);
   assert.equal(await page.locator('#assistant-topic-trigger').isVisible(), false);
   assert.equal(await page.locator('#assistant-depth').isVisible(), false);
   assert.equal(await page.locator('.assistant-heading #assistant-scope').count(), 1);
@@ -263,7 +272,8 @@ try {
   assert.ok(expandedLayout.questionWidth <= expandedLayout.turnsWidth * 0.5);
   assert.ok(Math.abs(expandedLayout.answerLeft - expandedLayout.turnsLeft) <= 2);
   assert.ok(Math.abs(expandedLayout.questionRight - expandedLayout.turnsRight) <= 6);
-  assert.ok(Math.abs(expandedLayout.turnsCenter - (VIEWPORT_WIDTH + 232) / 2) <= 2);
+  const conversationCenter = await page.locator('.assistant-conversation').evaluate(el => { const r=el.getBoundingClientRect(); return r.left+r.width/2; });
+  assert.ok(Math.abs(expandedLayout.turnsCenter - conversationCenter) <= 2);
   assert.ok(Math.abs(expandedLayout.composerCenter - expandedLayout.turnsCenter) <= 2);
   assert.ok(expandedLayout.composerWidth <= expandedLayout.turnsWidth);
   assert.ok(expandedLayout.composerWidth >= expandedLayout.turnsWidth * 0.75);
@@ -364,7 +374,7 @@ async function conversationMetrics(page) {
   return page.evaluate(() => {
     const rect = (selector) => document.querySelector(selector).getBoundingClientRect();
     const header = rect(".assistant-heading");
-    const turns = rect("#assistant-turns");
+    const turns = document.querySelector('#reader').classList.contains('assistant-expanded') ? rect('#assistant-turns > .assistant-turn') : rect("#assistant-turns");
     const answer = rect('.assistant-answer-bubble[data-current-answer="true"]');
     const question = rect(".assistant-question-bubble");
     const composer = rect("#assistant-follow-up");

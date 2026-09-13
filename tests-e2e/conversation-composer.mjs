@@ -82,6 +82,29 @@ try {
   assert.equal(await page.locator('#master-mode').inputValue(),'Standard');
   assert.equal(await page.locator('#master-question').inputValue(),'请解释这个概念');
   assert.deepEqual(errors,[]);
+  // Layout-only long-content fixture; never persisted or sent to a provider.
+  await page.locator('#master-history').evaluate(history => {
+    const message=document.createElement('article'); message.className='master-message';
+    for(let i=0;i<60;i++) { const p=document.createElement('p'); p.textContent=`滚动布局验证 ${i+1}：长内容应在工作区右侧滚动，正文保持居中。`; message.append(p); }
+    history.append(message); history.scrollTop=80;
+  });
+  const dockWidth=await page.locator('#assistant-panel').evaluate(el=>el.getBoundingClientRect().width);
+  await page.locator('#master-expand').click();
+  assert.equal(await page.locator('#reader').evaluate(el=>el.classList.contains('assistant-expanded')),true);
+  assert.equal(await page.locator('#master-expand').getAttribute('aria-pressed'),'true');
+  assert.equal(await page.locator('#master-history').evaluate(el=>Math.round(el.getBoundingClientRect().right)),1440);
+  assert.ok(await page.locator('#master-history').evaluate(el=>el.scrollHeight>el.clientHeight));
+  await page.locator('#master-history').hover(); await page.mouse.wheel(0,500);
+  await page.waitForFunction(()=>document.querySelector('#master-history').scrollTop>80);
+  await page.screenshot({path:'test-results/master-expanded-edge-scroll.png'});
+  await page.locator('.dock-tabs button').first().click();
+  assert.equal(await page.locator('#assistant-expand').getAttribute('aria-pressed'),'true');
+  await page.locator('.dock-tabs button').nth(1).click();
+  assert.equal(await page.locator('#master-question').inputValue(),'请解释这个概念');
+  await page.locator('#master-expand').click();
+  assert.equal(await page.locator('#master-expand').getAttribute('aria-pressed'),'false');
+  assert.equal(await page.locator('#assistant-panel').evaluate(el=>el.getBoundingClientRect().width),dockWidth);
+  assert.equal(await page.locator('#master-question').inputValue(),'请解释这个概念');
   console.log(JSON.stringify({status:'PASS',typography,reviewModes:'Fast/Standard/Deep',sendMode:'Standard',failureDraftPreserved:true,externalProviderCalls:0}));
 } finally {
   if(browser) await browser.close();
