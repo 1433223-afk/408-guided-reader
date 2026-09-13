@@ -8,8 +8,15 @@ export function createMessageRail(scroller) {
   const preview = document.createElement('div'); preview.className = 'message-rail-preview';
   preview.id = `${scroller.id}-preview`; preview.setAttribute('role', 'tooltip'); preview.hidden = true;
   shell.append(rail, preview);
-  let messages = [], buttons = [], frame = 0, leaveTimer = 0;
-  function dismiss() { preview.hidden = true; buttons.forEach(b => { b.removeAttribute('aria-describedby'); b.style.removeProperty('--tick-scale'); }); }
+  let messages = [], buttons = [], frame = 0, leaveTimer = 0, active = 0;
+  function emphasize(position) {
+    buttons.forEach((button,i) => {
+      const distance=Math.abs(i-position);
+      button.style.setProperty('--tick-scale',String(Math.max(4,26-distance*7)/26));
+      button.toggleAttribute('data-emphasis', i===Math.round(position));
+    });
+  }
+  function dismiss() { preview.hidden = true; buttons.forEach(b => b.removeAttribute('aria-describedby')); emphasize(active); }
   function show(index) {
     clearTimeout(leaveTimer);
     const message = messages[index]; if (!message) return;
@@ -17,17 +24,20 @@ export function createMessageRail(scroller) {
     const title = document.createElement('strong'); title.textContent = message.question.textContent.trim().slice(0, 100) || '提问';
     const text = document.createElement('p'); text.textContent = message.answer?.textContent.trim().slice(0, 240) || '等待回答';
     preview.replaceChildren(title, text); preview.hidden = false;
+    emphasize(index);
     buttons[index].setAttribute('aria-describedby', preview.id);
-    const y = buttons[index].getBoundingClientRect().top - shell.getBoundingClientRect().top;
+    const bounds = buttons[index].getBoundingClientRect();
+    const y = bounds.top + bounds.height/2 - shell.getBoundingClientRect().top - preview.offsetHeight/2;
     preview.style.top = `${Math.max(0, Math.min(y, shell.clientHeight - preview.offsetHeight))}px`;
   }
   function update() {
     frame = 0;
     if (!scroller.clientHeight || !messages.length) return;
     const top = scroller.getBoundingClientRect().top + 32;
-    let active = 0;
+    active = 0;
     messages.forEach((message, i) => { if (message.question.getBoundingClientRect().top <= top) active = i; });
     buttons.forEach((button, i) => { button.setAttribute('aria-current', String(i === active)); });
+    if(preview.hidden) emphasize(active);
   }
   function schedule() { if (!frame) frame = requestAnimationFrame(update); }
   function rebuild() {
@@ -63,11 +73,9 @@ export function createMessageRail(scroller) {
     if (next !== undefined) { event.preventDefault(); buttons.forEach((b, n) => { b.tabIndex = n === next ? 0 : -1; }); buttons[next]?.focus(); }
   };
   rail.onpointermove = event => {
-    const centers = buttons.map(button => { const r=button.getBoundingClientRect(); return r.top+r.height/2; });
-    buttons.forEach((button,i) => {
-      const influence=Math.max(0,1-Math.abs(event.clientY-centers[i])/48);
-      button.style.setProperty('--tick-scale',String(1+influence*0.65));
-    });
+    if(!buttons.length) return;
+    const first=buttons[0].getBoundingClientRect();
+    emphasize(Math.max(0,Math.min(buttons.length-1,(event.clientY-first.top-first.height/2)/first.height)));
   };
   shell.addEventListener('keydown', e => { if (e.key === 'Escape') dismiss(); });
   shell.addEventListener('pointerleave', dismiss);

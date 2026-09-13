@@ -357,3 +357,24 @@ Screenshots inspected: `test-results/master-review-popover.png`, `master-message
 Mock/AI-off only, no real provider calls or original-library writes. 8767 static HTTP 200 and original
 two books verified; refresh only. No Frozen/KP-entry/other Reader structure changes, no independent
 review, no closure. READY_FOR_USER_RETEST.
+
+## Reference-image ruler correction (2026-09-14)
+
+The user's additional screenshots exposed a presentation mismatch: centered green magnification
+is not the reference's left-aligned neutral ruler. Changed only the ruler: fixed left origin,
+10 px pitch, one charcoal emphasized tick, gray neighbors tapering 26/19/12/5/4 px with pointer
+distance, and 140 ms easing. Hover emphasis is independent of the scroll-position aria-current;
+leaving returns to the actual current item. No fabricated marks for short conversations.
+Preview title is now medium-weight single-line ellipsis, answer excerpt three lighter lines.
+Preview follows the hovered tick around its vertical midpoint, constrained to the scroll shell.
+Keyboard focus uses the same emphasis; reduced motion suppresses transitions. Earlier public
+distance-based prior-art remains relevant; no new dependency, architecture or authority change.
+
+Validation: 43 JS suite PASS; expanded 20-round fixture checks symmetric taper, minimum tick length,
+single emphasis, keyboard/local scrolling and cleanup. Real 348-page isolated-library Master and
+Assistant browser paths PASS, retaining actual Topic/Node count, preview, right-edge scrolling,
+recursive navigation and draft recovery. The Master harness now selects an actual retained answer
+instead of assuming the next-most-recent Topic is nonempty. No product workaround or user-data write.
+Updated local screenshot: `test-results/master-message-rail.png`. Human screenshot/motion retest
+pending; no pixel-identical Codex claim. This is static-only; refresh 8767, no restart required.
+Broad regression: 287 Python PASS / 2 unchanged optional OCR skips.

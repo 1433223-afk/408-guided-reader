@@ -101,8 +101,13 @@ try {
   const navigationWrites=[];
   const observe=request=>{if(request.method()!=='GET') navigationWrites.push(request.url());};
   page.on('request',observe);
-  const other=page.locator('#master-topic-list button').filter({has:page.locator('small')}).filter({visible:true});
-  const otherId=await other.evaluateAll((items,selected)=>items.find(item=>item.dataset.topicId!==selected).dataset.topicId,initialTopic);
+  const otherId=await page.evaluate(async({topics,revision,initial})=>{
+    for(const topic of topics.filter(t=>t.id!==initial)) {
+      const snapshot=await (await fetch(`/api/revisions/${revision}/learning/${topic.scope_id}`)).json();
+      if(snapshot.messages.some(m=>m.topic_id===topic.id && m.role==='assistant' && m.state==='COMPLETE')) return topic.id;
+    }
+  },{topics:data.learning.topics,revision:data.revision,initial:initialTopic});
+  assert.ok(otherId,'A retained answer is required for review and ruler checks');
   const reviewFixture=async route=>{
     const response=await route.fetch(); const body=await response.json();
     const answer=body.messages?.find(message=>message.topic_id===otherId && message.role==='assistant');

@@ -13,8 +13,8 @@ test('message ruler previews plain text, navigates locally by keyboard and drops
     const ticks=page.locator('.message-rail button');
     assert.equal(await ticks.count(),2);
     await ticks.first().hover();
-    assert.ok(Number(await ticks.first().evaluate(el=>el.style.getPropertyValue('--tick-scale')))>1);
-    assert.ok(Number(await ticks.nth(1).evaluate(el=>el.style.getPropertyValue('--tick-scale')))>1);
+    assert.equal(Number(await ticks.first().evaluate(el=>el.style.getPropertyValue('--tick-scale'))),1);
+    assert.ok(Number(await ticks.nth(1).evaluate(el=>el.style.getPropertyValue('--tick-scale')))<1);
     await ticks.first().focus();
     assert.match(await page.locator('#history-preview').textContent(),/为什么/);
     assert.match(await page.locator('#history-preview').textContent(),/解释一/);
@@ -25,6 +25,23 @@ test('message ruler previews plain text, navigates locally by keyboard and drops
     await page.keyboard.press('Home');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#history-preview').isHidden(),true);
+    await page.evaluate(()=>{
+      const history=document.querySelector('#history');
+      history.replaceChildren();
+      for(let i=0;i<20;i++) {
+        const q=document.createElement('p'); q.className='assistant-question-bubble'; q.textContent=`问题 ${i+1}`;
+        const a=document.createElement('div'); a.className='assistant-answer-bubble'; a.textContent=`回答 ${i+1}`;
+        history.append(q,a);
+      }
+    });
+    await page.waitForFunction(()=>document.querySelectorAll('.message-tick').length===20);
+    await ticks.nth(8).focus();
+    const lengths=await ticks.evaluateAll(items=>items.map(item=>Number(item.style.getPropertyValue('--tick-scale'))));
+    assert.equal(lengths[8],1);
+    assert.ok(lengths[7]>lengths[6] && lengths[6]>lengths[5]);
+    assert.equal(lengths[7],lengths[9]);
+    assert.equal(lengths[0],4/26);
+    assert.equal(await page.locator('.message-tick[data-emphasis]').count(),1);
     await page.evaluate(()=>document.querySelector('#history').replaceChildren());
     await page.waitForFunction(()=>document.querySelector('.message-rail').hidden);
     assert.equal(await ticks.count(),0);
