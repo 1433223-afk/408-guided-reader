@@ -37,7 +37,7 @@
       <header class="toolbar">
         <div class="book-heading">
           <button id="back-to-library" class="back-button" type="button">← 书库</button>
-          <div><span class="eyebrow">正在阅读</span><h1 id="reader-title"></h1></div>
+          <div><span id="reader-section-hint" class="eyebrow">正在阅读</span><h1 id="reader-title"></h1></div>
         </div>
         <div class="reader-controls" aria-label="阅读器控制">
           <button id="previous-page" class="icon-button" aria-label="上一页">←</button>
@@ -47,10 +47,9 @@
           <output id="preparation-status" class="preparation-status">正在准备文字…</output>
           <button id="printed-page-edit" class="printed-page" type="button" title="设置本页印刷页码"><span id="printed-page-label">印刷页未知</span></button>
           <button id="outline-toggle" class="outline-toggle" type="button" aria-expanded="false" aria-label="目录" title="目录">目录</button>
-          <button id="knowledge-toggle" class="outline-toggle" type="button" aria-expanded="false" aria-label="章节学习地图" title="章节学习地图">学习地图</button>
           <button id="search-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="书内搜索" title="书内搜索">⌕</button>
           <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="本页标记" title="本页标记"><span aria-hidden="true">✦</span><span id="marks-count" class="marks-count" hidden>0</span></button>
-          <button id="assistant-toggle" class="assistant-toggle" type="button" aria-expanded="false" aria-label="问 AI" title="问 AI">AI</button>
+          <button id="assistant-toggle" class="assistant-toggle" type="button" aria-expanded="false" aria-label="继续解释" title="继续当前临时解释" hidden>继续解释</button>
           <span class="control-divider"></span>
           <button id="zoom-out" class="icon-button" aria-label="缩小">−</button>
           <output id="zoom-value">100%</output>

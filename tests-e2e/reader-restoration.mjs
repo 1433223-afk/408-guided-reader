@@ -65,6 +65,9 @@ try {
     return page;
   }
   const baseline=await open(true), restored=await open(false);
+  assert.equal(await restored.locator('#knowledge-toggle,.outline-map-action').count(),0);
+  assert.equal(await restored.locator('#assistant-toggle').isVisible(),false);
+  assert.ok((await restored.locator('#reader-section-hint').textContent()).includes('2.2'));
   const metrics=p=>p.evaluate(()=>{
     const c=document.querySelector('.page[data-index="52"] canvas'),v=document.querySelector('#viewer'),t=document.querySelector('.toolbar');
     const r=c.getBoundingClientRect();return {canvasWidth:c.width,canvasHeight:c.height,cssWidth:r.width,cssHeight:r.height,left:r.left,top:r.top,viewerWidth:v.clientWidth,toolbarHeight:t.getBoundingClientRect().height};
@@ -85,6 +88,21 @@ try {
     }
     await restored.screenshot({path:`test-results/reader-restored-${width}.png`});
   }
+  await restored.setViewportSize({width:1600,height:1000});
+  const kp=restored.locator('.page[data-index="52"] .kp-learning-marker').first();
+  await kp.locator('summary').click();
+  await kp.getByRole('button',{name:'这里没完全懂',exact:true}).first().click();
+  await restored.locator('#master-form').waitFor();
+  assert.ok(await restored.locator('#master-title').textContent());
+  await restored.locator('.dock-tabs').getByRole('button',{name:'收起',exact:true}).click();
+  const dialog = new Promise(resolve=>restored.once('dialog',async d=>{assert.equal(d.type(),'prompt');await d.dismiss();resolve();}));
+  await restored.locator('#printed-page-edit').click(); await dialog;
+  await restored.locator('#search-toggle').click();
+  await restored.locator('#search-query').fill('中断向量');
+  await restored.locator('#search-form button').click();
+  await restored.locator('.search-result').first().click();
+  await restored.locator('.search-match-quad').first().waitFor();
+  await restored.locator('#search-close').click();
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({status:'PASS',baseline:'92febf6',canvasPixelsIdentical:true,metrics:stable,responsiveGeometryIdentical:true,errors}));
 } finally {if(browser)await browser.close();await stop();}

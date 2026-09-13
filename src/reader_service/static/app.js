@@ -13,7 +13,7 @@ import { createInlineUI } from "/inline-ui.js";
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-toggle", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -307,7 +307,6 @@ function closeReader() {
   elements["knowledge-panel"].hidden = true;
   setAssistantPanelOpen(false, { relayout: false });
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
-  elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
   elements["library-home"].hidden = false;
@@ -418,6 +417,18 @@ function scheduleViewportUpdate() {
   });
 }
 
+function renderReaderSectionHint() {
+  const output = document.getElementById("reader-section-hint");
+  const point = captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1);
+  const sections = state.outlineNodes.filter(n => n.kind === "SECTION" && n.resolution_state === "RESOLVED"
+    && point && [n.start_page,n.start_y,n.end_page,n.end_y].every(v => v !== null && v !== undefined)
+    && (n.start_page < point.pageIndex || n.start_page === point.pageIndex && n.start_y <= point.normalizedY)
+    && (n.end_page > point.pageIndex || n.end_page === point.pageIndex && n.end_y > point.normalizedY));
+  const section = sections.length === 1 ? sections[0] : null;
+  output.textContent = section ? `正在阅读 · ${section.title}` : "正在阅读";
+  output.title = section?.title || "当前位置暂无已确定范围的节";
+}
+
 function updateViewport() {
   if (!state.pdf) return;
   const top = elements.viewer.scrollTop;
@@ -437,6 +448,7 @@ function updateViewport() {
     if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
   }
   setCurrentPage(bestIndex);
+  renderReaderSectionHint();
   const keepStart = Math.max(0, (first ?? 0) - 2);
   const keepEnd = Math.min(state.pdf.numPages - 1, last + 2);
   for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
@@ -753,6 +765,7 @@ function renderGuideEntries(index) {
 }
 
 function renderOutline(payload) {
+  renderReaderSectionHint();
   const expanded = new Set([...elements["outline-tree"].querySelectorAll('.outline-target[aria-expanded="true"]')]
     .map((button) => button.closest("li").dataset.nodeId));
   const nodes = payload.nodes || [];
@@ -806,17 +819,6 @@ function renderOutline(payload) {
         });
       }
       row.append(disclosure, target);
-      if (node.kind === "CHAPTER") {
-        const map = document.createElement("button");
-        map.type = "button";
-        map.className = "outline-map-action";
-        map.textContent = "学习地图";
-        map.addEventListener("click", (event) => {
-          event.stopPropagation();
-          openKnowledgePanel(node.outline_node_id);
-        });
-        row.append(map);
-      }
       item.append(row);
       if (descendants.length) {
         const nested = branch(descendants, depth + 1);
@@ -879,7 +881,6 @@ async function openKnowledgePanel(chapterId = null) {
   }
   state.knowledgeChapterId = chapter.outline_node_id;
   elements["knowledge-panel"].hidden = false;
-  elements["knowledge-toggle"].setAttribute("aria-expanded", "true");
   elements["outline-panel"].hidden = true;
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
   elements["search-panel"].hidden = true;
@@ -1525,7 +1526,6 @@ function openAssistantPanel() {
   elements["knowledge-panel"].hidden = true;
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
-  elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
   state.searchRequest += 1;
   clearSearchMatch();
 }
@@ -1547,6 +1547,9 @@ function applyAssistantState(nextState) {
 }
 
 function renderAssistantNavigation(current) {
+  const entry = elements["assistant-toggle"];
+  entry.hidden = !state.assistantDraft && !state.assistantState.roots.length;
+  entry.title = state.assistantDraft ? "继续当前选区的临时解释" : `继续临时解释：${current?.label || "已有解释主题"}`;
   const roots = state.assistantState.roots || [];
   elements["assistant-context-bar"].hidden = roots.length === 0;
   elements["assistant-root-switcher"].replaceChildren(...roots.map((root) => {
@@ -2653,7 +2656,6 @@ elements["outline-toggle"].addEventListener("click", async () => {
     elements["knowledge-panel"].hidden = true;
     elements["search-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
-    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
     state.searchRequest += 1;
     clearSearchMatch();
     await loadBookMap();
@@ -2663,17 +2665,8 @@ elements["outline-close"].addEventListener("click", () => {
   elements["outline-panel"].hidden = true;
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
 });
-elements["knowledge-toggle"].addEventListener("click", () => {
-  if (elements["knowledge-panel"].hidden) openKnowledgePanel(state.knowledgeChapterId);
-  else {
-    elements["knowledge-panel"].hidden = true;
-    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
-    clearTimeout(state.knowledgePollTimer);
-  }
-});
 elements["knowledge-close"].addEventListener("click", () => {
   elements["knowledge-panel"].hidden = true;
-  elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
   clearTimeout(state.knowledgePollTimer);
 });
 
@@ -2688,7 +2681,6 @@ elements["search-toggle"].addEventListener("click", () => {
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["knowledge-panel"].hidden = true;
-    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-panel"].hidden = true;
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
     runSearch();
@@ -2726,7 +2718,6 @@ elements["marks-toggle"].addEventListener("click", async () => {
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["knowledge-panel"].hidden = true;
-    elements["knowledge-toggle"].setAttribute("aria-expanded", "false");
     elements["search-panel"].hidden = true;
     elements["search-toggle"].setAttribute("aria-expanded", "false");
     state.searchRequest += 1;
@@ -2746,7 +2737,8 @@ elements["marks-close"].addEventListener("click", () => {
 elements["copy-selection"].addEventListener("click", copySelection);
 elements["ask-selection"].addEventListener("click", stageAssistantSelection);
 elements["assistant-toggle"].addEventListener("click", () => {
-  const opening = elements["assistant-panel"].hidden;
+  if (!state.assistantDraft && !state.assistantState.roots.length) return;
+  const opening = elements["assistant-panel"].hidden || elements["assistant-panel"].classList.contains("master-active");
   if (opening) {
     openAssistantPanel();
   } else {

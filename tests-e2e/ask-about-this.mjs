@@ -300,6 +300,11 @@ try {
 
   await page.locator("#assistant-close").click();
   await page.locator("#assistant-panel").waitFor({ state: "hidden" });
+  assert.equal(await page.locator('#assistant-toggle').textContent(),'继续解释');
+  await page.locator('#assistant-toggle').click();
+  await page.locator('#assistant-panel').waitFor({state:'visible'});
+  assert.equal(await page.locator('#assistant-root-switcher option').count(),1);
+  await page.locator('#assistant-close').click();
   const secondSelected = await selectLine(page, 0);
   await page.locator("#ask-selection").click();
   await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
@@ -424,7 +429,8 @@ try {
   });
   assert.equal(staleFollowStatus, 404, "Reader close did not clear all temporary roots");
   await openBook(page, 348);
-  await page.locator("#assistant-toggle").click();
+  assert.equal(await page.locator("#assistant-toggle").isVisible(), false,
+    "Generic Assistant entry must stay absent without a current temporary context");
   assert.equal(await page.locator("#assistant-root-switcher option").count(), 0,
     "Reader reopen retained stale Root options in the Assistant UI");
 

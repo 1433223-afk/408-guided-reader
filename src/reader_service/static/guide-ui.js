@@ -30,7 +30,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   const reopen = document.createElement("button");
   reopen.id = "guide-reopen"; reopen.className = "toolbar-button";
   reopen.textContent = "导读"; reopen.title = "重新打开上次阅读的导读"; reopen.hidden = true;
-  document.getElementById("knowledge-toggle").after(reopen);
+  document.getElementById("outline-toggle").after(reopen);
   const positions = new Map();
   let width = 0, normalWidth = 0, expanded = false, dragging = false;
   const locationKey = () => `${revisionId}:${sectionId}:${renderedId}`;

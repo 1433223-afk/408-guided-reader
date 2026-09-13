@@ -56,3 +56,11 @@
 #reader :is(.assistant-error,.local-error) { color:#965b36; }
 #status { background-color:#3b5848; }
 #status.error { background-color:#805535; }
+
+/* Reader toolbar hierarchy only; sizes, order and responsive model remain in styles.css. */
+#reader-section-hint { display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+#reader .toolbar :is(.icon-button,.printed-page,.outline-toggle,.marks-toggle,.assistant-toggle,#inline-open,#inline-more,#guide-reopen) { background-color:transparent;border-color:transparent;color:#526052;font-weight:400; }
+#reader .toolbar :is(button:hover,button[aria-expanded="true"]) { background-color:#e3e8df;color:#304d3e; }
+#reader .toolbar .preparation-status.ready { color:#6b796d; }
+#reader .toolbar .control-divider { background:#ccccc2; }
+#reader #assistant-toggle[hidden] { display:none; }
