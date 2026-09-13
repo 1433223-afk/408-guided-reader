@@ -395,3 +395,39 @@ Idle-length clarification (2026-09-14): user clarified that current-item color m
 and rejected the 4 px idle length. Restored the earlier 14 px default length for every idle tick;
 only the actual current item is charcoal. Hover taper is unchanged. Targeted ruler tests cover
 equal idle lengths and current-color ownership after scroll/Escape. No conversation or other UI change.
+
+## Master minimal actions / review deletion pass (2026-09-14)
+
+Removed Master review-details entry/popover and all assistant provider/model/reviewer/detail
+rendering. PASS has no review text. Technical failure shows only `审查暂未完成 · 重试`;
+content FAIL shows `内容审查未通过 · 重试`. Retry still calls the existing Review path;
+no verdict, review policy or stored diagnostic is changed. Deleted the Master `仍不清楚`
+button, title-level action row and duplicate latest-answer memory entry. Continuing a question
+does not acquire new mastery-write authority.
+
+`已弄懂` is in the Composer `…` menu when the current Topic is confirmable (existing Section
+wording remains `都清楚了`). `收入学习记忆` is in each completed answer's `…` menu and targets
+that exact message. Native popovers support keyboard focus, Escape/outside dismissal and close
+on scope/Reader changes; no triangle disclosure or technical-details replacement. Transparent
+answer prose, light question bubbles, auto-growing Composer, fixed service-level Master provider,
+review-strength control and existing historical continuation remain unchanged.
+
+Read `ui-ux-pro-max` fully. Two focused placement searches did not yield a verified direct match;
+placement uses its general content-first/progressive-disclosure and accessible-control principles,
+plus actual frequency and target ownership, not a claimed database recommendation. No redesign,
+external code adoption or dependency. The ruler, KP entry, PDF geometry and other Reader UI are
+unchanged. No Frozen, backend, persistence, Review/Mastery/Memory semantics or routing changes.
+
+Validation: 43 JavaScript tests PASS. Served-browser `conversation-composer.mjs` PASS on an
+isolated copy of the retained real 348-page library: menu open/Escape, exact confirmation Topic
+and memory message IDs at mocked HTTP write boundaries, failed-action recovery, PASS/FAIL/technical
+failure presentation, no technical-detail DOM, narrow/expanded transparency, Topic isolation,
+draft/mode recovery and edge scrolling. `assistant-workspace.mjs` PASS for recursive navigation,
+selection, sibling/Root isolation and draft/scroll recovery. Original data untouched; zero external
+provider calls. Real-provider answer evaluation intentionally not rerun for this static UI change.
+Screenshot inspected: `test-results/master-answer-more.png` (local only).
+Broad regression rerun: 287 Python tests PASS, 2 unchanged optional external OCR skips.
+
+8767 serves updated Master/CSS HTTP 200 and the original two books. Static refresh only; no service
+restart or temporary-conversation clearing. Human visual/interaction acceptance remains pending;
+no ZCode review or Phase closure. READY_FOR_USER_RETEST.

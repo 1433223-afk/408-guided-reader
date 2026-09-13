@@ -45,6 +45,10 @@ try {
     } catch(error) { if(attempt===2) throw error; }
   }
   await page.locator('#master-form').waitFor({state:'visible'});
+  await page.locator('#master-more').click();
+  assert.equal(await page.locator('#master-confirm').isVisible(),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#master-confirm').isHidden(),true);
   const compactHeight=await page.locator('#master-question').evaluate(el=>el.getBoundingClientRect().height);
   await page.locator('#master-question').fill(Array(12).fill('输入框随内容增长').join('\n'));
   assert.ok(await page.locator('#master-question').evaluate(el=>el.getBoundingClientRect().height)>compactHeight);
@@ -108,10 +112,11 @@ try {
     }
   },{topics:data.learning.topics,revision:data.revision,initial:initialTopic});
   assert.ok(otherId,'A retained answer is required for review and ruler checks');
+  let reviewState='TECHNICAL_FAILURE';
   const reviewFixture=async route=>{
     const response=await route.fetch(); const body=await response.json();
     const answer=body.messages?.find(message=>message.topic_id===otherId && message.role==='assistant');
-    if(answer) { answer.review_state='TECHNICAL_FAILURE'; answer.detail='测试审查暂不可用'; }
+    if(answer) { answer.review_state=reviewState; answer.detail='测试审查暂不可用'; }
     await route.fulfill({response,json:body});
   };
   await page.route('**/learning/*',reviewFixture);
@@ -120,17 +125,16 @@ try {
   const snapshot=await (await snapshotResponse).json();
   await page.locator(`#master-topic-list [data-topic-id="${otherId}"][aria-current="true"]`).waitFor();
   assert.deepEqual(await page.locator('#master-history .master-message').evaluateAll(items=>items.map(item=>item.dataset.messageId)),snapshot.messages.filter(message=>message.topic_id===otherId).map(message=>message.id));
-  const reviewDetails=page.locator('.master-review-popover');
-  assert.equal(await reviewDetails.getByText('测试审查暂不可用',{exact:true}).isHidden(),true);
-  await page.locator('#master-history').getByRole('button',{name:'审查详情',exact:true}).first().click();
-  assert.equal(await reviewDetails.getByText('测试审查暂不可用',{exact:true}).isVisible(),true);
-  await page.screenshot({path:'test-results/master-review-popover.png'});
+  assert.equal(await page.getByText('测试审查暂不可用',{exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'审查详情',exact:true}).count(),0);
   assert.equal(await page.locator('#master-history').getByRole('button',{name:'重试',exact:true}).isVisible(),true);
+  const answerActions=page.locator('.master-actions-popover');
+  await page.locator('#master-history').getByRole('button',{name:'回答更多操作',exact:true}).first().click();
+  assert.equal(await answerActions.getByRole('button',{name:'收入学习记忆',exact:true}).isVisible(),true);
+  assert.equal(await page.locator('#master-confirm').isHidden(),true);
+  await page.screenshot({path:'test-results/master-answer-more.png'});
   await page.keyboard.press('Escape');
-  assert.equal(await reviewDetails.isHidden(),true);
-  await page.locator('#master-history').getByRole('button',{name:'审查详情',exact:true}).first().click();
-  await reviewDetails.getByRole('button',{name:'关闭',exact:true}).click();
-  assert.equal(await reviewDetails.isHidden(),true);
+  assert.equal(await answerActions.isHidden(),true);
   await page.unroute('**/learning/*',reviewFixture);
   if(snapshot.topics.find(topic=>topic.id===otherId).state==='RESOLVED') {
     assert.equal(await page.locator('#master-form').isHidden(),true);
@@ -139,7 +143,7 @@ try {
   await page.screenshot({path:'test-results/master-topics-history.png'});
   await page.locator('#master-expand').click();
   assert.equal(await page.locator('#master-history .assistant-answer-bubble').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
-  assert.equal(await page.locator('.master-topic-quick-actions').getByRole('button',{name:'仍不清楚',exact:true}).isVisible(),true);
+  assert.equal(await page.locator('#master-workspace').getByRole('button',{name:'仍不清楚',exact:true}).count(),0);
   assert.equal(await page.locator('.master-lifetime').count(),0);
   await page.screenshot({path:'test-results/master-narrow-quiet.png'});
   await page.locator('#master-expand').click();
@@ -174,6 +178,43 @@ try {
   assert.equal(await page.locator('#master-question').inputValue(),'请解释这个概念');
   if(await page.locator('#master-resume-topic').isVisible()) await page.locator('#master-resume-topic').click();
   await page.screenshot({path:'test-results/master-topics-workspace.png'});
+  // Exercise relocated actions at the HTTP boundary without changing retained user data.
+  const confirmations=[];
+  await page.route('**/learning/*/confirm',async route=>{
+    confirmations.push(route.request().postDataJSON());
+    await route.fulfill({status:503,json:{error:'测试确认暂不可用'}});
+  });
+  await page.locator('#master-more').click();
+  await page.locator('#master-confirm').click();
+  await page.waitForFunction(()=>document.querySelector('#master-status').textContent.includes('测试确认暂不可用'));
+  assert.equal(confirmations[0].topic_id,initialTopic);
+  await page.keyboard.press('Escape');
+  for(const state of ['FAIL','PASS']) {
+    reviewState=state;
+    await page.route('**/learning/*',reviewFixture);
+    await page.locator(`#master-topic-list [data-topic-id="${otherId}"]`).click();
+    await page.locator(`#master-topic-list [data-topic-id="${otherId}"][aria-current="true"]`).waitFor();
+    const answer=snapshot.messages.find(m=>m.topic_id===otherId && m.role==='assistant');
+    const row=page.locator(`#master-history [data-message-id="${answer.id}"]`);
+    const actions=row.locator('.master-answer-actions');
+    assert.equal(await actions.innerText(),state==='PASS'?'…':'内容审查未通过 ·\n重试\n…');
+    assert.equal(await row.getByText('测试审查暂不可用',{exact:true}).count(),0);
+    if(state==='PASS') {
+      const collected=[];
+      await page.route('**/revisions/*/memory',async route=>{
+        collected.push(route.request().postDataJSON());
+        await route.fulfill({status:503,json:{error:'测试收录暂不可用'}});
+      });
+      await row.getByRole('button',{name:'回答更多操作'}).click();
+      await answerActions.getByRole('button',{name:'收入学习记忆',exact:true}).click();
+      await page.waitForFunction(()=>!document.querySelector('.master-actions-popover .memory-source-control').disabled);
+      assert.deepEqual(collected,[{source_kind:'MASTER',source_id:answer.id}]);
+      await page.keyboard.press('Escape');
+    }
+    await page.unroute('**/learning/*',reviewFixture);
+    await page.locator(`#master-topic-list [data-topic-id="${initialTopic}"]`).click();
+    await page.locator(`#master-topic-list [data-topic-id="${initialTopic}"][aria-current="true"]`).waitFor();
+  }
   // Layout-only long-content fixture; never persisted or sent to a provider.
   await page.locator('#master-history').evaluate(history => {
     const message=document.createElement('article'); message.className='master-message';

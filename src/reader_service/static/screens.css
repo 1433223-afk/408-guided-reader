@@ -416,9 +416,6 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader #master-workspace .assistant-question-bubble { background:#eef0ed; border:0; border-radius:14px; }
 #reader #master-workspace .master-message > button { background:transparent; border:0; font-size:12px; padding:5px 0; }
 #reader #master-workspace .master-topic-actions { display:block; padding-right:0; }
-.master-topic-quick-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin-top:8px; }
-#reader #master-workspace .master-topic-quick-actions button { background:transparent; border:0; padding:3px 0; font-size:12px; font-weight:400; }
-#reader #master-workspace .master-topic-quick-actions #master-confirm { margin:0; }
 .message-rail-preview:not([hidden]) { animation:conversation-preview-in 130ms ease-out; transition:top 140ms ease-out; }
 @keyframes conversation-preview-in { from { opacity:0; transform:translateX(-3px); } to { opacity:1; transform:translateX(0); } }
 @media (prefers-reduced-motion:reduce) { .message-rail-preview:not([hidden]) { animation:none; transition:none; } .message-tick::after { transition:none; } }
@@ -428,8 +425,9 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader #master-status:empty { display:none; }
 .master-answer-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; margin-top:10px; font-size:12px; color:#6a756c; }
 #reader #master-workspace .master-answer-actions button { border:0; background:transparent; padding:2px 0; font-size:12px; font-weight:400; }
-#reader #master-workspace .master-review-popover { position:fixed; margin:0; width:min(360px,calc(100vw - 32px)); max-height:60vh; overflow:auto; padding:16px; border:1px solid #dce2dc; border-radius:12px; background:#fff; color:#39443b; box-shadow:0 5px 24px #24352918; font-size:12px; }
-.master-review-popover > button { float:right; }
-.master-review-popover p { line-height:1.65; overflow-wrap:anywhere; }
+#reader #master-workspace .master-actions-popover { position:fixed; margin:0; min-width:150px; max-width:calc(100vw - 32px); padding:6px; border:1px solid #dce2dc; border-radius:10px; background:#fff; color:#39443b; box-shadow:0 5px 24px #24352918; font-size:12px; }
+#reader #master-workspace .master-actions-popover button { width:100%; margin:0; border:0; background:transparent; text-align:left; padding:8px 10px; font-weight:400; }
+#reader #master-workspace .master-actions-popover button:hover { background:#f1f3ef; }
+#reader #master-more { background:transparent; border:0; padding:4px 8px; font-size:18px; }
 .message-tick::after { transform:scaleX(var(--tick-scale,.53846)); transition:transform 140ms cubic-bezier(.2,.7,.25,1),background-color 140ms ease-out; }
 @media (prefers-reduced-motion:reduce) { .message-tick::after { transition:none; } }
