@@ -25,7 +25,7 @@ export function createAssistantNavigator(panel, focus) {
     if (e.key === 'Home') next = 0;
     if (e.key === 'End') next = rows.length - 1;
     if (next !== undefined) { e.preventDefault(); rows[next]?.focus(); }
-    if (e.key === 'Escape') { close(); trigger.focus(); }
+    if (e.key === 'Escape' && !panel.closest('.assistant-expanded')) { close(); trigger.focus(); }
     if (['ArrowLeft','ArrowRight'].includes(e.key) && i >= 0) {
       e.preventDefault(); const row = rows[i]; const key = row.dataset.key;
       if (row.hasAttribute('aria-expanded') && (e.key === 'ArrowLeft') !== collapsed.has(key)) {
@@ -54,7 +54,8 @@ export function createAssistantNavigator(panel, focus) {
       const selected = current?.root_id === root.root_id && (current.node_id || '') === id;
       item.setAttribute('aria-selected', String(selected)); item.tabIndex = selected ? 0 : -1;
       if(children.length) item.setAttribute('aria-expanded', String(!collapsed.has(key)));
-      item.style.paddingInlineStart = `${12 + (depth - 1) * 16}px`;
+      item.style.paddingInlineStart = `${12 + (depth - 1) * 24}px`;
+      item.style.setProperty('--branch-inset', `${12 + (depth - 2) * 24 + 5}px`);
       const caret = document.createElement('span'); caret.textContent = children.length ? collapsed.has(key) ? '▸' : '▾' : '·'; caret.setAttribute('aria-hidden','true');
       const label = document.createElement('span'); label.textContent = node?.label || root.label;
       item.title = label.textContent; item.append(caret, label);

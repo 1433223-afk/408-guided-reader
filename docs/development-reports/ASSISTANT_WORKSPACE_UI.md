@@ -119,3 +119,28 @@ Full Master business-workflow E2E is `INTENTIONALLY_NOT_RUN` for this style-only
 mode/send contract is checked in the focused served-Reader test; no persistence/routing code changed.
 Current port 8767 serves all three changed assets HTTP 200; no service restart is needed for this
 static-only change. User refresh/retest remains pending.
+
+## Tree-first Workspace polish (2026-09-13, user retest pending)
+
+Only Assistant presentation changed. Expanded mode has one recursive navigator: the tree.
+The redundant topic trigger is hidden there; narrow Dock retains the bounded tree-popover entry.
+Child indentation increases from 16 to 24 px with faint elbow guides, shallow green current-row
+highlight, ellipsis and full native hover title. Escape no longer attempts to focus an invisible
+topic trigger in expanded mode. Root/Child identity, selection and provider context are unchanged.
+
+Sidebar is 232 px (was 256); expanded prose is 1024 px (was 960). Composer remains 960 px,
+with its existing input/model controls unchanged. Source and Workspace actions share one header;
+depth is shown only at levels 4 and 5. Thin muted scrollbars apply only inside Assistant turns/tree.
+No Reader toolbar, PDF layout, marks, library, Master surface, data directory or service code changed.
+UI/UX skill informed hierarchy and keyboard focus; its generic breadcrumb suggestion was not used
+because the user's tree-only direction controls.
+
+Validation: 42 JS tests PASS; actual served 348-page `assistant-workspace.mjs` PASS, including
+232/1024/960 px measurements, hidden duplicate topic/depth at Root, source header placement,
+Root/Child/sibling focus, subtree close, draft/caret/scroll and expanded-mode reversal.
+`conversation-composer.mjs` PASS, checking preserved Assistant/Master typography and controls.
+All provider activity used isolated localhost mocks; no real external calls or original-library writes.
+Updated screenshot: `test-results/ask-deeper-expanded-chat-layout.png`, visually inspected.
+Port 8767 serves updated CSS/module HTTP 200 and still returns the original two books.
+Static-only update: refresh, no service restart. Human visual acceptance remains pending.
+Final broad regression: 285 Python tests PASS, 2 unchanged optional external OCR skips.

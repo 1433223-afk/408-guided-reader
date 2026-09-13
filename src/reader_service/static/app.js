@@ -1473,6 +1473,16 @@ function applyAssistantDockWidth(width) {
 
 function renderAssistantViewportMode() {
   const expanded = state.assistantExpanded && !elements["assistant-panel"].hidden;
+  const heading = elements["assistant-panel"].querySelector('.assistant-heading');
+  const context = elements["assistant-context-bar"];
+  if (expanded) {
+    heading.prepend(elements["assistant-scope"]);
+    heading.querySelector('.assistant-heading-actions').prepend(elements["assistant-close-root"]);
+  } else {
+    context.before(elements["assistant-scope"]);
+    context.append(elements["assistant-close-root"]);
+  }
+  context.hidden = !state.assistantState.roots.length || (expanded && (state.assistantState.current?.depth || 1) < 4);
   elements.reader.classList.toggle("assistant-expanded", expanded);
   elements["assistant-expand"].setAttribute("aria-pressed", String(expanded));
   elements["assistant-expand"].textContent = expanded ? "还原" : "展开";
@@ -1614,6 +1624,8 @@ function renderAssistantNavigation(current) {
   }
   elements["assistant-back"].hidden = !current?.parent_ref;
   elements["assistant-depth"].textContent = current ? `递归深度：第 ${current.depth} 层，最多 5 层` : "";
+  elements["assistant-depth"].hidden = !current || current.depth < 4;
+  if (state.assistantExpanded) elements["assistant-context-bar"].hidden = !current || current.depth < 4;
   elements["assistant-close-root"].disabled = !current;
   elements["assistant-close-root"].textContent = current?.depth > 1
     ? "关闭本层解释" : "关闭此主题";
