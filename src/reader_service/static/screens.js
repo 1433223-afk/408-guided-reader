@@ -255,6 +255,7 @@ export function createAssistantModelMenu(select) {
   trigger.setAttribute('aria-label', '当前 AI 模型'); trigger.setAttribute('aria-haspopup', 'listbox');
   const list = node('div', '', 'assistant-model-options'); list.id = 'assistant-model-options';
   list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', '选择 AI 模型'); list.hidden = true;
+  list.tabIndex = -1;
   trigger.setAttribute('aria-controls', list.id); trigger.setAttribute('aria-expanded', 'false');
   wrapper.append(trigger, list); select.closest('.assistant-model').after(wrapper);
   select.closest('.assistant-model').hidden = true;
@@ -262,12 +263,11 @@ export function createAssistantModelMenu(select) {
   function close(restore = false) { list.hidden = true; trigger.setAttribute('aria-expanded','false'); if(restore) trigger.focus(); }
   function sync() {
     trigger.textContent = `${names[select.value] || '选择模型'} ▾`;
-    trigger.disabled = select.disabled; trigger.title = select.title;
-    if(select.disabled) close();
+    trigger.disabled = false; trigger.title = select.title;
     list.replaceChildren(...[...select.options].map(option => {
       const item = node('button', option.textContent); item.type = 'button'; item.tabIndex = -1;
       item.setAttribute('role','option'); item.setAttribute('aria-selected',String(option.selected));
-      item.disabled = option.disabled; item.dataset.value = option.value;
+      item.disabled = option.disabled || select.disabled; item.dataset.value = option.value;
       item.onclick = () => {
         if(select.disabled || option.disabled) {close(); return;}
         select.value = option.value; close(true);
@@ -277,11 +277,11 @@ export function createAssistantModelMenu(select) {
     }));
   }
   function open() {
-    if(select.disabled) return;
     sync(); list.style.transform = ''; list.hidden = false; trigger.setAttribute('aria-expanded','true');
+    if (select.disabled) list.append(node('small', select.title || '当前会话已锁定模型'));
     const bounds = list.getBoundingClientRect();
     list.style.transform = `translateX(${Math.max(8 - bounds.left, Math.min(0, window.innerWidth - 8 - bounds.right))}px)`;
-    (list.querySelector('[aria-selected="true"]') || list.querySelector('button:not(:disabled)'))?.focus();
+    (list.querySelector('[aria-selected="true"]:not(:disabled)') || list.querySelector('button:not(:disabled)') || list).focus();
   }
   trigger.onclick = () => list.hidden ? open() : close();
   trigger.onkeydown = e => { if(['ArrowDown','ArrowUp'].includes(e.key)) {e.preventDefault();open();} };

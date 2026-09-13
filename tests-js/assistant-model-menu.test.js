@@ -20,6 +20,12 @@ test('model menu keyboard selection forwards one original change and respects lo
     assert.equal(await page.locator('[role="listbox"]').isHidden(),true);
     assert.equal(await page.evaluate(()=>window.changes),1);
     await page.evaluate(()=>{document.querySelector('select').disabled=true;window.menu.sync();});
-    assert.equal(await trigger.isDisabled(),true);
+    assert.equal(await trigger.isDisabled(),false);
+    await trigger.click();
+    assert.equal(await page.locator('[role="listbox"]').isVisible(),true);
+    assert.equal(await page.locator('[role="option"]:disabled').count(),3);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('[role="listbox"]').isHidden(),true);
+    assert.equal(await page.evaluate(()=>window.changes),1);
   } finally {await browser.close();}
 });

@@ -137,8 +137,11 @@
         </form>
         <p class="assistant-lifetime">对话仅保存在当前 Reader 内存中；关闭即清空。</p>
       </aside>
-      <div id="assistant-answer-actions" class="assistant-answer-actions" hidden>
-        <button id="assistant-ask-deeper" type="button">再问一层</button>
+      <div id="assistant-answer-actions" class="selection-actions assistant-answer-actions" role="toolbar" aria-label="回答选区操作" hidden>
+        <div class="selection-action-row">
+          <button id="assistant-ask-deeper" type="button">再问一层</button>
+          <button id="assistant-cancel-selection" class="cancel-selection" type="button" aria-label="关闭选区操作">×</button>
+        </div>
       </div>
     </section>
     <div id="selection-actions" class="selection-actions" role="toolbar" aria-label="选区操作" hidden>

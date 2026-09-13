@@ -359,6 +359,8 @@ async function selectAssistantTextByMouse(page, needle) {
   await page.mouse.down();
   await page.mouse.move(points.end.x, points.end.y, { steps: 10 });
   await page.mouse.up();
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  await page.mouse.click(points.start.x, points.start.y, { button: "right" });
   await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
   return page.evaluate(() => getSelection()?.toString() || "");
 }

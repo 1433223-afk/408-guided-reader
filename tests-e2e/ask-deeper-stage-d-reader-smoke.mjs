@@ -23,7 +23,8 @@ try {
   await openBook(page, 348);
   const revisionId = await currentRevisionId(page);
 
-  await page.locator("#assistant-toggle").click();
+  await selectExactReaderText(page, revisionId, 24, "时钟脉冲信号");
+  await page.locator("#ask-selection").click();
   await dragDockToWidth(page, 540);
   const dockWidth = await page.locator("#assistant-panel").evaluate((element) => element.getBoundingClientRect().width);
   assert.ok(Math.abs(dockWidth - 540) <= 2);
@@ -169,7 +170,8 @@ async function currentRevisionId(page) {
 }
 
 async function openBook(page, pageCount) {
-  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).locator('.book-open').click();
+  await page.locator('#book-overview .overview-book-heading .primary-action').click();
   await page.locator("#reader").waitFor({ state: "visible" });
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
 }

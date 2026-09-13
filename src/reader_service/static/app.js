@@ -9,15 +9,18 @@ import { createMasterUI } from "/master-ui.js";
 import { createMemoryUI } from "/memory-ui.js";
 import { createGuideUI } from "/guide-ui.js";
 import { createInlineUI } from "/inline-ui.js";
+import { createAssistantNavigator } from "/assistant-navigator.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
 const assistantModelMenu = createAssistantModelMenu(elements["assistant-model"]);
+const assistantNavigator = createAssistantNavigator(elements["assistant-panel"], (...args) => focusAssistant(...args));
+const modelControl = document.querySelector('.assistant-model-control');
 
 const query = new URLSearchParams(location.search);
 const launchToken = query.get("token") || sessionStorage.getItem("reader-token") || "";
@@ -45,6 +48,7 @@ const state = {
   assistantReviewPolls: new Map(),
   assistantPending: false, assistantStatusTimer: 0,
   assistantScrollPositions: new Map(), assistantChildRequests: new Map(),
+  assistantViewDrafts: new Map(), assistantRenderedKey: null,
   assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
   assistantExpanded: false, assistantResizeAnchor: null,
 };
@@ -100,6 +104,7 @@ const teachingUiOptions = { state, api, goToPage,
   closeDock: () => setAssistantPanelOpen(false, { relayout: false }),
   explain: (selectedText, request) => {
   if (!state.readerSessionId || state.assistantPending) return;
+  rememberAssistantScroll();
   state.assistantDraft = { readerSessionId: state.readerSessionId, revisionId: state.revision.id, selectedText, request };
   openAssistantPanel(); renderAssistantDraft(); refreshAssistantStatus();
 } };
@@ -110,7 +115,7 @@ async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
     credentials: "same-origin",
-    headers: { "X-Reader-Token": launchToken, ...(options.headers || {}) },
+    headers: { "X-Reader-Token": launchToken, "X-Assistant-View": "current", ...(options.headers || {}) },
   });
   if (response.status === 204) return null;
   const payload = await response.json().catch(() => ({ error: `请求失败（${response.status}）` }));
@@ -1421,6 +1426,11 @@ function clearAssistantReviewPolls() {
 function rememberAssistantScroll() {
   const current = state.assistantState.current;
   if (!current) return;
+  if (!state.assistantDraft) {
+    const input = elements["assistant-question"];
+    state.assistantViewDrafts.set(assistantLocationKey(current.root_id, current.node_id),
+      {text: input.value, start: input.selectionStart, end: input.selectionEnd});
+  }
   state.assistantScrollPositions.set(
     assistantLocationKey(current.root_id, current.node_id),
     elements["assistant-turns"].scrollTop,
@@ -1428,6 +1438,10 @@ function rememberAssistantScroll() {
 }
 
 function forgetAssistantScroll(rootId, removedNodeIds = null) {
+  for (const key of state.assistantViewDrafts.keys()) {
+    if (removedNodeIds === null ? key.startsWith(`${rootId}:`)
+      : [...removedNodeIds].some(id => key === assistantLocationKey(rootId, id))) state.assistantViewDrafts.delete(key);
+  }
   if (removedNodeIds === null) {
     for (const key of state.assistantScrollPositions.keys()) {
       if (key.startsWith(`${rootId}:`)) state.assistantScrollPositions.delete(key);
@@ -1545,6 +1559,8 @@ function resetAssistantPanel() {
   state.assistantState = emptyAssistantState();
   state.assistantDraft = null;
   state.assistantScrollPositions.clear();
+  state.assistantViewDrafts.clear();
+  state.assistantRenderedKey = null;
   state.assistantChildRequests.clear();
   renderAssistantNavigation(null);
   hideAssistantAnswerActions();
@@ -1573,12 +1589,15 @@ function assistantScopeText(scope) {
 function applyAssistantState(nextState) {
   if (!nextState || !Array.isArray(nextState.roots)) return;
   if (Number(nextState.version || 0) < Number(state.assistantState.version || 0)) return;
+  if (!state.assistantDraft && state.assistantState.current?.root_id === nextState.current?.root_id
+      && state.assistantState.current?.node_id === nextState.current?.node_id) rememberAssistantScroll();
   state.assistantState = nextState;
   if (nextState.current?.provider) state.assistantActiveProvider = nextState.current.provider;
   renderAssistantWorkspace();
 }
 
 function renderAssistantNavigation(current) {
+  assistantNavigator.render(state.assistantState);
   const entry = elements["assistant-toggle"];
   entry.hidden = !state.assistantDraft && !state.assistantState.roots.length;
   entry.title = state.assistantDraft ? "继续当前选区的临时解释" : `继续临时解释：${current?.label || "已有解释主题"}`;
@@ -1594,7 +1613,7 @@ function renderAssistantNavigation(current) {
     elements["assistant-root-switcher"].value = state.assistantState.focused_ref.root_id;
   }
   elements["assistant-back"].hidden = !current?.parent_ref;
-  elements["assistant-depth"].textContent = current ? `${current.depth}/5` : "";
+  elements["assistant-depth"].textContent = current ? `递归深度：第 ${current.depth} 层，最多 5 层` : "";
   elements["assistant-close-root"].disabled = !current;
   elements["assistant-close-root"].textContent = current?.depth > 1
     ? "关闭本层解释" : "关闭此主题";
@@ -1650,6 +1669,11 @@ function renderAssistantWorkspace() {
     return;
   }
   elements["assistant-scope"].textContent = assistantScopeText(current.scope);
+  elements["assistant-follow-up"].append(modelControl);
+  const renderKey = JSON.stringify([current.root_id, current.node_id, current.turns, current.pending, current.error, current.can_retry,
+    [...state.assistantSavedTurns.keys()]]);
+  if (state.assistantRenderedKey === renderKey && elements["assistant-turns"].firstChild) { syncModelSelector(); return; }
+  state.assistantRenderedKey = renderKey;
   const turns = current.turns.map((turn, index) => {
     const article = document.createElement("article");
     article.className = "assistant-turn";
@@ -1711,7 +1735,11 @@ function renderAssistantWorkspace() {
   syncModelSelector();
   const locationKey = assistantLocationKey(current.root_id, current.node_id);
   const savedScroll = state.assistantScrollPositions.get(locationKey);
+  const draft = state.assistantViewDrafts.get(locationKey);
+  elements["assistant-question"].value = draft?.text || "";
+  elements["assistant-question"].setSelectionRange(draft?.start || 0, draft?.end || 0);
   requestAnimationFrame(() => {
+    if (state.assistantRenderedKey !== renderKey) return;
     elements["assistant-turns"].scrollTop = savedScroll ?? elements["assistant-turns"].scrollHeight;
   });
 }
@@ -1722,6 +1750,8 @@ function renderAssistantConversation(conversation) {
 }
 
 function renderAssistantDraft() {
+  state.assistantRenderedKey = null;
+  elements["assistant-first-turn"].append(modelControl);
   const draft = state.assistantDraft;
   if (!draft) {
     elements["assistant-first-turn"].hidden = true;
@@ -1768,6 +1798,7 @@ function stageAssistantSelection() {
   const readerSessionId = state.readerSessionId;
   const selectedText = resolvedText(selection?.resolved || []).trim();
   if (!selection?.resolved.length || !selectedText || !revisionId || !readerSessionId || state.assistantPending) return;
+  rememberAssistantScroll();
   state.assistantDraft = {
     readerSessionId,
     revisionId,
@@ -1836,7 +1867,8 @@ async function sendAssistantFollowUp() {
       }),
     });
     if (state.readerSessionId !== readerSessionId) return;
-    elements["assistant-question"].value = "";
+    state.assistantViewDrafts.delete(assistantLocationKey(current.root_id, current.node_id));
+    if (state.assistantState.current?.root_id === current.root_id && state.assistantState.current?.node_id === current.node_id) elements["assistant-question"].value = "";
     applyAssistantState(payload.assistant);
   } catch (error) {
     const stillBound = state.assistantState.current?.root_id === current.root_id
@@ -2038,12 +2070,32 @@ function captureAssistantAnswerSelection() {
     sourceSpans: mapped.sourceSpans,
     selectedText: mapped.selectedText,
   };
-  const rect = range.getBoundingClientRect();
+  return range;
+}
+
+function openAssistantAnswerContextMenu(event) {
+  const range = captureAssistantAnswerSelection();
+  if (!range) return;
+  const { clientX, clientY } = event;
+  const inside = Array.from(range.getClientRects()).some((rect) => (
+    clientX >= rect.left && clientX <= rect.right
+      && clientY >= rect.top && clientY <= rect.bottom
+  ));
+  if (!inside) {
+    hideAssistantAnswerActions();
+    return;
+  }
+  event.preventDefault();
   const action = elements["assistant-answer-actions"];
   action.hidden = false;
-  const box = action.getBoundingClientRect();
-  action.style.left = `${Math.max(6, Math.min(innerWidth - box.width - 6, rect.left))}px`;
-  action.style.top = `${Math.max(72, rect.top - box.height - 7)}px`;
+  requestAnimationFrame(() => {
+    if (action.hidden || !state.assistantAnswerSelection) return;
+    const below = clientY + 5;
+    const above = clientY - action.offsetHeight - 5;
+    const top = below + action.offsetHeight <= innerHeight - 8 ? below : above;
+    action.style.left = `${Math.max(8, Math.min(innerWidth - action.offsetWidth - 8, clientX + 5))}px`;
+    action.style.top = `${Math.max(76, Math.min(innerHeight - action.offsetHeight - 8, top))}px`;
+  });
 }
 
 function hideAssistantAnswerActions(clearNativeSelection = false) {
@@ -2841,17 +2893,17 @@ elements["assistant-follow-up"].addEventListener("submit", (event) => {
   sendAssistantFollowUp();
 });
 elements["assistant-turns"].addEventListener("pointerup", () => {
-  setTimeout(captureAssistantAnswerSelection, 0);
+  hideAssistantAnswerActions();
 });
-elements["assistant-turns"].addEventListener("contextmenu", (event) => {
-  captureAssistantAnswerSelection();
-  if (!elements["assistant-answer-actions"].hidden) event.preventDefault();
-});
+elements["assistant-turns"].addEventListener("contextmenu", openAssistantAnswerContextMenu);
 elements["assistant-turns"].addEventListener("click", (event) => {
   const save = event.target.closest(".assistant-save-note");
   if (save) saveAssistantTurn(save);
 });
 elements["assistant-ask-deeper"].addEventListener("click", sendAssistantChild);
+elements["assistant-cancel-selection"].addEventListener("click", () => {
+  hideAssistantAnswerActions(true);
+});
 elements["save-highlight"].addEventListener("click", () => {
   const colors = elements["selection-actions"].querySelector(".highlight-styles");
   if (colors.hidden) {

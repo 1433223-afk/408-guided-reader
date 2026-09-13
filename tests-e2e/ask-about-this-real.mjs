@@ -210,7 +210,8 @@ function assertChineseExplanation(answer, label) {
 }
 
 async function selectConcept(page, candidates) {
-  const selected = await page.locator('.assistant-answer-bubble[data-current-answer="true"]')
+  const bubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  const selected = await bubble
     .evaluate((bubble, values) => {
       const answer = bubble.textContent;
       let text = values.find((candidate) => answer.includes(candidate));
@@ -227,10 +228,17 @@ async function selectConcept(page, candidates) {
       selection.removeAllRanges();
       selection.addRange(range);
       bubble.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-      return text;
+      const rect = range.getClientRects()[0];
+      return { text, point: { x: rect.left + 1, y: rect.top + rect.height / 2 } };
     }, candidates);
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  await bubble.evaluate((element, point) => {
+    element.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: point.x, clientY: point.y,
+    }));
+  }, selected.point);
   await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
-  return selected;
+  return selected.text;
 }
 
 async function selectExactText(page, item) {

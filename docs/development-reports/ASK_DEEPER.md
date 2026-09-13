@@ -1,5 +1,9 @@
 # Ask Deeper Development Report
 
+Later user-authorized navigation/UI rework (2026-09-13):
+[Assistant Workspace UI report](ASSISTANT_WORKSPACE_UI.md). This supersedes the old visible
+Back/breadcrumb/Root-selector presentation below, not its frozen recursion/context semantics.
+
 ## Result
 
 `PHASE_STATUS: CLOSED / COMPLETE`

@@ -109,6 +109,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .ocr-line::selection { color: transparent; background: transparent; }
 .reader { --reader-selection-background: rgb(65 126 211 / 20%); }
 .inline-text::selection { background: var(--reader-selection-background); color: inherit; }
+.assistant-answer-bubble ::selection { background: var(--reader-selection-background); color: inherit; }
 .selection-quad {
   z-index: 1; position: absolute; background: var(--reader-selection-background); border-radius: 2px;
   pointer-events: none;
@@ -522,14 +523,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .assistant-follow-up button { align-self: stretch; padding: 0 14px; cursor: pointer; color: #2d291f; background: #e2bc75; border: 0; border-radius: 7px; font-size: 11px; font-weight: 750; }
 .assistant-follow-up button:disabled { cursor: wait; opacity: .55; }
 .assistant-lifetime { margin: 9px 0 0; color: #979084; font-size: 9px; }
-.assistant-answer-actions {
-  z-index: 12; position: fixed; padding: 4px; background: #332e27; border-radius: 7px;
-  box-shadow: 0 5px 18px rgb(0 0 0 / 22%);
-}
-.assistant-answer-actions button {
-  padding: 6px 9px; cursor: pointer; color: #2d291f; background: #e2bc75;
-  border: 0; border-radius: 5px; font-size: 10px; font-weight: 800;
-}
+.assistant-answer-actions { z-index: 60; }
 .preparation-retry {
   z-index: 3; position: absolute; cursor: pointer;
   left: 10px; bottom: 8px; padding: 4px 7px; color: #733b36; background: rgb(255 247 243 / 88%);

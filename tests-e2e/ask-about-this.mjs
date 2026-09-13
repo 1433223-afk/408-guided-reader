@@ -213,9 +213,9 @@ try {
   assert.equal(firstRoot.model, "GLM-5.3-Flash");
   assert.equal(firstRoot.turns[0].question, selected.text);
   assert.equal(firstRequest.source_kind, "ORIGINAL_PDF");
-  assert.equal(await page.locator("#assistant-depth").textContent(), "1/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 1 层，最多 5 层");
   assert.equal(await page.locator("#assistant-model").isDisabled(), true);
-  assert.equal(await page.locator("#assistant-model-trigger").isDisabled(), true);
+  assert.equal(await page.locator("#assistant-model-trigger").isDisabled(), false);
 
   const followResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
   await page.locator("#assistant-question").fill("为什么？");
@@ -236,7 +236,7 @@ try {
   const childResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 2 层，最多 5 层");
   assert.equal(await page.locator(".assistant-answer-bubble").count(), 0,
     "Parent answer remained stacked on the pending Child page");
   const childState = (await (await childResponse).json()).assistant;
@@ -244,9 +244,9 @@ try {
   assert.equal(childState.current.depth, 2);
   assert.equal(childState.current.parent_ref.root_id, firstRoot.root_id);
   assert.equal(childState.current.parent_ref.node_id, null);
-  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 2 层，最多 5 层");
   assert.match(await page.locator("#assistant-breadcrumb").textContent(), /优先级/);
-  assert.equal(await page.locator("#assistant-back").isVisible(), true);
+  assert.equal(await page.locator("#assistant-back").isVisible(), false);
 
   const childFollowResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
   await page.locator("#assistant-question").fill("再简单一点");
@@ -267,16 +267,16 @@ try {
   const grandchildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 3 层，最多 5 层");
   const grandchildState = (await (await grandchildResponse).json()).assistant;
   const firstDeepNode = grandchildState.current.node_id;
   assert.equal(grandchildState.current.depth, 3);
-  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 3 层，最多 5 层");
   assert.equal(grandchildState.roots[0].nodes.length, 2);
   await page.screenshot({ path: path.join(artifacts, "ask-deeper-depth-3.png"), fullPage: false });
 
   const backToChildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRoot.root_id, childAId);
   const backToChild = (await (await backToChildResponse).json()).assistant;
   assert.equal(backToChild.current.node_id, childAId);
   await page.waitForFunction((expected) => (
@@ -284,7 +284,7 @@ try {
   ), childScroll);
 
   const backToRootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRoot.root_id, null);
   const backToRoot = (await (await backToRootResponse).json()).assistant;
   assert.equal(backToRoot.current.depth, 1);
   await page.waitForFunction((expected) => (
@@ -301,14 +301,14 @@ try {
   assert.equal(siblingState.roots[0].nodes.length, 3);
 
   const siblingBackResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRoot.root_id, null);
   await siblingBackResponse;
   assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), [
     "优先级", "总线仲裁",
   ]);
   const callsBeforeReopen = providerCalls.length;
   const reopenResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-child-list button").filter({ hasText: "优先级" }).click();
+  await chooseTopic(page, firstRoot.root_id, childAId);
   const reopenedState = (await (await reopenResponse).json()).assistant;
   assert.equal(reopenedState.current.node_id, childAId);
   assert.equal(providerCalls.length, callsBeforeReopen);
@@ -329,7 +329,7 @@ try {
   await page.keyboard.press("Escape");
 
   const focusSiblingResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-child-list button").filter({ hasText: "总线仲裁" }).click();
+  await chooseTopic(page, firstRoot.root_id, childBId);
   await focusSiblingResponse;
 
   await page.locator("#assistant-close").click();
@@ -357,15 +357,15 @@ try {
   assert.equal(await page.locator("#assistant-root-switcher option").count(), 2);
 
   const switchResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-root-switcher").selectOption(firstRoot.root_id);
+  await chooseTopic(page, firstRoot.root_id, childBId);
   const switchedState = (await (await switchResponse).json()).assistant;
   assert.equal(switchedState.current.node_id, childBId);
   assert.equal(switchedState.current.depth, 2);
   assert.equal(switchedState.roots.length, 2);
-  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 2 层，最多 5 层");
 
   const backResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRoot.root_id, null);
   const backedState = (await (await backResponse).json()).assistant;
   assert.equal(backedState.current.depth, 1);
   assert.equal(backedState.roots.length, 2);
@@ -520,9 +520,10 @@ try {
 }
 
 async function selectAssistantAnswerText(page, text) {
-  await page.locator('.assistant-answer-bubble[data-current-answer="true"]').evaluate((bubble, value) => {
+  const bubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  const point = await bubble.evaluate((element, value) => {
     const nodes = [];
-    const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       if (!walker.currentNode.parentElement.closest("[data-assistant-unselectable='true']")) {
         nodes.push(walker.currentNode);
@@ -550,8 +551,16 @@ async function selectAssistantAnswerText(page, text) {
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
-    bubble.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    const rect = range.getClientRects()[0];
+    return { x: rect.left + 1, y: rect.top + rect.height / 2 };
   }, text);
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  await bubble.evaluate((element, at) => {
+    element.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: at.x, clientY: at.y,
+    }));
+  }, point);
   await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
 }
 
@@ -657,4 +666,10 @@ function centerY(quad) {
 
 function requireExists(candidate) {
   return os.platform() === "win32" && process.getBuiltinModule("node:fs").existsSync(candidate);
+}
+
+
+async function chooseTopic(page, rootId, nodeId) {
+  if (!(await page.locator(".assistant-topic-sidebar").isVisible())) await page.locator("#assistant-topic-trigger").click();
+  await page.locator(`.assistant-topic-sidebar [role="treeitem"][data-root-id="${rootId}"][data-node-id="${nodeId || ""}"] span:last-child`).click();
 }

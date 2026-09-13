@@ -185,10 +185,10 @@ try {
   await page.goto(running.url);
   await openBook(page, 348);
   await goToPage(page, 24);
-  await page.locator("#assistant-toggle").click();
+  assert.equal(await page.locator("#assistant-toggle").isHidden(), true);
   assert.equal(await page.locator("#assistant-context-bar").isHidden(), true);
   assert.equal(await page.locator("#assistant-empty").textContent(), "在原始 PDF 中选择文字，右键选择「问 AI」。");
-  await page.locator("#assistant-close").click();
+  assert.equal(await page.locator('#assistant-panel').isHidden(), true);
   await page.locator("#marks-toggle").click();
   await page.locator(".mark-card-ai-saved").waitFor();
   assert.equal(await page.locator(".mark-source-location").textContent(), "PDF 第 25 页");
@@ -274,6 +274,8 @@ async function selectAssistantTextByMouse(page, needle) {
   await page.mouse.down();
   await page.mouse.move(points.end.x, points.end.y, { steps: 10 });
   await page.mouse.up();
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  await page.mouse.click(points.start.x, points.start.y, { button: "right" });
   await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
   return page.evaluate(() => getSelection()?.toString() || "");
 }
@@ -286,6 +288,12 @@ async function selectExactReaderText(page, pageIndex, needle) {
   ).page, { id: revisionId, index: pageIndex });
   const line = overlay.lines.find((candidate) => candidate.text.includes(needle));
   assert.ok(line, `OCR line missing: ${needle}`);
+  await page.evaluate(({index, quad}) => {
+    const rect = document.querySelector(`.page[data-index="${index}"] .text-overlay`).getBoundingClientRect();
+    const viewer = document.querySelector('#viewer'); const viewport = viewer.getBoundingClientRect();
+    const y = rect.top + quad.reduce((sum, p) => sum + p[1], 0) / quad.length * rect.height;
+    viewer.scrollTop += y - (viewport.top + viewport.height / 2);
+  }, {index:pageIndex, quad:line.quad});
   const start = line.text.indexOf(needle);
   const end = start + needle.length;
   const firstCell = line.cells.findIndex((cell) => cell[3] > start && cell[2] < end);
@@ -317,7 +325,8 @@ async function currentRevisionId(page) {
 }
 
 async function openBook(page, pageCount) {
-  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).locator('.book-open').click();
+  await page.locator('#book-overview .overview-book-heading .primary-action').click();
   await page.locator("#reader").waitFor({ state: "visible" });
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
 }

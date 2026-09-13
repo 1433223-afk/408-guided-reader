@@ -97,6 +97,33 @@ try {
   assert.ok(visibleText.includes("中文与粗体混排"));
   assert.ok(visibleText.includes("行内数学"));
 
+  assert.equal(await selectRenderedOccurrence(page, "中文与粗体混排", 0), "中文与粗体混排");
+  assert.equal(await page.locator("#assistant-answer-actions.selection-actions").isVisible(), true);
+  assert.equal(await page.locator("#assistant-answer-actions .selection-action-row").isVisible(), true);
+  const toolbarStyles = await page.evaluate(() => {
+    const values = (selector, properties) => {
+      const style = getComputedStyle(document.querySelector(selector));
+      return Object.fromEntries(properties.map((property) => [property, style[property]]));
+    };
+    const container = ["padding", "backgroundColor", "borderColor", "borderRadius", "boxShadow"];
+    const button = ["minHeight", "padding", "color", "backgroundColor", "borderRadius", "fontSize"];
+    const cancel = ["minWidth", "padding", "color", "backgroundColor"];
+    return {
+      readerContainer: values("#selection-actions", container),
+      assistantContainer: values("#assistant-answer-actions", container),
+      readerPrimary: values("#save-highlight", button),
+      assistantAsk: values("#assistant-ask-deeper", button),
+      readerCancel: values("#cancel-selection", cancel),
+      assistantCancel: values("#assistant-cancel-selection", cancel),
+    };
+  });
+  assert.deepEqual(toolbarStyles.assistantContainer, toolbarStyles.readerContainer);
+  assert.deepEqual(toolbarStyles.assistantAsk, toolbarStyles.readerPrimary);
+  assert.deepEqual(toolbarStyles.assistantCancel, toolbarStyles.readerCancel);
+  await page.locator("#assistant-cancel-selection").click();
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  assert.equal(await page.evaluate(() => getSelection()?.isCollapsed ?? true), true);
+
   const ordinary = await createAndCloseChild(page, "中文与粗体混排", 0);
   assert.equal(ordinary.visibleSelection, "中文与粗体混排");
   assert.equal(ordinary.childQuestion, "中文与粗体混排");
@@ -112,7 +139,7 @@ try {
   assert.equal(repeated.request.source_spans[0].start, expectedSecondStart);
   assert.equal(repeated.childQuestion, "时钟周期");
 
-  await bubble.locator(".katex").first().evaluate((math) => {
+  const formulaPoint = await bubble.locator(".katex").first().evaluate((math) => {
     const text = document.createTreeWalker(math, NodeFilter.SHOW_TEXT).nextNode();
     const range = document.createRange();
     range.setStart(text, 0);
@@ -121,9 +148,16 @@ try {
     selection.removeAllRanges();
     selection.addRange(range);
     math.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+    const rect = range.getClientRects()[0];
+    return { x: rect.left + 1, y: rect.top + rect.height / 2 };
   });
   await page.waitForTimeout(100);
   assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  await bubble.locator(".katex").first().evaluate((element, point) => {
+    element.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: point.x, clientY: point.y,
+    }));
+  }, formulaPoint);
   assert.match(await page.locator("#status").textContent(), /不支持直接选择公式或代码/);
 
   assert.deepEqual(pageErrors, []);
@@ -139,6 +173,10 @@ try {
     markersExcludedFromSelection: true,
     repeatedPhraseMappedByOccurrence: true,
     multiTextNodeSelectionExact: true,
+    selectionRequiresContextMenu: true,
+    invalidRightClickPreservesNativeMenu: true,
+    selectionToolbarMatchesReader: true,
+    selectionCancelClearsNativeRange: true,
     codeMathIsolation: true,
     formulaSelectionRestrictedHonestly: true,
   }));
@@ -195,10 +233,34 @@ async function selectRenderedOccurrence(page, phrase, occurrence) {
     selection.removeAllRanges();
     selection.addRange(range);
     element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
-    return range.toString();
+    const rect = range.getClientRects()[0];
+    return {
+      text: range.toString(),
+      point: { x: rect.left + 1, y: rect.top + rect.height / 2 },
+    };
   }, { value: phrase, wanted: occurrence });
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true,
+    "Selecting an Assistant answer must not reveal 再问一层 before right-click");
+  const outsideIntercepted = await bubble.evaluate((element) => {
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: 0, clientY: 0,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  assert.equal(outsideIntercepted, false,
+    "Right-click outside the selected answer must preserve the native context menu");
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  const intercepted = await bubble.evaluate((element, point) => {
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: point.x, clientY: point.y,
+    });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, selected.point);
+  assert.equal(intercepted, true, "Right-click inside the Assistant selection must open its action menu");
   await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
-  return selected;
+  return selected.text;
 }
 
 async function selectLine(page, pageIndex) {
@@ -230,7 +292,10 @@ async function currentRevisionId(page) {
 }
 
 async function openBook(page, pageCount) {
-  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` })
+    .locator(".book-open").click();
+  await page.locator("#book-overview").waitFor({ state: "visible" });
+  await page.locator("#book-overview .overview-book-heading .primary-action").click();
   await page.locator("#reader").waitFor({ state: "visible" });
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
 }

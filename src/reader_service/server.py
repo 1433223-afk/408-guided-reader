@@ -1079,7 +1079,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/assistant-render.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/assistant-navigator.js", "/assistant-render.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:
@@ -1151,6 +1151,14 @@ def handler_factory(
                     remaining -= len(chunk)
 
         def _json(self, status: HTTPStatus, payload: dict) -> None:
+            # Browser tree navigation needs summaries plus the focused conversation only.
+            # Full service state stays in memory; a focus request lazily restores its turns.
+            if self.headers.get("X-Assistant-View") == "current" and isinstance(payload.get("assistant"), dict):
+                assistant_view = payload["assistant"]
+                for root in assistant_view.get("roots", []):
+                    root.pop("turns", None)
+                    for node in root.get("nodes", []):
+                        node.pop("turns", None)
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")

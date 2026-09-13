@@ -66,7 +66,7 @@ try {
   browser = await chromium.launch({ executablePath: chromePath(), headless: true });
   const page = await browser.newPage({ viewport: { width: VIEWPORT_WIDTH, height: 1080 } });
   const pageErrors = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("pageerror", (error) => { pageErrors.push(error.message); console.error(error.message); });
   await page.goto(running.url);
   await openBook(page, 348);
 
@@ -81,6 +81,7 @@ try {
   await page.locator("#assistant-start").click();
   const firstRootState = (await (await rootResponse).json()).assistant;
   const firstRootId = firstRootState.current.root_id;
+  assert.equal('turns' in firstRootState.roots[0], false);
   const callsAfterRoot = providerCalls.length;
   const rootBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
   await rootBubble.waitFor();
@@ -91,6 +92,12 @@ try {
   assert.equal(await rootBubble.locator("ul li").count(), 2);
   assert.equal(await rootBubble.locator(".assistant-math-block .katex").count(), 1);
   assert.ok(!(await rootBubble.innerText()).includes("\\frac"));
+  await page.locator('.dock-tabs button').nth(1).click();
+  assert.equal(await page.locator('#master-workspace').isVisible(), true);
+  assert.equal(await rootBubble.isVisible(), false);
+  await page.locator('.dock-tabs button').first().click();
+  assert.equal(await rootBubble.isVisible(), true);
+  assert.equal(providerCalls.length, callsAfterRoot);
 
   const initial = await panelMetrics(page);
   await dragDockToWidth(page, initial.panelWidth + 150);
@@ -113,6 +120,8 @@ try {
   assert.equal(await page.locator("#selection-actions").isVisible(), true);
   await page.locator("#cancel-selection").click();
 
+  await page.locator('#assistant-question').fill('留在根主题的草稿');
+  await page.locator('#assistant-question').evaluate(input => input.setSelectionRange(2, 4));
   assert.equal(await selectAssistantTextByMouse(page, "像乐队里的节拍器"), "像乐队里的节拍器");
   const rootScroll = await makeScrollableAndSet(page, 41);
   const childResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
@@ -122,18 +131,19 @@ try {
   assert.equal(await page.locator('.assistant-answer-bubble[data-current-answer="true"]').count(), 0);
   const childState = (await (await childResponse).json()).assistant;
   const childId = childState.current.node_id;
-  assert.equal(await page.locator("#assistant-depth").textContent(), "2/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 2 层，最多 5 层");
   assert.equal(await page.locator("#assistant-root-switcher option:checked").textContent(), "时钟脉冲信号");
   assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
     "像乐队里的节拍器",
   ]);
 
+  await page.locator('#assistant-question').fill('留在子主题的草稿');
   assert.equal(await selectAssistantTextByMouse(page, "高低电平变化"), "高低电平变化");
   const childScroll = await makeScrollableAndSet(page, 57);
   const grandchildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#assistant-depth").textContent(), "3/5");
+  assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 3 层，最多 5 层");
   const grandchildState = (await (await grandchildResponse).json()).assistant;
   const grandchildId = grandchildState.current.node_id;
   assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
@@ -141,13 +151,16 @@ try {
   ]);
 
   let focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRootId, childId);
   assert.equal((await (await focusResponse).json()).assistant.current.node_id, childId);
   await waitForScroll(page, childScroll);
+  assert.equal(await page.locator('#assistant-question').inputValue(), '留在子主题的草稿');
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRootId, null);
   assert.equal((await (await focusResponse).json()).assistant.current.root_id, firstRootId);
   await waitForScroll(page, rootScroll);
+  assert.equal(await page.locator('#assistant-question').inputValue(), '留在根主题的草稿');
+  assert.equal(await page.locator('#assistant-question').evaluate(input => input.selectionStart), 2);
   assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), ["像乐队里的节拍器"]);
   assert.equal(await selectAssistantTextByMouse(page, "时钟周期"), "时钟周期");
   const siblingResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
@@ -156,14 +169,14 @@ try {
   const siblingId = siblingState.current.node_id;
 
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRootId, null);
   await focusResponse;
   assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), [
     "像乐队里的节拍器", "时钟周期",
   ]);
   const callsBeforeReopen = providerCalls.length;
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-child-list button").filter({ hasText: "像乐队里的节拍器" }).click();
+  await chooseTopic(page, firstRootId, childId);
   const reopened = (await (await focusResponse).json()).assistant;
   assert.equal(reopened.current.node_id, childId);
   assert.deepEqual(reopened.current.children.map((child) => child.label), ["高低电平变化"]);
@@ -177,9 +190,10 @@ try {
   assert.ok(!afterClose.roots[0].nodes.some((node) => node.node_id === childId));
   assert.ok(!afterClose.roots[0].nodes.some((node) => node.node_id === grandchildId));
   assert.ok(afterClose.roots[0].nodes.some((node) => node.node_id === siblingId));
+  await page.waitForFunction(() => document.querySelector('#assistant-title').textContent === '时钟脉冲信号');
   assert.deepEqual(await page.locator("#assistant-child-list button").allTextContents(), ["时钟周期"]);
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-child-list button").filter({ hasText: "时钟周期" }).click();
+  await chooseTopic(page, firstRootId, siblingId);
   await focusResponse;
 
   assert.equal(await selectExactReaderText(page, 262, "识别异常和中断"), "识别异常和中断");
@@ -194,20 +208,20 @@ try {
 
   const callsBeforeSwitch = providerCalls.length;
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-root-switcher").selectOption(firstRootId);
+  await chooseTopic(page, firstRootId, null);
   const restoredFirstRoot = (await (await focusResponse).json()).assistant;
-  assert.equal(restoredFirstRoot.current.node_id, siblingId);
+  assert.equal(restoredFirstRoot.current.node_id, null);
   assert.equal(providerCalls.length, callsBeforeSwitch);
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-root-switcher").selectOption(secondRootId);
+  await chooseTopic(page, secondRootId, null);
   assert.equal((await (await focusResponse).json()).assistant.current.root_id, secondRootId);
   assert.equal(providerCalls.length, callsBeforeSwitch);
 
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-root-switcher").selectOption(firstRootId);
-  assert.equal((await (await focusResponse).json()).assistant.current.node_id, siblingId);
+  await chooseTopic(page, firstRootId, null);
+  assert.equal((await (await focusResponse).json()).assistant.current.node_id, null);
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
-  await page.locator("#assistant-back").click();
+  await chooseTopic(page, firstRootId, null);
   assert.equal((await (await focusResponse).json()).assistant.current.depth, 1);
 
   await dragDockToWidth(page, 610);
@@ -236,18 +250,18 @@ try {
   assert.ok(expanded.panelWidth >= VIEWPORT_WIDTH - 2);
   assert.equal(providerCalls.length, callsBeforeExpanded);
   const expandedLayout = await conversationMetrics(page);
-  assert.ok(expandedLayout.headerWidth >= 900 && expandedLayout.headerWidth <= 1000);
+  assert.ok(expandedLayout.headerWidth > 1800);
   assert.ok(expandedLayout.rootSwitcherWidth <= 220);
-  assert.ok(expandedLayout.turnsWidth <= 900);
+  assert.ok(expandedLayout.turnsWidth <= 960);
   assert.ok(expandedLayout.answerWidth > expandedLayout.questionWidth);
-  assert.ok(expandedLayout.answerWidth <= expandedLayout.turnsWidth * 0.83);
+  assert.ok(expandedLayout.answerWidth <= expandedLayout.turnsWidth);
   assert.ok(expandedLayout.answerWidth >= expandedLayout.turnsWidth * 0.75);
   assert.ok(expandedLayout.questionWidth <= expandedLayout.turnsWidth * 0.5);
   assert.ok(Math.abs(expandedLayout.answerLeft - expandedLayout.turnsLeft) <= 2);
   assert.ok(Math.abs(expandedLayout.questionRight - expandedLayout.turnsRight) <= 6);
-  assert.ok(Math.abs(expandedLayout.turnsCenter - VIEWPORT_WIDTH / 2) <= 2);
+  assert.ok(Math.abs(expandedLayout.turnsCenter - (VIEWPORT_WIDTH + 256) / 2) <= 2);
   assert.ok(Math.abs(expandedLayout.composerCenter - expandedLayout.turnsCenter) <= 2);
-  assert.ok(expandedLayout.composerWidth <= expandedLayout.turnsWidth * 0.83);
+  assert.ok(expandedLayout.composerWidth <= expandedLayout.turnsWidth);
   assert.ok(expandedLayout.composerWidth >= expandedLayout.turnsWidth * 0.75);
   assert.equal(await page.locator(".assistant-math-block .katex").count(), 1);
   assert.equal(expandedLayout.answerHasCardChrome, false);
@@ -350,7 +364,7 @@ async function conversationMetrics(page) {
     const answer = rect('.assistant-answer-bubble[data-current-answer="true"]');
     const question = rect(".assistant-question-bubble");
     const composer = rect("#assistant-follow-up");
-    const rootSwitcher = rect("#assistant-root-switcher");
+    const rootSwitcher = rect("#assistant-topic-trigger");
     const answerElement = document.querySelector('.assistant-answer-bubble[data-current-answer="true"]');
     const answerStyle = getComputedStyle(answerElement);
     const code = answerElement.querySelector("pre");
@@ -446,6 +460,8 @@ async function selectAssistantTextByMouse(page, needle) {
   await page.mouse.down();
   await page.mouse.move(points.end.x, points.end.y, { steps: 10 });
   await page.mouse.up();
+  assert.equal(await page.locator("#assistant-answer-actions").isHidden(), true);
+  await page.mouse.click(points.start.x, points.start.y, { button: "right" });
   await page.locator("#assistant-answer-actions").waitFor({ state: "visible" });
   return page.evaluate(() => getSelection()?.toString() || "");
 }
@@ -489,7 +505,10 @@ async function currentRevisionId(page) {
 }
 
 async function openBook(page, pageCount) {
-  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` })
+    .locator(".book-open").click();
+  await page.locator("#book-overview").waitFor({ state: "visible" });
+  await page.locator("#book-overview .overview-book-heading .primary-action").click();
   await page.locator("#reader").waitFor({ state: "visible" });
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
 }
@@ -552,4 +571,10 @@ function chromePath() {
   const found = candidates.find((candidate) => fs.existsSync(candidate));
   if (!found) throw new Error("Chrome or Edge is required");
   return found;
+}
+
+
+async function chooseTopic(page, rootId, nodeId) {
+  if (!(await page.locator(".assistant-topic-sidebar").isVisible())) await page.locator("#assistant-topic-trigger").click();
+  await page.locator(`.assistant-topic-sidebar [role="treeitem"][data-root-id="${rootId}"][data-node-id="${nodeId || ""}"] span:last-child`).click();
 }
