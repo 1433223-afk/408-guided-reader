@@ -215,7 +215,7 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     entry.textContent = pending ? 'KP · 准备中' : error ? 'KP · 重试'
       : busy ? `KP · ${stages[snapshot.prepare_stage] || '准备中'}${count}`
       : snapshot?.status === 'READY' ? `${snapshot.knowledge_points.length} 个知识点`
-      : snapshot?.status === 'FAILED' ? 'KP · 重试生成' : snapshot ? '生成本章 KP' : 'KP · 读取中';
+      : snapshot?.status === 'FAILED' ? '生成失败 · 重试' : snapshot ? '＋ 生成本章知识点' : 'KP · 读取中';
     entry.title = error || (snapshot?.status === 'READY' ? '查看本章知识点与学习状态'
       : `${snapshot?.chapter_title || '当前章'}：${entry.textContent}，PDF 阅读不受影响`);
   }

@@ -126,7 +126,7 @@ try {
     return route.fulfill({json:stage});
   });
   const kpEntry=restored.locator('#reader-kp-action');
-  await kpEntry.filter({hasText:'生成本章 KP'}).waitFor({timeout:12000});
+  await kpEntry.filter({hasText:'＋ 生成本章知识点'}).waitFor({timeout:12000});
   await kpEntry.click();
   for (const [prepare_stage,label] of [['RESOLVING_SOURCE','来源准备中'],['GENERATING','生成中'],['REVIEWING','审查中'],['VALIDATING','校验中'],['PUBLISHING','发布中']]) {
     stage={...stage,prepare_stage}; await kpEntry.filter({hasText:label}).waitFor().catch(async e=>{console.log('KP phase diagnostic',requests,stage.prepare_stage,await kpEntry.textContent(),await kpEntry.getAttribute('title'));throw e;});
@@ -134,7 +134,7 @@ try {
     assert.ok((await kpEntry.getAttribute('class')).includes('ai-progress'));
   }
   stage={...stage,status:'FAILED'};
-  await kpEntry.filter({hasText:'重试生成'}).waitFor(); await kpEntry.click();
+  await kpEntry.filter({hasText:'生成失败 · 重试'}).waitFor(); await kpEntry.click();
   assert.equal(requests,2);
   stage=chapterContext.snapshot;
   await kpEntry.filter({hasText:'个知识点'}).waitFor();

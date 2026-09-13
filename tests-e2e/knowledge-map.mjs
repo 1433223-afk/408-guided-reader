@@ -125,19 +125,21 @@ try {
     await page.locator('.book-card').filter({hasText:'348 个 PDF 页面'}).getByRole('button',{name:'打开',exact:true}).click();
     await page.locator('.overview-book-heading .primary-action').click();
     const outline=await json(page,`/api/revisions/${book.active_revision.id}/outline`);
-    const chapter=outline.nodes.find(n=>n.title==='第6章 总线');
-    const section=outline.nodes.find(n=>n.kind==='SECTION' && n.parent_id===chapter.outline_node_id && n.start_page!==null);
-    await page.locator('#page-number').fill(String(section.start_page+1));
+    const chapter=outline.nodes.find(n=>n.title==='第5章 中央处理器');
+    assert.equal(chapter.resolution_state,'PARTIAL');
+    const initial=await json(page,`/api/revisions/${book.active_revision.id}/chapters/${chapter.outline_node_id}/knowledge-map`);
+    assert.equal(initial.status,'NOT_PREPARED');
+    await page.locator('#page-number').fill(String(chapter.start_page+1));
     await page.locator('#page-number').press('Enter');
-    await page.locator(`.page[data-index="${section.start_page}"] canvas`).waitFor();
+    await page.locator(`.page[data-index="${chapter.start_page}"] canvas`).waitFor();
     const entry=page.locator('#reader-kp-action');
-    await entry.filter({hasText:'生成本章 KP'}).waitFor();
+    await entry.filter({hasText:'＋ 生成本章知识点'}).waitFor();
     await page.evaluate(()=>{
       window.kpStages=[];
       new MutationObserver(()=>window.kpStages.push(document.querySelector('#reader-kp-action').textContent)).observe(document.querySelector('#reader-kp-action'),{childList:true,subtree:true});
     });
     await entry.click();
-    await entry.filter({hasText:'重试生成'}).waitFor({timeout:180000});
+    await entry.filter({hasText:'生成失败 · 重试'}).waitFor({timeout:180000});
     await entry.click();
     await entry.filter({hasText:'个知识点'}).waitFor({timeout:180000});
     await entry.click();
@@ -151,7 +153,7 @@ try {
     const stages=await page.evaluate(()=>window.kpStages);
     assert.ok(stages.some(s=>s.includes('生成中')));assert.ok(stages.some(s=>s.includes('审查中')));
     assert.deepEqual(pageErrors,[]);
-    console.log(JSON.stringify({status:'PASS',flow:'real Chapter 6 preparation -> review failure -> retry -> READY -> Reader KP list -> PDF -> Overview',count,stages,externalProviderCalls:0}));
+    console.log(JSON.stringify({status:'PASS',flow:'real never-generated Chapter 5 preparation -> review failure -> retry -> READY -> Reader KP list -> PDF -> Overview',count,stages,externalProviderCalls:0}));
   } else {
   const book = await openBook(page, 348);
   assert.equal(book.active_revision.blob_sha256, expectedHash);

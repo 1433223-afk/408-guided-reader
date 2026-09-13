@@ -23,7 +23,7 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
       window.ui.sync('old','s-old');window.ui.sync('current','s');
       window.finishOld({status:'READY',knowledge_points:[{primary_section_id:'s-old'}]});
     });
-    await page.locator('#reader-kp-action').filter({hasText:'生成本章 KP'}).waitFor();
+    await page.locator('#reader-kp-action').filter({hasText:'＋ 生成本章知识点'}).waitFor();
     await page.evaluate(()=>{const b=document.querySelector('#reader-kp-action');b.click();b.click();});
     await page.waitForFunction(()=>document.querySelector('#reader-kp-action').textContent.includes('等待开始'));
     assert.deepEqual(await page.evaluate(()=>window.posts),['/api/revisions/revision/chapters/current/knowledge-map/prepare']);
@@ -43,4 +43,22 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
     await page.evaluate(()=>window.ui.reset());
     assert.equal(await page.locator('#reader-kp-action').isVisible(),false);
   } finally {await browser.close();}
+});
+
+test('Reader identifies an unprepared chapter from page bookmarks without inventing exact ranges', async()=>{
+  const {runInNewContext}=await import('node:vm');
+  const source=fs.readFileSync(new URL('../src/reader_service/static/app.js',import.meta.url),'utf8');
+  const fn=source.slice(source.indexOf('function renderReaderSectionHint()'),source.indexOf('function updateViewport()'));
+  const nodes=[{kind:'CHAPTER',outline_node_id:'a',resolution_state:'PARTIAL',start_page:10},
+    {kind:'CHAPTER',outline_node_id:'b',resolution_state:'PARTIAL',start_page:20}];
+  let target;
+  const context={state:{outlineNodes:nodes},document:{getElementById:()=>({})},
+    elements:{viewer:{getBoundingClientRect:()=>({top:68})}},
+    captureZoomAnchor:()=>({pageIndex:19,normalizedY:0.5}),chapterEntry:{sync:id=>target=id}};
+  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'a');
+  context.captureZoomAnchor=()=>({pageIndex:20,normalizedY:0});
+  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'b');
+  nodes.push({...nodes[1],outline_node_id:'ambiguous'});
+  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,null);
+  assert.equal(nodes[0].start_y,undefined);assert.equal(nodes[0].end_page,undefined);
 });

@@ -444,6 +444,16 @@ function renderReaderSectionHint() {
       && (n.end_page > point.pageIndex || n.end_page === point.pageIndex && n.end_y > point.normalizedY));
     chapter = matches.length === 1 ? matches[0] : null;
   }
+  // Page-level Outline bookmarks identify the chapter to prepare before its exact
+  // physical range exists. This is navigation context, never a KP source range.
+  if (!chapter && point) {
+    const chapters = state.outlineNodes.filter(n => n.kind === "CHAPTER" && Number.isInteger(n.start_page))
+      .sort((a,b) => a.start_page - b.start_page);
+    const preceding = chapters.filter(n => n.start_page <= point.pageIndex);
+    const candidate = preceding.at(-1);
+    if (candidate?.resolution_state === "PARTIAL"
+        && chapters.filter(n => n.start_page === candidate.start_page).length === 1) chapter = candidate;
+  }
   chapterEntry.sync(chapter?.outline_node_id || null, section?.outline_node_id || null);
 }
 
