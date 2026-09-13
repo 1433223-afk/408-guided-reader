@@ -88,3 +88,34 @@ projection. Run browser harnesses with `READER_DATA_DIR` pointing at the prepare
 
 Checkpoint: the commit containing this report. Pre-existing related Assistant model/menu/rendering
 changes were preserved and integrated; no unrelated repository changes were discarded.
+
+## Same-session typography / Master Composer UAT polish (2026-09-13)
+
+User requested modern, consistent Master/Assistant fonts and a review-strength selector matching
+the Assistant model menu. The input fallback was concrete: textarea did not inherit the interface
+font, and Assistant had invalid `font: 12px/1.4 inherit` shorthand. Both now explicitly use the
+same local Segoe UI / Microsoft YaHei UI sans-serif stack, 15 px input and 16 px body text.
+Code and KaTeX fonts and PDF rendering are unchanged; no web fonts or network dependency.
+
+Master now reuses the existing Composer menu implementation (`createComposerChoice` in
+`screens.js`). Its low-weight `标准 ▾` trigger sits beside Send, opens upward with brief option
+descriptions, and supports pointer/keyboard selection, Escape, outside dismissal and focus return.
+The hidden original `master-mode` select remains the value owner: Fast/Standard/Deep values,
+Standard default, actual send payload, Review routing and persistence are unchanged. Input focus,
+padding and shape now match Assistant; Master Send/explicit understanding confirmation are compact.
+UI/UX skill informed readable typography and shared control behavior rather than a new design system.
+
+Targeted model-menu test PASS. `conversation-composer.mjs` PASS on an isolated copy of the real
+348-page library: opened a real retained KP Master through its Reader marker; selected all three
+strengths, checked keyboard/Escape, intercepted a Standard send at the UI HTTP boundary to prove
+the value and failure-draft retention without invoking a provider, switched Assistant/Master,
+and measured equal computed input font family / 15 px size / 24.75 px line height. Both Dock
+and expanded Assistant paths passed `assistant-workspace.mjs` again. Screenshots visually checked:
+`test-results/master-composer-polish.png` and the updated expanded Assistant screenshot.
+42 JS tests and the broad 285 Python tests passed (2 unchanged optional OCR skips).
+The focused Composer harness explicitly disables all providers; retained Master opens and its
+local menu remains usable under AI-off. No real provider calls; no source-Library writes; no Frozen changes.
+Full Master business-workflow E2E is `INTENTIONALLY_NOT_RUN` for this style-only delta: actual
+mode/send contract is checked in the focused served-Reader test; no persistence/routing code changed.
+Current port 8767 serves all three changed assets HTTP 200; no service restart is needed for this
+static-only change. User refresh/retest remains pending.

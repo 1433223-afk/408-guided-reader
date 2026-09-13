@@ -519,7 +519,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .assistant-error { color: #813b34; background: #f7e7e4; border: 1px solid #e8c7c1; }
 .assistant-empty { align-self: start; margin: 12px 0; color: #888074; font: 13px/1.6 Georgia, serif; }
 .assistant-follow-up { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; padding-top: 12px; border-top: 1px solid #e1d9ca; }
-.assistant-follow-up textarea { resize: none; min-width: 0; padding: 9px 10px; color: #332f29; background: #fff; border: 1px solid #c9c2b5; border-radius: 7px; font: 12px/1.4 inherit; }
+.assistant-follow-up textarea { resize: none; min-width: 0; padding: 9px 10px; color: #332f29; background: #fff; border: 1px solid #c9c2b5; border-radius: 7px; font-family: inherit; font-size: 15px; line-height: 1.6; }
 .assistant-follow-up button { align-self: stretch; padding: 0 14px; cursor: pointer; color: #2d291f; background: #e2bc75; border: 0; border-radius: 7px; font-size: 11px; font-weight: 750; }
 .assistant-follow-up button:disabled { cursor: wait; opacity: .55; }
 .assistant-lifetime { margin: 9px 0 0; color: #979084; font-size: 9px; }

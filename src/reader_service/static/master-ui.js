@@ -1,4 +1,5 @@
 import { renderAssistantAnswer } from "/assistant-render.js";
+import { createComposerChoice } from "/screens.js";
 
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 const REVIEW = { NOT_REQUESTED: "快速 · 未独立审查", PENDING: "审查中", PASS: "审查通过", FAIL: "审查未通过", TECHNICAL_FAILURE: "审查技术失败" };
@@ -29,15 +30,21 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     <p id="master-status" role="status">从教材知识点打开持久对话。</p>
     <div id="master-history" aria-live="polite"></div>
     <form id="master-form" hidden>
-      <label>审查强度 <select id="master-mode"><option value="Fast">快速</option><option value="Standard" selected>标准</option><option value="Deep">深入</option></select></label>
       <label for="master-question" class="sr-only">向 Master 提问</label>
       <textarea id="master-question" maxlength="2000" rows="3" placeholder="这个知识点哪里还没完全懂？"></textarea>
-      <button id="master-send" type="submit">发送</button>
+      <div class="master-composer-actions">
+        <div class="assistant-model-control">
+          <label class="assistant-model"><span class="sr-only">审查强度</span><select id="master-mode" aria-label="审查强度"><option value="Fast">快速 · 通常不做独立审查</option><option value="Standard" selected>标准 · 检查学术与客观正确性</option><option value="Deep">深入 · 同时检查推理与教学有效性</option></select></label>
+        </div>
+        <button id="master-send" type="submit">发送</button>
+      </div>
     </form>
     <button id="master-confirm" type="button" hidden>已经弄懂</button>
     <p class="master-lifetime">对话自动保存；收起或重启不会改变理解状态。</p>`;
   dock.append(panel);
   const el = (id) => panel.querySelector(`#master-${id}`);
+  createComposerChoice(el('mode'), {id:'master-review', label:'审查强度',
+    names:{Fast:'快速', Standard:'标准', Deep:'深入'}});
   const post = (path, body = {}) => api(path, { method: "POST", body: JSON.stringify(body) });
   const scopeId = (point) => point.scope_id || point.knowledge_point_id || point.outline_node_id;
   const base = (id = current && scopeId(current.point)) => `/api/revisions/${revision()}/learning/${id}`;

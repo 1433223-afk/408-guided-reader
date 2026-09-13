@@ -250,19 +250,23 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
 
 // Visual adapter only: the original select remains the value/change/disabled owner.
 export function createAssistantModelMenu(select) {
+  return createComposerChoice(select, {id:'assistant-model', label:'当前 AI 模型',
+    names:{deepseek:'DeepSeek',zhipu:'GLM-5.3',openrouter:'Gemini 3.8'}});
+}
+
+export function createComposerChoice(select, {id, label, names}) {
   const wrapper = node('div', '', 'assistant-model-menu');
-  const trigger = node('button'); trigger.type = 'button'; trigger.id = 'assistant-model-trigger';
-  trigger.setAttribute('aria-label', '当前 AI 模型'); trigger.setAttribute('aria-haspopup', 'listbox');
-  const list = node('div', '', 'assistant-model-options'); list.id = 'assistant-model-options';
-  list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', '选择 AI 模型'); list.hidden = true;
+  const trigger = node('button', '', 'composer-choice-trigger'); trigger.type = 'button'; trigger.id = `${id}-trigger`;
+  trigger.setAttribute('aria-label', label); trigger.setAttribute('aria-haspopup', 'listbox');
+  const list = node('div', '', 'assistant-model-options'); list.id = `${id}-options`;
+  list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', label); list.hidden = true;
   list.tabIndex = -1;
   trigger.setAttribute('aria-controls', list.id); trigger.setAttribute('aria-expanded', 'false');
   wrapper.append(trigger, list); select.closest('.assistant-model').after(wrapper);
   select.closest('.assistant-model').hidden = true;
-  const names = {deepseek:'DeepSeek',zhipu:'GLM-5.3',openrouter:'Gemini 3.8'};
   function close(restore = false) { list.hidden = true; trigger.setAttribute('aria-expanded','false'); if(restore) trigger.focus(); }
   function sync() {
-    trigger.textContent = `${names[select.value] || '选择模型'} ▾`;
+    trigger.textContent = `${names[select.value] || label} ▾`;
     trigger.disabled = false; trigger.title = select.title;
     list.replaceChildren(...[...select.options].map(option => {
       const item = node('button', option.textContent); item.type = 'button'; item.tabIndex = -1;
