@@ -390,3 +390,8 @@ browser path PASS. First browser attempt failed while copying a disappearing SQL
 unchanged harness rerun passed, no user-data or storage-code changes. Prior broad result above
 remains the baseline; this intermediate visual correction does not claim Phase/UAT closure.
 Static refresh only; user visual retest pending.
+
+Idle-length clarification (2026-09-14): user clarified that current-item color must remain dark
+and rejected the 4 px idle length. Restored the earlier 14 px default length for every idle tick;
+only the actual current item is charcoal. Hover taper is unchanged. Targeted ruler tests cover
+equal idle lengths and current-color ownership after scroll/Escape. No conversation or other UI change.

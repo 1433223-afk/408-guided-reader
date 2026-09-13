@@ -13,8 +13,8 @@ test('message ruler previews plain text, navigates locally by keyboard and drops
     const ticks=page.locator('.message-rail button');
     assert.equal(await ticks.count(),2);
     await page.waitForFunction(()=>document.querySelector('.message-tick').hasAttribute('aria-current'));
-    assert.equal(await page.locator('.message-tick[data-emphasis]').count(),0);
-    assert.deepEqual(await ticks.evaluateAll(items=>items.map(el=>Number(el.style.getPropertyValue('--tick-scale')))),[4/26,4/26]);
+    assert.equal(await page.locator('.message-tick[data-emphasis][aria-current="true"]').count(),1);
+    assert.deepEqual(await ticks.evaluateAll(items=>items.map(el=>Number(el.style.getPropertyValue('--tick-scale')))),[14/26,14/26]);
     await ticks.first().hover();
     assert.equal(Number(await ticks.first().evaluate(el=>el.style.getPropertyValue('--tick-scale'))),1);
     assert.ok(Number(await ticks.nth(1).evaluate(el=>el.style.getPropertyValue('--tick-scale')))<1);
@@ -24,12 +24,12 @@ test('message ruler previews plain text, navigates locally by keyboard and drops
     await page.keyboard.press('End'); await page.keyboard.press('Enter');
     await page.waitForFunction(()=>document.querySelector('#history').scrollTop>500);
     await page.waitForFunction(()=>document.querySelectorAll('.message-rail button')[1].getAttribute('aria-current')==='true');
-    assert.equal(await page.locator('.message-tick[data-emphasis]').count(),0);
+    assert.equal(await page.locator('.message-tick[data-emphasis][aria-current="true"]').count(),1);
     assert.equal(await page.evaluate(()=>scrollY),0);
     await page.keyboard.press('Home');
     await page.keyboard.press('Escape');
     assert.equal(await page.locator('#history-preview').isHidden(),true);
-    assert.deepEqual(await ticks.evaluateAll(items=>items.map(el=>Number(el.style.getPropertyValue('--tick-scale')))),[4/26,4/26]);
+    assert.deepEqual(await ticks.evaluateAll(items=>items.map(el=>Number(el.style.getPropertyValue('--tick-scale')))),[14/26,14/26]);
     await page.evaluate(()=>{
       const history=document.querySelector('#history');
       history.replaceChildren();

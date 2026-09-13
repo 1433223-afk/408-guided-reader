@@ -431,5 +431,5 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader #master-workspace .master-review-popover { position:fixed; margin:0; width:min(360px,calc(100vw - 32px)); max-height:60vh; overflow:auto; padding:16px; border:1px solid #dce2dc; border-radius:12px; background:#fff; color:#39443b; box-shadow:0 5px 24px #24352918; font-size:12px; }
 .master-review-popover > button { float:right; }
 .master-review-popover p { line-height:1.65; overflow-wrap:anywhere; }
-.message-tick::after { transform:scaleX(var(--tick-scale,.154)); transition:transform 140ms cubic-bezier(.2,.7,.25,1),background-color 140ms ease-out; }
+.message-tick::after { transform:scaleX(var(--tick-scale,.53846)); transition:transform 140ms cubic-bezier(.2,.7,.25,1),background-color 140ms ease-out; }
 @media (prefers-reduced-motion:reduce) { .message-tick::after { transition:none; } }

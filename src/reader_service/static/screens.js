@@ -12,8 +12,8 @@ export function createMessageRail(scroller) {
   function emphasize(position) {
     buttons.forEach((button,i) => {
       const distance=position===null ? Infinity : Math.abs(i-position);
-      button.style.setProperty('--tick-scale',String(Math.max(4,26-distance*7)/26));
-      button.toggleAttribute('data-emphasis', position!==null && i===Math.round(position));
+      button.style.setProperty('--tick-scale',String((position===null ? 14 : Math.max(4,26-distance*7))/26));
+      button.toggleAttribute('data-emphasis', i===(position===null ? active : Math.round(position)));
     });
   }
   function dismiss() { preview.hidden = true; buttons.forEach(b => b.removeAttribute('aria-describedby')); emphasize(null); }
