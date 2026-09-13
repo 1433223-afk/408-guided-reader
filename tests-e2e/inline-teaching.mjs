@@ -74,9 +74,9 @@ try {
   const noKp=nodes.find(n=>n.kind==='SECTION' && n.title.startsWith('6.1'));
   const base=s=>`/api/revisions/${rev}/sections/${s.outline_node_id}/inline-teaching`;
   await openBook(page);
-  await (await toolbarControl(page,'#inline-open')).click();
-  await page.locator('#inline-section').selectOption(ready.outline_node_id);
-  await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-generate').click()]);
+  await navigateSection(page,ready);
+  assert.equal(await page.locator('#inline-enabled,#inline-section').count(),0);
+  await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-open').click()]);
   assert.ok(await page.locator('.page canvas').count());
   let first=await settled(page,base(ready));
   assert.ok(first.published,JSON.stringify(first.task));
@@ -143,28 +143,34 @@ try {
     await page.setViewportSize({width:1440,height:1000});
     await page.waitForTimeout(500); await page.locator('#inline-panel').scrollIntoViewIfNeeded();
     await page.screenshot({path:'test-results/inline-margin.png',fullPage:true});
-    await (await toolbarControl(page,'#inline-enabled')).uncheck(); assert.equal(await page.locator('.inline-marker').count(),0);
-    await (await toolbarControl(page,'#inline-enabled')).check(); assert.ok(await page.locator('.inline-marker').count());
+    await navigateSection(page,ready);
+    await page.locator('#inline-open').click(); assert.equal(await page.locator(`.inline-marker[data-section-id="${ready.outline_node_id}"]`).count(),0);
+    await page.locator('#inline-open').click(); await page.locator('.inline-marker').first().waitFor();
     await openGuide(page,ready);
     await page.locator('#guide-expand').click(); await page.waitForTimeout(300);
     await page.locator('#guide-expand').click(); await page.locator('#guide-close').click();
-    await (await toolbarControl(page,'#inline-enabled')).uncheck();
+    await navigateSection(page,ready); await page.locator('#inline-open').click();
     await page.locator('#back-to-library').click();
     await stop(); running=await start({...loopback,GUIDED_READER_DEEPSEEK_DISABLED:'1',GUIDED_READER_ZHIPU_DISABLED:'1'});
-    await page.goto(running.url); await openBook(page); await (await toolbarControl(page,'#inline-open')).click();
-    await page.locator('#inline-section').selectOption(ready.outline_node_id);
+    await page.goto(running.url); await openBook(page); await navigateSection(page,ready);
     assert.equal((await get(page,base(ready))).published.id,first.published.id);
-    assert.equal(await page.locator('#inline-enabled').isChecked(),false);
-    await (await toolbarControl(page,'#inline-enabled')).check();
-    if (!(await page.locator('#inline-menu').isVisible())) await (await toolbarControl(page,'#inline-open')).click();
-    await page.locator('#inline-section').selectOption(ready.outline_node_id);
-    await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-generate').click()]);
+    assert.equal(await page.locator('#inline-open').getAttribute('aria-pressed'),'false');
+    await page.locator('#inline-open').click();
+    await page.locator('#inline-more').click();
+    assert.deepEqual(await page.locator('#inline-menu button').allTextContents(),['重新生成']);
+    await page.locator('#inline-generate').press('Escape');
+    assert.equal(await page.locator('#inline-menu').isVisible(),false);
+    await page.locator('#inline-more').press('Enter');
+    await page.screenshot({path:'test-results/inline-entry-menu.png'});
+    await Promise.all([page.waitForResponse(r=>r.url().endsWith('/inline-teaching/regenerate') && r.request().method()==='POST'),page.locator('#inline-generate').click()]);
     const failed=await settled(page,base(ready)); assert.equal(failed.task.state,'FAILED'); assert.equal(failed.published.id,first.published.id);
+    await page.waitForFunction(()=>document.querySelector('#inline-open').textContent.includes('重试'));
+    assert.equal(await page.locator('#inline-more').isVisible(),false);
     await stop(); running=await start(loopback); await page.goto(running.url); await openBook(page);
-    await (await toolbarControl(page,'#inline-open')).click(); await page.locator('#inline-section').selectOption(ready.outline_node_id);
-    await Promise.all([page.waitForResponse(r => r.url().endsWith('/inline-teaching/retry') && r.request().method()==='POST'), page.locator('#inline-retry').click()]); const replacement=await settled(page,base(ready));
+    await navigateSection(page,ready);
+    await Promise.all([page.waitForResponse(r => r.url().endsWith('/inline-teaching/retry') && r.request().method()==='POST'), page.locator('#inline-open').click()]); const replacement=await settled(page,base(ready));
     assert.equal(replacement.published.version,2);
-    await page.locator('#inline-section').selectOption(noKp.outline_node_id); await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-generate').click()]);
+    await navigateSection(page,noKp); await Promise.all([page.waitForResponse(r => /inline-teaching\/(generate|regenerate)$/.test(r.url()) && r.request().method()==='POST'), page.locator('#inline-open').click()]);
     const independent=await settled(page,base(noKp)); assert.ok(independent.published,JSON.stringify(independent.task));
     const verified=spawnSync('python',['tests-e2e/inline_verify.py',dataDir,rev],{windowsHide:true,encoding:'utf8'});
     assert.equal(verified.status,0,verified.stdout+verified.stderr);
@@ -247,4 +253,17 @@ async function relativePosition(page) {
 async function toolbarControl(page, selector) {
   if(!await page.locator(selector).isVisible()) await page.locator('.reader-more>summary').click();
   return page.locator(selector);
+}
+
+async function navigateSection(page, section) {
+  if (!(await page.locator('#outline-panel').isVisible())) await page.locator('#outline-toggle').click();
+  const row = page.locator(`li[data-node-id="${section.outline_node_id}"] > .outline-row`);
+  if (!(await row.isVisible())) await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-disclosure`).click();
+  await row.locator('.outline-target').click();
+  await page.locator('#outline-toggle').click();
+  await page.locator('#viewer').hover();
+  const height=await page.locator(`.page[data-index="${section.start_page}"]`).evaluate(e=>e.getBoundingClientRect().height);
+  await page.mouse.wheel(0,height*section.start_y+12);
+  await page.waitForFunction(id=>document.querySelector('#inline-open').dataset.sectionId===id, section.outline_node_id).catch(async e=>{console.log('Section diagnostic',section,await page.locator('#inline-open').evaluate(b=>({id:b.dataset.sectionId,title:b.title,page:document.querySelector('#page-number').value}))); throw e;});
+  await page.waitForFunction(()=>!document.querySelector('#inline-open').title.includes('正在读取'));
 }

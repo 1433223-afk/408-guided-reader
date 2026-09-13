@@ -568,24 +568,20 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .reader:has(#inline-open) { grid-template-columns: minmax(0, 1fr); }
 .reader:has(#inline-open) .reader-controls { min-width: 0; overflow-x: auto; }
 .reader:has(#inline-open) .reader-controls > * { flex-shrink: 0; }
-.inline-toolbar, .inline-switch { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
-.inline-switch { font-size: 12px; color: #625b4e; cursor: pointer; }
-.inline-switch input { accent-color: #80734f; margin: 0; cursor: pointer; }
-#inline-open { border: 0; background: transparent; color: #766d5d; padding: 3px 7px; font-size: 20px; cursor: pointer; }
-#inline-menu { position: absolute; z-index: 15; top: 62px; right: 16px; width: min(340px, calc(100vw - 32px)); padding: 14px; border: 1px solid #ded8cc; border-radius: 4px; background: #fffdf8; box-shadow: 0 3px 10px #302b2010; }
-#inline-menu[hidden], #inline-panel[hidden] { display: none; }
-.inline-controls { display: flex; align-items: center; gap: 8px; }
-#inline-section { flex: 1; min-width: 0; max-width: 100%; padding: 5px; font-size: 12px; background: transparent; border: 1px solid #ded8cc; }
-#inline-status { font-size: 12px; line-height: 1.65; color: #766e60; margin: 12px 0; }
+.inline-toolbar { position: relative; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+#inline-open { border: 0; background: transparent; color: #766d5d; padding: 3px 7px; font-size: 12px; cursor: pointer; min-width: 104px; }
+#reader #inline-open[aria-pressed="true"] { color: #304d3e; background-color: #dfe6dd; box-shadow: inset 0 -2px #3b5848; }
+#inline-open:disabled { opacity: .65; cursor: default; }
+#inline-more { border: 0; background: transparent; color: #766d5d; padding: 3px 5px; font-size: 14px; cursor: pointer; }
+#inline-more[hidden], #inline-menu[hidden], #inline-panel[hidden] { display: none; }
+#inline-menu { position: fixed; z-index: 15; top: 62px; width: max-content; padding: 6px 12px; border: 1px solid #ccccc2; border-radius: 2px; background: #f6f5ee; box-shadow: 0 3px 10px #302b2010; }
 #inline-menu button, #inline-panel button { padding: 4px 0; font-size: 12px; color: #756344; cursor: pointer; border: 0; border-radius: 0; background: transparent; }
-#inline-menu button:disabled { opacity: .45; cursor: default; }
 #inline-menu button:hover:not(:disabled), #inline-panel button:hover { text-decoration: underline; }
-#inline-menu #inline-menu-close { margin-left: auto; width: 24px; height: 24px; padding: 0; flex-shrink: 0; font-size: 14px; color: #9c9587; }
 .reader.inline-open .pages { padding-right: 364px; }
 .page:has(.inline-marker), .page:has(#inline-panel) { overflow: visible; }
 #inline-panel { position: absolute; left: calc(100% + 16px); width: 316px; max-height: min(520px, 70vh); overflow: auto; z-index: 6; padding: 18px; color: #504b40; background: #fffdf7; border: 1px solid #ded8c9; border-radius: 3px; box-shadow: none; }
 #inline-panel #inline-close { position: absolute; right: 8px; top: 6px; width: 24px; height: 24px; padding: 0; font-size: 14px; color: #9c9587; }
-#inline-panel #inline-close:hover, #inline-menu #inline-menu-close:hover { color: #625b4e; text-decoration: none; }
+#inline-panel #inline-close:hover { color: #625b4e; text-decoration: none; }
 #inline-content { font-size: 14px; line-height: 1.8; }
 #inline-content > strong { display: block; font-size: 11px; font-weight: 500; color: #94836a; letter-spacing: .08em; margin: 0 18px 9px 0; }
 #inline-content p { margin: 8px 0; white-space: pre-wrap; }

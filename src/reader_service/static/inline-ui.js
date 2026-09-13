@@ -5,19 +5,21 @@ const labels = { lead_in: "为什么这里重要", bridge: "接着这样看", wa
 export function createInlineUI({ state, api, goToPage, readingAnchor, layout, explain, contextMenu, hideContextMenu }) {
   const reader = document.getElementById("reader"), viewer = document.getElementById("viewer");
   const controls = document.createElement("div"); controls.className = "inline-toolbar";
-  controls.innerHTML = `<label class="inline-switch"><input id="inline-enabled" type="checkbox" role="switch">行间教学</label><button id="inline-open" type="button" aria-label="行间教学管理" aria-expanded="false" aria-controls="inline-menu">⋯</button>`;
+  controls.innerHTML = `<button id="inline-open" type="button" aria-pressed="false" aria-describedby="inline-status">✦ 行间教学</button><button id="inline-more" type="button" aria-label="行间教学更多操作" aria-expanded="false" aria-controls="inline-menu" hidden>···</button><span id="inline-status" class="sr-only" role="status"></span>`;
   document.getElementById("guide-reopen").after(controls);
-  const toggle = controls.querySelector("button"), enabled = controls.querySelector("input");
+  const toggle = controls.querySelector("#inline-open"), more = controls.querySelector("#inline-more");
   const menu = document.createElement("aside"); menu.id = "inline-menu"; menu.hidden = true;
   menu.setAttribute("aria-label", "行间教学管理");
-  menu.innerHTML = `<div class="inline-controls"><select id="inline-section" aria-label="行间教学当前节"></select><button id="inline-menu-close" type="button" aria-label="关闭教学管理">×</button></div><p id="inline-status" role="status"></p><div class="inline-controls"><button id="inline-generate" type="button">生成本节教学</button><button id="inline-retry" type="button" hidden>重试</button></div>`;
+  menu.innerHTML = `<button id="inline-generate" type="button">重新生成</button>`;
   reader.append(menu);
   const panel = document.createElement("aside");
   panel.id = "inline-panel"; panel.hidden = true; panel.setAttribute("aria-label", "行间教学批注");
   panel.innerHTML = `<button id="inline-close" type="button" aria-label="关闭 Guidance">×</button><div id="inline-content"></div>`;
-  const selector = menu.querySelector("select"), status = menu.querySelector("#inline-status"), content = panel.querySelector("#inline-content");
-  const generate = menu.querySelector("#inline-generate"), retry = menu.querySelector("#inline-retry");
+  const status = controls.querySelector("#inline-status"), content = panel.querySelector("#inline-content");
+  const generate = menu.querySelector("#inline-generate");
+  let menuOwner = null;
   let revision = null, epoch = 0, selected = null, active = null, timer = 0;
+  const activating = new Set();
   const cache = new Map(), loading = new Map(), intents = new Map(), pending = new Set(), visible = new Map();
   const requestErrors = new Map();
   const base = id => `/api/revisions/${revision}/sections/${id}/inline-teaching`;
@@ -32,18 +34,11 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
   }
   function reset() {
     epoch++; revision = state.revision?.id || null; selected = active = null;
-    clearTimeout(timer); cache.clear(); loading.clear(); intents.clear(); pending.clear(); visible.clear(); requestErrors.clear(); selector.replaceChildren();
+    clearTimeout(timer); cache.clear(); loading.clear(); intents.clear(); pending.clear(); visible.clear(); requestErrors.clear(); activating.clear();
     close(false); closeMenu();
   }
   function sync() {
     if (revision !== state.revision?.id) reset();
-    const prior = selected;
-    selector.replaceChildren();
-    for (const node of state.outlineNodes.filter(n => n.kind === "SECTION" && n.resolution_state === "RESOLVED")) {
-      const option = document.createElement("option"); option.value = node.outline_node_id; option.textContent = node.title; selector.append(option);
-    }
-    if (prior && [...selector.options].some(o => o.value === prior)) selector.value = prior;
-    selected = selector.value || null;
     for (const index of state.rendered) renderPage(index);
     refresh();
   }
@@ -59,55 +54,91 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       && (n.start_page < point.pageIndex || n.start_page === point.pageIndex && n.start_y <= point.normalizedY)
       && (n.end_page > point.pageIndex || n.end_page === point.pageIndex && n.end_y > point.normalizedY))?.outline_node_id;
   }
-  function closeMenu() { menu.hidden = true; toggle.setAttribute("aria-expanded", "false"); }
+  function closeMenu() { menu.hidden = true; menuOwner = null; more.setAttribute("aria-expanded", "false"); }
   function open(id, itemId) {
-    closeMenu(); selected = id; selector.value = id; active = itemId;
+    closeMenu(); selected = id; active = itemId;
     refresh();
     if (!reader.classList.contains("inline-open")) layout(() => reader.classList.add("inline-open"));
     repaint();
   }
-  toggle.onclick = () => {
-    if (!menu.hidden) { closeMenu(); return; }
-    sync();
-    if (!active) selected = currentSection() || selected;
-    selector.value = selected; refresh(); load(selected);
-    menu.hidden = false; toggle.setAttribute("aria-expanded", "true");
+  toggle.onclick = async () => {
+    const id = currentSection(), stamp = epoch;
+    if (!id || activating.has(id) || pending.has(id)) return;
+    activating.add(id); refresh();
+    try {
+      await load(id);
+      if (stamp !== epoch || id !== currentSection()) return;
+      const snapshot = cache.get(id), task = snapshot?.task;
+      if (!snapshot || ["DRAFT", "IN_REVIEW", "REJECTED"].includes(task?.state)) return;
+      if (task?.state === "FAILED") {
+        await send(task.terminal ? (snapshot.published ? "regenerate" : "generate") : "retry", id);
+      } else if (snapshot.published) {
+        visibility(id, !on(id));
+        if (!on(id) && selected === id) close();
+        repaint();
+      } else await send("generate", id);
+    } finally { if (stamp === epoch) { activating.delete(id); refresh(); } }
   };
-  menu.querySelector("#inline-menu-close").onclick = closeMenu;
+  more.onclick = () => {
+    if (!menu.hidden) { closeMenu(); return; }
+    refresh();
+    if (more.hidden) return;
+    menuOwner = currentSection(); menu.hidden = false;
+    const bounds = more.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(bounds.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${bounds.bottom + 6}px`;
+    more.setAttribute("aria-expanded", "true"); generate.focus();
+  };
   panel.querySelector("#inline-close").onclick = () => {
     const marker = document.querySelector(`.inline-marker[data-item-id="${active}"][data-section-id="${selected}"]`);
     close(); marker?.focus({ preventScroll: true });
   };
   reader.addEventListener("keydown", e => {
-    if (e.key === "Escape" && (panel.contains(e.target) || menu.contains(e.target))) {
-      e.preventDefault(); if (menu.contains(e.target)) { closeMenu(); toggle.focus(); } else panel.querySelector("#inline-close").click();
+    if (e.key === "Escape" && (panel.contains(e.target) || menu.contains(e.target) || e.target === more && !menu.hidden)) {
+      e.preventDefault(); if (!panel.contains(e.target)) { closeMenu(); more.focus(); } else panel.querySelector("#inline-close").click();
     }
   });
   document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target) && !controls.contains(e.target)) closeMenu(); });
-  selector.onchange = () => { close(); selected = selector.value; refresh(); load(selected); };
-  enabled.onchange = () => {
-    if (selected) { visibility(selected, enabled.checked); if (!enabled.checked) close(); repaint(); refresh(); }
+  controls.parentElement.addEventListener("scroll", closeMenu, {passive:true});
+  window.addEventListener("resize", closeMenu);
+  generate.onclick = () => {
+    const id = menuOwner;
+    if (!id || id !== currentSection() || more.hidden || generate.disabled) { closeMenu(); return; }
+    closeMenu(); toggle.focus(); send("regenerate", id);
   };
-  generate.onclick = () => send(cache.get(selected)?.published ? "regenerate" : "generate");
-  retry.onclick = () => send("retry");
   function refresh() {
-    const snapshot = cache.get(selected), task = snapshot?.task, pub = snapshot?.published;
-    const busy = task && ["DRAFT", "IN_REVIEW", "REJECTED"].includes(task.state);
-    enabled.checked = on(selected); enabled.disabled = !selected;
-    // The published pointer determines whether this action is generate or replace.
-    generate.disabled = !selected || !snapshot || Boolean(busy) || pending.has(selected);
-    generate.textContent = pub ? "重新生成本节教学" : "生成本节教学";
-    retry.hidden = task?.state !== "FAILED" || Boolean(task?.terminal); retry.disabled = pending.has(selected);
-    status.textContent = !selected ? "本书暂没有已确定范围的节，原 PDF 仍可阅读。" : !snapshot ? "正在读取已发布教学…"
+    const id = currentSection(), node = state.outlineNodes.find(n => n.outline_node_id === id);
+    const snapshot = cache.get(id), task = snapshot?.task, pub = snapshot?.published;
+    const busy = ["DRAFT", "IN_REVIEW", "REJECTED"].includes(task?.state);
+    const waiting = pending.has(id) || activating.has(id);
+    toggle.disabled = !id || busy || waiting;
+    toggle.setAttribute("aria-pressed", String(Boolean(id && pub && on(id))));
+    toggle.setAttribute("aria-busy", String(busy || waiting));
+    toggle.dataset.sectionId = id || "";
+    toggle.textContent = busy ? (task.stage === "REVIEW" ? "✦ 审查中…" : "✦ 生成中…")
+      : waiting ? "✦ 处理中…" : task?.state === "FAILED" || requestErrors.has(id) ? "✦ 行间教学 · 重试" : "✦ 行间教学";
+    const ready = Boolean(pub) && !busy && !waiting && task?.state !== "FAILED" && !requestErrors.has(id);
+    more.hidden = !ready;
+    more.title = `${node?.title || "当前节"} · 更多操作`;
+    generate.disabled = !ready;
+    if (!ready || menuOwner !== id) {
+      const focused = menu.contains(document.activeElement);
+      closeMenu();
+      if (focused) toggle.focus({preventScroll:true});
+    }
+    status.textContent = !id ? "当前位置不在已确定范围的节内，原 PDF 仍可阅读。" : !snapshot ? "正在读取已发布教学…"
       : busy ? (task.stage === "REVIEW" ? "正在独立审查，原 PDF 和已发布提示仍可使用。" : "正在生成少量提示，可继续阅读。")
-      : task?.state === "FAILED" ? (task.terminal ? "本次未通过审查，已停止；可重新生成。" : "本次生成或审查失败，可重试当前阶段。") + (pub ? " 原教学仍可使用。" : "")
+      : task?.state === "FAILED" ? (task.terminal ? "本次未通过审查，点击以新版本重新生成。" : "本次生成或审查失败，点击重试当前阶段。") + (pub ? " 原教学仍保留。" : "")
       : pub?.no_intervention ? "已通过独立审查：本节暂不需要额外提示。"
-      : pub ? "已通过独立审查；点击页内 ✦ 阅读。" : "按需为本节生成稀疏提示，原 PDF 始终可用。";
+      : pub ? (on(id) ? "已开启，点击关闭本节行间教学。" : "已关闭，点击开启本节行间教学。")
+      : "点击为当前节生成提示，原 PDF 始终可用。";
     if (pub?.stale) status.textContent += " 来源已有更新，可重新生成。";
     if (pub?.omitted_count) status.textContent += ` ${pub.omitted_count} 个位置无法可靠确认，已隐藏。`;
-    if (requestErrors.has(selected)) status.textContent += ` ${requestErrors.get(selected)}`;
-    const item = on(selected) && pub?.content.items.find(i => i.id === active && pub.sources[i.target_id]?.available);
-    const identity = item ? `${pub.id}:${item.id}` : "";
+    if (requestErrors.has(id)) status.textContent += ` ${requestErrors.get(id)}`;
+    toggle.title = `${node?.title || "行间教学"}：${status.textContent}`;
+    const selectedPub = cache.get(selected)?.published;
+    const item = on(selected) && selectedPub?.content.items.find(i => i.id === active && selectedPub.sources[i.target_id]?.available);
+    const identity = item ? `${selectedPub.id}:${item.id}` : "";
     if (content.dataset.identity === identity) return;
     content.dataset.identity = identity; content.replaceChildren();
     if (!item) { if (active) close(); return; }
@@ -131,27 +162,27 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       await load(id, true);
       if (stamp !== epoch || id !== selected) return;
       const fresh = cache.get(id)?.published;
-      const source = fresh?.id === pub.id && fresh.content.items.some(i => i.id === item.id) && fresh.sources[item.target_id];
+      const source = fresh?.id === selectedPub.id && fresh.content.items.some(i => i.id === item.id) && fresh.sources[item.target_id];
       if (!source?.available) { close(); refresh(); status.textContent = "教材位置已变化，未跳转。"; return; }
       goToPage(source.pdf_page_index, Math.min(...source.quad.map(p => p[1])));
     };
     const ask = document.createElement("button"); ask.type = "button"; ask.className = "inline-assistant-action"; ask.textContent = "继续问 Assistant";
     ask.onclick = () => explain(item.text, { source_kind: "INLINE_GUIDANCE", section_id: selected,
-      asset_id: pub.id, item_id: item.id, field: "text", start_offset: 0, end_offset: Array.from(item.text).length });
+      asset_id: selectedPub.id, item_id: item.id, field: "text", start_offset: 0, end_offset: Array.from(item.text).length });
     const actions = document.createElement("div"); actions.className = "inline-actions";
     actions.append(ask, jump); content.append(actions);
   }
   async function load(id, force = false) {
     if (!id || !revision) return;
-    if (loading.has(id)) return loading.get(id);
     if (!force && cache.has(id)) return;
+    if (loading.has(id)) return loading.get(id);
     const stamp = epoch;
     const work = (async () => {
       try {
         const snapshot = await api(base(id));
         if (stamp !== epoch) return;
-        cache.set(id, snapshot); repaint(); if (selected === id) refresh(); schedule();
-      } catch (e) { if (stamp === epoch && selected === id) status.textContent = e.message; }
+        cache.set(id, snapshot); requestErrors.delete(id); repaint(); refresh(); schedule();
+      } catch (e) { if (stamp === epoch) { requestErrors.set(id, e.message); refresh(); } }
       finally { if (stamp === epoch) loading.delete(id); }
     })();
     loading.set(id, work); return work;
@@ -167,9 +198,9 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       for (const id of ids) load(id, true);
     }, jobs.length ? 800 : 5000);
   }
-  async function send(action) {
-    const id = selected, stamp = epoch;
-    if (!id || pending.has(id)) return;
+  async function send(action, id) {
+    const stamp = epoch;
+    if (!id || pending.has(id) || ["DRAFT", "IN_REVIEW", "REJECTED"].includes(cache.get(id)?.task?.state)) return;
     pending.add(id); requestErrors.delete(id); refresh();
     if (!intents.has(id) || intents.get(id).action !== action) intents.set(id, { action, id: crypto.randomUUID() });
     try {
@@ -240,10 +271,8 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
   new ResizeObserver(repaint).observe(viewer);
   new ResizeObserver(() => { if (active) repaint(); }).observe(panel);
   viewer.addEventListener("scroll", () => {
-    if (!active && menu.hidden) {
-      const id = currentSection();
-      if (id && id !== selected) { selected = id; selector.value = id; refresh(); load(id); }
-    }
+    const id = currentSection();
+    refresh(); load(id);
     repaint();
   }, { passive: true });
   reader.addEventListener("toggle", repaint, true);
