@@ -11,12 +11,13 @@ test('message ruler previews plain text, navigates locally by keyboard and drops
     await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replace(/export /g,'')});
     await page.evaluate(()=>createMessageRail(document.querySelector('#history')));
     const ticks=page.locator('.message-rail button');
-    assert.equal(await ticks.count(),4);
+    assert.equal(await ticks.count(),2);
     await ticks.first().focus();
     assert.match(await page.locator('#history-preview').textContent(),/为什么/);
+    assert.match(await page.locator('#history-preview').textContent(),/解释一/);
     await page.keyboard.press('End'); await page.keyboard.press('Enter');
     await page.waitForFunction(()=>document.querySelector('#history').scrollTop>500);
-    await page.waitForFunction(()=>document.querySelectorAll('.message-rail button')[2].getAttribute('aria-current')==='true' || document.querySelectorAll('.message-rail button')[3].getAttribute('aria-current')==='true');
+    await page.waitForFunction(()=>document.querySelectorAll('.message-rail button')[1].getAttribute('aria-current')==='true');
     assert.equal(await page.evaluate(()=>scrollY),0);
     await page.keyboard.press('Home');
     await page.keyboard.press('Escape');

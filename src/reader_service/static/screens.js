@@ -14,8 +14,8 @@ export function createMessageRail(scroller) {
     clearTimeout(leaveTimer);
     const message = messages[index]; if (!message) return;
     dismiss();
-    const title = document.createElement('strong'); title.textContent = message.matches('.assistant-question-bubble') ? '你的提问' : '回答';
-    const text = document.createElement('p'); text.textContent = message.textContent.trim().slice(0, 240) || '（空消息）';
+    const title = document.createElement('strong'); title.textContent = message.question.textContent.trim().slice(0, 100) || '提问';
+    const text = document.createElement('p'); text.textContent = message.answer?.textContent.trim().slice(0, 240) || '等待回答';
     preview.replaceChildren(title, text); preview.hidden = false;
     buttons[index].setAttribute('aria-describedby', preview.id);
     const y = buttons[index].getBoundingClientRect().top - shell.getBoundingClientRect().top;
@@ -26,7 +26,7 @@ export function createMessageRail(scroller) {
     if (!scroller.clientHeight || !messages.length) return;
     const top = scroller.getBoundingClientRect().top + 32;
     let active = 0;
-    messages.forEach((message, i) => { if (message.getBoundingClientRect().top <= top) active = i; });
+    messages.forEach((message, i) => { if (message.question.getBoundingClientRect().top <= top) active = i; });
     buttons.forEach((button, i) => { button.setAttribute('aria-current', String(i === active)); });
   }
   function schedule() { if (!frame) frame = requestAnimationFrame(update); }
@@ -34,15 +34,20 @@ export function createMessageRail(scroller) {
     const focused = buttons.indexOf(document.activeElement);
     dismiss();
     preview.replaceChildren();
-    messages = [...scroller.querySelectorAll('.assistant-question-bubble, .assistant-answer-bubble')];
+    const bubbles = [...scroller.querySelectorAll('.assistant-question-bubble, .assistant-answer-bubble')];
+    messages = [];
+    for (const bubble of bubbles) {
+      if (bubble.matches('.assistant-question-bubble')) messages.push({question:bubble,answer:null});
+      else if(messages.length) messages.at(-1).answer=bubble;
+    }
     buttons = messages.map((message, i) => {
       const button = document.createElement('button'); button.type = 'button';
-      button.className = message.matches('.assistant-question-bubble') ? 'message-tick question-tick' : 'message-tick';
-      button.setAttribute('aria-label', `第 ${i + 1} 条${message.matches('.assistant-question-bubble') ? '提问' : '回答'}：${message.textContent.trim().slice(0, 60)}`);
+      button.className = 'message-tick question-tick';
+      button.setAttribute('aria-label', `第 ${i + 1} 轮对话：${message.question.textContent.trim().slice(0, 60)}`);
       button.tabIndex = i === Math.max(0, focused) ? 0 : -1;
       button.onpointerenter = () => show(i); button.onfocus = () => show(i);
       button.onclick = () => {
-        const top = message.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 16;
+        const top = message.question.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 16;
         scroller.scrollTo({top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
         dismiss();
       };

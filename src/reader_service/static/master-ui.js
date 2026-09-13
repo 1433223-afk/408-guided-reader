@@ -45,8 +45,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
         <button id="master-send" type="submit">发送</button>
       </div>
     </form>
-    <button id="master-confirm" type="button" hidden>已经弄懂</button>
-    <p class="master-lifetime">对话自动保存；收起或重启不会改变理解状态。</p>`;
+    <button id="master-confirm" type="button" hidden>已弄懂</button>`;
   dock.append(panel);
   const el = (id) => panel.querySelector(`#master-${id}`);
   const conversation = document.createElement('div'); conversation.className='master-conversation';
@@ -61,9 +60,11 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   });
   resume.id='master-resume-topic'; resume.hidden=true; el('form').before(resume);
   const topicActions = document.createElement('div'); topicActions.className='master-topic-actions';
-  const topicMenu = document.createElement('details'); topicMenu.className='master-topic-menu';
-  const topicSummary = document.createElement('summary'); topicSummary.textContent='主题操作';
-  topicMenu.append(topicSummary, el('confirm'), resume, panel.querySelector('.master-lifetime'));
+  const topicMenu = document.createElement('div'); topicMenu.className='master-topic-quick-actions';
+  const unclearAction=button('仍不清楚',()=> { if(current) open(current.point,true); });
+  unclearAction.hidden=true;
+  const topicMemory=document.createElement('span'); topicMemory.className='master-topic-memory';
+  topicMenu.append(el('confirm'), unclearAction, topicMemory, resume);
   topicActions.append(el('title'), topicMenu); conversation.prepend(topicActions);
   createMessageRail(el('history'));
   createComposerChoice(el('mode'), {id:'master-review', label:'审查强度',
@@ -116,7 +117,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     for (const page of pages.children) if (page.querySelector("canvas")) renderPage(Number(page.dataset.index));
   }
   async function open(point, unclear = false, topicId = null) {
-    topicMenu.open = false;
+    unclearAction.hidden=true; topicMemory.replaceChildren();
     if(current) topicDrafts.set(scopeId(current.point), {text:el('question').value,scroll:el('history').scrollTop,intent:sendIntent});
     const request = ++generation;
     clearTimeout(poll);
@@ -159,6 +160,10 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     const history = el("history");
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
     const visibleMessages=expanded ? current.messages.filter(message=>!composingNew && message.topic_id===selectedTopicId) : current.messages;
+    unclearAction.hidden=false;
+    topicMemory.replaceChildren();
+    const latestAnswer=visibleMessages.findLast(message=>message.role==='assistant' && message.state==='COMPLETE');
+    if(latestAnswer) topicMemory.append(memoryControl(revision(),'MASTER',latestAnswer.id));
     const expandedDetails = new Set([...history.querySelectorAll('.master-message-details[open]')].map(detail=>detail.closest('[data-message-id]').dataset.messageId));
     const rendered = visibleMessages.map((message) => {
       const row = document.createElement("article");
@@ -177,8 +182,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       const disclosure = document.createElement('details'); disclosure.className='master-message-details';
       disclosure.open = expandedDetails.has(message.id);
       const summary = document.createElement('summary');
-      summary.textContent = message.review_state === 'FAIL' ? '审查未通过 · 查看详情'
-        : message.review_state === 'TECHNICAL_FAILURE' ? '审查未完成 · 查看详情'
+      summary.textContent = message.review_state === 'FAIL' ? '内容审查未通过 · 详情'
+        : message.review_state === 'TECHNICAL_FAILURE' ? '审查暂未完成，可稍后重试'
         : message.review_state === 'PENDING' ? '正在审查' : '回答详情与操作';
       if (message.role === 'assistant') { disclosure.append(summary, metadata); row.append(disclosure); }
       else if(metadata.textContent) row.append(metadata);
@@ -193,7 +198,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
         secondary.append(detail);
       }
       if (message.state === "FAILED" || ["FAIL", "TECHNICAL_FAILURE"].includes(message.review_state)) {
-        secondary.append(button(message.role === "user" ? "重试发送" : "重试审查", () => act("retry", { message_id: message.id })));
+        row.append(button(message.role === "user" ? "重试发送" : "重试审查", () => act("retry", { message_id: message.id })));
       }
       return row;
     });
@@ -205,7 +210,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     // A second question must not overtake an unanswered durable question.
     el("send").disabled = current.messages.some((m) => m.role === "user" && ["PENDING", "FAILED"].includes(m.state));
     el("confirm").hidden = !active || Boolean(historical) || composingNew;
-    el("confirm").textContent = current.point.scope_kind === "SECTION" ? "都清楚了" : "已经弄懂";
+    el("confirm").textContent = current.point.scope_kind === "SECTION" ? "都清楚了" : "已弄懂";
     el("question").placeholder = current.point.scope_kind === "SECTION" ? "这一节哪些地方还没完全懂？" : "这个知识点哪里还没完全懂？";
     clearTimeout(poll);
     if (current.messages.some((m) => m.state === "PENDING" || m.review_state === "PENDING")) {
@@ -398,6 +403,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     clearTimeout(poll);
     current = null;
     selectedTopicId=null; composingNew=false; topicDrafts.clear();
+    unclearAction.hidden=true; topicMemory.replaceChildren();
     entries = { points: [], sections: [] };
     if (pages.classList.contains("has-learning-controls")) {
       pages.classList.remove("has-learning-controls");

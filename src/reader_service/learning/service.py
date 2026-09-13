@@ -165,13 +165,14 @@ class LearningService:
                 {"role": "system", "content": REVIEW_SYSTEM + ("\n上次结构无效，请严格返回指定 JSON。" if attempt else "")},
                 {"role": "user", "content": json.dumps({"mode": answer["review_mode"], "source": source,
                     "question": question["content"], "candidate": answer["content"]}, ensure_ascii=False)}
-            ], interaction_id=f"master-review:{answer['id']}")
+            ], interaction_id=f"master-review:{answer['id']}",
+                **({"json_object": True} if self.reviewer == "openrouter" else {}))
             try:
                 verdict = SavedExplanationService._validate_verdict(completion.answer)
             except ValueError:
                 if attempt == 0:
                     continue
-                raise ValueError("审查连续返回无效结构，未通过审查，可重试。") from None
+                raise ValueError("审查结果结构无效，技术链路未完成；可重试审查。这不是内容审查未通过。") from None
             self.repository.update_message(answer["id"], review_state=verdict.verdict, detail=verdict.summary,
                 reviewer_provider=completion.effective_config["provider"], reviewer_model=completion.effective_config["model"])
             return

@@ -122,6 +122,30 @@ def test_topic_navigation_is_read_only_and_preserves_real_identity(learning):
     assert len(runtime.calls) == 1
 
 
+def test_master_openrouter_review_requests_json_without_weakening_verdict(learning):
+    f, master, runtime, points = learning
+    master.reviewer = 'openrouter'
+    original = runtime.complete_for_with_metadata
+    options = []
+    def complete(provider, messages, **kwargs):
+        if provider == 'openrouter':
+            options.append(kwargs)
+            assert kwargs.get('json_object') is True
+        return original(provider, messages, **kwargs)
+    runtime.complete_for_with_metadata = complete
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    runtime.review = 'FAIL'
+    master.send(rev, kp, {'intent_id':'json-review','question':'为什么？'})
+    idle(master)
+    answer = master.snapshot(rev,kp)['messages'][-1]
+    assert answer['review_state'] == 'FAIL'
+    runtime.review = 'PASS'
+    master.retry(rev,kp,answer['id'])
+    idle(master)
+    assert master.snapshot(rev,kp)['messages'][-1]['review_state'] == 'PASS'
+    assert len(options) == 2
+
+
 def test_question_committed_before_egress_double_send_failure_retry_and_replay(learning):
     f, master, runtime, points = learning
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']

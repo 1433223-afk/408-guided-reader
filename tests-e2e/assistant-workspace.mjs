@@ -186,7 +186,7 @@ try {
   await page.locator('#assistant-expand').click();
   assert.equal(await page.locator('#assistant-turns').evaluate(el => Math.round(el.getBoundingClientRect().right)), VIEWPORT_WIDTH);
   const messageRail=page.locator('.assistant-conversation .message-rail');
-  assert.equal(await messageRail.locator('button').count(),reopened.current.turns.length*2);
+  assert.equal(await messageRail.locator('button').count(),reopened.current.turns.length);
   await messageRail.locator('button').first().hover();
   await page.locator('#assistant-turns-preview').waitFor({state:'visible'});
   await messageRail.locator('button').first().focus();

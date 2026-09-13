@@ -257,3 +257,62 @@ Limitations: previews are excerpts, not generated summaries; very long tick list
 no pixel-level Codex parity or large-history performance benchmark is claimed. Human visual and
 interaction acceptance remains pending. No independent review or closure.
 8767 serves updated scripts/CSS HTTP 200 and original two books; static-only refresh, no restart.
+
+## Master Review diagnosis and paired-item UAT correction (2026-09-13)
+
+User requested a narrow Master/Assistant correction, not Reader/KP entry work. Narrow Master answers
+now have transparent prose surfaces too; questions retain a light neutral bubble. Topic-title actions
+are directly visible: explicit understood confirmation, explicit unclear (existing `/open` semantics),
+and collecting the latest visible completed answer into learning memory. Existing per-answer memory
+actions remain available. Historical continuation stays explicit. Removed lifetime copy and the
+topic-action disclosure. No new mastery state or automatic inference is introduced.
+
+Review UI distinguishes `内容审查未通过` from `审查暂未完成，可稍后重试`; review retry stays visible.
+Provider/model/reviewer and technical reasons remain in details. A FAIL is never presented as PASS.
+The ruler now has one item per question/answer pair, with both excerpts in the preview; it navigates
+to the question. A missing answer says waiting rather than pairing with an unrelated question.
+Preview uses restrained 130 ms entrance/indicator transitions, disabled for reduced-motion users.
+Earlier GitHub pattern study remains applicable; no framework or external code adopted.
+
+### Actual failure evidence (not inferred from UI wording)
+
+- Live retained history had two Gemini/OpenRouter `TECHNICAL_FAILURE` records with the specific
+  invalid-structure reason, not content verdict FAIL. The Master path has no cross-provider fallback.
+- Two bounded synthetic Gemini calls using the old Review request succeeded at transport level and
+  stopped normally, but strict validation failed. The diagnosed response was Markdown-fenced JSON
+  (`Review verdict is not JSON`), not token truncation or rejected credentials. Historical raw
+  responses were not retained, so their exact syntax cannot be retrospectively proven per record.
+- Root technical defect: Review requested JSON only in prose, while its validator requires a strict
+  JSON object. The already-supported OpenRouter JSON-object request option was not supplied here.
+  Fixed only the Master Review call to enable it for OpenRouter; unchanged schema, two-attempt bound,
+  model routing, grounding, and PASS/FAIL validation. No permissive parsing or review bypass added.
+- Same synthetic request with JSON mode validated successfully. A real retained failed answer was
+  retried through `LearningService.retry` on an isolated real-library copy with its original
+  reviewer `openrouter / google/gemini-3.8-flash`: PASS. Answer content, message count, Topic records
+  and mastery status were unchanged. Original historical answers were not silently rewritten.
+- Zhipu failure was NOT reproduced. Live readiness: configured/credential available/config valid,
+  Credential Manager `408-guided-reader-zhipu`, `GLM-5.3-Flash`, no cooling. Two native Zhipu calls
+  completed normally with valid Review objects. This proves current small-request connectivity,
+  not all historical failures or long-payload reliability. No Zhipu fault or fix is invented.
+- Whitelisted environment inspection of the live process found no Assistant/Master/Review overrides:
+  current defaults are DeepSeek / DeepSeek / Zhipu. All roles share named provider runtime/credential
+  configuration; role selectors differ. Historical Gemini reviewer metadata is not evidence of the
+  current role selector or of fallback execution. No role defaults changed in this task.
+
+Diagnostic budget actually used: two small Zhipu calls, three small authorized Gemini calls
+(two old-contract, one corrected), and one Gemini retry over an isolated retained real answer.
+Only sanitized status/length/finish/schema evidence was output; credentials, headers and content
+bodies were not logged/captured. Temporary diagnostics and user material are not committed.
+
+### Verification / handoff
+
+43 JS tests PASS; 23 affected learning tests PASS, including explicit JSON mode, content FAIL
+remaining FAIL and retry recovery. Broad Python: 287 PASS / 2 existing optional OCR skips.
+`conversation-composer.mjs` PASS: narrow transparent answer, direct topic action/lifetime removal,
+review details and visible retry, paired preview/tick count, right-edge scrolling and mode reversal.
+`assistant-workspace.mjs` PASS: paired current-node items plus existing recursive/scroll/draft golden
+path. No KP entry, PDF geometry, source authority, persistence or Frozen edits. No ZCode invocation.
+Screenshots: `test-results/master-narrow-quiet.png`, `master-message-rail.png` (local only).
+8767 restarted with the original data path and unchanged default role configuration; original two
+books and static HTTP 200 verified. Temporary Assistant clears on restart by design. Human retest
+pending; if Zhipu fails again, its exact operation/error is still needed to diagnose that failure.
