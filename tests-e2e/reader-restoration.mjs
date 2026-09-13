@@ -81,6 +81,8 @@ try {
   for(const width of [1600,1280,1024]) {
     await baseline.setViewportSize({width,height:1000});await restored.setViewportSize({width,height:1000});await restored.waitForTimeout(700);
     assert.deepEqual(await metrics(restored),await metrics(baseline));
+    const navigation=await restored.locator('.reader-page-controls').boundingBox();
+    assert.ok(Math.abs(navigation.x+navigation.width/2-width/2)<1,'Page navigation must be visually centered');
     for(const [toggle,panel,close] of [['outline-toggle','outline-panel','outline-close'],['search-toggle','search-panel','search-close'],['marks-toggle','marks-panel','marks-close']]) {
       await baseline.locator('#'+toggle).click();await restored.locator('#'+toggle).click();
       assert.deepEqual(await restored.locator('#'+panel).boundingBox(),await baseline.locator('#'+panel).boundingBox());
@@ -103,6 +105,40 @@ try {
   await restored.locator('.search-result').first().click();
   await restored.locator('.search-match-quad').first().waitFor();
   await restored.locator('#search-close').click();
+  await restored.locator('#page-number').fill('53'); await restored.locator('#page-number').press('Enter');
+  await restored.waitForTimeout(800);
+  const chapterContext=await restored.evaluate(async()=>{
+    const books=(await (await fetch('/api/books')).json()).books;
+    const revision=books.find(b=>b.active_revision.page_count===348).active_revision.id;
+    const context=await (await fetch(`/api/revisions/${revision}/reading-context?page=52&y=0.5`)).json();
+    const url=`/api/revisions/${revision}/chapters/${context.chapter.outline_node_id}/knowledge-map`;
+    return {url, snapshot:await(await fetch(url)).json()};
+  });
+  let stage={...chapterContext.snapshot,status:'NOT_PREPARED',regeneration_state:null}, requests=0;
+  await restored.route(url=>url.pathname.startsWith(chapterContext.url),async route=>{
+    if(route.request().method()==='POST') {
+      requests++; stage={...stage,status:'PREPARING',prepare_stage:'QUEUED',sections_total:4,sections_completed:0};
+      return route.fulfill({json:{chapter_map:stage}});
+    }
+    return route.fulfill({json:stage});
+  });
+  const kpEntry=restored.locator('#reader-kp-action');
+  await kpEntry.filter({hasText:'生成本章 KP'}).waitFor({timeout:12000});
+  await kpEntry.click();
+  for (const [prepare_stage,label] of [['RESOLVING_SOURCE','来源准备中'],['GENERATING','生成中'],['REVIEWING','审查中'],['VALIDATING','校验中'],['PUBLISHING','发布中']]) {
+    stage={...stage,prepare_stage}; await kpEntry.filter({hasText:label}).waitFor().catch(async e=>{console.log('KP phase diagnostic',requests,stage.prepare_stage,await kpEntry.textContent(),await kpEntry.getAttribute('title'));throw e;});
+    assert.equal(await kpEntry.isDisabled(),true);
+    assert.ok((await kpEntry.getAttribute('class')).includes('ai-progress'));
+  }
+  stage={...stage,status:'FAILED'};
+  await kpEntry.filter({hasText:'重试生成'}).waitFor(); await kpEntry.click();
+  assert.equal(requests,2);
+  stage=chapterContext.snapshot;
+  await kpEntry.filter({hasText:'↗'}).waitFor();
+  assert.equal(await restored.locator('#knowledge-panel').isVisible(),false);
+  await kpEntry.click();
+  await restored.locator('#book-overview').waitFor();
+  await restored.locator('.overview-section[open] .overview-kp').first().waitFor();
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({status:'PASS',baseline:'92febf6',canvasPixelsIdentical:true,metrics:stable,responsiveGeometryIdentical:true,errors}));
 } finally {if(browser)await browser.close();await stop();}

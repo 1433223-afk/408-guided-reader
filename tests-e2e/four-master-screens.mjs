@@ -68,7 +68,7 @@ try {
   for(const status of ['NOT_PREPARED','PREPARING','FAILED','READY']) {
     await page.route(mapPattern,async route=>{const response=await route.fetch();const value=await response.json();value.status=status;if(status!=='READY')value.knowledge_points=[];else value.regeneration_state='FAILED';await route.fulfill({json:value});});
     await selected.click();
-    const expected={NOT_PREPARED:'本章学习结构尚未准备',PREPARING:'正在准备本章学习结构',FAILED:'本章准备失败',READY:'重新生成失败'}[status];
+    const expected={NOT_PREPARED:'本章学习结构尚未准备',PREPARING:'准备中',FAILED:'本章准备失败',READY:'重新生成失败'}[status];
     await page.locator('.overview-map').getByText(expected,{exact:false}).waitFor();
     assert.ok(await page.locator('.overview-book-heading .primary-action').isEnabled());
     if(status!=='READY')assert.equal(await page.locator('.overview-kp').count(),0);

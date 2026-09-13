@@ -8,12 +8,14 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   panel.setAttribute("aria-label", "本节导读");
   panel.innerHTML = `<div id="guide-divider" role="separator" tabindex="0" aria-label="导读宽度" aria-orientation="vertical" aria-controls="guide-panel"></div>
     <div class="guide-heading"><strong id="guide-title">本节导读</strong><div class="guide-tools"><button id="guide-expand" type="button">展开</button><details id="guide-more"><summary aria-label="导读更多操作">更多</summary><div id="guide-actions"></div></details><button id="guide-close" type="button" aria-label="收起导读">×</button></div></div>
-    <div class="guide-meta"><p id="guide-status" role="status"></p></div>
+    <div class="guide-meta"><p id="guide-status" role="status"></p><button id="guide-status-retry" type="button" hidden>重试</button></div>
     <div id="guide-scroll"><div id="guide-content"></div></div>`;
   document.getElementById("reader").append(panel);
   const title = panel.querySelector("#guide-title");
   const status = panel.querySelector("#guide-status");
   const actions = panel.querySelector("#guide-actions");
+  const statusRetry = panel.querySelector('#guide-status-retry');
+  statusRetry.onclick = () => send(snapshot?.task?.terminal ? 'regenerate' : 'retry');
   document.addEventListener("pointerdown", event => {
     const more = panel.querySelector("#guide-more");
     if (!more.contains(event.target)) more.open = false;
@@ -110,7 +112,10 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     title.textContent = `${snapshot.section.title} · 导读`;
     const task = snapshot.task, published = snapshot.published;
     const busy = task && ["DRAFT", "REJECTED", "IN_REVIEW"].includes(task.state);
-    status.textContent = busy ? (task.stage === "REVIEW" ? "正在独立审查…" : "正在生成导读…")
+    statusRetry.hidden = task?.state !== 'FAILED'; statusRetry.disabled = pending;
+    statusRetry.textContent = task?.terminal ? '重新生成' : '重试';
+    status.classList.toggle("ai-progress", Boolean(busy || pending));
+    status.textContent = pending ? "准备中…" : busy ? (task.stage === "REVIEW" ? "正在独立审查…" : "正在生成导读…")
       : task?.state === "FAILED" ? (task.terminal ? "导读未通过审查，已停止本次生成。" : "本次导读生成或审查失败，可重试当前阶段。")
       : published ? "已通过独立审查。" : "按需生成本节简明导读，教材阅读始终可用。";
     if (published?.stale) status.textContent += " 教材依赖已变化，保留原导读，可重新生成。";
@@ -118,7 +123,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     if (published && task?.state === "FAILED") status.textContent += " 原导读仍可使用。";
     status.title = status.textContent;
     if (task?.state === "FAILED" && published) {
-      status.textContent = task.terminal ? "本次导读未通过审查，原导读仍可阅读。" : "本次生成失败，原导读仍可阅读。可在“更多”中重试。";
+      status.textContent = task.terminal ? "本次导读未通过审查，原导读仍可阅读。" : "本次生成失败，原导读仍可阅读。点击重试。";
       status.setAttribute("aria-label", status.title);
     } else status.removeAttribute("aria-label");
     actions.replaceChildren();

@@ -91,9 +91,10 @@ export function createScreens({api, home, memory, read, remove, revision, announ
   function renderMap(p, chapter) {
     map.replaceChildren(); const h = node('div', '', 'chapter-heading'); h.append(node('h2', chapter.title));
     if(p.status === 'READY') { const meta=node('div'); meta.append(node('p', `${p.knowledge_points.length} 个知识点`, 'muted')); const counts=learning?.chapter_counts?.[selectedChapter]; if(counts) meta.append(node('p', `${counts.UNDERSTOOD} 已理解 · ${counts.NOT_FULLY_CLEAR} 仍不清楚 · ${counts.UNCONFIRMED} 待确认`, 'muted')); h.append(meta); } map.append(h);
-    const status = {NOT_PREPARED:'本章学习结构尚未准备', PREPARING:`正在准备本章学习结构 · ${p.sections_completed || 0}/${p.sections_total || '—'} 小节`, FAILED:`本章准备失败 · ${p.failure_code || ''}`} [p.status];
-    if(status) map.append(node('p', status, p.status === 'FAILED' ? 'local-error' : 'muted'));
-    if(p.regeneration_state === 'RUNNING' || p.regeneration_state === 'FAILED') map.append(node('p', p.regeneration_state === 'RUNNING' ? '正在重新生成，当前已发布地图仍可使用。' : '重新生成失败，保留当前已发布地图。', 'muted'));
+    const phase = {QUEUED:'等待开始',RESOLVING_SOURCE:'来源准备中',GENERATING:'生成中',REVIEWING:'审查中',VALIDATING:'校验中',PUBLISHING:'发布中'}[p.prepare_stage] || '准备中';
+    const status = {NOT_PREPARED:'本章学习结构尚未准备', PREPARING:`${phase} · ${p.sections_completed || 0}/${p.sections_total || '—'} 小节`, FAILED:`本章准备失败 · ${p.failure_code || ''}`} [p.status];
+    if(status) map.append(node('p', status, p.status === 'FAILED' ? 'local-error' : p.status === 'PREPARING' ? 'muted ai-progress' : 'muted'));
+    if(p.regeneration_state === 'RUNNING' || p.regeneration_state === 'FAILED') map.append(node('p', p.regeneration_state === 'RUNNING' ? `${phase}，当前已发布地图仍可使用。` : '重新生成失败，保留当前已发布地图。', p.regeneration_state === 'RUNNING' ? 'muted ai-progress' : 'muted'));
     if(p.status !== 'PREPARING') {
       const controls = node('details', '', 'map-options'); controls.append(node('summary', p.status === 'READY' ? '学习结构选项' : '准备学习结构'));
       const b = action(p.status === 'READY' ? '重新生成本章知识点' : p.status === 'FAILED' ? '重试准备' : '准备本章学习地图', async () => {
@@ -147,4 +148,58 @@ export function createScreens({api, home, memory, read, remove, revision, announ
     try { const c = await api(`/api/revisions/${r.id}/reading-context?page=${p.pdf_page_index}&y=${p.normalized_offset}`); if(h.isConnected) { h.textContent = c.section?.title || c.chapter?.title || '继续阅读教材'; const counts=c.learning_counts; if(counts) info.append(node('p', `${counts.UNDERSTOOD} 已理解　·　${counts.NOT_FULLY_CLEAR} 仍不清楚　·　${counts.UNCONFIRMED} 待确认`, 'continue-stats')); } } catch { /* PDF resume remains independent. */ }
   }
   return {open, close, library, overview};
+}
+
+// Current-chapter preparation only; the full map remains owned by Book Overview.
+export function createChapterEntry({api, revision, openOverview, published}) {
+  const entry = document.createElement('button');
+  entry.id = 'reader-kp-action'; entry.type = 'button'; entry.hidden = true;
+  document.getElementById('outline-toggle').after(entry);
+  let owner = null, chapter = null, section = null, snapshot = null, epoch = 0, timer, pending = false, error = null;
+  const stages = {QUEUED:'等待开始',RESOLVING_SOURCE:'来源准备中',GENERATING:'生成中',REVIEWING:'审查中',VALIDATING:'校验中',PUBLISHING:'发布中'};
+  const base = () => `/api/revisions/${owner}/chapters/${chapter}/knowledge-map`;
+  function reset() { ++epoch; clearTimeout(timer); owner = chapter = snapshot = null; pending = false; error = null; entry.hidden = true; }
+  function sync(id, sectionId) {
+    if (owner === revision() && chapter === id) { if(section !== sectionId) {section = sectionId; render();} return; }
+    reset(); owner = revision(); chapter = id; section = sectionId;
+    if (owner && chapter) { entry.hidden = false; render(); load(); }
+  }
+  function render() {
+    const busy = snapshot?.status === 'PREPARING' || snapshot?.regeneration_state === 'RUNNING';
+    entry.disabled = pending || busy;
+    entry.classList.toggle('ai-progress', pending || busy);
+    entry.setAttribute('aria-busy', String(pending || busy));
+    entry.dataset.status = snapshot?.status || 'LOADING';
+    const count = snapshot?.sections_total ? ` ${snapshot.sections_completed || 0}/${snapshot.sections_total}` : '';
+    entry.textContent = pending ? 'KP · 准备中' : error ? 'KP · 重试'
+      : busy ? `KP · ${stages[snapshot.prepare_stage] || '准备中'}${count}`
+      : snapshot?.status === 'READY' ? (section ? `本节 ${snapshot.knowledge_points.filter(p=>p.primary_section_id === section).length} KP ↗` : '学习结构已就绪 ↗')
+      : snapshot?.status === 'FAILED' ? 'KP · 重试生成' : snapshot ? '生成本章 KP' : 'KP · 读取中';
+    entry.title = error || (snapshot?.status === 'READY' ? '当前 Section/KP 状态见页内学习入口；查看 Book Overview 完整结构'
+      : `${snapshot?.chapter_title || '当前章'}：${entry.textContent}，PDF 阅读不受影响`);
+  }
+  async function load() {
+    clearTimeout(timer); const stamp = epoch;
+    try {
+      const value = await api(base());
+      if (stamp !== epoch) return;
+      const newlyReady = snapshot?.status !== 'READY' && value.status === 'READY';
+      snapshot = value; error = null; render();
+      if (newlyReady) published();
+      timer = setTimeout(load, value.status === 'PREPARING' || value.regeneration_state === 'RUNNING' ? 700 : 5000);
+    } catch(e) { if (stamp === epoch) {error = e.message; render();} }
+  }
+  entry.onclick = async () => {
+    if (pending || !chapter || !owner || entry.disabled) return;
+    if (!snapshot || error) { await load(); return; }
+    if (snapshot.status === 'READY') { openOverview(chapter); return; }
+    const stamp = epoch; pending = true; error = null; clearTimeout(timer); render();
+    try {
+      const result = await api(`${base()}/prepare`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      if (stamp !== epoch) return;
+      snapshot = result.chapter_map;
+    } catch(e) { if (stamp === epoch) error = e.message; }
+    finally { if (stamp === epoch) {pending = false; render(); if(!error) load();} }
+  };
+  return {sync, reset};
 }

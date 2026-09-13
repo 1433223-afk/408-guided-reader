@@ -114,6 +114,7 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     toggle.disabled = !id || busy || waiting;
     toggle.setAttribute("aria-pressed", String(Boolean(id && pub && on(id))));
     toggle.setAttribute("aria-busy", String(busy || waiting));
+    toggle.classList.toggle("ai-progress", busy || waiting);
     toggle.dataset.sectionId = id || "";
     toggle.textContent = busy ? (task.stage === "REVIEW" ? "✦ 审查中…" : "✦ 生成中…")
       : waiting ? "✦ 处理中…" : task?.state === "FAILED" || requestErrors.has(id) ? "✦ 行间教学 · 重试" : "✦ 行间教学";

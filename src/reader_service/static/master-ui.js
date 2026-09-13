@@ -83,6 +83,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     openDock(true);
     select(true);
     el("status").textContent = "正在读取已保存的对话…";
+    el("status").classList.remove("ai-progress");
     try {
       const result = unclear ? await post(base(scopeId(point)) + "/open") : await api(base(scopeId(point)));
       if (request !== generation) return;
@@ -97,6 +98,10 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     el("title").textContent = current.point.title;
     const active = current.topics.find((t) => t.state === "ACTIVE");
     el("status").textContent = `${STATUS[current.status]} · ${active ? "当前话题待解决" : "当前没有未解决话题"}`;
+    const reviewing = current.messages.some(m => m.review_state === "PENDING");
+    const generating = current.messages.some(m => m.state === "PENDING");
+    el("status").classList.toggle("ai-progress", reviewing || generating);
+    if (reviewing || generating) el("status").textContent += reviewing ? " · 审查中" : " · 生成中";
     const history = el("history");
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
     const rendered = current.messages.map((message) => {
@@ -175,6 +180,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       sendIntent = { intent_id: crypto.randomUUID(), question, review_mode: mode };
     }
     el("send").disabled = true;
+    el("status").textContent = "准备发送…"; el("status").classList.add("ai-progress");
     const request = generation;
     try {
       const result = await post(base() + "/send", sendIntent);
@@ -184,7 +190,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       el("question").value = "";
       render();
     } catch (error) {
-      if (request === generation) { el("status").textContent = `${error.message}；再次发送会复用本次问题。`; el("send").disabled = false; }
+      if (request === generation) { el("status").classList.remove("ai-progress"); el("status").textContent = `${error.message}；再次发送会复用本次问题。`; el("send").disabled = false; }
     }
   });
   el("confirm").addEventListener("click", () => {

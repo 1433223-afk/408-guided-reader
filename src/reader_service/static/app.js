@@ -1,4 +1,4 @@
-import {createScreens, header, action} from "/screens.js";
+import {createScreens, createChapterEntry, header, action} from "/screens.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
 import {
   lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
@@ -157,6 +157,13 @@ async function showHome() {
 }
 const screens = createScreens({api, home: showHome, memory: () => memory.open(), read: enterReader,
   remove: removeBook, revision: chooseRevision, announce, isAuxiliary:isAuxiliaryOutlineRoot});
+const chapterEntry = createChapterEntry({api, revision: () => state.revision?.id,
+  published: () => master.refreshEntries().catch(() => {}),
+  openOverview: async chapterId => {
+    const book = state.book; if (!book) return;
+    await savePosition(); closeReader(); await loadBooks();
+    await screens.open(state.books.find(b => b.id === book.id) || book, chapterId);
+  }});
 const homeHeader = header('home', showHome, () => memory.open(), action('＋ 导入教材', () => elements['import-input'].click(), 'primary-action'));
 elements['library-home'].querySelector('.home-toolbar').replaceWith(homeHeader);
 homeHeader.querySelector('.space-navigation button:last-child').classList.add('memory-open');
@@ -276,6 +283,7 @@ async function openBook(book) {
 }
 
 function closeReader() {
+  chapterEntry.reset();
   inline.reset();
   guide.close();
   state.generation += 1;
@@ -427,6 +435,16 @@ function renderReaderSectionHint() {
   const section = sections.length === 1 ? sections[0] : null;
   output.textContent = section ? `正在阅读 · ${section.title}` : "正在阅读";
   output.title = section?.title || "当前位置暂无已确定范围的节";
+  let chapter = section;
+  while (chapter && chapter.kind !== "CHAPTER") chapter = state.outlineNodes.find(n => n.outline_node_id === chapter.parent_id);
+  if (!chapter && point) {
+    const matches = state.outlineNodes.filter(n => n.kind === "CHAPTER" && n.resolution_state === "RESOLVED"
+      && [n.start_page,n.start_y,n.end_page,n.end_y].every(v => v != null)
+      && (n.start_page < point.pageIndex || n.start_page === point.pageIndex && n.start_y <= point.normalizedY)
+      && (n.end_page > point.pageIndex || n.end_page === point.pageIndex && n.end_y > point.normalizedY));
+    chapter = matches.length === 1 ? matches[0] : null;
+  }
+  chapterEntry.sync(chapter?.outline_node_id || null, section?.outline_node_id || null);
 }
 
 function updateViewport() {

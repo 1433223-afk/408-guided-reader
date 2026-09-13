@@ -64,3 +64,17 @@
 #reader .toolbar .preparation-status.ready { color:#6b796d; }
 #reader .toolbar .control-divider { background:#ccccc2; }
 #reader #assistant-toggle[hidden] { display:none; }
+
+/* Center only the page-navigation group; PDF rows and the existing tool scroll stay intact. */
+#reader .toolbar { position:relative; }
+.reader-page-controls { position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px; }
+#reader .toolbar .book-heading { max-width:calc(50% - 110px); }
+#reader .toolbar .reader-controls { margin-left:auto;max-width:calc(50% - 110px); }
+#reader .reader-controls>.control-divider:first-child { display:none; }
+#reader .toolbar :is(#outline-toggle,#search-toggle,#marks-toggle,#inline-open,#inline-more,#guide-reopen,#reader-kp-action) { border:1px solid #c9cec3;background:#f1f2ea;border-radius:2px; }
+#reader-kp-action { padding:4px 7px;font:11px "Segoe UI","Microsoft YaHei UI",sans-serif;color:#3b5848;white-space:nowrap;cursor:pointer; }
+#reader-kp-action[hidden] { display:none; }
+#reader-kp-action:disabled { cursor:default; }
+.ai-progress::after,.assistant-pending::after { content:"";display:inline-block;width:8px;height:8px;margin-left:6px;border:1px solid currentColor;border-right-color:transparent;border-radius:50%;animation:reader-activity 1s linear infinite; }
+@keyframes reader-activity { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { .ai-progress::after,.assistant-pending::after { animation:none; } }
