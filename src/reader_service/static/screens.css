@@ -226,3 +226,16 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader #assistant-panel #assistant-close-root { background:transparent;border-color:transparent;color:#66756c; }
 #reader #assistant-panel #assistant-close-root:hover { background:#fff0f1;color:#b3313b; }
 #reader #assistant-panel #assistant-scope { white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+
+/* Product-owned model menu; the hidden native select retains the switching contract. */
+#reader #assistant-panel .assistant-model[hidden] { display:none; }
+#reader #assistant-panel .assistant-model-menu { position:relative; }
+#reader #assistant-panel #assistant-model-trigger { width:118px;text-align:left;white-space:nowrap;background:#fafbf6;color:#315c46;border-color:#d7e0d8; }
+#reader #assistant-panel #assistant-model-trigger:disabled { color:#66756c; }
+#reader #assistant-panel .assistant-model-options { position:absolute;z-index:30;right:0;top:calc(100% + 5px);width:310px;max-width:calc(100vw - 40px);padding:5px;border:1px solid #cbd5cd;border-radius:5px;background:#fafbf6;box-shadow:0 3px 12px rgb(36 53 44 / 10%); }
+#reader #assistant-panel .assistant-model-options[hidden] { display:none; }
+#reader #assistant-panel .assistant-model-options button { display:block;width:100%;height:auto;min-height:34px;padding:8px 10px;text-align:left;white-space:normal;border:0;border-radius:3px;background:#fafbf6;color:#24352c;line-height:1.5; }
+#reader #assistant-panel .assistant-model-options button[aria-selected="true"] { background:#446653;color:#fafbf6;font-weight:600; }
+#reader #assistant-panel .assistant-model-options button:hover { background:#e3ece3;color:#24352c; }
+#reader #assistant-panel .assistant-model-options button:focus-visible,#reader #assistant-panel #assistant-model-trigger:focus-visible { outline:2px solid #426f55;outline-offset:-2px; }
+#reader #assistant-panel .assistant-model-options button:active { background:#d3e3d5;color:#24352c; }

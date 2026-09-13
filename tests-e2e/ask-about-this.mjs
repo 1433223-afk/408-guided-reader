@@ -131,14 +131,16 @@ try {
   assert.equal(await unavailablePage.locator("#ask-selection").isEnabled(), true);
   await unavailablePage.locator("#ask-selection").click();
   await unavailablePage.locator("#assistant-first-turn").waitFor({ state: "visible" });
-  await unavailablePage.locator("#assistant-model").selectOption("zhipu");
+  await unavailablePage.locator("#assistant-model-trigger").click();
+  await unavailablePage.locator('.assistant-model-options [data-value="zhipu"]').click();
   assert.equal(providerCalls.length, 0, "opening a draft caused provider egress");
   assert.equal(await unavailablePage.locator("#assistant-start").isDisabled(), true);
   assert.equal(await unavailablePage.locator("#assistant-start").getAttribute("aria-disabled"), "true");
   assert.match(await unavailablePage.locator("#assistant-readiness").textContent(),
     /Zhipu.*408-guided-reader-zhipu.*Windows 用户/);
   assert.equal(await unavailablePage.locator("#assistant-readiness").isVisible(), true);
-  await unavailablePage.locator("#assistant-model").selectOption("deepseek");
+  await unavailablePage.locator("#assistant-model-trigger").click();
+  await unavailablePage.locator('.assistant-model-options [data-value="deepseek"]').click();
   assert.equal(await unavailablePage.locator("#assistant-start").isEnabled(), true);
   assert.equal(await unavailablePage.locator("#assistant-start").getAttribute("aria-disabled"), "false");
   assert.equal(await unavailablePage.locator("#assistant-readiness").isHidden(), true);
@@ -185,7 +187,14 @@ try {
   await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
   assert.equal(providerCalls.length, 0);
   assert.equal(await page.locator("#assistant-model").isEnabled(), true);
-  await page.locator("#assistant-model").selectOption("zhipu");
+  await page.locator("#assistant-model-trigger").focus();
+  await page.locator("#assistant-model-trigger").press('ArrowDown');
+  await page.screenshot({path:'test-results/assistant-model-menu.png'});
+  await page.locator('.assistant-model-options').screenshot({path:'test-results/assistant-model-menu-detail.png'});
+  await page.locator('.assistant-model-options [aria-selected="true"]').press('Escape');
+  assert.equal(await page.locator('.assistant-model-options').isHidden(),true);
+  await page.locator("#assistant-model-trigger").click();
+  await page.locator('.assistant-model-options [data-value="zhipu"]').click();
   const firstResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
   const firstHttp = await firstResponse;
@@ -206,6 +215,7 @@ try {
   assert.equal(firstRequest.source_kind, "ORIGINAL_PDF");
   assert.equal(await page.locator("#assistant-depth").textContent(), "1/5");
   assert.equal(await page.locator("#assistant-model").isDisabled(), true);
+  assert.equal(await page.locator("#assistant-model-trigger").isDisabled(), true);
 
   const followResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
   await page.locator("#assistant-question").fill("为什么？");
@@ -334,7 +344,8 @@ try {
   await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
   assert.equal(await page.locator("#assistant-model").isEnabled(), true,
     "a non-Assistant selection must stage a new Root with a fresh model choice");
-  await page.locator("#assistant-model").selectOption("deepseek");
+  await page.locator("#assistant-model-trigger").click();
+  await page.locator('.assistant-model-options [data-value="deepseek"]').click();
   const secondResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
   const secondState = (await (await secondResponse).json()).assistant;

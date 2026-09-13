@@ -25,7 +25,8 @@ try {
 
   assert.equal(await selectExactReaderText(page, 24, "时钟脉冲信号"), "时钟脉冲信号");
   await page.locator("#ask-selection").click();
-  await page.locator("#assistant-model").selectOption("deepseek");
+  await page.locator("#assistant-model-trigger").click();
+  await page.locator('.assistant-model-options [data-value="deepseek"]').click();
   let response = page.waitForResponse(
     (candidate) => candidate.url().endsWith("/assistant/ask"), { timeout: 180_000 },
   );

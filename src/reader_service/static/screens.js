@@ -246,3 +246,58 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
   };
   return {sync, reset};
 }
+
+
+// Visual adapter only: the original select remains the value/change/disabled owner.
+export function createAssistantModelMenu(select) {
+  const wrapper = node('div', '', 'assistant-model-menu');
+  const trigger = node('button'); trigger.type = 'button'; trigger.id = 'assistant-model-trigger';
+  trigger.setAttribute('aria-label', '当前 AI 模型'); trigger.setAttribute('aria-haspopup', 'listbox');
+  const list = node('div', '', 'assistant-model-options'); list.id = 'assistant-model-options';
+  list.setAttribute('role', 'listbox'); list.setAttribute('aria-label', '选择 AI 模型'); list.hidden = true;
+  trigger.setAttribute('aria-controls', list.id); trigger.setAttribute('aria-expanded', 'false');
+  wrapper.append(trigger, list); select.closest('.assistant-model').after(wrapper);
+  select.closest('.assistant-model').hidden = true;
+  const names = {deepseek:'DeepSeek',zhipu:'GLM-5.3',openrouter:'Gemini 3.8'};
+  function close(restore = false) { list.hidden = true; trigger.setAttribute('aria-expanded','false'); if(restore) trigger.focus(); }
+  function sync() {
+    trigger.textContent = `${names[select.value] || '选择模型'} ▾`;
+    trigger.disabled = select.disabled; trigger.title = select.title;
+    if(select.disabled) close();
+    list.replaceChildren(...[...select.options].map(option => {
+      const item = node('button', option.textContent); item.type = 'button'; item.tabIndex = -1;
+      item.setAttribute('role','option'); item.setAttribute('aria-selected',String(option.selected));
+      item.disabled = option.disabled; item.dataset.value = option.value;
+      item.onclick = () => {
+        if(select.disabled || option.disabled) {close(); return;}
+        select.value = option.value; close(true);
+        select.dispatchEvent(new Event('change', {bubbles:true}));
+      };
+      return item;
+    }));
+  }
+  function open() {
+    if(select.disabled) return;
+    sync(); list.style.transform = ''; list.hidden = false; trigger.setAttribute('aria-expanded','true');
+    const bounds = list.getBoundingClientRect();
+    list.style.transform = `translateX(${Math.max(8 - bounds.left, Math.min(0, window.innerWidth - 8 - bounds.right))}px)`;
+    (list.querySelector('[aria-selected="true"]') || list.querySelector('button:not(:disabled)'))?.focus();
+  }
+  trigger.onclick = () => list.hidden ? open() : close();
+  trigger.onkeydown = e => { if(['ArrowDown','ArrowUp'].includes(e.key)) {e.preventDefault();open();} };
+  list.onkeydown = e => {
+    if(e.key === 'Escape') {e.preventDefault();e.stopPropagation();close(true);return;}
+    if(e.key === 'Tab') {close(true);return;}
+    const items = [...list.querySelectorAll('button:not(:disabled)')];
+    const index = items.indexOf(document.activeElement);
+    let next;
+    if(e.key === 'ArrowDown') next=(index+1)%items.length;
+    if(e.key === 'ArrowUp') next=(index-1+items.length)%items.length;
+    if(e.key === 'Home') next=0;
+    if(e.key === 'End') next=items.length-1;
+    if(next !== undefined) {e.preventDefault();items[next]?.focus();}
+  };
+  document.addEventListener('pointerdown', e => { if(!wrapper.contains(e.target)) close(); });
+  select.addEventListener('change', sync);
+  sync(); return {sync};
+}

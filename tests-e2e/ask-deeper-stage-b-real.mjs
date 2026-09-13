@@ -27,7 +27,8 @@ try {
   assert.equal(await selectExactReaderText(page, 24, "时钟脉冲信号"), "时钟脉冲信号");
   await page.locator("#ask-selection").click();
   await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
-  await page.locator("#assistant-model").selectOption("deepseek");
+  await page.locator("#assistant-model-trigger").click();
+  await page.locator('.assistant-model-options [data-value="deepseek"]').click();
   const rootResponse = page.waitForResponse(
     (response) => response.url().endsWith("/assistant/ask"), { timeout: 180_000 },
   );
@@ -150,7 +151,8 @@ try {
   await page.locator("#ask-selection").click();
   await page.locator("#assistant-first-turn").waitFor({ state: "visible" });
   assert.equal(await page.locator("#assistant-model").isEnabled(), true);
-  await page.locator("#assistant-model").selectOption("deepseek");
+  await page.locator("#assistant-model-trigger").click();
+  await page.locator('.assistant-model-options [data-value="deepseek"]').click();
   const secondRootResponse = page.waitForResponse(
     (response) => response.url().endsWith("/assistant/ask"), { timeout: 180_000 },
   );
