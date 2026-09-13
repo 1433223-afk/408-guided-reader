@@ -125,8 +125,8 @@
 #reader .toolbar button:active { background-color:#cbded0; }
 #reader .marks-count { background-color:var(--reader-green);border-color:var(--reader-paper); }
 /* Warm yellow is reserved for small teaching/note accents, never the CTA fill. */
-#reader .inline-marker { color:var(--reader-green);background-color:#fff3b0;border-color:#ebd66a; }
-#reader .inline-marker:hover { color:var(--reader-green);background-color:#ffe77d;border-color:#d8bd43; }
+#reader .inline-marker { color:var(--reader-green);background-color:var(--reader-soft);border-color:#8ba995; }
+#reader .inline-marker:hover { color:var(--reader-green);background-color:var(--reader-active);border-color:#8ba995; }
 #reader .mark-card { border-left-color:#f2d65a; }
 #reader .mark-card.annotation-style-green,#reader .mark-card-ai-saved { border-left-color:#69967a; }
 #reader .mark-card.annotation-style-blue { border-left-color:#5793ce; }
@@ -162,3 +162,24 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader .marks-panel-heading button { color:var(--reader-muted); }
 
 #reader #marks-panel .mark-verification-pass { color:var(--reader-green); }
+
+/* Lightweight reading selection toolbar; actions/order and selection geometry stay intact. */
+#selection-actions { padding:6px;background:#fafbf6;color:#24352c;border:1px solid #cbd5cd;border-radius:8px;box-shadow:0 3px 12px rgb(36 53 44 / 10%); }
+#selection-actions .selection-action-row { gap:4px; }
+#selection-actions .selection-action-row button,#selection-actions .note-editor button { min-height:28px;padding:5px 9px;border-radius:4px;color:#24352c;background:transparent; }
+#selection-actions #save-highlight,#selection-actions #ask-selection,#selection-actions .note-editor button { color:#315c46;background:#edf2ed; }
+#selection-actions .selection-action-row button:hover,#selection-actions #save-highlight:hover,#selection-actions #ask-selection:hover,#selection-actions .note-editor button:hover { color:#315c46;background:#e3ece3; }
+#selection-actions .selection-action-row button:active,#selection-actions .selection-action-row button[aria-expanded="true"],#selection-actions .note-editor button:active { color:#315c46;background:#dceade; }
+#selection-actions #ask-selection:disabled { color:#87928b;background:transparent; }
+#selection-actions .selection-action-row .cancel-selection { min-width:28px;padding:3px 6px;color:#7b877f;background:transparent; }
+#selection-actions .selection-action-row .cancel-selection:hover { color:#52665a;background:#edf2ed; }
+#selection-actions .highlight-styles,#selection-actions .note-editor { border-top-color:#dce3dc; }
+#selection-actions .highlight-styles legend { color:#66756c; }
+#selection-actions .highlight-styles label { border-radius:4px; }
+#selection-actions .highlight-styles label:hover,#selection-actions .highlight-styles label:focus-within { background:#e3ece3; }
+#selection-actions .style-swatch { border-color:#a7b6aa; }
+#selection-actions .style-swatch.yellow { background:#ffe052; }
+#selection-actions .style-swatch.none { color:#66756c;background:#fafbf6; }
+#selection-actions .highlight-styles input:checked + .style-swatch { outline:2px solid #315c46;outline-offset:2px;box-shadow:0 0 0 2px #fafbf6; }
+#selection-actions .note-editor input { color:#24352c;background:#fff;border:1px solid #cbd5cd;border-radius:4px; }
+#selection-actions :is(button,input):focus-visible { outline:2px solid #426f55;outline-offset:2px; }

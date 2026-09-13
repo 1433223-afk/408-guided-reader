@@ -156,6 +156,21 @@ try {
   assert.equal(await page.locator("#ask-selection").isDisabled(), true);
 
   const selected = await selectLine(page, 302);
+  if(process.env.READER_SELECTION_CAPTURE) {
+    await page.screenshot({path:`test-results/selection-toolbar-${process.env.READER_SELECTION_CAPTURE}.png`});
+    await page.locator('#selection-actions').screenshot({path:`test-results/selection-toolbar-${process.env.READER_SELECTION_CAPTURE}-detail.png`});
+  }
+  if(process.env.READER_SELECTION_CAPTURE === 'after') {
+    await page.locator('label:has(input[name="highlight-style"][value="GREEN"])').click();
+    assert.equal(await page.locator('input[name="highlight-style"][value="GREEN"]').isChecked(),true);
+    await page.locator('label:has(input[name="highlight-style"][value="YELLOW"])').click();
+    await page.locator('#add-note').click();
+    await page.locator('#annotation-note').fill('颜色检查');
+    await page.locator('#selection-actions').screenshot({path:'test-results/selection-toolbar-after-note.png'});
+    await page.locator('#annotation-note').fill('');
+    await page.locator('#add-note').click();
+    assert.equal(await page.locator('#note-editor').isHidden(),true);
+  }
   const selectionMenuBox = await page.locator("#selection-actions").boundingBox();
   assert.ok(selectionMenuBox.width < 390);
   assert.equal(await page.locator("#ask-selection").isEnabled(), true);
