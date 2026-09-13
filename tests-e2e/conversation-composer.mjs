@@ -22,7 +22,7 @@ try {
   });
   browser=await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',headless:true});
   const page=await browser.newPage({viewport:{width:1440,height:1000}});
-  const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+  const errors=[]; page.on('pageerror',e=>{errors.push(e.message);console.error(e.message);});
   await page.goto(url);
   await page.locator('.book-card').filter({hasText:'348 个 PDF 页面'}).locator('.book-open').click();
   await page.locator('#book-overview .overview-book-heading .primary-action').click();
@@ -37,7 +37,7 @@ try {
   await page.locator('#page-number').press('Enter');
   const marker=page.locator(`.page[data-index="${point.display_end_page}"] .kp-learning-marker`).filter({hasText:point.title}).first();
   await marker.locator('summary').click();
-  await marker.getByRole('button',{name:'继续 Master 对话',exact:true}).click();
+  await page.getByRole('button',{name:'继续 Master 对话',exact:true}).filter({visible:true}).click();
   await page.locator('#master-form').waitFor({state:'visible'});
   assert.equal(await page.locator('#master-mode').isHidden(),true);
   assert.equal(await page.locator('#master-review-trigger').textContent(),'标准 ▾');
@@ -82,14 +82,46 @@ try {
   assert.equal(await page.locator('#master-mode').inputValue(),'Standard');
   assert.equal(await page.locator('#master-question').inputValue(),'请解释这个概念');
   assert.deepEqual(errors,[]);
+  await page.locator('#master-expand').click();
+  await page.locator('#master-topic-list button').first().waitFor();
+  assert.ok(await page.locator('#master-topic-list button').count()>1);
+  assert.equal(await page.locator('#master-topic-sidebar [role="treeitem"]').count(),0);
+  const initialTopic=await page.locator('#master-topic-list [aria-current="true"]').getAttribute('data-topic-id');
+  const navigationWrites=[];
+  const observe=request=>{if(request.method()!=='GET') navigationWrites.push(request.url());};
+  page.on('request',observe);
+  const other=page.locator('#master-topic-list button').filter({has:page.locator('small')}).filter({visible:true});
+  const otherId=await other.evaluateAll((items,selected)=>items.find(item=>item.dataset.topicId!==selected).dataset.topicId,initialTopic);
+  const snapshotResponse=page.waitForResponse(response=>/\/learning\/[^/]+$/.test(new URL(response.url()).pathname));
+  await page.locator(`#master-topic-list [data-topic-id="${otherId}"]`).click();
+  const snapshot=await (await snapshotResponse).json();
+  await page.locator(`#master-topic-list [data-topic-id="${otherId}"][aria-current="true"]`).waitFor();
+  assert.deepEqual(await page.locator('#master-history .master-message').evaluateAll(items=>items.map(item=>item.dataset.messageId)),snapshot.messages.filter(message=>message.topic_id===otherId).map(message=>message.id));
+  if(snapshot.topics.find(topic=>topic.id===otherId).state==='RESOLVED') {
+    assert.equal(await page.locator('#master-form').isHidden(),true);
+    assert.equal(await page.locator('#master-confirm').isHidden(),true);
+  }
+  await page.screenshot({path:'test-results/master-topics-history.png'});
+  const resolvedId=data.learning.topics.find(topic=>topic.state==='RESOLVED')?.id;
+  assert.ok(resolvedId,'Retained resolved Topic required');
+  await page.locator(`#master-topic-list [data-topic-id="${resolvedId}"]`).click();
+  await page.locator(`#master-topic-list [data-topic-id="${resolvedId}"][aria-current="true"]`).waitFor();
+  assert.equal(await page.locator('#master-form').isHidden(),true);
+  assert.equal(await page.locator('#master-confirm').isHidden(),true);
+  assert.equal(await page.locator('#master-resume-topic').isVisible(),true);
+  await page.locator(`#master-topic-list [data-topic-id="${initialTopic}"]`).click();
+  await page.locator(`#master-topic-list [data-topic-id="${initialTopic}"][aria-current="true"]`).waitFor();
+  page.off('request',observe); assert.deepEqual(navigationWrites,[]);
+  assert.equal(await page.locator('#master-question').inputValue(),'请解释这个概念');
+  if(await page.locator('#master-resume-topic').isVisible()) await page.locator('#master-resume-topic').click();
+  await page.screenshot({path:'test-results/master-topics-workspace.png'});
   // Layout-only long-content fixture; never persisted or sent to a provider.
   await page.locator('#master-history').evaluate(history => {
     const message=document.createElement('article'); message.className='master-message';
     for(let i=0;i<60;i++) { const p=document.createElement('p'); p.textContent=`滚动布局验证 ${i+1}：长内容应在工作区右侧滚动，正文保持居中。`; message.append(p); }
     history.append(message); history.scrollTop=80;
   });
-  const dockWidth=await page.locator('#assistant-panel').evaluate(el=>el.getBoundingClientRect().width);
-  await page.locator('#master-expand').click();
+  const dockWidth=await page.locator('#assistant-resize-handle').getAttribute('aria-valuenow').then(Number);
   assert.equal(await page.locator('#reader').evaluate(el=>el.classList.contains('assistant-expanded')),true);
   assert.equal(await page.locator('#master-expand').getAttribute('aria-pressed'),'true');
   assert.equal(await page.locator('#master-history').evaluate(el=>Math.round(el.getBoundingClientRect().right)),1440);

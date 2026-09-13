@@ -102,6 +102,26 @@ def test_explicit_evidence_recovery_and_no_automatic_downgrade(learning, service
             c.execute("DELETE FROM learning_events")
 
 
+def test_topic_navigation_is_read_only_and_preserves_real_identity(learning):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    master.send(rev, kp, {'intent_id': 'navigation', 'question': '为什么？', 'review_mode': 'Fast'})
+    idle(master)
+    before = master.snapshot(rev, kp)
+    topic = before['topics'][0]['id']
+    master.repository.confirm(rev, kp, topic)
+    current = master.repository.open(rev, kp)
+    entries = master.repository.entries(rev)
+    assert {t['id'] for t in entries['topics']} == {t['id'] for t in current['topics']}
+    old = next(t for t in entries['topics'] if t['id'] == topic)
+    assert old['state'] == 'RESOLVED'
+    assert old['label'] == '为什么？'
+    assert old['scope_id'] == kp and old['scope_kind'] == 'KP'
+    assert master.repository.entries(rev) == entries
+    assert master.snapshot(rev, kp) == current
+    assert len(runtime.calls) == 1
+
+
 def test_question_committed_before_egress_double_send_failure_retry_and_replay(learning):
     f, master, runtime, points = learning
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']

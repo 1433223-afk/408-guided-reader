@@ -1497,6 +1497,7 @@ function renderAssistantViewportMode() {
     "aria-label", expanded ? "还原临时解释面板" : "展开临时解释面板",
   );
   elements["assistant-expand"].title = expanded ? "还原临时解释面板" : "展开临时解释面板";
+  master.viewportChanged();
 }
 
 function setAssistantExpanded(expanded) {

@@ -15,6 +15,9 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   let poll = 0;
   let generation = 0;
   let sendIntent = null;
+  let selectedTopicId = null;
+  let composingNew = false;
+  const topicDrafts = new Map();
   const tabs = document.createElement("nav");
   tabs.className = "dock-tabs";
   tabs.setAttribute("aria-label", "AI 工作区");
@@ -46,6 +49,17 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     <p class="master-lifetime">对话自动保存；收起或重启不会改变理解状态。</p>`;
   dock.append(panel);
   const el = (id) => panel.querySelector(`#master-${id}`);
+  const conversation = document.createElement('div'); conversation.className='master-conversation';
+  conversation.append(...panel.children);
+  const sidebar = document.createElement('nav'); sidebar.id='master-topic-sidebar'; sidebar.setAttribute('aria-label','本书 Master 主题');
+  const topicHeading=document.createElement('strong'); topicHeading.textContent='本书主题';
+  const topicList=document.createElement('div'); topicList.id='master-topic-list';
+  sidebar.append(topicHeading, topicList); panel.append(sidebar, conversation);
+  const resume=button('继续提问', () => {
+    selectedTopicId=current?.topics.find(t=>t.state==='ACTIVE')?.id || null;
+    composingNew=!selectedTopicId; render(); el('question').focus();
+  });
+  resume.id='master-resume-topic'; resume.hidden=true; el('form').before(resume);
   createComposerChoice(el('mode'), {id:'master-review', label:'审查强度',
     names:{Fast:'快速', Standard:'标准', Deep:'深入'}});
   const post = (path, body = {}) => api(path, { method: "POST", body: JSON.stringify(body) });
@@ -57,6 +71,18 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     panel.hidden = !master;
     assistantTab.setAttribute("aria-pressed", String(!master));
     masterTab.setAttribute("aria-pressed", String(master));
+    if(master && current) render();
+  }
+  function renderTopicList() {
+    topicList.replaceChildren(...(entries.topics || []).map(topic => {
+      const item=button('', () => open({scope_id:topic.scope_id,title:topic.scope_title}, false, topic.id));
+      item.dataset.topicId=topic.id; item.title=`${topic.scope_title} · ${topic.label}`;
+      item.setAttribute('aria-current',String(topic.id===selectedTopicId && !composingNew));
+      const title=document.createElement('span'); title.textContent=topic.label;
+      const detail=document.createElement('small'); detail.textContent=`${topic.scope_title} · ${topic.state==='ACTIVE'?'未完全清楚':'已解决'}`;
+      item.append(title,detail); return item;
+    }));
+    if(!topicList.children.length) { const empty=document.createElement('p'); empty.textContent='还没有 Master 话题'; topicList.append(empty); }
   }
   function button(text, action) {
     const control = document.createElement("button");
@@ -71,6 +97,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     const result = await api(`/api/revisions/${owner}/learning`);
     if (owner !== revision()) return;
     entries = result;
+    renderTopicList();
     const hasControls = entries.points.length > 0;
     if (pages.classList.contains("has-learning-controls") !== hasControls) {
       pages.classList.toggle("has-learning-controls", hasControls);
@@ -82,7 +109,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     }
     for (const page of pages.children) if (page.querySelector("canvas")) renderPage(Number(page.dataset.index));
   }
-  async function open(point, unclear = false) {
+  async function open(point, unclear = false, topicId = null) {
+    if(current) topicDrafts.set(scopeId(current.point), {text:el('question').value,scroll:el('history').scrollTop,intent:sendIntent});
     const request = ++generation;
     clearTimeout(poll);
     current = null;
@@ -98,23 +126,33 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       const result = unclear ? await post(base(scopeId(point)) + "/open") : await api(base(scopeId(point)));
       if (request !== generation) return;
       current = result;
-      sendIntent = null;
-      el("question").value = "";
+      selectedTopicId=topicId || current.topics.find(t=>t.state==='ACTIVE')?.id || current.topics.at(-1)?.id || null;
+      composingNew=false;
+      sendIntent = topicDrafts.get(scopeId(current.point))?.intent || null;
+      el("question").value = topicDrafts.get(scopeId(current.point))?.text || '';
       render();
+      el('history').scrollTop=topicDrafts.get(scopeId(current.point))?.scroll || 0;
       await refreshEntries();
     } catch (error) { if (request === generation) el("status").textContent = error.message; }
   }
   function render() {
     el("title").textContent = current.point.title;
     const active = current.topics.find((t) => t.state === "ACTIVE");
+    const expanded=dock.closest('.reader').classList.contains('assistant-expanded');
+    if(!selectedTopicId && !composingNew) selectedTopicId=active?.id || current.topics.at(-1)?.id || null;
+    const historical=expanded && !composingNew && selectedTopicId && current.topics.find(t=>t.id===selectedTopicId)?.state!=='ACTIVE';
+    renderTopicList();
     el("status").textContent = `${STATUS[current.status]} · ${active ? "当前话题待解决" : "当前没有未解决话题"}`;
+    if(historical) el('status').textContent='已解决的话题 · 历史记录';
+    if(expanded && composingNew) el('status').textContent='继续提问将开启新一轮话题，已有历史保留。';
     const reviewing = current.messages.some(m => m.review_state === "PENDING");
     const generating = current.messages.some(m => m.state === "PENDING");
     el("status").classList.toggle("ai-progress", reviewing || generating);
     if (reviewing || generating) el("status").textContent += reviewing ? " · 审查中" : " · 生成中";
     const history = el("history");
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
-    const rendered = current.messages.map((message) => {
+    const visibleMessages=expanded ? current.messages.filter(message=>!composingNew && message.topic_id===selectedTopicId) : current.messages;
+    const rendered = visibleMessages.map((message) => {
       const row = document.createElement("article");
       row.dataset.messageId = message.id;
       row.className = "master-message";
@@ -151,10 +189,12 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     });
     history.replaceChildren(...rendered);
     if (nearBottom) history.scrollTop = history.scrollHeight;
-    el("form").hidden = false;
+    el("form").hidden = Boolean(historical);
+    resume.hidden=!historical;
+    resume.textContent=active ? '回到当前话题继续提问' : '继续提问（新话题）';
     // A second question must not overtake an unanswered durable question.
     el("send").disabled = current.messages.some((m) => m.role === "user" && ["PENDING", "FAILED"].includes(m.state));
-    el("confirm").hidden = !active;
+    el("confirm").hidden = !active || Boolean(historical) || composingNew;
     el("confirm").textContent = current.point.scope_kind === "SECTION" ? "都清楚了" : "已经弄懂";
     el("question").placeholder = current.point.scope_kind === "SECTION" ? "这一节哪些地方还没完全懂？" : "这个知识点哪里还没完全懂？";
     clearTimeout(poll);
@@ -196,9 +236,12 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       const result = await post(base() + "/send", sendIntent);
       if (request !== generation) return;
       current = result;
+      selectedTopicId=current.topics.find(t=>t.state==='ACTIVE')?.id || selectedTopicId;
+      composingNew=false;
       sendIntent = null;
       el("question").value = "";
       render();
+      await refreshEntries();
     } catch (error) {
       if (request === generation) { el("status").classList.remove("ai-progress"); el("status").textContent = `${error.message}；再次发送会复用本次问题。`; el("send").disabled = false; }
     }
@@ -344,6 +387,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     ++generation;
     clearTimeout(poll);
     current = null;
+    selectedTopicId=null; composingNew=false; topicDrafts.clear();
     entries = { points: [], sections: [] };
     if (pages.classList.contains("has-learning-controls")) {
       pages.classList.remove("has-learning-controls");
@@ -356,10 +400,13 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     el("status").textContent = "从教材知识点打开持久对话。";
     el("form").hidden = true;
     el("confirm").hidden = true;
+    resume.hidden=true; renderTopicList();
   }
-  return { refreshEntries, renderPage, decorateKnowledgeItem, reset, selectAssistant: () => select(false),
+  return { refreshEntries, renderPage, decorateKnowledgeItem, reset, viewportChanged: () => { if(current) render(); }, selectAssistant: () => select(false),
     openMemory: async (scope, messageId) => {
       await open({ scope_id: scope, title: 'Master 学习上下文' });
+      const message=current?.messages.find(m=>m.id===messageId);
+      if(message) { selectedTopicId=message.topic_id; composingNew=false; render(); }
       const row = [...el('history').children].find(node => node.dataset.messageId === messageId);
       if (row) { row.scrollIntoView({ block: 'center' }); row.tabIndex = -1; row.focus({ preventScroll: true }); }
     } };

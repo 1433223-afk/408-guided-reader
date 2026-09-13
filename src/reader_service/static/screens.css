@@ -353,9 +353,31 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader.assistant-expanded #assistant-panel #assistant-turns > * { width:calc(100% - 56px); max-width:1024px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
 #reader.assistant-expanded #assistant-panel .assistant-conversation > :is(#assistant-context-bar,#assistant-follow-up,#assistant-first-turn,#assistant-empty) { width:calc(100% - 56px); }
 #reader.assistant-expanded #master-workspace { min-width:0; gap:12px; }
-#reader.assistant-expanded #master-workspace > :not(#master-history) { width:calc(100% - 56px); max-width:960px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
 #reader.assistant-expanded #master-history { width:100%; max-width:none; overflow:auto; padding:4px 0 16px; scrollbar-width:thin; scrollbar-color:#8a97834d transparent; }
 #reader.assistant-expanded #master-history > * { width:calc(100% - 56px); max-width:1024px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
 #reader.assistant-expanded #master-history::-webkit-scrollbar { width:6px; height:6px; }
 #reader.assistant-expanded #master-history::-webkit-scrollbar-thumb { background:#8a97834d; border-radius:6px; }
 #reader.assistant-expanded #master-workspace #master-confirm { width:auto; }
+
+/* Master is a flat persistent Topic list, never an Assistant explanation tree. */
+.master-conversation { display:contents; }
+#master-topic-sidebar { display:none; }
+#reader.assistant-expanded #master-workspace { flex-direction:row; gap:0; }
+#reader.assistant-expanded #master-workspace > #master-topic-sidebar { display:block; flex:0 0 244px; width:244px; max-width:none; margin:0; padding:18px 10px; overflow:auto; background:#f0f3ec; border-right:1px solid #dce2d6; scrollbar-width:thin; }
+#master-topic-sidebar > strong { display:block; padding:0 10px 16px; font-size:13px; color:#637060; }
+#reader #master-topic-list button { display:block; width:100%; text-align:left; border:0; border-radius:7px; background:transparent; padding:11px 10px; margin:3px 0; }
+#reader #master-topic-list button[aria-current=true] { background:#e0e9d9; color:#304d35; }
+#reader #master-topic-list button:hover { background:#e7ede2; }
+#master-topic-list button span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+#master-topic-list button small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:5px; color:#6f7a69; font-size:11px; }
+#reader.assistant-expanded #master-workspace > .master-conversation { display:flex; flex-direction:column; flex:1; width:auto; max-width:none; min-width:0; min-height:0; margin:0; gap:8px; }
+#reader.assistant-expanded .master-conversation > :not(#master-history) { width:calc(100% - 48px); max-width:800px; margin-left:auto; margin-right:auto; box-sizing:border-box; }
+#reader.assistant-expanded .master-conversation #master-title { font-size:15px; margin-top:16px; }
+#reader.assistant-expanded .master-conversation #master-history { flex:1; min-height:0; width:100%; }
+#reader.assistant-expanded #master-history > .master-message { width:calc(100% - 48px); max-width:800px; margin:0 auto 22px; }
+#reader.assistant-expanded #master-history .assistant-answer-bubble { width:100%; max-width:none; margin:0; padding:0; }
+#reader.assistant-expanded #master-history .assistant-question-bubble { width:fit-content; max-width:80%; margin:8px 0 14px auto; padding:10px 14px; }
+#reader.assistant-expanded #master-history .master-message-status { font-size:11px; opacity:.8; }
+#reader.assistant-expanded .master-conversation #master-confirm { width:auto; margin-top:0; margin-bottom:0; }
+#reader.assistant-expanded .master-conversation .master-lifetime { font-size:11px; margin-bottom:8px; }
+@media (max-width:900px) { #reader.assistant-expanded #master-workspace > #master-topic-sidebar { flex-basis:200px; width:200px; } }

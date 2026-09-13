@@ -105,7 +105,24 @@ class LearningRepository:
                 for groups, key in ((section_counts, point['primary_section_id']), (chapter_counts, point['chapter_outline_node_id'])):
                     counts = groups.setdefault(key, {'UNDERSTOOD': 0, 'NOT_FULLY_CLEAR': 0, 'UNCONFIRMED': 0})
                     counts[point['status']] += 1
+            # Read-only navigation projection of existing, currently published scopes.
+            scopes = {p['thread_id']: p for p in [*points, *sections] if p.get('thread_id')}
+            topics = []
+            for row in c.execute("""SELECT topic.*,
+                (SELECT substr(content, 1, 100) FROM master_messages message
+                 WHERE message.topic_id=topic.id AND message.role='user'
+                 ORDER BY message.created_at, message.rowid LIMIT 1) AS question
+                FROM master_topics topic JOIN master_threads thread ON thread.id=topic.thread_id
+                WHERE thread.book_source_revision_id=? ORDER BY topic.created_at DESC, topic.rowid DESC""", (revision_id,)):
+                scope = scopes.get(row['thread_id'])
+                if scope is None:
+                    continue
+                topics.append({'id': row['id'], 'state': row['state'],
+                    'scope_id': scope.get('knowledge_point_id') or scope['outline_node_id'],
+                    'scope_kind': 'KP' if scope.get('knowledge_point_id') else 'SECTION',
+                    'scope_title': scope['title'], 'label': row['question'] or scope['title']})
             return {"points": points, "sections": sections,
+                    "topics": topics,
                     "section_counts": section_counts, "chapter_counts": chapter_counts}
 
     @staticmethod

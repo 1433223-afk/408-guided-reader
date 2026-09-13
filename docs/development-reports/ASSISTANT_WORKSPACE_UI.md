@@ -174,3 +174,41 @@ Screenshots: `test-results/assistant-expanded-edge-scroll.png` and
 `test-results/master-expanded-edge-scroll.png`. Human visual acceptance pending.
 Final broad regression: 285 Python tests PASS, 2 unchanged optional external OCR skips.
 Current 8767 serves app/Master/CSS HTTP 200 and returns two books; refresh only, no restart needed.
+
+## Master GPT-style Topic workspace (2026-09-13, user retest pending)
+
+Master expanded mode now has a flat, book-local list of actual durable Master Topics, not
+Assistant Root/Child nodes or KP threads relabeled as Topics. Selected rows are green, long labels
+truncate with native hover titles, and each row exposes scope and ACTIVE/RESOLVED status.
+The central chronological conversation filters by selected Topic ID; prose and Composer share an
+800 px centered lane. The existing history scrollport reaches the viewport's right edge. The
+Composer retains its low-weight review-strength menu; no provider selector moved into the header.
+Assistant recursion, narrow thread-history rendering and other Reader regions are unchanged.
+
+`LearningRepository.entries()` adds only a read-only projection of existing Topics within currently
+published scopes. No schema, writes, migration, provider/context or mastery rules changed. Selecting
+history makes GET requests only. Resolved Topics show their own history without a misleading Send
+or confirmation action; explicit continuation targets the existing ACTIVE Topic, or stages a new
+question whose Topic is created by the existing send path. Draft and retry intent survive scope
+navigation in memory. Memory links select the message's Topic before revealing its row.
+
+UI/UX skill informed readable measure and lightweight navigation; existing paper/green styling
+and native controls retained, no dependency or external code adopted. Earlier workspace pattern
+research remains applicable; this is a local projection/layout change, not a new navigation framework.
+
+Validation: 42 frontend tests and broad Python suite (285 passed, 2 existing optional OCR skips).
+Added real-identity/read-only Topic projection coverage; affected learning suite: 22 passed.
+`conversation-composer.mjs` PASS on an isolated copy of the real 348-page library: real Reader
+marker entry, flat Topic switching, exact message-ID filtering, resolved-history controls, zero
+navigation writes, preserved draft/mode, failed-send recovery, right-edge wheel scrolling and
+expand/restore reversal. The harness locates the visible marker action at page level because its
+popover placement need not remain within the original title-filtered marker locator; no KP code changed.
+`assistant-workspace.mjs` PASS with five localhost mock calls and unchanged recursive flow.
+No real external provider calls; full Master provider semantic evaluation intentionally not rerun
+for this UI-only delta. Screenshots visually inspected: `test-results/master-topics-history.png`
+(real retained conversation) and `master-expanded-edge-scroll.png` (DOM-only long-content fixture).
+
+Port 8767 restarted with the same invocation/data directory to load the new read-only projection.
+Original library still contains two books; Master module/CSS HTTP 200, Topic projection populated.
+Restart clears temporary Assistant state by design, not durable books/notes/Master history.
+No Frozen changes, independent review or human acceptance claimed. READY_FOR_USER_RETEST.
