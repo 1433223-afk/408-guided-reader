@@ -65,6 +65,7 @@ try {
       await rightClickSelection(page, pageIndex, line, 0, Math.min(5, line.cells.length));
       await page.locator("#selection-actions").waitFor({ state: "visible" });
       assert.equal(await page.locator("#marks-panel").isHidden(), true, "Marks must stay collapsed while saving");
+      await page.locator("#save-highlight").click();
       await page.locator(`label:has(input[name="highlight-style"][value="${highlightStyle}"])`).click();
       if (body) {
         await page.locator("#add-note").click();

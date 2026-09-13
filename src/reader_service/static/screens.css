@@ -164,7 +164,7 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader #marks-panel .mark-verification-pass { color:var(--reader-green); }
 
 /* Lightweight reading selection toolbar; actions/order and selection geometry stay intact. */
-#selection-actions { padding:6px;background:#fafbf6;color:#24352c;border:1px solid #cbd5cd;border-radius:8px;box-shadow:0 3px 12px rgb(36 53 44 / 10%); }
+#selection-actions { padding:6px;background:#fafbf6;color:#24352c;border:1px solid #cbd5cd;border-radius:8px;box-shadow:0 2px 8px rgb(36 53 44 / 6%); }
 #selection-actions .selection-action-row { gap:4px; }
 #selection-actions .selection-action-row button,#selection-actions .note-editor button { min-height:28px;padding:5px 9px;border-radius:4px;color:#24352c;background:transparent; }
 #selection-actions #save-highlight,#selection-actions #ask-selection,#selection-actions .note-editor button { color:#315c46;background:#edf2ed; }
@@ -183,3 +183,5 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #selection-actions .highlight-styles input:checked + .style-swatch { outline:2px solid #315c46;outline-offset:2px;box-shadow:0 0 0 2px #fafbf6; }
 #selection-actions .note-editor input { color:#24352c;background:#fff;border:1px solid #cbd5cd;border-radius:4px; }
 #selection-actions :is(button,input):focus-visible { outline:2px solid #426f55;outline-offset:2px; }
+
+#selection-actions .highlight-styles[hidden] { display:none; }

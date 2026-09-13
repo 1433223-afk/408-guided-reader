@@ -37,3 +37,22 @@ no USER_ACCEPTANCE PASS. Commit containing this report is the checkpoint.
 Final status: READY_FOR_USER_RETEST. Served before/after/interaction harness PASS;
 JavaScript 40 PASS; Python 285 PASS / 2 existing optional OCR skips
 (145.236s). XML: test-results/selection-toolbar-closure.xml. Whitespace checks PASS.
+
+## User-approved direction and final small adjustments — 2026-09-13
+
+User explicitly accepted the visual direction and requested closing this item after two
+small changes. Completed: color choices are initially hidden each time the selection
+menu opens; first Highlight click reveals them, a subsequent Highlight click uses the
+existing save action. Color selection and Note save semantics remain intact. Expansion
+uses existing positioning/clamping, with aria-expanded/aria-controls. Shadow reduced to
+0 2px 8px at 6% opacity. No other style or business changes.
+
+Actual real-PDF path PASS: initially collapsed -> expand -> green/yellow -> Note editor
+open/close -> save highlight -> reselect (collapsed again) -> Ask and existing recovery.
+JavaScript closure suite 40 PASS; syntax/diff checks PASS. Backend unchanged; Python
+closure from the immediately preceding implementation remains applicable. Other older
+annotation harness selectors were updated to expand before choosing/saving a highlight;
+those full older harnesses were not rerun. Final collapsed screenshot visually inspected.
+
+This item is closed per the user's explicit completion instruction; no new independent
+user-acceptance result is asserted for these final adjustments.

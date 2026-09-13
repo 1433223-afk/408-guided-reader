@@ -2475,7 +2475,8 @@ function renderSelection() {
 
 function showSelectionActions(clientX, clientY) {
   for (const id of ["save-highlight", "add-note"]) elements[id].hidden = Boolean(state.guideSelection);
-  elements["selection-actions"].querySelector(".highlight-styles").hidden = Boolean(state.guideSelection);
+  elements["selection-actions"].querySelector(".highlight-styles").hidden = true;
+  elements["save-highlight"].setAttribute("aria-expanded", "false");
   state.selectionMenuPoint = { x: clientX, y: clientY };
   elements["selection-actions"].hidden = false;
   positionSelectionActions();
@@ -2847,7 +2848,16 @@ elements["assistant-turns"].addEventListener("click", (event) => {
   if (save) saveAssistantTurn(save);
 });
 elements["assistant-ask-deeper"].addEventListener("click", sendAssistantChild);
-elements["save-highlight"].addEventListener("click", () => saveAnnotation());
+elements["save-highlight"].addEventListener("click", () => {
+  const colors = elements["selection-actions"].querySelector(".highlight-styles");
+  if (colors.hidden) {
+    colors.hidden = false;
+    elements["save-highlight"].setAttribute("aria-expanded", "true");
+    positionSelectionActions();
+    return;
+  }
+  saveAnnotation();
+});
 elements["add-note"].addEventListener("click", () => {
   const opening = elements["note-editor"].hidden;
   elements["note-editor"].hidden = !opening;

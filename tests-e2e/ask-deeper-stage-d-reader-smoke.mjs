@@ -39,6 +39,7 @@ try {
   const highlightResponse = page.waitForResponse((response) => (
     response.url().includes("/annotations") && response.request().method() === "POST"
   ));
+  await page.locator("#save-highlight").click(); // Expand colors first.
   await page.locator("#save-highlight").click();
   assert.equal((await highlightResponse).status(), 201);
   await page.getByText("高亮已保存。").waitFor();

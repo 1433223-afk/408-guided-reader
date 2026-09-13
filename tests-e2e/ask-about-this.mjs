@@ -161,6 +161,9 @@ try {
     await page.locator('#selection-actions').screenshot({path:`test-results/selection-toolbar-${process.env.READER_SELECTION_CAPTURE}-detail.png`});
   }
   if(process.env.READER_SELECTION_CAPTURE === 'after') {
+    assert.equal(await page.locator('#highlight-colors').isHidden(),true);
+    await page.locator('#save-highlight').click();
+    assert.equal(await page.locator('#highlight-colors').isVisible(),true);
     await page.locator('label:has(input[name="highlight-style"][value="GREEN"])').click();
     assert.equal(await page.locator('input[name="highlight-style"][value="GREEN"]').isChecked(),true);
     await page.locator('label:has(input[name="highlight-style"][value="YELLOW"])').click();
@@ -170,6 +173,10 @@ try {
     await page.locator('#annotation-note').fill('');
     await page.locator('#add-note').click();
     assert.equal(await page.locator('#note-editor').isHidden(),true);
+    await page.locator('#save-highlight').click();
+    await page.getByText('高亮已保存。',{exact:true}).waitFor();
+    await selectLine(page,302);
+    assert.equal(await page.locator('#highlight-colors').isHidden(),true);
   }
   const selectionMenuBox = await page.locator("#selection-actions").boundingBox();
   assert.ok(selectionMenuBox.width < 390);
