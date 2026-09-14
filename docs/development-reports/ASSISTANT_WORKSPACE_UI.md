@@ -431,3 +431,41 @@ Broad regression rerun: 287 Python tests PASS, 2 unchanged optional external OCR
 8767 serves updated Master/CSS HTTP 200 and the original two books. Static refresh only; no service
 restart or temporary-conversation clearing. Human visual/interaction acceptance remains pending;
 no ZCode review or Phase closure. READY_FOR_USER_RETEST.
+
+## Assistant latency and Zhipu readiness diagnosis (2026-09-14)
+
+The live Zhipu failure was a local launch configuration error, not a credential/provider defect:
+`.tmp/start-reader-8767.ps1` explicitly set `GUIDED_READER_ZHIPU_DISABLED=1`. The Windows
+Credential Manager target `408-guided-reader-zhipu` was present and secret-free status checks showed
+the credential, `GLM-5.3-Flash`, official HTTPS endpoint, configuration/model/endpoint validation and
+cooling state were all healthy. Removing that local override and restarting 8767 changed Zhipu to
+`READY`; a real Reader draft could select Zhipu and Send was enabled with no AI-off message. The
+frontend already consumes `/api/assistant/status`: unavailable choices remain discoverable so their
+specific diagnostic can be shown, while Send is disabled at the provider boundary.
+
+One real 348-page textbook selection used 4 selected characters, 209 same-page OCR characters,
+safe Chapter/Section metadata and the compact Skill. Context construction took about 1 ms. Exact
+provider-reported prompt totals were 554 Zhipu tokens / 566 DeepSeek tokens for Root, 923 for a
+Zhipu same-level follow-up, and 977 for a Zhipu Child. Root had zero history; follow-up carried one
+bounded prior user/answer pair; Child carried the complete triggering parent answer required by the
+Frozen Child contract plus the same bounded source context. No complete Section/Chapter OCR, Root
+conversation, ancestor tree or unbounded history was sent. Segment token values are only local
+estimates because neither provider exposes per-segment counts and no tokenizer dependency was added;
+the final prompt totals above are provider usage, not estimates. True TTFT is unavailable because
+the product path remains `stream=false`; total latency is not mislabeled as TTFT.
+
+Default real totals were Zhipu Root 9.209 s, follow-up 16.015 s, Child 13.362 s, and DeepSeek Root
+6.364 s. A same-prompt narrow comparison reduced Zhipu Root to 4.358 s / 315 completion tokens with
+`reasoning_effort=low`, and DeepSeek Root to 2.150 s / 279 completion tokens with
+`thinking=disabled`, versus 933/927 default completion tokens. Both returned complete approximately
+500-character answers. Assistant now applies only these already-supported per-call parameters;
+grounding, egress, history bounds and answer limits are unchanged. Provider latency still varies: a
+subsequent real Zhipu Reader request took over 15 seconds, so this is a measured reduction in excess
+reasoning work, not a guaranteed latency SLA or a reason to add RAG/vector storage.
+
+Long requests now show `准备上下文` and then `正在回答` in the existing polite live region. Ask has
+no review stage to fabricate; flows that actually save/review an explanation retain their existing
+review feedback. Validation: 71 Assistant Python tests PASS; 43 JavaScript tests PASS; JavaScript
+syntax PASS; real 348-page `ask-about-this.mjs` PASS after narrowing one stale test selector to the
+Assistant model list. Live 8767 Zhipu status/draft/real answer path passed. No new endpoint,
+dependency, persistence, telemetry, context category, vector DB, RAG or Frozen change.

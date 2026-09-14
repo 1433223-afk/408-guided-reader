@@ -837,6 +837,27 @@ class AssistantService:
     def _complete(
         self, provider: str, messages: list[dict], *, interaction_id: str
     ) -> str:
+        provider_options = {
+            "deepseek": {"thinking_mode": "disabled"},
+            "zhipu": {"reasoning_effort": "low"},
+        }.get(provider, {})
+        complete_for_with_metadata = getattr(
+            self.runtime, "complete_for_with_metadata", None
+        )
+        if complete_for_with_metadata is not None:
+            return complete_for_with_metadata(
+                provider,
+                messages,
+                interaction_id=interaction_id,
+                **provider_options,
+            ).answer
+        complete_with_metadata = getattr(self.runtime, "complete_with_metadata", None)
+        if complete_with_metadata is not None:
+            return complete_with_metadata(
+                messages,
+                interaction_id=interaction_id,
+                **provider_options,
+            ).answer
         complete_for = getattr(self.runtime, "complete_for", None)
         if complete_for is not None:
             return complete_for(provider, messages, interaction_id=interaction_id)

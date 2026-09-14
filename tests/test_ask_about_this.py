@@ -574,6 +574,10 @@ def test_selected_provider_is_the_only_call_and_follow_up_stays_pinned(assistant
     assert followed["provider"] == "zhipu"
     assert followed["root_id"] == first["root_id"]
     assert len(adapters["zhipu"].calls) == 2
+    assert all(
+        call["body"]["reasoning_effort"] == "low"
+        for call in adapters["zhipu"].calls
+    )
     assert adapters["deepseek"].calls == []
     assert adapters["openrouter"].calls == []
 
@@ -591,6 +595,9 @@ def test_selected_provider_is_the_only_call_and_follow_up_stays_pinned(assistant
     assert len(replacement["turns"]) == 1
     assert len(replacement_state["roots"]) == 2
     assert len(adapters["deepseek"].calls) == 1
+    assert adapters["deepseek"].calls[0]["body"]["thinking"] == {
+        "type": "disabled"
+    }
     assert adapters["openrouter"].calls == []
 
 

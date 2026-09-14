@@ -190,11 +190,24 @@ try {
   await page.locator("#assistant-model-trigger").focus();
   await page.locator("#assistant-model-trigger").press('ArrowDown');
   await page.screenshot({path:'test-results/assistant-model-menu.png'});
-  await page.locator('.assistant-model-options').screenshot({path:'test-results/assistant-model-menu-detail.png'});
-  await page.locator('.assistant-model-options [aria-selected="true"]').press('Escape');
-  assert.equal(await page.locator('.assistant-model-options').isHidden(),true);
+  await page.locator('#assistant-model-options').screenshot({path:'test-results/assistant-model-menu-detail.png'});
+  await page.locator('#assistant-model-options [aria-selected="true"]').press('Escape');
+  assert.equal(await page.locator('#assistant-model-options').isHidden(),true);
   await page.locator("#assistant-model-trigger").click();
   await page.locator('.assistant-model-options [data-value="zhipu"]').click();
+  await page.evaluate(() => {
+    window.__assistantPendingStages = [];
+    window.__assistantPendingObserver = new MutationObserver(() => {
+      const text = document.querySelector(".assistant-pending")?.textContent;
+      if (text && window.__assistantPendingStages.at(-1) !== text) {
+        window.__assistantPendingStages.push(text);
+      }
+    });
+    window.__assistantPendingObserver.observe(
+      document.querySelector("#assistant-turns"),
+      { childList: true, subtree: true, characterData: true },
+    );
+  });
   const firstResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
   const firstHttp = await firstResponse;
@@ -203,6 +216,12 @@ try {
   const firstRequest = firstHttp.request().postDataJSON();
   const firstState = firstPayload.assistant;
   const firstRoot = firstState.current;
+  const pendingStages = await page.evaluate(() => {
+    window.__assistantPendingObserver.disconnect();
+    return window.__assistantPendingStages;
+  });
+  assert.ok(pendingStages.includes("准备上下文…"));
+  assert.ok(pendingStages.some((stage) => stage.startsWith("正在回答")));
   await page.locator(".assistant-answer-bubble").getByText("总线仲裁", { exact: false }).waitFor();
   await page.screenshot({path:'test-results/assistant-reading-panel.png'});
   await page.locator('#assistant-panel').screenshot({path:'test-results/assistant-reading-panel-detail.png'});

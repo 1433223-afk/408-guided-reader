@@ -1736,7 +1736,7 @@ function renderAssistantWorkspace() {
   if (current.pending) {
     const pending = document.createElement("div");
     pending.className = "assistant-pending";
-    pending.textContent = `正在解释“${current.label}”……`;
+    pending.textContent = "准备上下文…";
     turns.push(pending);
   } else if (current.error) {
     const error = document.createElement("div");
@@ -1793,12 +1793,18 @@ function renderAssistantDraft() {
   syncModelSelector();
 }
 
-function showAssistantPending(question) {
+function showAssistantPending(question, phase = "answering") {
   const pending = document.createElement("div");
   pending.className = "assistant-pending";
-  pending.textContent = `正在解释「${question}」…`;
+  pending.textContent = phase === "preparing" ? "准备上下文…" : `正在回答“${question}”…`;
   elements["assistant-turns"].append(pending);
   elements["assistant-empty"].hidden = true;
+  return pending;
+}
+
+async function advanceAssistantPending(pending, question) {
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  if (pending?.isConnected) pending.textContent = `正在回答“${question}”…`;
 }
 
 function showAssistantError(error) {
@@ -1841,7 +1847,8 @@ async function sendAssistantFirstTurn() {
   if (!draft || state.assistantPending || !state.assistantConfigured || state.assistantCooling) return;
   state.assistantPending = true;
   syncModelSelector();
-  showAssistantPending(draft.selectedText);
+  const pending = showAssistantPending(draft.selectedText, "preparing");
+  await advanceAssistantPending(pending, draft.selectedText);
   try {
     const payload = await api(`/api/revisions/${draft.revisionId}/assistant/ask`, {
       method: "POST",
@@ -1875,7 +1882,8 @@ async function sendAssistantFollowUp() {
   if (!question || !current || !readerSessionId || state.assistantPending) return;
   state.assistantPending = true;
   elements["assistant-send"].disabled = true;
-  showAssistantPending(question);
+  const pending = showAssistantPending(question, "preparing");
+  await advanceAssistantPending(pending, question);
   try {
     const payload = await api("/api/assistant/follow-up", {
       method: "POST",
@@ -2135,6 +2143,8 @@ async function sendAssistantChild() {
   rememberAssistantScroll();
   hideAssistantAnswerActions(true);
   if (!optimisticChildState(childSelection, nodeId)) return;
+  const pending = elements["assistant-turns"].querySelector(".assistant-pending:last-child");
+  await advanceAssistantPending(pending, childSelection.selectedText);
   state.assistantChildRequests.set(requestKey, nodeId);
   try {
     const payload = await api("/api/assistant/child", {
