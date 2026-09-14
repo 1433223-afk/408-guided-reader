@@ -1707,27 +1707,29 @@ This is also what lets a learner become unclear again later without erasing the 
 
 ```
 MasterTopic
-  topic_id, thread_ref
+  topic_id, thread_ref UNIQUE
   state: ACTIVE | RESOLVED
-  continuation_of: topic_id | None      # linked continuation, never a merge
   frozen_basis_ref: TurnRange | None    # set when finalization begins; immutable once set
   resolved_by: EXPLICIT_USER_EVIDENCE | FUTURE_ASSESSMENT_RULE | None
 ```
 
-A Topic is a durable clustering of `MasterMessage` turns around one condensable question — distinct
+A Topic is the durable learning focus and `MasterMessage` cluster for one MasterThread — distinct
 from a single answer, a `KPStatus` write, and whatever long-term summary eventually gets attached to
-it. `ACTIVE → RESOLVED` is the only transition, and it fires **only** on explicit user evidence or a
-future formally-authorized assessment rule — never on UI/session events. Closing the Master panel, the
-Reader, or the app, or switching tabs, touches nothing here: `MasterTopic.state` has no code path from
-any of those events.
+it. One `MasterThread` owns exactly one durable Topic: lookup/open/send includes both ACTIVE and
+RESOLVED state, and a unique `thread_ref` constraint makes a second Topic structurally unavailable.
+Reopen, revisit, restart and ordinary continued questions reuse the same `topic_id`. Ordinary Send
+appends a message but changes neither Topic state nor Mastery.
 
-**Finalization race.** When a Topic begins finalizing (condensation/summarization), `frozen_basis_ref`
-is set once and never mutated — finalization reasons only about the turns that existed at that
-instant. If the user continues the same question-cluster afterward, those new messages attach to a
-**new** `MasterTopic` with `continuation_of` pointing back, never appended to the frozen basis and
-never silently merged. A parent Topic with an unresolved continuation may complete its own summary,
-but that completion **must not** itself resolve any KP as understood (§15.6) — only the continuation's
-own resolution can do that for whatever it covers.
+`ACTIVE → RESOLVED` fires **only** on explicit understood evidence or a future formally-authorized
+assessment rule. A separately authorized explicit unresolved-evidence action may perform
+`RESOLVED → ACTIVE` on the same identity; the associated KP/Section projection changes only if its
+own evidence rule authorizes that write. Closing the Master panel, Reader, app, switching tabs or
+ordinary continuation touches neither state nor identity.
+
+**Finalization race.** When a Topic begins finalizing (condensation/summarization),
+`frozen_basis_ref` is set once and never mutated, so that work reasons only about the turns present at
+that instant. Later messages still append to the same Topic outside that frozen basis; they do not
+rewrite the in-flight result, mint a continuation identity or independently change Mastery.
 
 ### 15.6 Evidence-gated mastery authority — `FROZEN_FROM_PRODUCT` (§26.2)
 
@@ -2460,6 +2462,7 @@ Every phase ends with a development report (AGENTS.md §5).
 | **A-17** | Deterministic gates before any reviewer model call | RECOMMENDED_FOR_DRAFT | Cheap mechanical checks catch most failures; model calls are the expensive scarce resource | Model review only | — |
 | **A-18** | Provider credentials in the OS credential store | RECOMMENDED_FOR_DRAFT | Keeps secrets out of config, DB and repo | Config file; env only | Deployment model changes |
 | **A-19** | Assistant answer rendering: LLM Markdown via **marked + DOMPurify + KaTeX** (`trust=false`, no raw HTML, no cross-message macro state), with a verbatim raw↔rendered selection mapping for Child creation offsets | **RESOLVED [E]** (user decision D2, 2026-09-06 — Ask Deeper UAT rework) | Hand-written Markdown/LaTeX parsing is an unnecessary risk surface; the mapping requirement protects the frozen Child CURRENT FOCUS from rendering-induced offset drift | Hand-rolled parser subset; MathJax; React-specific stacks (remark/rehype — the Reader frontend is not React) | A rendering need outside the Markdown+math set, or a sanitizer/KaTeX security advisory |
+| **A-20** | One durable Master Topic per learning thread; ACTIVE/RESOLVED are mutable evidence states on that stable identity, not conversation identities | **RESOLVED [E]** (user amendment, 2026-09-14) | Resolution followed by revisit previously minted duplicate sidebar Topics and fragmented one learning focus; stable identity preserves conversation, History and Memory while ordinary continuation remains mastery-neutral | Linked continuation Topics; title-based UI deduplication | A future product need for multiple independently named learning focuses inside one KP/Section thread |
 
 ---
 
@@ -2768,7 +2771,7 @@ ledgers (§6–§15 of that document) is disposed below into exactly one of:
 | LEGACY-MASTER-MUSTANSWER-001 | P1 | A | §26.3 | — (Product-level policy; no engineering mechanism needed) |
 | LEGACY-MASTER-ATTRIBUTION-001 | P1 | A | §26.3 | — |
 | LEGACY-MASTER-TOPIC-001 | P1 | A | §26.1 | §15.5 |
-| LEGACY-MASTER-CONDENSATION-RACE-001 | P1 | A | §26.1 (finalization race) | §15.5 (`frozen_basis_ref`, `continuation_of`) |
+| LEGACY-MASTER-CONDENSATION-RACE-001 | P1 | A (amended) | §26.1 (finalization race on one stable Topic) | §15.5 (`frozen_basis_ref`; later turns stay outside the frozen basis without minting identity) |
 | LEGACY-MASTER-NODOWNGRADE-001 | P1 | A | §26.2 | §15.6 |
 | LEGACY-SYS-CLOSURE-001 | P1 | **B** | §20 / §20.4 (superseded by user-approved continuous-article amendment, 2026-09-10) | — |
 | LEGACY-SYS-RECALL-001 | P1 | A | §32 (added paragraph) | — (Recall generation itself is Phase R7, not yet designed) |

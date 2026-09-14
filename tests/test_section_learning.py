@@ -69,9 +69,14 @@ def test_section_choices_durable_scope_and_clear_history(learning, service):
             c.execute('DELETE FROM learning_events WHERE section_outline_node_id=?', (section,))
     reopened = restarted.repository.open(rev, section)
     assert reopened['status'] == 'ANSWERED_HAS_UNCLEAR'
-    assert len(reopened['topics']) == 2
+    assert len(reopened['topics']) == 1
+    assert reopened['topics'][0]['id'] == clear['topics'][0]['id']
+    assert reopened['topics'][0]['state'] == 'ACTIVE'
     assert all(p['status'] == 'UNDERSTOOD' for p in restarted.repository.entries(rev)['points'] if p['primary_section_id'] == section)
-    assert restarted.repository.confirm(rev, section, clear['topics'][0]['id']) == reopened
+    resolved_again = restarted.repository.confirm(rev, section, clear['topics'][0]['id'])
+    assert resolved_again['status'] == 'ANSWERED_CLEAR'
+    assert len(resolved_again['topics']) == 1
+    assert resolved_again['topics'][0]['state'] == 'RESOLVED'
     pdf = make_pdf(((420, 600),))
     sibling = service.intake(BytesIO(pdf), content_length=len(pdf), filename='sibling.pdf')['book']['active_revision']
     service.delete_book(f['book']['id'])

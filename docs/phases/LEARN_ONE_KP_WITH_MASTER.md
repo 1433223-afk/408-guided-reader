@@ -2,6 +2,12 @@
 
 > **Status: CLOSED / COMPLETE — same-Phase Section Learning Check addition (2026-09-10).**
 
+> **Authority amendment (2026-09-14).** The user replaced this closed Phase's continuation-Topic
+> rule with stable Master Topic identity: one durable Topic per learning thread across resolution,
+> ordinary continuation, reopen, revisit and restart. Explicit unresolved evidence may reactivate the
+> same Topic; ordinary chat changes neither Topic state nor Mastery. This amendment supersedes any
+> older wording below that permits a new unresolved/continuation Topic.
+
 The user explicitly reopened this implementation conversation for the formal Section two-option
 check and durable Section Master, initially stopping at READY_FOR_USER_RETEST. The user explicitly
 accepted the addition and reading-position UAT fix at `f4c76db`, and authorized closure only.

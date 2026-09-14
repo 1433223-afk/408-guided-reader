@@ -2,15 +2,78 @@
 
 ## Result
 
-`CLOSED / COMPLETE` / `USER_ACCEPTANCE PASS` — the user explicitly accepted the same-Phase Section Learning Check
-addition and reading-position UAT correction at `f4c76db` on 2026-09-10, then authorized closure
-only. Independent narrow acceptance is PASS. Previous closure at `fbe36d5` remains the baseline;
-this addition has its own acceptance evidence. No new Phase is created.
+The previously closed Phase remains historical acceptance. A user-approved same-Phase authority
+amendment on 2026-09-14 replaces continuation Topics with stable Master Topic identity; that narrow
+repair is `IMPLEMENTATION_READY / READY_FOR_USER_RETEST` and does not claim new user acceptance.
+The earlier Section Learning Check and reading-position UAT correction remain `CLOSED / COMPLETE` /
+`USER_ACCEPTANCE PASS` at `f4c76db`; independent narrow acceptance for that earlier closure is PASS.
+No new Phase is created.
 
 Second-level Section cards now offer `都清楚了` and `还有些地方不完全清楚`. Clear sets every owned KP
 to UNDERSTOOD, including previously unclear ones, resolves current Section state/Topic and preserves
 history. Unclear records only Section state/event, opens Section Master and never guesses negative KP
 statuses. Third-level `确认本小节` keeps its existing UNCONFIRMED-only behavior.
+
+### Stable Master Topic identity amendment and repair (2026-09-14)
+
+**Root cause.** `LearningRepository._open()` looked up only `state='ACTIVE'`. Once `已弄懂`
+changed a Topic to `RESOLVED`, the next explicit open or Send inserted a new ACTIVE Topic in the
+same durable learning thread. The sidebar faithfully rendered both rows; this was identity
+fragmentation, not a title-rendering duplicate. Plain GET history/restart was read-only, while the
+old continuation path deliberately minted. Existing Product §26.1, Implementation §15.5 and two
+tests encoded that obsolete continuation model.
+
+**Authority and lifecycle.** The user explicitly amended Product §26.1/§26.2 and decision 56 plus
+Implementation §15.5; Architecture Decision A-20 records one durable Topic per MasterThread. ACTIVE
+and RESOLVED are evidence states on that identity. Reopen, revisit, restart and ordinary Send reuse
+the same `topic_id`; ordinary chat changes neither Topic state nor KP/Section mastery. An explicit
+unresolved-evidence API action may reactivate the same Topic, while its mastery effect remains gated
+by the existing explicit-evidence rules. The retired UI phrase `继续提问（新话题）` is now simply
+`继续提问`; no removed `仍不清楚` entry was reintroduced.
+
+**Source and schema.** `_open(..., reactivate=False)` now selects the thread's Topic regardless of
+state. Only the explicit `/open` evidence path requests reactivation; enqueue/Send does not. Migration
+18 backs up the database, selects each thread's earliest Topic as canonical, redirects messages and
+LearningEvent references, preserves the latest effective Topic state, deletes only the duplicate
+Topic rows, restores the append-only trigger and replaces the ACTIVE-only partial index with unique
+`master_topics(thread_id)`. This is a one-time bounded migration plus structural guard, not a generic
+deduplication subsystem.
+
+**Authorized real-library cleanup.** Before migration the live 348-page Library had 21 Topics in 16
+threads, four duplicate threads and five extra Topics. Between dry-run and execution the user added
+one real question/answer pair to duplicate Topic `72bfe6dd-94a2-4aeb-840a-678b350ffd92`, so the safe
+execution baseline was 14 messages rather than the earlier observed 12. Those two messages were
+merged into earliest canonical `b9e0c2f2-0558-492f-ad51-36dc38a2b7e4`; deleting them to force the
+stale count would have violated conversation preservation. The other canonical mappings were:
+
+- `6c65ad44-b578-45d4-8e31-423cea302f12` → `caf8f747-721b-4980-a8d9-a58e1a3c6f19`;
+- `06ab2d91-3560-46bd-98ac-5f1573abdc26` → `542c0989-31a3-4405-9f2b-bdaad654b539`;
+- `2c6b4331-d649-47a3-873b-0692a1a36739` and
+  `16a3241a-44c0-47ab-b87c-614de21ff207` →
+  `02f76afe-08e6-48fa-9dde-6bda3c9a7da6`.
+
+The verified pre-migration backup is
+`var/manual-browser/state.sqlite3.pre-migration-18.bak`. Actual results: Topics `21 → 16`, duplicate
+threads `4 → 0`, threads `16`, messages `14`, Learning History `48`, Learning Memory `2`, KP status
+rows `35`, Section state rows `1`. Message/event content and IDs, all Memory relations, KP/Section
+mastery projections and thread identities match the backup; only merged Topic references and the
+canonical latest Topic state differ. `PRAGMA integrity_check = ok`, foreign-key violations `0`,
+`learning_events_no_update` restored, migration marker `18`, and `one_master_topic_per_thread`
+present.
+
+**Verification.** Targeted Learning + Section tests: **30 PASS**, covering resolved continuation on
+the same ID, mastery-neutral Send, explicit same-ID reactivation, restart/GET no-write behavior,
+eight-way concurrent open, Section semantics, migration of unique messages/events/Memory and unique
+constraint enforcement. Full Python closure suite: **289 passed / 2 unchanged optional OCR skips**.
+Frontend unit suite: **43 PASS**. Master conversation workspace E2E: **PASS**, external provider calls
+`0`. On the migrated real site, expanded Master showed exactly 16 unique Topic IDs; opening
+`存储器的性能指标概述` displayed the two preserved messages now attached to its earliest canonical.
+
+The broader real-book `test:e2e:master` was attempted, not reported as PASS: its old book-card entry
+assumption was corrected to traverse Book Overview, after which an unrelated dynamic learning-marker
+`scrollIntoViewIfNeeded` detached-DOM race stopped the script before its Master flow. This bounded
+repair does not alter that Reader-marker subsystem; the directly relevant real-site Master history
+path above passed without provider or mastery writes.
 
 ### Section addition closure verification (2026-09-10)
 

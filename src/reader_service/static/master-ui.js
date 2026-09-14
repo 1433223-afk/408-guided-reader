@@ -56,8 +56,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   const topicList=document.createElement('div'); topicList.id='master-topic-list';
   sidebar.append(topicHeading, topicList); panel.append(sidebar, conversation);
   const resume=button('继续提问', () => {
-    selectedTopicId=current?.topics.find(t=>t.state==='ACTIVE')?.id || null;
-    composingNew=!selectedTopicId; render(); el('question').focus();
+    selectedTopicId=current?.topics[0]?.id || null;
+    composingNew=true; render(); el('question').focus();
   });
   resume.id='master-resume-topic'; resume.hidden=true; el('form').before(resume);
   const topicActions = document.createElement('div'); topicActions.className='master-topic-actions';
@@ -173,7 +173,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     if (generating) el("status").textContent = '正在回答…';
     const history = el("history");
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
-    const visibleMessages=expanded ? current.messages.filter(message=>!composingNew && message.topic_id===selectedTopicId) : current.messages;
+    const visibleMessages=expanded ? current.messages.filter(message=>message.topic_id===selectedTopicId) : current.messages;
     const rendered = visibleMessages.map((message) => {
       const row = document.createElement("article");
       row.dataset.messageId = message.id;
@@ -210,7 +210,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     if (nearBottom) history.scrollTop = history.scrollHeight;
     el("form").hidden = Boolean(historical);
     resume.hidden=!historical;
-    resume.textContent=active ? '回到当前话题继续提问' : '继续提问（新话题）';
+    resume.textContent=active ? '回到当前话题继续提问' : '继续提问';
     // A second question must not overtake an unanswered durable question.
     el("send").disabled = current.messages.some((m) => m.role === "user" && ["PENDING", "FAILED"].includes(m.state));
     canConfirm = Boolean(active) && !historical && !composingNew;

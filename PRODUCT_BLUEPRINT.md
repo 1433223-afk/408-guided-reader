@@ -1323,14 +1323,18 @@ The system may additionally maintain structured summaries/status alongside the v
 
 ## 26.1 Master Topic lifecycle
 
-A **Master Topic** is a cluster of turns around one condensable learning question. It is distinct
+A **Master Topic** is the durable learning focus and turn cluster for one Master learning thread. It is distinct
 from a Master *answer* (one reply), a *Mastery update* (a KP status change), and *long-term
 attribution/summary* (where a resolved Topic gets recorded).
+
+Each durable Master learning thread owns exactly one durable Topic identity. For a KP or Section in a
+Book, reopen, revisit, restart and ordinary continuation all reuse that Topic; resolution never causes
+a replacement or continuation Topic to be minted.
 
 Topic state, conceptually:
 
 ```text
-ACTIVE → RESOLVED
+ACTIVE ⇄ RESOLVED
 ```
 
 A Topic becomes `RESOLVED` only through **explicit user evidence** that the issue is now clear, or a
@@ -1338,11 +1342,12 @@ future formally-defined assessment mechanism. Closing the Master panel, the Read
 or switching tabs **does not** resolve a Topic — resolution is independent of any UI/session
 lifecycle event.
 
-If the user continues the same question-cluster while a Topic is being finalized, the in-flight work
-uses its own frozen basis; new messages on the same cluster form a distinct continuation linked back
-to the original, rather than being lost or silently altering what was already finalized. A parent
-Topic awaiting resolution of such a continuation must not itself mark a KP as understood — the
-continuation's own resolution governs that.
+Ordinary continued questions append to the same Topic without changing its state or Mastery. If a
+future explicit user-evidence path establishes that the same learning focus is unresolved again, it
+may reactivate that Topic while preserving its identity and history; any KP/Section Mastery change
+still follows the separately authorized explicit-evidence rules. Work already being finalized uses
+its frozen turn basis, while later turns remain on the same Topic outside that frozen basis rather
+than silently changing the finalized result.
 
 ## 26.2 Evidence-gated mastery authority
 
@@ -1355,9 +1360,9 @@ was summarized. `UNDERSTOOD` requires either **explicit user confirmation** or a
 formally-authorized assessment rule — answering a question is never, by itself, sufficient evidence.
 
 Once a KP reaches `UNDERSTOOD` through Master's evidence-gated path, it is **never automatically
-downgraded** because a later, unrelated question surfaces confusion elsewhere; a new unresolved Topic
-may coexist with a prior `UNDERSTOOD` KP without silently reversing it. Any future explicit downgrade
-mechanism is a separate, deliberately designed product rule — Master does not invent one on its own.
+downgraded** because a later question is appended or the same Topic is revisited. Explicit unresolved
+evidence may reactivate the stable Topic, but any future explicit Mastery downgrade mechanism remains
+a separate, deliberately designed product rule — Master does not invent one on its own.
 
 When a Topic is later resolved, current unclear/mastery state may change according to these rules, but
 historical questions and prior unclear evidence remain in Learning History regardless (§29).
@@ -1894,7 +1899,7 @@ Unless explicitly reopened, the following are current product baseline decisions
 53. A new request from a non-Assistant source (Original, Guide, Guidance, Master answer, other visible content) always creates a new Root at depth 1, never a Child of the currently focused chain.
 54. A Child receives the selected range, the complete triggering parent answer turn, source lineage, relevant scope, and minimal reference context — never the full ancestor conversation tree by default.
 55. Technical retry preserves the same logical interaction identity and never increases depth or creates a Child; provider failure never alters Progress, Mastery, Learning History, or creates a Master record.
-56. A Master Topic is ACTIVE until explicitly RESOLVED by user evidence or a future formal assessment rule; closing any panel/app/tab is never itself resolution.
+56. Each durable Master learning thread has one stable Topic identity across resolution, continuation, reopen, revisit and restart. A Topic is RESOLVED only by explicit user evidence or a future formal assessment rule; ordinary continuation never changes Topic/Mastery state, explicit unresolved evidence may reactivate that same Topic, and closing any panel/app/tab is never itself resolution.
 57. Master may attribute NOT_FULLY_CLEAR to evidenced KPs but may never autonomously mark UNDERSTOOD merely because it answered; UNDERSTOOD requires explicit user confirmation or a future formal assessment rule, and is never auto-downgraded later.
 58. Whether Master answers a question is independent of where that question is attributed in long-term learning structure; course-relevant questions are answered regardless of attribution outcome.
 59. Formal System Teaching semantic rework is bounded at 3 cycles per candidate; exhaustion is terminal FAILED, never a silent PASS or unreviewed fallback; technical failure never consumes rework count.

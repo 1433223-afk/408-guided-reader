@@ -95,3 +95,73 @@ CREATE TRIGGER learning_events_no_direct_delete BEFORE DELETE ON learning_events
 WHEN EXISTS (SELECT 1 FROM book_source_revisions WHERE id = OLD.book_source_revision_id)
 BEGIN SELECT RAISE(ABORT, 'Learning history can only cascade with its book'); END;
 """
+
+
+STABLE_TOPIC_SCHEMA = """
+CREATE TEMP TABLE master_topic_identity_merge_plan (
+    thread_id TEXT PRIMARY KEY,
+    canonical_id TEXT NOT NULL,
+    latest_id TEXT NOT NULL,
+    latest_state TEXT NOT NULL,
+    latest_resolved_at TEXT,
+    latest_resolved_by TEXT
+);
+INSERT INTO master_topic_identity_merge_plan
+SELECT grouped.thread_id,
+    (SELECT id FROM master_topics
+     WHERE thread_id = grouped.thread_id ORDER BY created_at, rowid LIMIT 1),
+    (SELECT id FROM master_topics
+     WHERE thread_id = grouped.thread_id ORDER BY created_at DESC, rowid DESC LIMIT 1),
+    (SELECT state FROM master_topics
+     WHERE thread_id = grouped.thread_id ORDER BY created_at DESC, rowid DESC LIMIT 1),
+    (SELECT resolved_at FROM master_topics
+     WHERE thread_id = grouped.thread_id ORDER BY created_at DESC, rowid DESC LIMIT 1),
+    (SELECT resolved_by FROM master_topics
+     WHERE thread_id = grouped.thread_id ORDER BY created_at DESC, rowid DESC LIMIT 1)
+FROM (SELECT thread_id FROM master_topics GROUP BY thread_id HAVING COUNT(*) > 1) AS grouped;
+
+DROP TRIGGER learning_events_no_update;
+UPDATE master_messages
+SET topic_id = (
+    SELECT plan.canonical_id FROM master_topic_identity_merge_plan AS plan
+    WHERE plan.thread_id = master_messages.thread_id
+)
+WHERE thread_id IN (SELECT thread_id FROM master_topic_identity_merge_plan);
+UPDATE learning_events
+SET topic_id = (
+    SELECT plan.canonical_id
+    FROM master_topics AS topic
+    JOIN master_topic_identity_merge_plan AS plan ON plan.thread_id = topic.thread_id
+    WHERE topic.id = learning_events.topic_id
+)
+WHERE topic_id IN (
+    SELECT topic.id FROM master_topics AS topic
+    JOIN master_topic_identity_merge_plan AS plan ON plan.thread_id = topic.thread_id
+);
+DELETE FROM master_topics
+WHERE id IN (
+    SELECT topic.id FROM master_topics AS topic
+    JOIN master_topic_identity_merge_plan AS plan ON plan.thread_id = topic.thread_id
+    WHERE topic.id != plan.canonical_id
+);
+UPDATE master_topics
+SET state = (
+        SELECT plan.latest_state FROM master_topic_identity_merge_plan AS plan
+        WHERE plan.canonical_id = master_topics.id
+    ),
+    resolved_at = (
+        SELECT plan.latest_resolved_at FROM master_topic_identity_merge_plan AS plan
+        WHERE plan.canonical_id = master_topics.id
+    ),
+    resolved_by = (
+        SELECT plan.latest_resolved_by FROM master_topic_identity_merge_plan AS plan
+        WHERE plan.canonical_id = master_topics.id
+    )
+WHERE id IN (SELECT canonical_id FROM master_topic_identity_merge_plan);
+
+DROP INDEX one_active_master_topic;
+CREATE UNIQUE INDEX one_master_topic_per_thread ON master_topics(thread_id);
+CREATE TRIGGER learning_events_no_update BEFORE UPDATE ON learning_events
+BEGIN SELECT RAISE(ABORT, 'Learning history is append-only'); END;
+DROP TABLE master_topic_identity_merge_plan;
+"""

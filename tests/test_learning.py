@@ -91,7 +91,9 @@ def test_explicit_evidence_recovery_and_no_automatic_downgrade(learning, service
     restarted.repository.confirm(rev, kp, topic)
     opened_again = restarted.repository.open(rev, kp)
     assert opened_again['status'] == 'UNDERSTOOD'
-    assert len(opened_again['topics']) == 2
+    assert len(opened_again['topics']) == 1
+    assert opened_again['topics'][0]['id'] == topic
+    assert opened_again['topics'][0]['state'] == 'ACTIVE'
     assert opened_again['messages'] == state['messages']
     with service.database.connect() as c:
         events = list(c.execute('SELECT event_type FROM learning_events'))
@@ -110,16 +112,39 @@ def test_topic_navigation_is_read_only_and_preserves_real_identity(learning):
     before = master.snapshot(rev, kp)
     topic = before['topics'][0]['id']
     master.repository.confirm(rev, kp, topic)
-    current = master.repository.open(rev, kp)
-    entries = master.repository.entries(rev)
+    resolved = master.snapshot(rev, kp)
+    before_counts = {}
+    with master.repository.database.connect() as c:
+        for table in ('master_threads', 'master_topics', 'master_messages', 'learning_events', 'kp_status'):
+            before_counts[table] = c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+    restarted = LearningService(master.repository.database, f['foundation'], runtime)
+    current = restarted.snapshot(rev, kp)
+    entries = restarted.repository.entries(rev)
     assert {t['id'] for t in entries['topics']} == {t['id'] for t in current['topics']}
     old = next(t for t in entries['topics'] if t['id'] == topic)
     assert old['state'] == 'RESOLVED'
     assert old['label'] == '为什么？'
     assert old['scope_id'] == kp and old['scope_kind'] == 'KP'
-    assert master.repository.entries(rev) == entries
-    assert master.snapshot(rev, kp) == current
+    assert current == resolved
+    assert restarted.repository.entries(rev) == entries
+    assert restarted.snapshot(rev, kp) == current
+    with master.repository.database.connect() as c:
+        assert {table: c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+                for table in before_counts} == before_counts
     assert len(runtime.calls) == 1
+
+
+def test_concurrent_explicit_open_reuses_one_topic(learning):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    with ThreadPoolExecutor(8) as pool:
+        results = list(pool.map(lambda _: master.repository.open(rev, kp), range(8)))
+    topic_ids = {result['topics'][0]['id'] for result in results}
+    assert len(topic_ids) == 1
+    with master.repository.database.connect() as c:
+        assert c.execute('SELECT COUNT(*) FROM master_threads').fetchone()[0] == 1
+        assert c.execute('SELECT COUNT(*) FROM master_topics').fetchone()[0] == 1
+        assert c.execute("SELECT COUNT(*) FROM learning_events WHERE event_type='KP_EXPLICIT_UNCLEAR'").fetchone()[0] == 1
 
 
 def test_master_openrouter_review_requests_json_without_weakening_verdict(learning):
@@ -382,10 +407,77 @@ def test_resolution_during_provider_call_does_not_lose_turn_or_reopen_topic(lear
     master.send(rev, kp, {'intent_id': 'second', 'question': '新的问题'})
     idle(master)
     state = master.snapshot(rev, kp)
-    assert len(state['topics']) == 2
-    assert state['topics'][1]['state'] == 'ACTIVE'
+    assert len(state['topics']) == 1
+    assert state['topics'][0]['id'] == topic
+    assert state['topics'][0]['state'] == 'RESOLVED'
     assert state['status'] == 'UNDERSTOOD'
-    assert len(runtime.calls[-2][1]['topic_messages']) == 1
+    assert [message['content'] for message in runtime.calls[-2][1]['topic_messages']] == [
+        '问题', '根据所附教材，这是该知识点的解释。补充解释：可以用日常例子理解。', '新的问题'
+    ]
+
+
+def test_stable_topic_migration_merges_references_and_preserves_state(learning, service, tmp_path):
+    f, _, _, points = learning
+    revision, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    path = tmp_path / 'stable-topic-v17.sqlite3'
+    source = sqlite3.connect(service.database.path)
+    destination = sqlite3.connect(path)
+    try:
+        source.backup(destination)
+    finally:
+        source.close()
+        destination.close()
+    with sqlite3.connect(path) as c:
+        c.execute('DELETE FROM schema_migrations WHERE version=18')
+        c.execute('DROP INDEX one_master_topic_per_thread')
+        c.execute("CREATE UNIQUE INDEX one_active_master_topic ON master_topics(thread_id) WHERE state='ACTIVE'")
+        c.execute("""INSERT INTO master_threads(id,book_source_revision_id,knowledge_point_id,created_at)
+            VALUES ('thread',?,?,?)""", (revision, kp, '2026-01-01T00:00:00Z'))
+        c.execute("INSERT INTO master_topics VALUES ('canonical','thread','RESOLVED','2026-01-01T00:00:01Z','2026-01-01T00:00:04Z','EXPLICIT_USER_EVIDENCE')")
+        c.execute("INSERT INTO master_topics VALUES ('duplicate','thread','ACTIVE','2026-01-01T00:00:05Z',NULL,NULL)")
+        rows = [
+            ('user-one', 'canonical', 'one', 'user', '原问题', '2026-01-01T00:00:02Z', None),
+            ('answer-one', 'canonical', 'one', 'assistant', '原回答', '2026-01-01T00:00:03Z', 'PASS'),
+            ('user-two', 'duplicate', 'two', 'user', '后续问题', '2026-01-01T00:00:06Z', None),
+            ('answer-two', 'duplicate', 'two', 'assistant', '后续回答', '2026-01-01T00:00:07Z', 'PASS'),
+        ]
+        for message_id, topic_id, intent, role, content, created_at, review_state in rows:
+            c.execute("""INSERT INTO master_messages(
+                id,thread_id,topic_id,intent_id,role,content,created_at,state,review_mode,review_state)
+                VALUES (?,'thread',?,?,?,?,?,'COMPLETE','Standard',?)""",
+                (message_id, topic_id, intent, role, content, created_at, review_state))
+        c.execute("""INSERT INTO kp_status VALUES (?,?,'UNDERSTOOD','KP_EXPLICIT_UNDERSTOOD',?,?)""",
+                  (kp, revision, '2026-01-01T00:00:04Z', '2026-01-01T00:00:04Z'))
+        c.execute("""INSERT INTO learning_events(
+            id,book_source_revision_id,knowledge_point_id,topic_id,event_type,status,created_at)
+            VALUES ('event-one',?,?,'canonical','KP_EXPLICIT_UNDERSTOOD','UNDERSTOOD','2026-01-01T00:00:04Z')""", (revision, kp))
+        c.execute("""INSERT INTO learning_events(
+            id,book_source_revision_id,knowledge_point_id,topic_id,event_type,status,created_at)
+            VALUES ('event-two',?,?,'duplicate','KP_EXPLICIT_UNCLEAR','NOT_FULLY_CLEAR','2026-01-01T00:00:05Z')""", (revision, kp))
+        c.execute("INSERT INTO learning_memory VALUES ('memory',?,'MASTER','answer-two','2026-01-01T00:00:08Z')", (revision,))
+    Database(path).initialize()
+    backup = path.with_name(path.name + '.pre-migration-18.bak')
+    assert backup.exists()
+    with sqlite3.connect(backup) as c:
+        assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert c.execute("SELECT COUNT(*) FROM master_topics WHERE thread_id='thread'").fetchone()[0] == 2
+    with Database(path).connect() as c:
+        topic = c.execute("SELECT * FROM master_topics WHERE thread_id='thread'").fetchone()
+        assert tuple(topic[key] for key in ('id', 'state', 'resolved_at', 'resolved_by')) == ('canonical', 'ACTIVE', None, None)
+        assert [tuple(row) for row in c.execute("SELECT id,topic_id,content FROM master_messages WHERE thread_id='thread' ORDER BY created_at")] == [
+            ('user-one', 'canonical', '原问题'), ('answer-one', 'canonical', '原回答'),
+            ('user-two', 'canonical', '后续问题'), ('answer-two', 'canonical', '后续回答')]
+        assert [tuple(row) for row in c.execute("SELECT id,topic_id FROM learning_events WHERE knowledge_point_id=? ORDER BY created_at", (kp,))] == [
+            ('event-one', 'canonical'), ('event-two', 'canonical')]
+        assert tuple(c.execute("SELECT source_kind,source_id FROM learning_memory WHERE id='memory'").fetchone()) == ('MASTER', 'answer-two')
+        assert c.execute('SELECT status FROM kp_status WHERE knowledge_point_id=?', (kp,)).fetchone()[0] == 'UNDERSTOOD'
+        assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert not c.execute('PRAGMA foreign_key_check').fetchall()
+        assert c.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 18
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute("UPDATE learning_events SET topic_id='canonical' WHERE id='event-one'")
+        with pytest.raises(sqlite3.IntegrityError):
+            c.execute("INSERT INTO master_topics VALUES ('second','thread','ACTIVE','later',NULL,NULL)")
 
 
 def test_subsection_bulk_scope_boundaries_history_and_restart(learning, service):

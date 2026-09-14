@@ -149,18 +149,21 @@ class LearningRepository:
         """, (kp_id, point["book_source_revision_id"], status, evidence,
               timestamp if status == "UNDERSTOOD" else None, timestamp))
 
-    def _open(self, c, point):
+    def _open(self, c, point, *, reactivate=False):
         self._lock_scope(c, point)
         column = "section_outline_node_id" if point["scope_kind"] == "SECTION" else "knowledge_point_id"
         c.execute(f"INSERT OR IGNORE INTO master_threads(id, book_source_revision_id, {column}, created_at) VALUES (?, ?, ?, ?)",
                   (str(uuid4()), point["book_source_revision_id"], point["scope_id"], now()))
         thread_id = self._thread(c, point)["id"]
-        topic = c.execute("SELECT id FROM master_topics WHERE thread_id = ? AND state = 'ACTIVE'", (thread_id,)).fetchone()
+        topic = c.execute("SELECT id, state FROM master_topics WHERE thread_id = ?", (thread_id,)).fetchone()
         if topic is None:
             topic_id = str(uuid4())
             c.execute("INSERT INTO master_topics VALUES (?, ?, 'ACTIVE', ?, NULL, NULL)", (topic_id, thread_id, now()))
         else:
-            topic_id = topic[0]
+            topic_id = topic["id"]
+            if reactivate and topic["state"] == "RESOLVED":
+                c.execute("""UPDATE master_topics SET state='ACTIVE', resolved_at=NULL, resolved_by=NULL
+                    WHERE id=?""", (topic_id,))
         return thread_id, topic_id
 
     def _lock_scope(self, c, point):
@@ -185,7 +188,7 @@ class LearningRepository:
         with self.database.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             point = self.point(c, revision_id, kp_id)
-            _, topic_id = self._open(c, point)
+            _, topic_id = self._open(c, point, reactivate=True)
             if point["scope_kind"] == "SECTION":
                 if self._status(c, point) != "ANSWERED_HAS_UNCLEAR":
                     self._section_event(c, point, "ANSWERED_HAS_UNCLEAR", topic_id)

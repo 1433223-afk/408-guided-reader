@@ -330,7 +330,9 @@ async function assertLearningControlPlacement(page) {
   assert.ok(inside, 'Compact KP entries stay inside their PDF page');
 }
 async function openBook(page) {
-  await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).click();
+  await page.locator(".book-card").filter({ hasText: "348 个 PDF 页面" }).locator(".book-open").click();
+  await page.locator("#book-overview").waitFor({ state: "visible" });
+  await page.locator("#book-overview .overview-book-heading .primary-action").click();
   await page.locator(".page canvas").first().waitFor({ timeout: 30_000 });
 }
 async function openMap(page, chapter) {
