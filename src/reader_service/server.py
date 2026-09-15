@@ -609,6 +609,7 @@ def handler_factory(
                         state = assistant.ask_inline(
                             payload["reader_session_id"], ask_match.group(1), context,
                             payload.get("provider"), self._assistant_stream_event if streaming else None,
+                            payload.get("continuation"),
                         )
                     elif payload.get("source_kind") == "READING_GUIDE":
                         if teaching is None:
@@ -617,6 +618,7 @@ def handler_factory(
                         state = assistant.ask_guide(
                             payload["reader_session_id"], ask_match.group(1), context,
                             payload.get("provider"), self._assistant_stream_event if streaming else None,
+                            payload.get("continuation"),
                         )
                     else:
                         state = assistant.ask_selection(
@@ -628,6 +630,7 @@ def handler_factory(
                             provider=payload.get("provider"),
                             source_kind=payload.get("source_kind", "ORIGINAL_PDF"),
                             stream=self._assistant_stream_event if streaming else None,
+                            continuation=payload.get("continuation"),
                         )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._assistant_failure(
@@ -713,6 +716,7 @@ def handler_factory(
                     state = assistant.retry_child(
                         payload["reader_session_id"], payload["root_id"], payload["node_id"],
                         stream=self._assistant_stream_event if streaming else None,
+                        continuation=payload.get("continuation"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._assistant_failure(
@@ -785,6 +789,7 @@ def handler_factory(
                         payload["question"],
                         node_id=payload.get("node_id"),
                         stream=self._assistant_stream_event if streaming else None,
+                        continuation=payload.get("continuation"),
                     )
                 except (KeyError, TypeError, ValueError) as exc:
                     self._assistant_failure(
@@ -1126,7 +1131,11 @@ def handler_factory(
             self, failure: ProviderFailure, *, streaming: bool = False
         ) -> None:
             payload = {
-                "code": f"AI_{failure.kind.value}",
+                "code": (
+                    "AI_RESPONSE_LENGTH_LIMIT"
+                    if failure.code == "response_length_limit"
+                    else f"AI_{failure.kind.value}"
+                ),
                 "error": failure.user_message,
             }
             diagnostics = failure.diagnostics or {}

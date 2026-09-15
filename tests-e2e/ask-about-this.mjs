@@ -24,6 +24,7 @@ await mkdir(artifacts, { recursive: true });
 await cp(sourceDataDir, dataDir, { recursive: true });
 const providerCalls = [];
 let controlledChildFailure = false;
+let controlledLengthLimit = false;
 const mockProvider = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
@@ -33,6 +34,7 @@ const mockProvider = createServer(async (request, response) => {
   const currentFocus = latest.startsWith("【当前解释焦点（用户所选）】\n")
     ? latest.split("\n")[1] : "";
   const isChild = latest.includes("【直接上一轮】");
+  const isContinuation = latest.includes("上一条回答因输出长度上限中断");
   if (controlledChildFailure) {
     if (body.stream) {
       response.writeHead(200, {"Content-Type":"text/event-stream; charset=utf-8"});
@@ -43,8 +45,26 @@ const mockProvider = createServer(async (request, response) => {
     }
     return;
   }
+  if (controlledLengthLimit && body.stream && !isContinuation) {
+    response.writeHead(200, {"Content-Type":"text/event-stream; charset=utf-8"});
+    response.write(`data: ${JSON.stringify({
+      choices: [{delta: {content: "前半段尚未结束："}, finish_reason: null}],
+    })}\n\n`);
+    response.write(`data: ${JSON.stringify({
+      choices: [{delta: {content: ""}, finish_reason: "length"}],
+      usage: {
+        prompt_tokens: 42,
+        completion_tokens: body.max_tokens,
+        total_tokens: 42 + body.max_tokens,
+      },
+    })}\n\n`);
+    response.end("data: [DONE]\n\n");
+    return;
+  }
   let answer;
-  if (latest === "延迟回答") {
+  if (controlledLengthLimit && isContinuation) {
+    answer = "后半段已经完整结束。";
+  } else if (latest === "延迟回答") {
     await new Promise((resolve) => setTimeout(resolve, 800));
     answer = "这条回答所属的解释已经关闭，因此不应重新出现在界面中。";
   } else if (latest === "为什么？") {
@@ -155,7 +175,7 @@ try {
   await unavailablePage.locator("#ask-selection").click();
   await unavailablePage.locator("#assistant-first-turn").waitFor({ state: "visible" });
   await unavailablePage.locator("#assistant-model-trigger").click();
-  await unavailablePage.locator('.assistant-model-options [data-value="zhipu"]').click();
+  await unavailablePage.locator('#assistant-model-options [data-value="zhipu"]').click();
   assert.equal(providerCalls.length, 0, "opening a draft caused provider egress");
   assert.equal(await unavailablePage.locator("#assistant-start").isDisabled(), true);
   assert.equal(await unavailablePage.locator("#assistant-start").getAttribute("aria-disabled"), "true");
@@ -163,7 +183,7 @@ try {
     /Zhipu.*408-guided-reader-zhipu.*Windows 用户/);
   assert.equal(await unavailablePage.locator("#assistant-readiness").isVisible(), true);
   await unavailablePage.locator("#assistant-model-trigger").click();
-  await unavailablePage.locator('.assistant-model-options [data-value="deepseek"]').click();
+  await unavailablePage.locator('#assistant-model-options [data-value="deepseek"]').click();
   assert.equal(await unavailablePage.locator("#assistant-start").isEnabled(), true);
   assert.equal(await unavailablePage.locator("#assistant-start").getAttribute("aria-disabled"), "false");
   assert.equal(await unavailablePage.locator("#assistant-readiness").isHidden(), true);
@@ -217,7 +237,7 @@ try {
   await page.locator('#assistant-model-options [aria-selected="true"]').press('Escape');
   assert.equal(await page.locator('#assistant-model-options').isHidden(),true);
   await page.locator("#assistant-model-trigger").click();
-  await page.locator('.assistant-model-options [data-value="zhipu"]').click();
+  await page.locator('#assistant-model-options [data-value="zhipu"]').click();
   await page.evaluate(() => {
     window.__assistantPendingStages = [];
     window.__assistantPendingObserver = new MutationObserver(() => {
@@ -398,7 +418,7 @@ try {
   assert.equal(await page.locator("#assistant-model").isEnabled(), true,
     "a non-Assistant selection must stage a new Root with a fresh model choice");
   await page.locator("#assistant-model-trigger").click();
-  await page.locator('.assistant-model-options [data-value="deepseek"]').click();
+  await page.locator('#assistant-model-options [data-value="deepseek"]').click();
   const secondResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
   await secondResponse;
@@ -506,6 +526,45 @@ try {
   assert.equal(antiBypass.status, 409);
   assert.equal(antiBypass.body.code, "ASSISTANT_ASSISTANT_SOURCE_REQUIRES_CHILD");
   assert.equal(providerCalls.length, antiBypassCalls);
+
+  controlledLengthLimit = true;
+  const continuedSelection = await selectLine(page, 302);
+  await page.locator("#ask-selection").click();
+  const limitedRequest = page.waitForRequest(
+    (request) => request.url().endsWith("/assistant/ask")
+      && !request.postData()?.includes('"continuation"'),
+  );
+  await page.locator("#assistant-start").click();
+  const limitedPayload = (await limitedRequest).postDataJSON();
+  await page.getByText("前半段尚未结束：", {exact: true}).waitFor();
+  const continueButton = page.getByRole("button", {name: "继续生成", exact: true});
+  await continueButton.waitFor();
+  assert.equal(await page.getByText("完成", {exact: true}).count(), 0,
+    "length-limited response was mislabeled complete");
+  const continuationRequest = page.waitForRequest(
+    (request) => request.url().endsWith("/assistant/ask")
+      && request.postData()?.includes('"continuation"'),
+  );
+  await continueButton.click();
+  const continuationPayload = (await continuationRequest).postDataJSON();
+  await page.locator(".assistant-pending").waitFor({state: "detached"});
+  controlledLengthLimit = false;
+  const continuedState = await focusedAssistantState(page, limitedPayload.reader_session_id);
+  assert.equal(continuedState.current.turns[0].question, continuedSelection.text);
+  assert.equal(
+    continuedState.current.turns[0].answer,
+    "前半段尚未结束：后半段已经完整结束。",
+  );
+  assert.equal(continuationPayload.continuation.partial_answer, "前半段尚未结束：");
+  const continuationBody = providerCalls.at(-1).body;
+  assert.equal(continuationBody.max_tokens, 8192);
+  assert.deepEqual(continuationBody.thinking, {type: "disabled"});
+  assert.deepEqual(
+    continuationBody.messages.slice(-2).map((message) => message.role),
+    ["assistant", "user"],
+  );
+  assert.equal(continuationBody.messages.at(-2).content, "前半段尚未结束：");
+  assert.ok(continuationBody.messages.at(-1).content.includes("从中断处直接继续"));
 
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });

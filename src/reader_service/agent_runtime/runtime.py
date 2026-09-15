@@ -485,6 +485,11 @@ class AgentRuntime:
                     attempt,
                     call_id,
                 )
+                if failure.code == "response_length_limit":
+                    # The provider completed this attempt successfully but exhausted the
+                    # caller's generation budget. Recovery is an explicit continuation,
+                    # never an automatic replay or a provider-cooling condition.
+                    raise
                 if failure.kind is ProviderFailureKind.USER_ACTIONABLE:
                     self._start_cooling()
                     raise

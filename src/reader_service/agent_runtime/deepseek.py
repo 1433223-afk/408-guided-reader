@@ -231,7 +231,7 @@ class OpenAICompatibleAdapter:
             raise ProviderFailure(
                 ProviderFailureKind.TRANSIENT,
                 "response_length_limit",
-                "回答达到长度上限，未能完整结束；已保留收到的内容，可以重新回答。",
+                "回答达到长度上限，未能完整结束；已保留收到的内容，可以继续生成。",
                 diagnostics=diagnostics,
             )
 

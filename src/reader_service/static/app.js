@@ -2100,16 +2100,20 @@ function showAssistantStreamFailure(view, error, retry) {
   message.textContent = error.message || "AI 解释失败，请稍后再试。";
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = view.content ? "重新回答" : "重试";
-  button.addEventListener("click", () => retry());
+  const canContinue = error.code === "AI_RESPONSE_LENGTH_LIMIT" && Boolean(view.content);
+  button.textContent = canContinue ? "继续生成" : view.content ? "重新回答" : "重试";
+  button.addEventListener("click", () => retry(canContinue ? view.content : ""));
   failure.append(message, button);
   view.article.after(failure);
 }
 
-async function runAssistantStream({ path, body, question, showQuestion = true, retry, streamKey }) {
+async function runAssistantStream({
+  path, body, question, showQuestion = true, retry, streamKey, initialContent = "",
+}) {
   clearAssistantStreamTransient();
   const pending = showAssistantPending(question, "preparing");
   const view = createAssistantStreamView(question, pending, { showQuestion });
+  if (initialContent) appendAssistantDelta(view, initialContent);
   const controller = new AbortController();
   state.assistantStreamControllers.set(streamKey, controller);
   let completed = null;
@@ -2190,7 +2194,7 @@ function stageAssistantSelection() {
   clearSelection();
 }
 
-async function sendAssistantFirstTurn() {
+async function sendAssistantFirstTurn(continuationText = "") {
   const draft = state.assistantDraft;
   if (!draft || state.assistantPending || !state.assistantConfigured || state.assistantCooling) return;
   state.assistantPending = true;
@@ -2200,13 +2204,15 @@ async function sendAssistantFirstTurn() {
       path: `/api/revisions/${draft.revisionId}/assistant/ask`,
       question: draft.selectedText,
       showQuestion: false,
-      retry: () => sendAssistantFirstTurn(),
+      retry: (partial) => sendAssistantFirstTurn(partial),
       streamKey: `draft:${draft.readerSessionId}`,
+      initialContent: continuationText,
       body: {
         reader_session_id: draft.readerSessionId,
         provider: state.assistantActiveProvider,
         source_kind: "ORIGINAL_PDF",
         ...draft.request,
+        ...(continuationText ? { continuation: { partial_answer: continuationText } } : {}),
       },
     });
     if (state.readerSessionId !== draft.readerSessionId) return;
@@ -2226,7 +2232,7 @@ async function sendAssistantFirstTurn() {
   }
 }
 
-async function sendAssistantFollowUp() {
+async function sendAssistantFollowUp(continuationText = "") {
   const question = elements["assistant-question"].value.trim();
   const current = state.assistantState.current;
   const readerSessionId = state.readerSessionId;
@@ -2237,13 +2243,15 @@ async function sendAssistantFollowUp() {
     const payload = await runAssistantStream({
       path: "/api/assistant/follow-up",
       question,
-      retry: () => sendAssistantFollowUp(),
+      retry: (partial) => sendAssistantFollowUp(partial),
       streamKey: assistantLocationKey(current.root_id, current.node_id),
+      initialContent: continuationText,
       body: {
         reader_session_id: readerSessionId,
         root_id: current.root_id,
         node_id: current.node_id,
         question,
+        ...(continuationText ? { continuation: { partial_answer: continuationText } } : {}),
       },
     });
     if (state.readerSessionId !== readerSessionId) return;
@@ -2362,7 +2370,7 @@ function markOptimisticChildError(rootId, nodeId, message, render = true) {
   }
 }
 
-async function retryAssistantChild(rootId, nodeId, button) {
+async function retryAssistantChild(rootId, nodeId, button, continuationText = "") {
   const sessionId = state.readerSessionId;
   const current = state.assistantState.current;
   button.disabled = true;
@@ -2370,9 +2378,15 @@ async function retryAssistantChild(rootId, nodeId, button) {
     const payload = await runAssistantStream({
       path: '/api/assistant/retry-child',
       question: current?.label || "这层解释",
-      retry: () => retryAssistantChild(rootId, nodeId, button),
+      retry: (partial) => retryAssistantChild(rootId, nodeId, button, partial),
       streamKey: assistantLocationKey(rootId, nodeId),
-      body: {reader_session_id:sessionId,root_id:rootId,node_id:nodeId},
+      initialContent: continuationText,
+      body: {
+        reader_session_id: sessionId,
+        root_id: rootId,
+        node_id: nodeId,
+        ...(continuationText ? { continuation: { partial_answer: continuationText } } : {}),
+      },
     });
     if(state.readerSessionId === sessionId) applyAssistantState(payload.assistant);
   } catch(error) {
@@ -2511,7 +2525,9 @@ async function sendAssistantChild() {
     const payload = await runAssistantStream({
       path: "/api/assistant/child",
       question: childSelection.selectedText,
-      retry: () => retryAssistantChild(childSelection.rootId, nodeId, { disabled: false }),
+      retry: (partial) => retryAssistantChild(
+        childSelection.rootId, nodeId, { disabled: false }, partial
+      ),
       streamKey: assistantLocationKey(childSelection.rootId, nodeId),
       body: {
         reader_session_id: readerSessionId,

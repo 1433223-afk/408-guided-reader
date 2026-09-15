@@ -30,6 +30,7 @@ MAX_QUESTION_CHARS = 500
 MAX_ANSWER_SELECTION_CHARS = 2_000
 MAX_HISTORY_TURNS = 6
 MAX_HISTORY_CHARS = 8_000
+MAX_CONTINUATION_CHARS = 16_000
 MAX_DEPTH = 5
 StreamEmitter = Callable[[dict], None]
 SYSTEM_BOUNDARY = (
@@ -300,22 +301,29 @@ class AssistantService:
         provider: str | None = None,
         source_kind: str | SelectionSourceKind = SelectionSourceKind.ORIGINAL_PDF,
         stream: StreamEmitter | None = None,
+        continuation: dict | None = None,
     ) -> dict:
         kind = self._root_source_kind(source_kind)
         context = lambda: self.contexts.build(revision_id, page_index, start=start, end=end)
         return self._ask_context(
-            reader_session_id, revision_id, page_index, context, kind, provider, stream
+            reader_session_id, revision_id, page_index, context, kind, provider, stream,
+            continuation,
         )
 
-    def ask_guide(self, reader_session_id, revision_id, context, provider=None, stream=None):
+    def ask_guide(self, reader_session_id, revision_id, context, provider=None, stream=None,
+                  continuation=None):
         return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
-                                 context, SelectionSourceKind.READING_GUIDE, provider, stream)
+                                 context, SelectionSourceKind.READING_GUIDE, provider, stream,
+                                 continuation)
 
-    def ask_inline(self, reader_session_id, revision_id, context, provider=None, stream=None):
+    def ask_inline(self, reader_session_id, revision_id, context, provider=None, stream=None,
+                   continuation=None):
         return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
-                                 context, SelectionSourceKind.INLINE_GUIDANCE, provider, stream)
+                                 context, SelectionSourceKind.INLINE_GUIDANCE, provider, stream,
+                                 continuation)
 
-    def _ask_context(self, reader_session_id, revision_id, page_index, context, kind, provider, stream=None):
+    def _ask_context(self, reader_session_id, revision_id, page_index, context, kind, provider,
+                     stream=None, continuation=None):
         session_id = self._validate_session_id(reader_session_id)
         slot = self._slot_for(session_id)
         generation, focus_version = self._begin(slot, session_id)
@@ -324,15 +332,19 @@ class AssistantService:
         selected_provider, selected_model = self._provider_identity(provider)
         turn_id = str(uuid4())
         user_content = provider_user_message(context)
+        messages, partial_answer = self._continuation_messages(
+            self._messages([], user_content), continuation
+        )
         self._emit_stage(stream, context_started)
         completions: list[ProviderCompletion] = []
         answer = self._complete(
             selected_provider,
-            self._messages([], user_content),
+            messages,
             interaction_id=turn_id,
             stream=stream,
             completions=completions,
         )
+        answer = self._join_continuation(partial_answer, answer)
         root_id = str(uuid4())
         source = SelectionSource(
             kind,
@@ -467,6 +479,7 @@ class AssistantService:
         node_id: str,
         *,
         stream: StreamEmitter | None = None,
+        continuation: dict | None = None,
     ) -> dict:
         """Retry only the retained failed first turn, with its original private grounding."""
         session_id = self._validate_session_id(reader_session_id)
@@ -494,13 +507,17 @@ class AssistantService:
         # Completion never steals focus after the user navigates elsewhere.
         return self._finish_child(session_id, slot, generation, clean_root_id,
                                   parent_id, clean_node_id, interaction_id,
-                                  provider, selected_text, user_content, stream)
+                                  provider, selected_text, user_content, stream,
+                                  continuation)
 
     def _finish_child(self, session_id, slot, generation, clean_root_id,
                       clean_node_id, requested_node_id, interaction_id,
-                      provider, selected_text, user_content, stream=None):
+                      provider, selected_text, user_content, stream=None,
+                      continuation=None):
         context_started = time.perf_counter()
-        messages = self._messages([], user_content)
+        messages, partial_answer = self._continuation_messages(
+            self._messages([], user_content), continuation
+        )
         self._emit_stage(stream, context_started)
         completions: list[ProviderCompletion] = []
         try:
@@ -511,6 +528,7 @@ class AssistantService:
                 stream=stream,
                 completions=completions,
             )
+            answer = self._join_continuation(partial_answer, answer)
         except Exception as exc:
             failure_recorded = self._fail_pending_child(
                 session_id,
@@ -563,6 +581,7 @@ class AssistantService:
         *,
         node_id: str | None = None,
         stream: StreamEmitter | None = None,
+        continuation: dict | None = None,
     ) -> dict:
         session_id = self._validate_session_id(reader_session_id)
         clean_root_id = self._validate_id(root_id, "Root id")
@@ -587,7 +606,9 @@ class AssistantService:
                         "TURN_ALREADY_PENDING", "当前层已有一个回答正在生成，请稍候。"
                     )
                 level.pending_turn_id = turn_id
-                messages = self._messages(level.turns, clean_question)
+                messages, partial_answer = self._continuation_messages(
+                    self._messages(level.turns, clean_question), continuation
+                )
                 provider = root.provider
         context_started = time.perf_counter()
         self._emit_stage(stream, context_started)
@@ -600,6 +621,7 @@ class AssistantService:
                 stream=stream,
                 completions=completions,
             )
+            answer = self._join_continuation(partial_answer, answer)
         except Exception as exc:
             failure_recorded = self._clear_pending_turn(
                 session_id, slot, generation, clean_root_id, clean_node_id, turn_id
@@ -866,6 +888,48 @@ class AssistantService:
         messages.append({"role": "user", "content": new_user_content})
         return messages
 
+    @staticmethod
+    def _continuation_messages(
+        messages: list[dict], continuation: dict | None
+    ) -> tuple[list[dict], str | None]:
+        if continuation is None:
+            return messages, None
+        if not isinstance(continuation, dict) or set(continuation) != {"partial_answer"}:
+            raise ValueError("Assistant continuation payload is invalid")
+        partial_answer = continuation.get("partial_answer")
+        if (
+            not isinstance(partial_answer, str)
+            or not partial_answer.strip()
+            or len(partial_answer) > MAX_CONTINUATION_CHARS
+        ):
+            raise ValueError("Assistant continuation content is invalid or too long")
+        continued = copy.deepcopy(messages)
+        continued.extend([
+            {"role": "assistant", "content": partial_answer},
+            {
+                "role": "user",
+                "content": (
+                    "上一条回答因输出长度上限中断。请从中断处直接继续，只输出缺失的后续内容，"
+                    "不要重复已经给出的部分。"
+                ),
+            },
+        ])
+        return continued, partial_answer
+
+    @staticmethod
+    def _join_continuation(partial_answer: str | None, answer: str) -> str:
+        if partial_answer is None:
+            return answer
+        separator = (
+            " "
+            if partial_answer[-1:].isascii()
+            and partial_answer[-1:].isalnum()
+            and answer[:1].isascii()
+            and answer[:1].isalnum()
+            else ""
+        )
+        return partial_answer + separator + answer
+
     def _provider_identity(self, provider: str | None) -> tuple[str, str]:
         resolver = getattr(self.runtime, "provider_identity", None)
         if resolver is not None:
@@ -890,8 +954,8 @@ class AssistantService:
         completions: list[ProviderCompletion] | None = None,
     ) -> str:
         provider_options = {
-            "deepseek": {"thinking_mode": "disabled"},
-            "zhipu": {"reasoning_effort": "low"},
+            "deepseek": {"thinking_mode": "disabled", "max_tokens": 8_192},
+            "zhipu": {"reasoning_effort": "low", "max_tokens": 16_384},
         }.get(provider, {})
         if stream is not None:
             stream_for_with_metadata = getattr(

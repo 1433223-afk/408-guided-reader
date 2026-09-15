@@ -524,11 +524,10 @@ A real streamed answer visibly ended halfway through a Markdown table while the 
 that reached `[DONE]`; therefore `finish_reason=length` at the 4096-token request ceiling was
 misclassified as a successful complete answer. DeepSeek and Zhipu now reject a non-empty
 length-limited response as `response_length_limit`. The Reader retains already displayed deltas and
-shows the explicit recoverable message `回答达到长度上限，未能完整结束；已保留收到的内容，可以重新回答。`;
+shows the explicit recoverable message `回答达到长度上限，未能完整结束；已保留收到的内容，可以继续生成。`;
 the incomplete text is not committed to temporary conversation state and no automatic retry occurs
 after visible output. Normal `stop`, transport interruption and empty-response behavior are
-unchanged. The token ceiling was not enlarged and no continuation protocol, prompt change, provider
-change or new dependency was introduced.
+unchanged. That checkpoint deliberately corrected classification before changing the token budget.
 
 Validation: deterministic fragmented-SSE tests cover both DeepSeek and Zhipu `length` termination;
 the non-stream compatibility path is covered too. Full Assistant Python tests, the full Python
@@ -537,6 +536,54 @@ PASSes against the genuine SSE mock provider, including preserved partial conten
 same-identity retry. The first browser invocation did not reach Reader because the default stale
 local data directory lacked the expected 348-page book; rerunning with the current manual-browser
 library passed. No real provider call was needed for this deterministic protocol correction.
+
+## Provider output budgets and explicit continuation (2026-09-15)
+
+The Assistant's 4096-token output ceiling was traced to Provider Bake-off checkpoint
+`3c5327bb` (2026-09-05). It replaced an earlier 900-token budget after real calibration showed
+that provider reasoning could consume the generation allowance and leave an empty or visibly
+truncated answer. It was an empirical safety setting, not a Product/Frozen limit and not a
+provider maximum. The shared runtime already accepts a bounded per-call override up to 16384 tokens;
+other generation paths were already using that facility.
+
+Current official provider documentation confirms that reasoning is not a separate free budget:
+
+- DeepSeek's Chat Completion usage reports `completion_tokens_details.reasoning_tokens` within
+  `completion_tokens`; thinking and visible answer therefore share the requested generation
+  allowance. The current `deepseek-flash` documentation lists substantially higher model output
+  capability than this product needs, with non-thinking and thinking defaults above the old 4096
+  setting. Sources checked: <https://api-docs.deepseek.com/api/create-chat-completion>,
+  <https://api-docs.deepseek.com/quick_start/pricing>, and
+  <https://api-docs.deepseek.com/guides/thinking_mode>.
+- Zhipu documents `GLM-5.3-Flash` as forced-thinking with a 128K maximum output and states that
+  thinking consumes additional tokens. Repository calibration independently observed the former
+  900-token allowance being exhausted by reasoning before a visible answer. Sources checked:
+  <https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash>,
+  <https://docs.bigmodel.cn/cn/guide/capabilities/thinking>, and
+  <https://docs.bigmodel.cn/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8>.
+
+Assistant calls now use 8192 tokens for DeepSeek's existing non-thinking fast path and 16384 for
+Zhipu's existing forced-thinking `reasoning_effort=low` path. These are deliberately below the
+providers' theoretical maxima: enough headroom for reasoning plus a complete textbook explanation,
+without turning an ordinary Ask into an unbounded long-form generation. No new deep-mode UI,
+provider, model, prompt/grounding category, RAG or automatic continuation loop was introduced.
+
+`finish_reason=length` remains a failure, never `完成`. It bypasses retry and cooling, retains the
+already streamed text, and exposes `继续生成` only for that typed failure. Clicking it explicitly
+resends the original bounded grounding/messages plus at most 16000 characters of the retained
+partial answer and one internal instruction to continue from the cutoff without repetition.
+Successful output is joined into the same Root/follow-up/Child answer; the original selection or
+typed user message, Root/Child identity and depth remain unchanged. Other partial transport failures
+retain the existing `重新回答` recovery. No automatic provider call is made.
+
+Verification: all Assistant Python tests PASS, including provider-specific request budgets,
+non-cooling length failure, bounded continuation payload shape, exact original user message,
+same-level follow-up and same-identity Child continuation. JavaScript stream tests PASS. The served
+real-348-page-library `ask-about-this.mjs` path PASSes the deterministic SSE `length` scenario:
+partial text remains visible, `完成` is absent, `继续生成` is explicit, the DeepSeek request uses
+8192 with thinking disabled, and the completed answer combines both pieces. Provider maxima and
+reasoning accounting were documentation/calibration findings; this correction did not spend another
+real-provider call or claim a new latency benchmark. Frozen Blueprints are unchanged.
 
 ## Master workspace morph UAT polish (2026-09-15)
 

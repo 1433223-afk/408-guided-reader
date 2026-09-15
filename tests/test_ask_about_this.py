@@ -895,6 +895,159 @@ def test_streaming_runtime_retries_only_before_visible_content():
     assert caught.value.diagnostics["ttft_ms"] is not None
 
 
+def test_assistant_provider_budgets_match_current_fast_and_light_reasoning_modes(
+    assistant_fixture,
+):
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    assistant = AssistantService(assistant_fixture["contexts"], providers)
+    revision_id = assistant_fixture["revision_id"]
+
+    assistant.ask_selection(
+        "reader-session-deepseek-budget", revision_id, 3,
+        provider="deepseek", **selection(3),
+    )
+    assistant.ask_selection(
+        "reader-session-zhipu-budget", revision_id, 3,
+        provider="zhipu", **selection(3),
+    )
+
+    assert adapters["deepseek"].calls[-1]["body"]["max_tokens"] == 8_192
+    assert adapters["deepseek"].calls[-1]["body"]["thinking"] == {"type": "disabled"}
+    assert adapters["zhipu"].calls[-1]["body"]["max_tokens"] == 16_384
+    assert adapters["zhipu"].calls[-1]["body"]["reasoning_effort"] == "low"
+
+
+def test_length_limited_root_can_explicitly_continue_without_rewriting_user_message(
+    assistant_fixture,
+):
+    length_limit = ProviderFailure(
+        ProviderFailureKind.TRANSIENT,
+        "response_length_limit",
+        "回答达到长度上限，未能完整结束；已保留收到的内容，可以继续生成。",
+    )
+    adapter = StreamingMockAdapter([["未完成", length_limit], ["后续完成"]])
+    agent = runtime(adapter)
+    assistant = AssistantService(assistant_fixture["contexts"], agent)
+    session_id = "reader-session-root-continuation"
+    revision_id = assistant_fixture["revision_id"]
+    partial_events = []
+
+    with pytest.raises(ProviderFailure) as caught:
+        assistant.ask_selection(
+            session_id, revision_id, 3, stream=partial_events.append, **selection(3)
+        )
+    assert caught.value.code == "response_length_limit"
+    assert [event.get("content") for event in partial_events if event["type"] == "delta"] == [
+        "未完成"
+    ]
+    assert agent.status()["cooling"] is False
+
+    completed = assistant.ask_selection(
+        session_id,
+        revision_id,
+        3,
+        stream=lambda _event: None,
+        continuation={"partial_answer": "未完成"},
+        **selection(3),
+    )
+    turn = focused(completed)["turns"][0]
+    assert turn["question"] == "总线事务"
+    assert turn["answer"] == "未完成后续完成"
+    continuation_messages = adapter.calls[-1]["body"]["messages"]
+    assert [message["role"] for message in continuation_messages] == [
+        "system", "user", "assistant", "user",
+    ]
+    assert continuation_messages[-2]["content"] == "未完成"
+    assert "从中断处直接继续" in continuation_messages[-1]["content"]
+
+
+def test_length_limited_follow_up_and_child_continue_at_the_same_level_and_identity(
+    assistant_fixture,
+):
+    def limited():
+        return ProviderFailure(
+            ProviderFailureKind.TRANSIENT,
+            "response_length_limit",
+            "回答达到长度上限，未能完整结束；已保留收到的内容，可以继续生成。",
+        )
+
+    adapter = StreamingMockAdapter([
+        ["根回答含概念"],
+        ["追问前半", limited()],
+        ["追问后半"],
+        ["子回答前半", limited()],
+        ["子回答后半"],
+    ])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-level-continuation"
+    state = assistant.ask_selection(
+        session_id, assistant_fixture["revision_id"], 3,
+        stream=lambda _event: None, **selection(3),
+    )
+    root_id = focused(state)["root_id"]
+
+    with pytest.raises(ProviderFailure):
+        assistant.follow_up(
+            session_id, root_id, "为什么？", stream=lambda _event: None
+        )
+    state = assistant.follow_up(
+        session_id,
+        root_id,
+        "为什么？",
+        stream=lambda _event: None,
+        continuation={"partial_answer": "追问前半"},
+    )
+    assert focused(state)["depth"] == 1
+    assert focused(state)["turns"][-1]["question"] == "为什么？"
+    assert focused(state)["turns"][-1]["answer"] == "追问前半追问后半"
+
+    parent = focused(state)
+    source_turn = parent["turns"][-1]
+    node_id = "continued-child"
+    with pytest.raises(ProviderFailure):
+        assistant.create_child(
+            session_id,
+            root_id,
+            parent_node_id=None,
+            turn_id=source_turn["turn_id"],
+            start_offset=source_turn["answer"].index("追问"),
+            end_offset=source_turn["answer"].index("追问") + len("追问"),
+            node_id=node_id,
+            stream=lambda _event: None,
+        )
+    state = assistant.retry_child(
+        session_id,
+        root_id,
+        node_id,
+        stream=lambda _event: None,
+        continuation={"partial_answer": "子回答前半"},
+    )
+    assert focused(state)["node_id"] == node_id
+    assert focused(state)["depth"] == 2
+    assert focused(state)["turns"][0]["question"] == "追问"
+    assert focused(state)["turns"][0]["answer"] == "子回答前半子回答后半"
+
+
+@pytest.mark.parametrize("continuation", [
+    {},
+    {"partial_answer": ""},
+    {"partial_answer": "x" * 16_001},
+    {"partial_answer": "ok", "unexpected": True},
+])
+def test_assistant_continuation_is_bounded_and_shape_checked(
+    assistant_fixture, continuation
+):
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(MockAdapter()))
+    with pytest.raises(ValueError):
+        assistant.ask_selection(
+            "reader-session-invalid-continuation",
+            assistant_fixture["revision_id"],
+            3,
+            continuation=continuation,
+            **selection(3),
+        )
+
+
 @pytest.mark.parametrize("code", ["auth", "quota"])
 def test_user_actionable_provider_failures_do_not_retry_or_leak_secret(code, caplog):
     failure = ProviderFailure(
@@ -1211,7 +1364,7 @@ def test_openai_compatible_stream_rejects_length_limited_partial_answer(
     assert caught.value.kind is ProviderFailureKind.TRANSIENT
     assert caught.value.code == "response_length_limit"
     assert caught.value.user_message == (
-        "回答达到长度上限，未能完整结束；已保留收到的内容，可以重新回答。"
+        "回答达到长度上限，未能完整结束；已保留收到的内容，可以继续生成。"
     )
     assert caught.value.diagnostics["finish_reason"] == "length"
     assert caught.value.diagnostics["usage"]["completion_tokens"] == 4096
