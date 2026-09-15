@@ -92,6 +92,7 @@ class OpenAICompatibleAdapter:
         )
         if usage is not None:
             metadata["usage"] = usage
+        self._reject_length_limited_response(choice.get("finish_reason"), metadata)
         if not isinstance(answer, str) or not answer.strip():
             raise ProviderFailure(
                 ProviderFailureKind.TRANSIENT,
@@ -110,6 +111,7 @@ class OpenAICompatibleAdapter:
         body: dict,
         timeout: float,
         on_delta,
+        on_reasoning_delta=None,
     ) -> ProviderResponse:
         request = Request(
             endpoint,
@@ -171,8 +173,10 @@ class OpenAICompatibleAdapter:
                     if not isinstance(delta, dict):
                         continue
                     reasoning = delta.get("reasoning_content")
-                    if isinstance(reasoning, str):
+                    if isinstance(reasoning, str) and reasoning:
                         reasoning_length += len(reasoning)
+                        if on_reasoning_delta is not None:
+                            on_reasoning_delta(reasoning)
                     content = delta.get("content")
                     if isinstance(content, str) and content:
                         pieces.append(content)
@@ -205,6 +209,7 @@ class OpenAICompatibleAdapter:
                 "AI 服务的流式回答意外中断；已保留收到的内容，可明确重试。",
                 diagnostics=metadata,
             )
+        self._reject_length_limited_response(finish_reason, metadata)
         if not answer.strip():
             raise ProviderFailure(
                 ProviderFailureKind.TRANSIENT,
@@ -213,6 +218,22 @@ class OpenAICompatibleAdapter:
                 diagnostics=metadata,
             )
         return ProviderResponse(answer=answer.strip(), usage=usage, diagnostics=metadata)
+
+    @staticmethod
+    def _reject_length_limited_response(
+        finish_reason: object, diagnostics: dict
+    ) -> None:
+        if (
+            isinstance(finish_reason, str)
+            and finish_reason.casefold() == "length"
+            and diagnostics.get("content_present") is True
+        ):
+            raise ProviderFailure(
+                ProviderFailureKind.TRANSIENT,
+                "response_length_limit",
+                "回答达到长度上限，未能完整结束；已保留收到的内容，可以重新回答。",
+                diagnostics=diagnostics,
+            )
 
     def _proxy_handler(self, endpoint: str) -> ProxyHandler:
         if self.provider_name != "openrouter" or _is_loopback_endpoint(endpoint):

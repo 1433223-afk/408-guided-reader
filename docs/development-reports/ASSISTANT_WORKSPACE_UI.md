@@ -516,3 +516,24 @@ inspection remains bounded and in memory; API keys/Authorization headers are abs
 logs and errors. Conversation lifetime remains Core-Service memory only. No vector DB, RAG,
 telemetry, persistence, Frozen Blueprint change or unrelated performance architecture was added.
 This is an Assistant streaming increment, not a new Phase closure or independent-review claim.
+
+## Streaming length-limit UAT correction (2026-09-15)
+
+A real streamed answer visibly ended halfway through a Markdown table while the Reader labelled it
+`完成`. The OpenAI-compatible adapter was recording provider `finish_reason` but accepted any stream
+that reached `[DONE]`; therefore `finish_reason=length` at the 4096-token request ceiling was
+misclassified as a successful complete answer. DeepSeek and Zhipu now reject a non-empty
+length-limited response as `response_length_limit`. The Reader retains already displayed deltas and
+shows the explicit recoverable message `回答达到长度上限，未能完整结束；已保留收到的内容，可以重新回答。`;
+the incomplete text is not committed to temporary conversation state and no automatic retry occurs
+after visible output. Normal `stop`, transport interruption and empty-response behavior are
+unchanged. The token ceiling was not enlarged and no continuation protocol, prompt change, provider
+change or new dependency was introduced.
+
+Validation: deterministic fragmented-SSE tests cover both DeepSeek and Zhipu `length` termination;
+the non-stream compatibility path is covered too. Full Assistant Python tests, the full Python
+suite and all 47 JavaScript tests PASS. The real-348-page-library Ask/Ask-Deeper browser regression
+PASSes against the genuine SSE mock provider, including preserved partial content and explicit
+same-identity retry. The first browser invocation did not reach Reader because the default stale
+local data directory lacked the expected 348-page book; rerunning with the current manual-browser
+library passed. No real provider call was needed for this deterministic protocol correction.

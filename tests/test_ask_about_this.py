@@ -1168,6 +1168,90 @@ def test_openai_compatible_stream_parser_handles_fragmented_utf8_done_and_usage(
     assert result.diagnostics["reasoning_length"] == len("private")
 
 
+@pytest.mark.parametrize("provider", ["deepseek", "zhipu"])
+def test_openai_compatible_stream_rejects_length_limited_partial_answer(
+    monkeypatch, provider
+):
+    wire = (
+        'data: {"choices":[{"delta":{"content":"还没说完 | 维度 |"},'
+        '"finish_reason":"length"}],"usage":{"prompt_tokens":7,'
+        '"completion_tokens":4096,"total_tokens":4103}}\n\n'
+        'data: [DONE]\n\n'
+    ).encode("utf-8")
+    fragments = deque([wire[:53], wire[53:]])
+
+    class FragmentedResponse:
+        headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read1(self, _size):
+            return fragments.popleft() if fragments else b""
+
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            return FragmentedResponse()
+
+    monkeypatch.setattr(provider_adapter, "build_opener", lambda *_args: Opener())
+    deltas = []
+    with pytest.raises(ProviderFailure) as caught:
+        OpenAICompatibleAdapter(provider).stream(
+            "http://127.0.0.1:9999/chat/completions",
+            "stream-secret",
+            {"model": "test", "messages": [], "stream": True},
+            2,
+            deltas.append,
+        )
+
+    assert deltas == ["还没说完 | 维度 |"]
+    assert caught.value.kind is ProviderFailureKind.TRANSIENT
+    assert caught.value.code == "response_length_limit"
+    assert caught.value.user_message == (
+        "回答达到长度上限，未能完整结束；已保留收到的内容，可以重新回答。"
+    )
+    assert caught.value.diagnostics["finish_reason"] == "length"
+    assert caught.value.diagnostics["usage"]["completion_tokens"] == 4096
+
+
+def test_openai_compatible_nonstream_rejects_length_limited_partial_answer(
+    monkeypatch,
+):
+    payload = json.dumps({
+        "choices": [{
+            "message": {"content": "未完成的答案"},
+            "finish_reason": "length",
+        }],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 4096, "total_tokens": 4100},
+    }).encode("utf-8")
+
+    class Response(BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            return Response(payload)
+
+    monkeypatch.setattr(provider_adapter, "build_opener", lambda *_args: Opener())
+    with pytest.raises(ProviderFailure) as caught:
+        OpenAICompatibleAdapter("deepseek").complete(
+            "http://127.0.0.1:9999/chat/completions",
+            "secret",
+            {"model": "test", "messages": []},
+            2,
+        )
+
+    assert caught.value.code == "response_length_limit"
+    assert caught.value.diagnostics["content_length"] == len("未完成的答案")
+
+
 def test_empty_response_attempt_observer_retains_only_safe_finish_usage_and_lengths():
     reasoning_canary = "PRIVATE_REASONING_BODY_MUST_NOT_BE_RETAINED"
 
