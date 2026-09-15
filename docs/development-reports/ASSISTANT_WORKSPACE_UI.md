@@ -606,3 +606,36 @@ provider calls remained zero. Port 8767 serves the current app and is ready for 
 
 No Assistant behavior, Reader layout, PDF geometry, Master Topic/history/model/Review/Mastery
 semantics, persistence, API, schema or dependency changed in this motion-only correction.
+
+## Assistant workspace morph and selection-open latency (2026-09-15)
+
+Assistant Expand/Restore now uses the accepted Master Workspace Morph timing and easing while
+retaining the existing Assistant workspace and Composer DOM. The focused conversation moves with
+the workspace for 220 ms using `cubic-bezier(.2,.72,.22,1)`; the recursive Topic tree follows after
+96 ms with a 124 ms fade/10 px slide. Restore reverses the sequence: the tree leaves in 96 ms and
+the workspace settles after a 36 ms delay over 184 ms. Reduced-motion applies the same final state
+synchronously. Root/Child focus, current node, history and tree scroll, Composer draft/caret/focus,
+model choice and pending/error/retry UI remain attached to their original DOM/state.
+
+The selection-to-Assistant pause was local Reader work, not provider wait. Opening the panel called
+`captureZoomAnchor()`, synchronously read geometry across the 348-page document, then
+`relayoutPages()` removed and recreated the PDF page wrappers. On the real textbook the baseline
+recorded 391 page-DOM mutations, a roughly 122 ms click-adjacent long task, shell visibility at
+38.9 ms and first frame at 57.2 ms. The selection entry now stages the draft and opens the already
+mounted Assistant shell as a fixed overlay without changing `.assistant-dock-open`; status refresh
+and the eventual provider request remain asynchronous. The selection toolbar exits over 90 ms.
+The final same-path browser run recorded shell visibility at 20.1 ms, first frame at 39.6 ms, no
+long task at or above 50 ms in the 300 ms observation window, zero destructive page mutations and
+unchanged PDF canvas identity. Ordinary later toolbar reopening keeps its existing Dock path.
+
+Validation: all 47 JavaScript tests PASS. `assistant-workspace.mjs` PASS on the isolated copy of the
+real 348-page textbook, including Root/Child/sibling navigation, pending-state rapid Expand/Restore,
+failure-state Expand/Restore with the same retry UI, same Composer identity, draft/caret/focus/model,
+history and tree scroll, Dock resize, reduced motion, preserved PDF canvas identity and zero external
+provider calls. `ask-about-this.mjs` PASS for the full adjacent Assistant contract and Reader-close /
+AI-off recovery. Screenshots are `test-results/assistant-morph-before.png` and
+`test-results/assistant-morph-after.png`. Port 8767 responds with the current no-store static app.
+
+No Root/Child, maximum-depth, context handoff, provider routing, request payload, persistence,
+Assistant/Master authority, PDF geometry or other Reader interaction changed. This UAT correction is
+`READY_FOR_USER_RETEST`; it does not claim user acceptance or reopen a Phase.

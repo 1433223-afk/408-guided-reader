@@ -14,11 +14,18 @@ const dataDir = path.join(acceptanceRoot, "data");
 await cp(sourceDataDir, dataDir, { recursive: true });
 
 const providerCalls = [];
+let failNextAssistantRequest = false;
 const provider = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
   providerCalls.push(body);
+  if (failNextAssistantRequest) {
+    failNextAssistantRequest = false;
+    response.writeHead(400, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ error: { message: "workspace failure fixture" } }));
+    return;
+  }
   const prompt = body.messages.at(-1).content;
   let answer;
   if (prompt.includes("【当前解释焦点（用户所选）】\n高低电平变化")) {
@@ -71,7 +78,59 @@ try {
 
   assert.equal(await selectExactReaderText(page, 24, "时钟脉冲信号"), "时钟脉冲信号");
   assert.equal(await page.locator("#selection-actions").isVisible(), true);
+  await page.evaluate(() => {
+    const canvases = [...document.querySelectorAll(".page canvas")];
+    canvases.forEach((canvas, index) => { canvas.dataset.askOpenIdentity = String(index); });
+    const metric = window.__assistantAskOpen = {
+      destructivePageMutations: 0,
+      canvasCount: canvases.length,
+      longTasks: [],
+    };
+    new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (metric.clickStart != null && entry.startTime >= metric.clickStart
+            && entry.startTime <= metric.clickStart + 300) metric.longTasks.push(entry.duration);
+      }
+    }).observe({ type: "longtask", buffered: true });
+    new MutationObserver((records) => {
+      metric.destructivePageMutations += records.filter((record) => (
+        [...record.removedNodes].some((node) => node instanceof Element
+          && (node.matches("canvas,.text-overlay") || node.querySelector?.("canvas,.text-overlay")))
+      )).length;
+    }).observe(document.querySelector("#pages"), { childList: true, subtree: true });
+    const panel = document.querySelector("#assistant-panel");
+    new MutationObserver(() => {
+      if (!panel.hidden && metric.shellVisible == null) metric.shellVisible = performance.now();
+    }).observe(panel, { attributes: true, attributeFilter: ["hidden"] });
+    document.querySelector("#ask-selection").addEventListener("click", () => {
+      metric.clickStart = performance.now();
+      requestAnimationFrame(() => { metric.firstFrame = performance.now(); });
+    }, { capture: true, once: true });
+  });
   await page.locator("#ask-selection").click();
+  await page.waitForFunction(() => window.__assistantAskOpen.shellVisible != null);
+  const dismissalTiming = await page.locator("#selection-actions").evaluate((menu) => (
+    menu.getAnimations().map((animation) => animation.effect.getTiming())
+      .find((timing) => timing.duration === 90)
+  ));
+  await page.waitForTimeout(320);
+  const askOpenTiming = await page.evaluate(() => ({
+    shellMs: window.__assistantAskOpen.shellVisible - window.__assistantAskOpen.clickStart,
+    firstFrameMs: window.__assistantAskOpen.firstFrame - window.__assistantAskOpen.clickStart,
+    maxLongTaskMs: Math.max(0, ...window.__assistantAskOpen.longTasks),
+    destructivePageMutations: window.__assistantAskOpen.destructivePageMutations,
+    canvasCount: window.__assistantAskOpen.canvasCount,
+    canvasIdentityPreserved: [...document.querySelectorAll(".page canvas")].every(
+      (canvas, index) => canvas.dataset.askOpenIdentity === String(index)
+    ),
+  }));
+  assert.ok(askOpenTiming.shellMs < 100, `Assistant shell took ${askOpenTiming.shellMs}ms`);
+  assert.ok(askOpenTiming.firstFrameMs < 100, `Assistant first frame took ${askOpenTiming.firstFrameMs}ms`);
+  assert.ok(askOpenTiming.maxLongTaskMs < 50, `Assistant open long task took ${askOpenTiming.maxLongTaskMs}ms`);
+  assert.equal(askOpenTiming.destructivePageMutations, 0);
+  assert.equal(askOpenTiming.canvasIdentityPreserved, true);
+  assert.ok(dismissalTiming);
+  await page.locator("#selection-actions").waitFor({ state: "hidden" });
   await page.locator("#assistant-model-trigger").click();
   await page.locator('#assistant-model-options [data-value="deepseek"]').click();
   assert.equal(providerCalls.length, 0);
@@ -102,7 +161,7 @@ try {
   await dragDockToWidth(page, initial.panelWidth + 150);
   const wider = await panelMetrics(page);
   assert.ok(wider.panelWidth >= initial.panelWidth + 140);
-  assert.ok(wider.viewerWidth <= initial.viewerWidth - 140);
+  assert.ok(Math.abs(wider.viewerWidth - initial.viewerWidth) <= 2);
   assert.equal(await page.locator("#assistant-title").textContent(), "时钟脉冲信号");
   assert.equal(providerCalls.length, callsAfterRoot);
 
@@ -126,6 +185,10 @@ try {
   const childResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
+  await page.locator("#assistant-expand").click();
+  assert.equal(await page.locator("#assistant-expand").getAttribute("aria-pressed"), "true");
+  await page.locator("#assistant-expand").click();
+  assert.equal(await page.locator("#assistant-expand").getAttribute("aria-pressed"), "false");
   assert.equal(await page.locator("#assistant-title").textContent(), "像乐队里的节拍器");
   assert.equal(await page.locator('.assistant-answer-bubble[data-current-answer="true"]').count(), 0);
   assert.equal((await childResponse).status(), 200);
@@ -192,6 +255,8 @@ try {
   assert.equal(reopenProviderCalls, 0);
   await page.locator('#assistant-turns').evaluate(el => { el.style.maxHeight=''; });
   await page.locator('#assistant-expand').click();
+  await page.waitForFunction(() => document.querySelector("#reader").dataset.assistantMorphPhase === "expanding");
+  await page.waitForFunction(() => !document.querySelector("#reader").dataset.assistantMorphPhase);
   assert.equal(await page.locator('#assistant-turns').evaluate(el => Math.round(el.getBoundingClientRect().right)), VIEWPORT_WIDTH);
   const messageRail=page.locator('.assistant-conversation .message-rail');
   assert.equal(await messageRail.locator('button').count(),reopened.current.turns.length);
@@ -205,6 +270,8 @@ try {
   await page.waitForFunction(()=>document.querySelector('#assistant-turns').scrollTop>0);
   await page.screenshot({path:'test-results/assistant-expanded-edge-scroll.png'});
   await page.locator('#assistant-expand').click();
+  await page.waitForFunction(() => document.querySelector("#reader").dataset.assistantMorphPhase === "restoring");
+  await page.waitForFunction(() => !document.querySelector("#reader").dataset.assistantMorphPhase);
 
   const closeChildResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/close-child"));
   assert.equal(await page.locator("#assistant-close-root").textContent(), "关闭本层解释");
@@ -270,7 +337,32 @@ try {
   const normalScreenshot = path.join(process.cwd(), "test-results", "ask-deeper-normal-chat-layout.png");
   await mkdir(path.dirname(normalScreenshot), { recursive: true });
   await page.screenshot({ path: normalScreenshot });
+  const assistantContinuity = await page.evaluate(() => {
+    const question = document.querySelector("#assistant-question");
+    const sidebar = document.querySelector(".assistant-topic-sidebar");
+    question.value = "展开连续性草稿";
+    question.focus({ preventScroll: true });
+    question.setSelectionRange(2, 6);
+    question.__assistantMorphIdentity = "same-composer";
+    sidebar.scrollTop = Math.min(42, sidebar.scrollHeight - sidebar.clientHeight);
+    const selected = sidebar.querySelector('[aria-selected="true"]');
+    return {
+      value: question.value,
+      historyScroll: document.querySelector("#assistant-turns").scrollTop,
+      sidebarScroll: sidebar.scrollTop,
+      rootId: selected?.dataset.rootId || null,
+      nodeId: selected?.dataset.nodeId ?? null,
+      model: document.querySelector("#assistant-model").value,
+    };
+  });
   await page.locator("#assistant-expand").click();
+  await page.waitForFunction(() => document.querySelector("#reader").dataset.assistantMorphPhase === "expanding");
+  const sidebarMotion = await page.locator(".assistant-topic-sidebar").evaluate((sidebar) => (
+    sidebar.getAnimations().map((animation) => animation.effect.getTiming())
+      .find((timing) => timing.delay === 96 && timing.duration === 124)
+  ));
+  assert.ok(sidebarMotion);
+  await page.waitForFunction(() => !document.querySelector("#reader").dataset.assistantMorphPhase);
   const expanded = await panelMetrics(page);
   assert.equal(await page.locator("#assistant-expand").getAttribute("aria-pressed"), "true");
   assert.ok(expanded.panelWidth >= VIEWPORT_WIDTH - 2);
@@ -303,10 +395,68 @@ try {
   const screenshot = path.join(process.cwd(), "test-results", "ask-deeper-expanded-chat-layout.png");
   await mkdir(path.dirname(screenshot), { recursive: true });
   await page.screenshot({ path: screenshot });
+  assert.equal(await page.locator("#assistant-question").evaluate((question) => question.__assistantMorphIdentity), "same-composer");
+  assert.equal(await page.locator("#assistant-question").evaluate((question) => question === document.activeElement), true);
+  assert.deepEqual(await page.locator("#assistant-question").evaluate((question) => [question.selectionStart, question.selectionEnd]), [2, 6]);
+  assert.equal(await page.locator("#assistant-question").inputValue(), assistantContinuity.value);
+  assert.equal(await page.locator("#assistant-model").inputValue(), assistantContinuity.model);
+  assert.equal(await page.locator('.assistant-topic-sidebar [aria-selected="true"]').getAttribute("data-root-id"), assistantContinuity.rootId);
+  assert.equal(await page.locator('.assistant-topic-sidebar [aria-selected="true"]').getAttribute("data-node-id"), assistantContinuity.nodeId);
   await page.locator("#assistant-expand").click();
+  await page.waitForFunction(() => document.querySelector("#reader").dataset.assistantMorphPhase === "restoring");
+  await page.waitForFunction(() => !document.querySelector("#reader").dataset.assistantMorphPhase);
   assert.ok(Math.abs((await panelMetrics(page)).panelWidth - widthBeforeExpanded) <= 2);
   assert.equal(await scroller.evaluate((element) => element.scrollTop), scrollBeforeExpanded);
   assert.equal(providerCalls.length, callsBeforeExpanded);
+  assert.equal(await page.locator("#assistant-question").evaluate((question) => question.__assistantMorphIdentity), "same-composer");
+  assert.equal(await page.locator("#assistant-question").evaluate((question) => question === document.activeElement), true);
+  assert.equal(await page.locator("#assistant-question").inputValue(), assistantContinuity.value);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.locator("#assistant-expand").click();
+  assert.equal(await page.locator("#reader").getAttribute("data-assistant-morph-phase"), null);
+  assert.ok(Math.abs(await page.locator(".assistant-topic-sidebar").evaluate((sidebar) => sidebar.scrollTop) - assistantContinuity.sidebarScroll) <= 1);
+  await page.locator("#assistant-expand").click();
+  assert.equal(await page.locator("#reader").getAttribute("data-assistant-morph-phase"), null);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+
+  await page.locator("#assistant-question").fill("故障态展开连续性");
+  await page.locator("#assistant-question").evaluate((question) => {
+    question.focus({ preventScroll: true });
+    question.setSelectionRange(2, 5);
+    question.__assistantFailureMorphIdentity = "same-composer";
+  });
+  const failureRootId = await page.locator('.assistant-topic-sidebar [aria-selected="true"]')
+    .getAttribute("data-root-id");
+  const callsBeforeFailure = providerCalls.length;
+  failNextAssistantRequest = true;
+  await page.locator("#assistant-send").click();
+  const failure = page.locator(".assistant-stream-error");
+  await failure.waitFor({ state: "visible" });
+  assert.equal(providerCalls.length, callsBeforeFailure + 1);
+  assert.equal(await failure.locator("button").textContent(), "重试");
+  assert.equal(await page.locator("#assistant-question").inputValue(), "故障态展开连续性");
+  await page.locator("#assistant-question").focus();
+  await page.locator("#assistant-expand").click();
+  await page.waitForFunction(() => !document.querySelector("#reader").dataset.assistantMorphPhase);
+  assert.equal(await failure.isVisible(), true);
+  assert.equal(await page.locator("#assistant-question").evaluate(
+    (question) => question.__assistantFailureMorphIdentity
+  ), "same-composer");
+  assert.equal(await page.locator("#assistant-question").evaluate(
+    (question) => question === document.activeElement
+  ), true);
+  assert.equal(await page.locator("#assistant-question").inputValue(), "故障态展开连续性");
+  assert.equal(await page.locator('.assistant-topic-sidebar [aria-selected="true"]')
+    .getAttribute("data-root-id"), failureRootId);
+  await page.locator("#assistant-expand").click();
+  await page.waitForFunction(() => !document.querySelector("#reader").dataset.assistantMorphPhase);
+  assert.equal(await failure.isVisible(), true);
+  assert.equal(await page.locator("#assistant-question").evaluate(
+    (question) => question.__assistantFailureMorphIdentity
+  ), "same-composer");
+  assert.equal(await page.locator("#assistant-question").inputValue(), "故障态展开连续性");
+  assert.equal(await page.locator('.assistant-topic-sidebar [aria-selected="true"]')
+    .getAttribute("data-root-id"), failureRootId);
 
   assert.equal(await selectExactReaderText(page, 24, "时钟脉冲信号"), "时钟脉冲信号");
   assert.equal(await page.locator("#selection-actions").isVisible(), true);
@@ -372,6 +522,8 @@ try {
     childId,
     grandchildId,
     siblingId,
+    askOpenTiming,
+    failureMorph: "PASS",
   }));
 } finally {
   if (browser) await browser.close();

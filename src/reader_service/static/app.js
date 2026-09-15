@@ -67,6 +67,10 @@ const MASTER_WORKSPACE_MOTION = Object.freeze({
 let masterWorkspaceMorph = null;
 let masterMorphFocusOrigin = null;
 let masterSidebarScrollPosition = 0;
+let assistantWorkspaceMorph = null;
+let assistantMorphFocusOrigin = null;
+let assistantSidebarScrollPosition = 0;
+let selectionActionsDismissal = null;
 
 const master = createMasterUI({ api, revision: () => state.revision?.id,
   toggleExpanded: () => setAssistantExpanded(!state.assistantExpanded),
@@ -80,6 +84,15 @@ document.getElementById("master-expand")?.addEventListener("pointerdown", () => 
   masterMorphFocusOrigin = null;
   if (active instanceof HTMLElement && document.getElementById("master-workspace")?.contains(active)) {
     masterMorphFocusOrigin = captureMasterFocus(active);
+  }
+});
+
+elements["assistant-expand"].addEventListener("pointerdown", () => {
+  const active = document.activeElement;
+  assistantMorphFocusOrigin = null;
+  const conversation = elements["assistant-panel"].querySelector(".assistant-conversation");
+  if (active instanceof HTMLElement && conversation?.contains(active)) {
+    assistantMorphFocusOrigin = captureMasterFocus(active);
   }
 });
 
@@ -1748,6 +1761,171 @@ function animateMasterWorkspace(expanded) {
     .then(() => finishMasterWorkspaceMorph(token));
 }
 
+function captureAssistantMorphSnapshot() {
+  const panel = elements["assistant-panel"];
+  const workspace = panel.querySelector(".assistant-workspace-body");
+  const conversation = workspace.querySelector(".assistant-conversation");
+  const history = elements["assistant-turns"];
+  const sidebar = workspace.querySelector(".assistant-topic-sidebar");
+  if (sidebar?.offsetParent) assistantSidebarScrollPosition = sidebar.scrollTop;
+  const preferredFocus = assistantMorphFocusOrigin || captureMasterFocus();
+  assistantMorphFocusOrigin = null;
+  const historyBounds = history.getBoundingClientRect();
+  const anchor = preferredFocus?.element instanceof HTMLElement && conversation.contains(preferredFocus.element)
+    ? preferredFocus.element
+    : [...history.querySelectorAll(".assistant-turn")].find((turn) => {
+      const rect = turn.getBoundingClientRect();
+      return rect.bottom > historyBounds.top + 8 && rect.top < historyBounds.bottom - 8;
+    }) || elements["assistant-title"];
+  return {
+    panelRect: panel.getBoundingClientRect(), workspace, conversation, history, sidebar,
+    sidebarWasVisible: Boolean(sidebar.offsetParent),
+    sidebarRect: sidebar.getBoundingClientRect(),
+    anchor, anchorRect: anchor.getBoundingClientRect(),
+    historyScroll: history.scrollTop,
+    sidebarScroll: assistantSidebarScrollPosition,
+    focus: preferredFocus,
+  };
+}
+
+function restoreAssistantMorphState(snapshot, { focus = false } = {}) {
+  snapshot.history.scrollTop = snapshot.historyScroll;
+  assistantSidebarScrollPosition = snapshot.sidebarScroll;
+  if (snapshot.sidebar?.offsetParent) snapshot.sidebar.scrollTop = snapshot.sidebarScroll;
+  if (!focus) return;
+  const target = snapshot.focus?.element;
+  if (!(target instanceof HTMLElement) || !target.isConnected || !target.offsetParent) return;
+  target.focus({ preventScroll: true });
+  if (snapshot.focus.selection && (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement)) {
+    target.setSelectionRange(
+      snapshot.focus.selection.start,
+      snapshot.focus.selection.end,
+      snapshot.focus.selection.direction,
+    );
+  }
+}
+
+function assistantSidebarGhost(sidebar) {
+  if (!(sidebar instanceof HTMLElement) || !sidebar.offsetParent) return null;
+  const rect = sidebar.getBoundingClientRect();
+  const ghost = sidebar.cloneNode(true);
+  ghost.classList.add("assistant-topic-sidebar-ghost");
+  ghost.removeAttribute("id");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+  ghost.querySelectorAll("button, a, input, select, textarea").forEach((node) => node.tabIndex = -1);
+  Object.assign(ghost.style, {
+    top: `${rect.top}px`, left: `${rect.left}px`, width: `${rect.width}px`, height: `${rect.height}px`,
+  });
+  document.body.append(ghost);
+  return ghost;
+}
+
+function finishAssistantWorkspaceMorph(token) {
+  if (!assistantWorkspaceMorph || assistantWorkspaceMorph.token !== token) return;
+  const { animations, surface, sidebarGhost, snapshot } = assistantWorkspaceMorph;
+  animations.forEach((animation) => animation.cancel());
+  surface?.remove();
+  sidebarGhost?.remove();
+  elements.reader.classList.remove("assistant-workspace-morphing");
+  delete elements.reader.dataset.assistantMorphPhase;
+  restoreAssistantMorphState(snapshot, { focus: true });
+  assistantWorkspaceMorph = null;
+}
+
+function cancelAssistantWorkspaceMorph() {
+  if (assistantWorkspaceMorph) finishAssistantWorkspaceMorph(assistantWorkspaceMorph.token);
+}
+
+function animateAssistantWorkspace(expanded) {
+  cancelAssistantWorkspaceMorph();
+  const snapshot = captureAssistantMorphSnapshot();
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const narrowTopicsOpen = snapshot.workspace.classList.contains("topics-open");
+  const sidebarGhost = expanded || reduced || narrowTopicsOpen ? null : assistantSidebarGhost(snapshot.sidebar);
+  const surface = expanded || reduced ? null : masterMorphSurface(snapshot.panelRect);
+
+  if (expanded) state.assistantDockWidthBeforeExpanded = state.assistantDockWidth;
+  state.assistantExpanded = expanded;
+  if (!expanded) applyAssistantDockWidth(state.assistantDockWidthBeforeExpanded);
+  renderAssistantViewportMode();
+  hideAssistantAnswerActions(true);
+  restoreAssistantMorphState(snapshot);
+
+  if (reduced) {
+    restoreAssistantMorphState(snapshot, { focus: true });
+    return;
+  }
+
+  const afterRect = snapshot.anchor.getBoundingClientRect();
+  const deltaX = snapshot.anchorRect.left - afterRect.left;
+  const deltaY = snapshot.anchorRect.top - afterRect.top;
+  const easing = "cubic-bezier(.2,.72,.22,1)";
+  const token = Symbol("assistant-workspace-morph");
+  const animations = [];
+  elements.reader.classList.add("assistant-workspace-morphing");
+  elements.reader.dataset.assistantMorphPhase = expanded ? "expanding" : "restoring";
+
+  if (expanded) {
+    const sidebarDeltaX = snapshot.sidebarWasVisible
+      ? snapshot.sidebarRect.left - snapshot.sidebar.getBoundingClientRect().left : -10;
+    animations.push(elements["assistant-panel"].animate([
+      { clipPath: `inset(0 0 0 ${Math.max(0, snapshot.panelRect.left)}px)` },
+      { clipPath: "inset(0 0 0 0)" },
+    ], { duration: MASTER_WORKSPACE_MOTION.workspace, easing, fill: "both" }));
+    animations.push(snapshot.conversation.animate([
+      { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`, opacity: .985 },
+      { transform: "translate3d(0, 0, 0)", opacity: 1 },
+    ], { duration: MASTER_WORKSPACE_MOTION.workspace, easing, fill: "both" }));
+    animations.push(snapshot.sidebar.animate([
+      { opacity: narrowTopicsOpen ? 1 : 0, transform: `translate3d(${sidebarDeltaX}px, 0, 0)` },
+      { opacity: 1, transform: "translate3d(0, 0, 0)" },
+    ], {
+      delay: narrowTopicsOpen ? 0 : MASTER_WORKSPACE_MOTION.sidebarDelay,
+      duration: narrowTopicsOpen ? MASTER_WORKSPACE_MOTION.workspace : MASTER_WORKSPACE_MOTION.sidebarReveal,
+      easing,
+      fill: "both",
+    }));
+  } else {
+    const targetRect = elements["assistant-panel"].getBoundingClientRect();
+    if (surface) animations.push(surface.animate([
+      { transform: "translate3d(0, 0, 0)", opacity: 1 },
+      { transform: `translate3d(${targetRect.left}px, 0, 0)`, opacity: 1 },
+    ], {
+      delay: MASTER_WORKSPACE_MOTION.restoreWorkspaceDelay,
+      duration: MASTER_WORKSPACE_MOTION.restoreWorkspace,
+      easing,
+      fill: "both",
+    }));
+    animations.push(snapshot.conversation.animate([
+      { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`, opacity: .985 },
+      { transform: "translate3d(0, 0, 0)", opacity: 1 },
+    ], {
+      delay: MASTER_WORKSPACE_MOTION.restoreWorkspaceDelay,
+      duration: MASTER_WORKSPACE_MOTION.restoreWorkspace,
+      easing,
+      fill: "both",
+    }));
+    if (sidebarGhost) animations.push(sidebarGhost.animate([
+      { opacity: 1, transform: "translate3d(0, 0, 0)" },
+      { opacity: 0, transform: "translate3d(-10px, 0, 0)" },
+    ], { duration: MASTER_WORKSPACE_MOTION.sidebarHide, easing, fill: "both" }));
+    if (narrowTopicsOpen && snapshot.sidebar.offsetParent) animations.push(snapshot.sidebar.animate([
+      { opacity: 1, transform: `translate3d(${snapshot.sidebarRect.left - snapshot.sidebar.getBoundingClientRect().left}px, 0, 0)` },
+      { opacity: 1, transform: "translate3d(0, 0, 0)" },
+    ], {
+      delay: MASTER_WORKSPACE_MOTION.restoreWorkspaceDelay,
+      duration: MASTER_WORKSPACE_MOTION.restoreWorkspace,
+      easing,
+      fill: "both",
+    }));
+  }
+
+  assistantWorkspaceMorph = { token, animations, surface, sidebarGhost, snapshot };
+  Promise.allSettled(animations.map((animation) => animation.finished))
+    .then(() => finishAssistantWorkspaceMorph(token));
+}
+
 function setAssistantExpanded(expanded, { animate = true } = {}) {
   if (elements["assistant-panel"].hidden && expanded) return;
   if (expanded === state.assistantExpanded) return;
@@ -1755,7 +1933,12 @@ function setAssistantExpanded(expanded, { animate = true } = {}) {
     animateMasterWorkspace(expanded);
     return;
   }
+  if (animate) {
+    animateAssistantWorkspace(expanded);
+    return;
+  }
   cancelMasterWorkspaceMorph();
+  cancelAssistantWorkspaceMorph();
   if (expanded) state.assistantDockWidthBeforeExpanded = state.assistantDockWidth;
   state.assistantExpanded = expanded;
   if (!expanded) applyAssistantDockWidth(state.assistantDockWidthBeforeExpanded);
@@ -1769,7 +1952,9 @@ function setAssistantPanelOpen(open, { focusViewer = false, relayout = true } = 
   const anchor = relayout && wasOpen !== open ? captureZoomAnchor() : null;
   if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   elements["assistant-panel"].hidden = !open;
-  elements.reader.classList.toggle("assistant-dock-open", open);
+  const overlayOpen = open && !relayout;
+  elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
+  elements["assistant-panel"].classList.toggle("assistant-overlay-open", overlayOpen);
   elements["assistant-toggle"].setAttribute("aria-expanded", String(open));
   renderAssistantViewportMode();
   hideAssistantAnswerActions(true);
@@ -1785,7 +1970,8 @@ function beginAssistantResize(event) {
   if (event.button !== 0 || state.assistantExpanded) return;
   event.preventDefault();
   event.stopPropagation();
-  state.assistantResizeAnchor = captureZoomAnchor();
+  state.assistantResizeAnchor = elements["assistant-panel"].classList.contains("assistant-overlay-open")
+    ? null : captureZoomAnchor();
   elements["assistant-panel"].classList.add("resizing");
   elements["assistant-resize-handle"].setPointerCapture(event.pointerId);
   updateAssistantDockFromPointer(event.clientX);
@@ -1838,10 +2024,10 @@ function resetAssistantPanel() {
   syncModelSelector();
 }
 
-function openAssistantPanel() {
+function openAssistantPanel({ relayout = true } = {}) {
   master.selectAssistant();
   chapterEntry.close();
-  setAssistantPanelOpen(true);
+  setAssistantPanelOpen(true, { relayout });
   elements["search-panel"].hidden = true;
   elements["marks-panel"].hidden = true;
   elements["knowledge-panel"].hidden = true;
@@ -2188,10 +2374,10 @@ function stageAssistantSelection() {
       end: { line_ordinal: selection.focus.lineOrdinal, boundary: selection.focus.boundary },
     },
   };
-  openAssistantPanel();
+  openAssistantPanel({ relayout: false });
   renderAssistantDraft();
   refreshAssistantStatus();
-  clearSelection();
+  clearSelection({ animateActions: true });
 }
 
 async function sendAssistantFirstTurn(continuationText = "") {
@@ -2938,6 +3124,12 @@ function renderSelection() {
 }
 
 function showSelectionActions(clientX, clientY) {
+  if (selectionActionsDismissal) {
+    const animation = selectionActionsDismissal;
+    selectionActionsDismissal = null;
+    animation.cancel();
+  }
+  elements["selection-actions"].style.removeProperty("pointer-events");
   for (const id of ["save-highlight", "add-note"]) elements[id].hidden = Boolean(state.guideSelection);
   elements["selection-actions"].querySelector(".highlight-styles").hidden = true;
   elements["save-highlight"].setAttribute("aria-expanded", "false");
@@ -2963,9 +3155,36 @@ function positionSelectionActions() {
   });
 }
 
-function hideSelectionActions() {
+function hideSelectionActions({ animate = false } = {}) {
   state.guideSelection = null;
-  elements["selection-actions"].hidden = true;
+  const menu = elements["selection-actions"];
+  const finalize = () => {
+    menu.hidden = true;
+    menu.style.removeProperty("opacity");
+    menu.style.removeProperty("transform");
+    menu.style.removeProperty("pointer-events");
+  };
+  if (selectionActionsDismissal) {
+    const previous = selectionActionsDismissal;
+    selectionActionsDismissal = null;
+    previous.cancel();
+  }
+  if (animate && !menu.hidden && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    menu.style.pointerEvents = "none";
+    const animation = menu.animate([
+      { opacity: 1, transform: "translate3d(0, 0, 0)" },
+      { opacity: 0, transform: "translate3d(0, 2px, 0)" },
+    ], { duration: 90, easing: "cubic-bezier(.2,.72,.22,1)", fill: "both" });
+    selectionActionsDismissal = animation;
+    animation.finished.catch(() => {}).then(() => {
+      if (selectionActionsDismissal !== animation) return;
+      selectionActionsDismissal = null;
+      animation.cancel();
+      finalize();
+    });
+  } else {
+    finalize();
+  }
   elements["note-editor"].hidden = true;
   elements["add-note"].setAttribute("aria-expanded", "false");
   elements["annotation-note"].value = "";
@@ -3013,13 +3232,13 @@ function openSelectionContextMenu(event) {
   showSelectionActions(event.clientX, event.clientY);
 }
 
-function clearSelection() {
+function clearSelection({ animateActions = false } = {}) {
   document.querySelectorAll(".selection-quad").forEach((node) => node.remove());
   window.getSelection()?.removeAllRanges();
   state.selection = null;
   state.selecting = false;
   syncAskEligibility();
-  hideSelectionActions();
+  hideSelectionActions({ animate: animateActions });
 }
 
 function selectedHighlightStyle() {
