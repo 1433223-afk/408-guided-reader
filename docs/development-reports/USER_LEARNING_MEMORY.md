@@ -2,7 +2,7 @@
 
 ## Result
 
-**CLOSED / COMPLETE — 2026-09-12. Latest UI deletion pass READY_FOR_USER_RETEST — 2026-09-15.**
+**CLOSED / COMPLETE — 2026-09-12. Latest browser IA pass READY_FOR_USER_RETEST — 2026-09-15.**
 User acceptance explicitly confirmed **PASS** by the user. Final independent narrow review **PASS**
 (P0=0 / P1=0 / P2=0, recommendation **CLOSE**); machine and real-use acceptance PASS.
 The accepted durable product boundary remains unchanged; the latest presentation-only deletion pass
@@ -17,6 +17,28 @@ enrolment or learning update.
 Reader contains no Learning Memory browser or removal action; management belongs to the independent page.
 
 ## Implemented
+
+### Book → Section → KP browser IA (2026-09-15)
+
+Replaced the database-style Book/Section/KP dropdown strip with a browse hierarchy. The Memory home
+now contains only Books that own memberships and their counts. A Book opens a dedicated view with
+an Outline-backed Chapter/Section rail containing only nodes that own Memory, KP content groups,
+compact item rows and the existing content-first detail. Search is hidden until requested and is
+strictly scoped to the current Book. There is no manual refresh control; opening the collection and
+membership mutations use the existing API refresh path.
+
+Durable identity and provenance are still resolved by the existing service. The UI derives Chapter
+placement only by following the authoritative Outline parent chain; missing Section/KP associations
+remain in an honest **其他** group. Source return and membership removal reuse their existing routes.
+
+- TARGETED FRONTEND: `node --test tests-js/memory-ui.test.js` **3 PASS**, including current-Book
+  search isolation, removal race protection and the absence of the old filter/refresh controls.
+- SHORTEST REAL PATH: `tests-e2e/memory-navigation.mjs` PASS on an isolated copy of the real Library:
+  Learning Memory → Book → Section/KP → item → source → Book list. All providers were disabled.
+  The requested full 348-page collect/restart/cascade flow and broad suites were intentionally not
+  rerun because this pass changes only the local Memory browser IA.
+- Visual checks: `memory-ia-home.png`, `memory-ia-book.png` and `memory-ia-detail.png` at 1600×1000.
+  No new dependency, API, persistence behavior or cross-Book search was introduced.
 
 ### UI deletion pass (2026-09-15)
 
@@ -187,4 +209,4 @@ Core files: `memory.py`, `memory_schema.py`, `static/memory-ui.js`; integrations
 Accepted implementation: `c702316` (original implementation `5f03c06`; independent-page amendment
 `9d5d7b1`; final brief clarification `14b2172`). Closure commit is the commit containing the final
 report/status/review update, reported by hash in the handoff. The 2026-09-15 UI deletion pass
-checkpoint is likewise reported in its user-retest handoff.
+and browser IA checkpoints are likewise reported in their user-retest handoffs.

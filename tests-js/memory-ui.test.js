@@ -56,12 +56,33 @@ test('memory keeps raw Markdown and technical review detail out of the reading v
     await page.addScriptTag({ content: 'function renderAssistantAnswer(node, body) { node.textContent = body.slice(0, 50000); }\n' + source + '\nwindow.createMemoryUI=createMemoryUI;' });
     await page.evaluate(() => {
       const item = { id: 'membership', book_id: 'book', book_title: '教材', book_source_revision_id: 'revision', source_kind: 'AI_SAVED', source_id: 'answer',
+        section: {id:'section',title:'2.1 数据表示'}, knowledge_point:{id:'kp',title:'补码'},
         source: { body: '文'.repeat(50001) + '\n**完整末尾 <script>不可执行</script>**', verification_state: 'FAIL', pdf_page_index: 0, anchor_state: 'OK', quote: '来源', provenance: { answer_question: '原问题' } } };
+      const other = {...item,id:'other-membership',book_id:'other-book',book_title:'另一教材',book_source_revision_id:'other-revision',
+        source_id:'other-answer',source:{...item.source,body:'只属于另一教材的内容',provenance:{answer_question:'另一教材问题'}}};
       window.expectedOriginal = item.source.body;
-      createMemoryUI({ api: async path => path === '/api/memory' ? { items: [item] } : { item }, announce: () => {}, returnToSource: () => {} });
+      createMemoryUI({ api: async path => path === '/api/memory' ? { items: [item, other] }
+        : path.endsWith('/outline') ? {nodes:[
+          {outline_node_id:'chapter',kind:'CHAPTER',title:'第2章 数据表示',parent_id:null,start_page:0,start_y:0},
+          {outline_node_id:'section',kind:'SECTION',title:'2.1 数据表示',parent_id:'chapter',start_page:0,start_y:0},
+        ]} : { item }, announce: () => {}, returnToSource: () => {} });
     });
     await page.locator('.memory-open').first().click();
-    await page.locator('.memory-card-open').click();
+    assert.equal(await page.locator('#memory-book').count(), 0);
+    assert.equal(await page.locator('#memory-section').count(), 0);
+    assert.equal(await page.locator('#memory-refresh').count(), 0);
+    await page.locator('.memory-book-open[data-book-id="book"]').click();
+    assert.equal(await page.locator('#memory-search').isHidden(), true);
+    assert.equal(await page.locator('.memory-chapter h2').innerText(), '第2章 数据表示');
+    assert.equal(await page.locator('.memory-section-open span').innerText(), '2.1 数据表示');
+    assert.equal(await page.locator('.memory-section-open small').innerText(), '1');
+    assert.equal(await page.locator('.memory-kp-group h2').innerText(), '补码');
+    await page.locator('#memory-search-toggle').click();
+    await page.locator('#memory-query').fill('只属于另一教材');
+    assert.equal(await page.locator('.memory-item-open').count(), 0);
+    await page.locator('#memory-query').press('Escape');
+    assert.equal(await page.locator('#memory-search').isHidden(), true);
+    await page.locator('.memory-item-open').click();
     await page.locator('#memory-detail[data-detail-id="membership"]').waitFor();
     const content = await page.locator('#memory-detail .memory-answer').textContent();
     assert.equal(content, '文'.repeat(50000));
@@ -81,17 +102,23 @@ test('switching Memory detail immediately removes stale destructive actions', as
     await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
     await page.addScriptTag({content:'function renderAssistantAnswer(n,s){n.textContent=s;}\n'+source+'\nwindow.createMemoryUI=createMemoryUI;'});
     await page.evaluate(()=>{
-      const items=['a','b'].map(id=>({id,book_id:'book',book_title:'教材',book_source_revision_id:'revision',source_kind:'MASTER',source_id:id,source:{question:id,content:'原回答 '+id}}));
+      const items=['a','b'].map(id=>({id,book_id:'book',book_title:'教材',book_source_revision_id:'revision',source_kind:'MASTER',source_id:id,
+        section:{id:'section',title:'1.1 小节'},knowledge_point:{id:'kp',title:'知识点'},source:{question:id,content:'原回答 '+id}}));
       window.deletes=[];
       createMemoryUI({announce:()=>{},returnToSource:()=>{},api:async(path,options={})=>{
         if(options.method==='DELETE'){window.deletes.push(path);return {};}
         if(path==='/api/memory')return {items};
+        if(path.endsWith('/outline'))return {nodes:[
+          {outline_node_id:'chapter',kind:'CHAPTER',title:'第1章',parent_id:null,start_page:0,start_y:0},
+          {outline_node_id:'section',kind:'SECTION',title:'1.1 小节',parent_id:'chapter',start_page:0,start_y:0},
+        ]};
         if(path.endsWith('/b'))await new Promise(resolve=>{window.resolveSecond=resolve;});
         return {item:items.find(i=>path.endsWith('/'+i.id))};
       }});
     });
-    await page.locator('.memory-open').click();await page.locator('#memory-detail[data-detail-id="a"]').waitFor();
-    await page.locator('[data-memory-id="b"] .memory-card-open').click();
+    await page.locator('.memory-open').click();await page.locator('.memory-book-open').click();
+    await page.locator('.memory-item-open[data-memory-id="a"]').click();await page.locator('#memory-detail[data-detail-id="a"]').waitFor();
+    await page.locator('.memory-item-open[data-memory-id="b"]').click();
     assert.equal(await page.locator('#memory-detail button').count(),0);
     await page.evaluate(()=>window.resolveSecond());await page.locator('#memory-detail[data-detail-id="b"]').waitFor();
     await page.locator('#memory-detail .memory-more > summary').click();
