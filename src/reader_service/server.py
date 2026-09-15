@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
-from reader_service.agent_runtime import ProviderFailure
+from reader_service.agent_runtime import ProviderFailure, StreamConsumerDisconnected
 from reader_service.annotation import AnnotationService
 from reader_service.assistant import AssistantService, AssistantStateError
 from reader_service.library import IntakeError, LibraryService
@@ -594,18 +594,28 @@ def handler_factory(
                         "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
                     })
                     return
+                streaming = False
                 try:
                     payload = self._read_json()
+                    streaming = self._wants_assistant_stream()
+                    if streaming:
+                        self._start_assistant_stream()
                     if payload.get("source_kind") == "INLINE_GUIDANCE":
                         if teaching is None:
                             raise ValueError("行间教学服务不可用。")
                         context = teaching.inline.selection_context(ask_match.group(1), payload["section_id"], payload["asset_id"], payload["item_id"], payload["field"], payload["start_offset"], payload["end_offset"])
-                        state = assistant.ask_inline(payload["reader_session_id"], ask_match.group(1), context, payload.get("provider"))
+                        state = assistant.ask_inline(
+                            payload["reader_session_id"], ask_match.group(1), context,
+                            payload.get("provider"), self._assistant_stream_event if streaming else None,
+                        )
                     elif payload.get("source_kind") == "READING_GUIDE":
                         if teaching is None:
                             raise ValueError("导读服务不可用。")
                         context = teaching.selection_context(ask_match.group(1), payload["section_id"], payload["asset_id"], payload["module_id"], payload["start_offset"], payload["end_offset"])
-                        state = assistant.ask_guide(payload["reader_session_id"], ask_match.group(1), context, payload.get("provider"))
+                        state = assistant.ask_guide(
+                            payload["reader_session_id"], ask_match.group(1), context,
+                            payload.get("provider"), self._assistant_stream_event if streaming else None,
+                        )
                     else:
                         state = assistant.ask_selection(
                             payload["reader_session_id"],
@@ -615,20 +625,28 @@ def handler_factory(
                             end=payload["end"],
                             provider=payload.get("provider"),
                             source_kind=payload.get("source_kind", "ORIGINAL_PDF"),
+                            stream=self._assistant_stream_event if streaming else None,
                         )
                 except (KeyError, TypeError, ValueError) as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_ASK", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.BAD_REQUEST, "INVALID_ASK", str(exc)
+                    )
                     return
                 except AssistantStateError as exc:
-                    self._assistant_state_failure(exc)
+                    self._assistant_state_failure(exc, streaming=streaming)
                     return
                 except LookupError as exc:
-                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASK_CONTEXT_NOT_FOUND", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.NOT_FOUND, "ASK_CONTEXT_NOT_FOUND", str(exc)
+                    )
                     return
                 except ProviderFailure as exc:
-                    self._provider_failure(exc)
+                    self._provider_failure(exc, streaming=streaming)
                     return
-                self._json(HTTPStatus.OK, {"assistant": state})
+                except StreamConsumerDisconnected:
+                    return
+                if not streaming:
+                    self._json(HTTPStatus.OK, {"assistant": state})
                 return
             if parsed.path == "/api/assistant/child":
                 if not self._authorized():
@@ -638,8 +656,12 @@ def handler_factory(
                         "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
                     })
                     return
+                streaming = False
                 try:
                     payload = self._read_json()
+                    streaming = self._wants_assistant_stream()
+                    if streaming:
+                        self._start_assistant_stream()
                     state = assistant.create_child(
                         payload["reader_session_id"],
                         payload["root_id"],
@@ -649,20 +671,28 @@ def handler_factory(
                         end_offset=int(payload["end_offset"]),
                         node_id=payload.get("node_id"),
                         source_spans=payload.get("source_spans"),
+                        stream=self._assistant_stream_event if streaming else None,
                     )
                 except (KeyError, TypeError, ValueError) as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_CHILD", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.BAD_REQUEST, "INVALID_CHILD", str(exc)
+                    )
                     return
                 except AssistantStateError as exc:
-                    self._assistant_state_failure(exc)
+                    self._assistant_state_failure(exc, streaming=streaming)
                     return
                 except LookupError as exc:
-                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_LEVEL_GONE", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.NOT_FOUND, "ASSISTANT_LEVEL_GONE", str(exc)
+                    )
                     return
                 except ProviderFailure as exc:
-                    self._provider_failure(exc)
+                    self._provider_failure(exc, streaming=streaming)
                     return
-                self._json(HTTPStatus.OK, {"assistant": state})
+                except StreamConsumerDisconnected:
+                    return
+                if not streaming:
+                    self._json(HTTPStatus.OK, {"assistant": state})
                 return
             if parsed.path == "/api/assistant/retry-child":
                 if not self._authorized():
@@ -672,22 +702,36 @@ def handler_factory(
                         "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
                     })
                     return
+                streaming = False
                 try:
                     payload = self._read_json()
-                    state = assistant.retry_child(payload["reader_session_id"], payload["root_id"], payload["node_id"])
+                    streaming = self._wants_assistant_stream()
+                    if streaming:
+                        self._start_assistant_stream()
+                    state = assistant.retry_child(
+                        payload["reader_session_id"], payload["root_id"], payload["node_id"],
+                        stream=self._assistant_stream_event if streaming else None,
+                    )
                 except (KeyError, TypeError, ValueError) as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_CHILD", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.BAD_REQUEST, "INVALID_CHILD", str(exc)
+                    )
                     return
                 except AssistantStateError as exc:
-                    self._assistant_state_failure(exc)
+                    self._assistant_state_failure(exc, streaming=streaming)
                     return
                 except LookupError as exc:
-                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_LEVEL_GONE", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.NOT_FOUND, "ASSISTANT_LEVEL_GONE", str(exc)
+                    )
                     return
                 except ProviderFailure as exc:
-                    self._provider_failure(exc)
+                    self._provider_failure(exc, streaming=streaming)
                     return
-                self._json(HTTPStatus.OK, {"assistant": state})
+                except StreamConsumerDisconnected:
+                    return
+                if not streaming:
+                    self._json(HTTPStatus.OK, {"assistant": state})
                 return
             if parsed.path == "/api/assistant/close-child":
                 if not self._authorized():
@@ -727,27 +771,39 @@ def handler_factory(
                         "code": "AI_UNCONFIGURED", "error": "尚未配置 AI 功能；Reader 其余能力仍可使用。"
                     })
                     return
+                streaming = False
                 try:
                     payload = self._read_json()
+                    streaming = self._wants_assistant_stream()
+                    if streaming:
+                        self._start_assistant_stream()
                     state = assistant.follow_up(
                         payload["reader_session_id"],
                         payload["root_id"],
                         payload["question"],
                         node_id=payload.get("node_id"),
+                        stream=self._assistant_stream_event if streaming else None,
                     )
                 except (KeyError, TypeError, ValueError) as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_FOLLOW_UP", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.BAD_REQUEST, "INVALID_FOLLOW_UP", str(exc)
+                    )
                     return
                 except AssistantStateError as exc:
-                    self._assistant_state_failure(exc)
+                    self._assistant_state_failure(exc, streaming=streaming)
                     return
                 except LookupError as exc:
-                    self._json(HTTPStatus.NOT_FOUND, {"code": "ASSISTANT_LEVEL_GONE", "error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.NOT_FOUND, "ASSISTANT_LEVEL_GONE", str(exc)
+                    )
                     return
                 except ProviderFailure as exc:
-                    self._provider_failure(exc)
+                    self._provider_failure(exc, streaming=streaming)
                     return
-                self._json(HTTPStatus.OK, {"assistant": state})
+                except StreamConsumerDisconnected:
+                    return
+                if not streaming:
+                    self._json(HTTPStatus.OK, {"assistant": state})
                 return
             if parsed.path == "/api/assistant/focus":
                 if not self._authorized():
@@ -1064,22 +1120,70 @@ def handler_factory(
                 raise ValueError("Request body must be a JSON object")
             return value
 
-        def _provider_failure(self, failure: ProviderFailure) -> None:
-            self._json(
-                HTTPStatus.SERVICE_UNAVAILABLE,
-                {"code": f"AI_{failure.kind.value}", "error": failure.user_message},
+        def _provider_failure(
+            self, failure: ProviderFailure, *, streaming: bool = False
+        ) -> None:
+            payload = {
+                "code": f"AI_{failure.kind.value}",
+                "error": failure.user_message,
+            }
+            diagnostics = failure.diagnostics or {}
+            metrics = {
+                key: diagnostics.get(key)
+                for key in ("ttft_ms", "latency_ms")
+                if isinstance(diagnostics.get(key), int)
+            }
+            if metrics:
+                payload["metrics"] = metrics
+            if streaming:
+                self._assistant_stream_event({"type": "error", **payload})
+            else:
+                self._json(HTTPStatus.SERVICE_UNAVAILABLE, payload)
+
+        def _assistant_state_failure(
+            self, failure: AssistantStateError, *, streaming: bool = False
+        ) -> None:
+            self._assistant_failure(
+                streaming,
+                HTTPStatus.CONFLICT,
+                f"ASSISTANT_{failure.code}",
+                failure.user_message,
             )
 
-        def _assistant_state_failure(self, failure: AssistantStateError) -> None:
-            self._json(
-                HTTPStatus.CONFLICT,
-                {"code": f"ASSISTANT_{failure.code}", "error": failure.user_message},
-            )
+        def _assistant_failure(
+            self, streaming: bool, status: HTTPStatus, code: str, message: str
+        ) -> None:
+            payload = {"code": code, "error": message}
+            if streaming:
+                self._assistant_stream_event({"type": "error", **payload})
+            else:
+                self._json(status, payload)
+
+        def _wants_assistant_stream(self) -> bool:
+            return "text/event-stream" in self.headers.get("Accept", "").casefold()
+
+        def _start_assistant_stream(self) -> None:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self._assistant_stream_event({"type": "stage", "stage": "preparing"})
+
+        def _assistant_stream_event(self, payload: dict) -> None:
+            self._project_assistant_view(payload)
+            encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            try:
+                self.wfile.write(f"data: {encoded}\n\n".encode("utf-8"))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError) as exc:
+                raise StreamConsumerDisconnected() from exc
 
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/assistant-navigator.js", "/assistant-render.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:
@@ -1153,12 +1257,7 @@ def handler_factory(
         def _json(self, status: HTTPStatus, payload: dict) -> None:
             # Browser tree navigation needs summaries plus the focused conversation only.
             # Full service state stays in memory; a focus request lazily restores its turns.
-            if self.headers.get("X-Assistant-View") == "current" and isinstance(payload.get("assistant"), dict):
-                assistant_view = payload["assistant"]
-                for root in assistant_view.get("roots", []):
-                    root.pop("turns", None)
-                    for node in root.get("nodes", []):
-                        node.pop("turns", None)
+            self._project_assistant_view(payload)
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1169,6 +1268,17 @@ def handler_factory(
                 self.wfile.write(encoded)
             except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 pass
+
+        def _project_assistant_view(self, payload: dict) -> None:
+            if self.headers.get("X-Assistant-View") != "current":
+                return
+            assistant_view = payload.get("assistant")
+            if not isinstance(assistant_view, dict):
+                return
+            for root in assistant_view.get("roots", []):
+                root.pop("turns", None)
+                for node in root.get("nodes", []):
+                    node.pop("turns", None)
 
         def _preparation_events(
             self, coordinator: PreparationCoordinator, revision_id: str

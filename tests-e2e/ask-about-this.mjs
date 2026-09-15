@@ -33,7 +33,16 @@ const mockProvider = createServer(async (request, response) => {
   const currentFocus = latest.startsWith("【当前解释焦点（用户所选）】\n")
     ? latest.split("\n")[1] : "";
   const isChild = latest.includes("【直接上一轮】");
-  if (controlledChildFailure) { response.writeHead(500, {'Content-Type':'application/json'}); response.end(JSON.stringify({error:{message:'controlled child failure'}})); return; }
+  if (controlledChildFailure) {
+    if (body.stream) {
+      response.writeHead(200, {"Content-Type":"text/event-stream; charset=utf-8"});
+      response.end(`data: ${JSON.stringify({choices:[{delta:{content:"已收到的部分解释"},finish_reason:null}]})}\n\n`);
+    } else {
+      response.writeHead(500, {'Content-Type':'application/json'});
+      response.end(JSON.stringify({error:{message:'controlled child failure'}}));
+    }
+    return;
+  }
   let answer;
   if (latest === "延迟回答") {
     await new Promise((resolve) => setTimeout(resolve, 800));
@@ -56,11 +65,25 @@ const mockProvider = createServer(async (request, response) => {
   } else {
     answer = "一次总线事务会经过地址、数据与控制阶段；总线仲裁决定多个部件竞争时谁先使用总线。";
   }
-  response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({
-    choices: [{ message: { role: "assistant", content: answer } }],
-    usage: { prompt_tokens: 42, completion_tokens: 18, total_tokens: 60 },
-  }));
+  if (body.stream) {
+    response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8" });
+    const pieces = answer.match(/.{1,5}/gu) || [];
+    for (const piece of pieces) {
+      response.write(`data: ${JSON.stringify({choices:[{delta:{content:piece},finish_reason:null}],usage:null})}\n\n`);
+      await new Promise((resolve) => setTimeout(resolve, 8));
+    }
+    response.write(`data: ${JSON.stringify({
+      choices:[{delta:{content:""},finish_reason:"stop"}],
+      usage:{prompt_tokens:42,completion_tokens:18,total_tokens:60},
+    })}\n\n`);
+    response.end("data: [DONE]\n\n");
+  } else {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: answer } }],
+      usage: { prompt_tokens: 42, completion_tokens: 18, total_tokens: 60 },
+    }));
+  }
 });
 await new Promise((resolve) => mockProvider.listen(0, "127.0.0.1", resolve));
 const providerEndpoint = `http://127.0.0.1:${mockProvider.address().port}/chat/completions`;
@@ -212,9 +235,9 @@ try {
   await page.locator("#assistant-start").click();
   const firstHttp = await firstResponse;
   assert.equal(firstHttp.status(), 200);
-  const firstPayload = await firstHttp.json();
   const firstRequest = firstHttp.request().postDataJSON();
-  const firstState = firstPayload.assistant;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const firstState = await focusedAssistantState(page, firstRequest.reader_session_id);
   const firstRoot = firstState.current;
   const pendingStages = await page.evaluate(() => {
     window.__assistantPendingObserver.disconnect();
@@ -222,6 +245,7 @@ try {
   });
   assert.ok(pendingStages.includes("准备上下文…"));
   assert.ok(pendingStages.some((stage) => stage.startsWith("正在回答")));
+  assert.ok(pendingStages.includes("完成"));
   await page.locator(".assistant-answer-bubble").getByText("总线仲裁", { exact: false }).waitFor();
   await page.screenshot({path:'test-results/assistant-reading-panel.png'});
   await page.locator('#assistant-panel').screenshot({path:'test-results/assistant-reading-panel-detail.png'});
@@ -239,7 +263,9 @@ try {
   const followResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
   await page.locator("#assistant-question").fill("为什么？");
   await page.locator("#assistant-send").click();
-  const followState = (await (await followResponse).json()).assistant;
+  await followResponse;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const followState = await focusedAssistantState(page, firstRequest.reader_session_id);
   assert.equal(followState.current.depth, 1);
   assert.equal(followState.current.turns.length, 2);
   await page.locator(".assistant-answer-bubble").getByText("优先级", { exact: false }).waitFor();
@@ -256,9 +282,11 @@ try {
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
   assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 2 层，最多 5 层");
-  assert.equal(await page.locator(".assistant-answer-bubble").count(), 0,
+  assert.equal(await page.locator(".assistant-answer-bubble:not(.assistant-answer-streaming)").count(), 0,
     "Parent answer remained stacked on the pending Child page");
-  const childState = (await (await childResponse).json()).assistant;
+  await childResponse;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const childState = await focusedAssistantState(page, firstRequest.reader_session_id);
   const childAId = childState.current.node_id;
   assert.equal(childState.current.depth, 2);
   assert.equal(childState.current.parent_ref.root_id, firstRoot.root_id);
@@ -270,7 +298,9 @@ try {
   const childFollowResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/follow-up"));
   await page.locator("#assistant-question").fill("再简单一点");
   await page.locator("#assistant-send").click();
-  const childFollowState = (await (await childFollowResponse).json()).assistant;
+  await childFollowResponse;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const childFollowState = await focusedAssistantState(page, firstRequest.reader_session_id);
   assert.equal(childFollowState.current.depth, 2);
   assert.equal(childFollowState.current.turns.length, 2);
   await page.locator('.assistant-answer-bubble[data-current-answer="true"]')
@@ -287,7 +317,9 @@ try {
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
   assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 3 层，最多 5 层");
-  const grandchildState = (await (await grandchildResponse).json()).assistant;
+  await grandchildResponse;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const grandchildState = await focusedAssistantState(page, firstRequest.reader_session_id);
   const firstDeepNode = grandchildState.current.node_id;
   assert.equal(grandchildState.current.depth, 3);
   assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 3 层，最多 5 层");
@@ -315,7 +347,9 @@ try {
   const siblingResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
-  const siblingState = (await (await siblingResponse).json()).assistant;
+  await siblingResponse;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const siblingState = await focusedAssistantState(page, firstRequest.reader_session_id);
   const childBId = siblingState.current.node_id;
   assert.equal(siblingState.roots[0].nodes.length, 3);
 
@@ -367,7 +401,9 @@ try {
   await page.locator('.assistant-model-options [data-value="deepseek"]').click();
   const secondResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
-  const secondState = (await (await secondResponse).json()).assistant;
+  await secondResponse;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const secondState = await focusedAssistantState(page, firstRequest.reader_session_id);
   const secondRoot = secondState.current;
   assert.equal(secondState.roots.length, 2);
   assert.equal(secondRoot.depth, 1);
@@ -401,8 +437,9 @@ try {
   const closeRootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/close-root"));
   await page.locator("#assistant-close-root").click();
   const afterClose = (await (await closeRootResponse).json()).assistant;
-  assert.equal((await delayedFollowResponse).status(), 409,
-    "an in-flight response from a closed Root was not structurally cancelled");
+  assert.equal((await delayedFollowResponse).status(), 200,
+    "the SSE request did not start before the Root was closed");
+  await page.waitForTimeout(900);
   assert.equal(afterClose.roots.length, 1);
   assert.equal(afterClose.current.root_id, secondRoot.root_id);
   assert.equal(afterClose.roots[0].nodes.length, 0);
@@ -436,8 +473,10 @@ try {
   const failedResponse = page.waitForResponse(r=>r.url().endsWith('/assistant/child'));
   await page.locator('#assistant-ask-deeper').click();
   const failedPayload = (await failedRequest).postDataJSON();
-  assert.equal((await failedResponse).status(),503);
-  const retryButton = page.getByRole('button',{name:'重试这层解释',exact:true});
+  assert.equal((await failedResponse).status(),200);
+  await failedResponse;
+  await page.getByText('已收到的部分解释',{exact:true}).waitFor();
+  const retryButton = page.getByRole('button',{name:'重新回答',exact:true});
   await retryButton.waitFor();
   assert.ok(await page.locator('#viewer').isVisible());
   const failedBody=providerCalls.at(-1).body;
@@ -445,7 +484,9 @@ try {
   await page.waitForTimeout(31000); // Existing provider cooldown remains enforced.
   const recoveredResponse=page.waitForResponse(r=>r.url().endsWith('/assistant/retry-child'));
   await retryButton.click();
-  const recovered=(await (await recoveredResponse).json()).assistant.current;
+  await recoveredResponse;
+  await page.locator(".assistant-pending").waitFor({state:"detached"});
+  const recovered=(await focusedAssistantState(page, firstRequest.reader_session_id)).current;
   assert.equal(recovered.node_id,failedPayload.node_id);
   assert.equal(recovered.root_id,failedPayload.root_id);
   assert.equal(recovered.turns.length,1);
@@ -627,6 +668,24 @@ async function goToPage(page, pageIndex) {
   await page.locator("#page-number").press("Enter");
   await page.locator(`.page[data-index="${pageIndex}"] canvas`).waitFor({ state: "visible", timeout: 30_000 });
   await page.locator(`.page[data-index="${pageIndex}"] .text-overlay`).waitFor({ state: "attached", timeout: 15_000 });
+}
+
+async function focusedAssistantState(page, readerSessionId) {
+  const current = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  await current.waitFor();
+  const target = await current.evaluate((element) => ({
+    root_id: element.dataset.rootId,
+    node_id: element.dataset.nodeId || null,
+  }));
+  return page.evaluate(async ({payload, readerSessionId}) => {
+    const response = await fetch("/api/assistant/focus", {
+      method: "POST",
+      headers: {"Content-Type":"application/json", "X-Assistant-View":"current"},
+      body: JSON.stringify({reader_session_id: readerSessionId, ...payload}),
+    });
+    if (!response.ok) throw new Error(`focus state ${response.status}`);
+    return (await response.json()).assistant;
+  }, {payload: target, readerSessionId});
 }
 
 async function json(page, url) {

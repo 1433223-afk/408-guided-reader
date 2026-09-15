@@ -87,6 +87,28 @@ class NamedMockAdapter(MockAdapter):
         return ProviderResponse(answer, self.usage)
 
 
+class StreamingMockAdapter(MockAdapter):
+    def stream(self, endpoint, api_key, body, timeout, on_delta):
+        self.calls.append({
+            "endpoint": endpoint,
+            "api_key": api_key,
+            "body": body,
+            "timeout": timeout,
+        })
+        outcome = self.outcomes.popleft() if self.outcomes else ["真实", "增量"]
+        if isinstance(outcome, Exception):
+            raise outcome
+        for delta in outcome:
+            if isinstance(delta, Exception):
+                raise delta
+            on_delta(delta)
+        answer = "".join(outcome)
+        return ProviderResponse(
+            answer,
+            {"prompt_tokens": 10, "completion_tokens": len(outcome), "total_tokens": 10 + len(outcome)},
+        )
+
+
 def line(text: str, y: float) -> DetectedLine:
     width = 0.75 / max(1, len(text))
     cells = tuple(
@@ -334,6 +356,68 @@ def test_selection_ask_follow_up_payload_and_scope_isolation(assistant_fixture):
     assert "291" in inspection_text
     assert "dev-secret-key" not in inspection_text
     assert "Authorization" not in inspection_text
+
+
+def test_root_follow_up_and_child_stream_without_changing_context_contract(
+    assistant_fixture,
+):
+    adapter = StreamingMockAdapter([
+        ["地址码", "是地址字段。"],
+        ["地址字段", "用于选择位置。"],
+        ["地址字段", "就是用来定位的字段。"],
+    ])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    session_id = "reader-session-stream-contract"
+
+    root_events = []
+    root_state = assistant.ask_selection(
+        session_id,
+        assistant_fixture["revision_id"],
+        3,
+        **selection(3),
+        stream=root_events.append,
+    )
+    assert [event["type"] for event in root_events] == [
+        "stage", "delta", "delta", "complete",
+    ]
+    assert root_events[0]["stage"] == "answering"
+    assert "".join(event["content"] for event in root_events if event["type"] == "delta") == "地址码是地址字段。"
+    assert root_events[-1]["metrics"]["output_tokens"] == 2
+    assert focused(root_state)["turns"][0]["question"] == "总线事务"
+
+    follow_events = []
+    followed = assistant.follow_up(
+        session_id,
+        focused(root_state)["root_id"],
+        "为什么？",
+        stream=follow_events.append,
+    )
+    assert focused(followed)["depth"] == 1
+    assert len(focused(followed)["turns"]) == 2
+    assert "".join(event["content"] for event in follow_events if event["type"] == "delta") == "地址字段用于选择位置。"
+
+    current = focused(followed)
+    first_turn = current["turns"][-1]
+    start = first_turn["answer"].index("地址字段")
+    child_events = []
+    child = assistant.create_child(
+        session_id,
+        current["root_id"],
+        parent_node_id=None,
+        turn_id=first_turn["turn_id"],
+        start_offset=start,
+        end_offset=start + len("地址字段"),
+        stream=child_events.append,
+    )
+    assert focused(child)["depth"] == 2
+    assert focused(child)["turns"][0]["question"] == "地址字段"
+    child_payload = adapter.calls[2]["body"]
+    assert child_payload["stream"] is True
+    assert child_payload["messages"][-1]["content"].startswith(
+        "【当前解释焦点（用户所选）】\n地址字段"
+    )
+    assert "地址字段用于选择位置。" in child_payload["messages"][-1]["content"]
+    assert len(child_payload["messages"]) == 2
 
 
 def test_same_page_selections_keep_distinct_visible_and_provider_focus(assistant_fixture):
@@ -766,6 +850,51 @@ def test_transient_retry_is_bounded_and_cooling_short_circuits():
     assert len(adapter.calls) == 4
 
 
+def test_streaming_runtime_uses_real_deltas_usage_and_ttft():
+    adapter = StreamingMockAdapter([["地", "址", "码"]])
+    agent = runtime(adapter)
+    deltas = []
+    result = agent.stream_with_metadata(
+        [{"role": "user", "content": "bounded"}],
+        deltas.append,
+        interaction_id="stream-metrics",
+    )
+    assert deltas == ["地", "址", "码"]
+    assert result.answer == "地址码"
+    assert result.ttft_ms is not None
+    assert result.latency_ms >= result.ttft_ms
+    assert result.usage["completion_tokens"] == 3
+    assert adapter.calls[0]["body"]["stream"] is True
+    assert adapter.calls[0]["body"]["stream_options"] == {"include_usage": True}
+    assert result.effective_config["request_parameters"]["stream"] is True
+
+
+def test_streaming_runtime_retries_only_before_visible_content():
+    transient = ProviderFailure(
+        ProviderFailureKind.TRANSIENT, "network", "暂时失败"
+    )
+    before_content = StreamingMockAdapter([transient, ["恢复"]])
+    recovered = runtime(before_content, max_attempts=2)
+    deltas = []
+    assert recovered.stream_with_metadata(
+        [{"role": "user", "content": "bounded"}], deltas.append
+    ).answer == "恢复"
+    assert len(before_content.calls) == 2
+    assert deltas == ["恢复"]
+
+    after_content = StreamingMockAdapter([["部分", transient]])
+    interrupted = runtime(after_content, max_attempts=3)
+    partial = []
+    with pytest.raises(ProviderFailure) as caught:
+        interrupted.stream_with_metadata(
+            [{"role": "user", "content": "bounded"}], partial.append
+        )
+    assert len(after_content.calls) == 1
+    assert partial == ["部分"]
+    assert caught.value.diagnostics["partial_content_received"] is True
+    assert caught.value.diagnostics["ttft_ms"] is not None
+
+
 @pytest.mark.parametrize("code", ["auth", "quota"])
 def test_user_actionable_provider_failures_do_not_retry_or_leak_secret(code, caplog):
     failure = ProviderFailure(
@@ -993,6 +1122,52 @@ def test_deepseek_adapter_refuses_redirect_to_second_endpoint():
     assert hits == ["/chat/completions"]
 
 
+@pytest.mark.parametrize("provider", ["deepseek", "zhipu"])
+def test_openai_compatible_stream_parser_handles_fragmented_utf8_done_and_usage(
+    monkeypatch, provider
+):
+    wire = (
+        'data: {"choices":[{"delta":{"reasoning_content":"private"},"finish_reason":null}]}\r\n\r\n'
+        'data: {"choices":[{"delta":{"content":"地"},"finish_reason":null}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"址码"},"finish_reason":"stop"}],'
+        '"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}\n\n'
+        'data: [DONE]\n\n'
+    ).encode("utf-8")
+    fragments = deque([wire[:83], wire[83:117], wire[117:149], wire[149:]])
+
+    class FragmentedResponse:
+        headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read1(self, _size):
+            return fragments.popleft() if fragments else b""
+
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            return FragmentedResponse()
+
+    monkeypatch.setattr(provider_adapter, "build_opener", lambda *_args: Opener())
+    deltas = []
+    result = OpenAICompatibleAdapter(provider).stream(
+        "http://127.0.0.1:9999/chat/completions",
+        "stream-secret",
+        {"model": "test", "messages": [], "stream": True},
+        2,
+        deltas.append,
+    )
+    assert deltas == ["地", "址码"]
+    assert result.answer == "地址码"
+    assert result.usage == {
+        "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10,
+    }
+    assert result.diagnostics["reasoning_length"] == len("private")
+
+
 def test_empty_response_attempt_observer_retains_only_safe_finish_usage_and_lengths():
     reasoning_canary = "PRIVATE_REASONING_BODY_MUST_NOT_BE_RETAINED"
 
@@ -1119,6 +1294,54 @@ def test_assistant_http_contract_round_trips_and_close_clears(assistant_fixture)
         with urlopen(request) as response:
             assert response.status == 204
         assert assistant.conversation_count() == 0
+
+
+def test_assistant_http_stream_exposes_real_lifecycle_deltas_and_metrics(assistant_fixture):
+    from test_api import running_server
+    from urllib.request import Request, urlopen
+
+    adapter = StreamingMockAdapter([["地", "址码"]])
+    assistant = AssistantService(assistant_fixture["contexts"], runtime(adapter))
+    revision_id = assistant_fixture["revision_id"]
+    body = json.dumps({
+        "reader_session_id": "reader-session-http-stream",
+        "pdf_page_index": 3,
+        **selection(3),
+    }, ensure_ascii=False).encode()
+    with running_server(
+        assistant_fixture["foundation"].library,
+        outline=assistant_fixture["outline"],
+        assistant=assistant,
+    ) as (base, token):
+        request = Request(
+            f"{base}/api/revisions/{revision_id}/assistant/ask",
+            method="POST",
+            data=body,
+            headers={
+                "X-Reader-Token": token,
+                "X-Assistant-View": "current",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+        )
+        with urlopen(request) as response:
+            assert response.headers["Content-Type"].startswith("text/event-stream")
+            wire = response.read().decode("utf-8")
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in wire.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert [event["type"] for event in events] == [
+        "stage", "stage", "delta", "delta", "complete",
+    ]
+    assert [event.get("stage") for event in events[:2]] == ["preparing", "answering"]
+    assert "".join(event["content"] for event in events if event["type"] == "delta") == "地址码"
+    complete = events[-1]
+    assert complete["assistant"]["current"]["turns"][0]["answer"] == "地址码"
+    assert "turns" not in complete["assistant"]["roots"][0]
+    assert complete["metrics"]["output_tokens"] == 2
+    assert adapter.calls[0]["body"]["stream"] is True
 
 
 def create_child_for_text(

@@ -51,8 +51,7 @@ const provider = createServer(async (request, response) => {
   providerCalls.push(body);
   const answer = body.messages.at(-1).content.includes("【直接上一轮】")
     ? "这是精确映射后的深入解释。" : rawAnswer;
-  response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ choices: [{ message: { content: answer } }] }));
+  sendProviderAnswer(response, body, answer);
 });
 await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
 
@@ -195,11 +194,31 @@ async function createAndCloseChild(page, phrase, occurrence) {
   const request = (await requestPromise).postDataJSON();
   const response = await responsePromise;
   assert.equal(response.status(), 200);
-  const child = (await response.json()).assistant.current;
+  const childBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  await childBubble.waitFor();
+  const childQuestion = await childBubble.locator("xpath=preceding-sibling::*[1]").innerText();
   const closePromise = page.waitForResponse((candidate) => candidate.url().endsWith("/assistant/close-child"));
   await page.locator("#assistant-close-root").click();
   assert.equal((await closePromise).status(), 200);
-  return { visibleSelection, request, childQuestion: child.turns[0].question };
+  return { visibleSelection, request, childQuestion };
+}
+
+function sendProviderAnswer(response, body, answer) {
+  if (!body.stream) {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: answer } }] }));
+    return;
+  }
+  response.writeHead(200, { "Content-Type": "text/event-stream" });
+  const split = Math.ceil(answer.length / 2);
+  for (const content of [answer.slice(0, split), answer.slice(split)]) {
+    if (content) response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+  }
+  response.write(`data: ${JSON.stringify({
+    choices: [{ delta: {}, finish_reason: "stop" }],
+    usage: { completion_tokens: answer.length },
+  })}\n\n`);
+  response.end("data: [DONE]\n\n");
 }
 
 async function selectRenderedOccurrence(page, phrase, occurrence) {

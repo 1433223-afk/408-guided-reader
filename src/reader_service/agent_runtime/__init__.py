@@ -19,6 +19,7 @@ from .runtime import (
     ProviderFailureKind,
     ProviderResponse,
     ProviderRuntimeSet,
+    StreamConsumerDisconnected,
 )
 
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "ProviderFailureKind",
     "ProviderResponse",
     "ProviderRuntimeSet",
+    "StreamConsumerDisconnected",
     "read_deepseek_api_key",
     "read_deepseek_credential",
     "read_provider_api_key",

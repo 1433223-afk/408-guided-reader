@@ -1,4 +1,5 @@
 import {createScreens, createChapterEntry, createAssistantModelMenu, createMessageRail, header, action} from "/screens.js";
+import { streamAssistantResponse } from "/assistant-stream.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
 import {
   lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
@@ -48,6 +49,7 @@ const state = {
   assistantSaveIntents: new Map(), assistantSavedTurns: new Map(),
   assistantReviewPolls: new Map(),
   assistantPending: false, assistantStatusTimer: 0,
+  assistantStreamControllers: new Map(),
   assistantScrollPositions: new Map(), assistantChildRequests: new Map(),
   assistantViewDrafts: new Map(), assistantRenderedKey: null,
   assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
@@ -292,6 +294,7 @@ async function openBook(book) {
 }
 
 function closeReader() {
+  abortAssistantStreams();
   chapterEntry.reset();
   inline.reset();
   guide.close();
@@ -1802,6 +1805,101 @@ function showAssistantPending(question, phase = "answering") {
   return pending;
 }
 
+function abortAssistantStreams() {
+  for (const controller of state.assistantStreamControllers.values()) controller.abort();
+  state.assistantStreamControllers.clear();
+}
+
+function createAssistantStreamView(question, pending, { showQuestion = true } = {}) {
+  const article = document.createElement("article");
+  article.className = "assistant-turn assistant-stream-turn";
+  if (showQuestion) {
+    const questionBubble = document.createElement("p");
+    questionBubble.className = "assistant-question-bubble";
+    questionBubble.textContent = question;
+    article.append(questionBubble);
+  }
+  const answer = document.createElement("div");
+  answer.className = "assistant-answer-bubble assistant-answer-streaming";
+  answer.hidden = true;
+  answer.setAttribute("aria-live", "off");
+  article.append(answer);
+  pending.before(article);
+  return { article, answer, pending, content: "" };
+}
+
+function clearAssistantStreamTransient() {
+  elements["assistant-turns"].querySelectorAll(
+    ".assistant-stream-turn,.assistant-stream-error,.assistant-pending"
+  ).forEach((node) => node.remove());
+}
+
+function appendAssistantDelta(view, content) {
+  if (!content || !view.article.isConnected) return;
+  view.content += content;
+  view.answer.hidden = false;
+  view.answer.append(document.createTextNode(content));
+  elements["assistant-turns"].scrollTop = elements["assistant-turns"].scrollHeight;
+}
+
+function showAssistantStreamFailure(view, error, retry) {
+  view.pending.remove();
+  const failure = document.createElement("div");
+  failure.className = "assistant-error assistant-stream-error";
+  const message = document.createElement("span");
+  message.textContent = error.message || "AI 解释失败，请稍后再试。";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = view.content ? "重新回答" : "重试";
+  button.addEventListener("click", () => retry());
+  failure.append(message, button);
+  view.article.after(failure);
+}
+
+async function runAssistantStream({ path, body, question, showQuestion = true, retry, streamKey }) {
+  clearAssistantStreamTransient();
+  const pending = showAssistantPending(question, "preparing");
+  const view = createAssistantStreamView(question, pending, { showQuestion });
+  const controller = new AbortController();
+  state.assistantStreamControllers.set(streamKey, controller);
+  let completed = null;
+  try {
+    await streamAssistantResponse(path, {
+      method: "POST",
+      credentials: "same-origin",
+      signal: controller.signal,
+      headers: {
+        "X-Reader-Token": launchToken,
+        "X-Assistant-View": "current",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+      },
+      body: JSON.stringify(body),
+    }, (event) => {
+      if (event.type === "stage" && event.stage === "answering") {
+        pending.textContent = "正在回答…";
+      } else if (event.type === "delta") {
+        appendAssistantDelta(view, event.content);
+      } else if (event.type === "complete") {
+        completed = event;
+      }
+    });
+    if (!completed) throw new Error("流式回答未正常完成；已保留收到的内容，可以重试。");
+    pending.textContent = "完成";
+    pending.classList.add("assistant-complete");
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return completed;
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    showAssistantStreamFailure(view, error, retry);
+    throw error;
+  } finally {
+    if (state.assistantStreamControllers.get(streamKey) === controller) {
+      state.assistantStreamControllers.delete(streamKey);
+    }
+  }
+}
+
 async function advanceAssistantPending(pending, question) {
   await new Promise((resolve) => requestAnimationFrame(resolve));
   if (pending?.isConnected) pending.textContent = `正在回答“${question}”…`;
@@ -1847,25 +1945,28 @@ async function sendAssistantFirstTurn() {
   if (!draft || state.assistantPending || !state.assistantConfigured || state.assistantCooling) return;
   state.assistantPending = true;
   syncModelSelector();
-  const pending = showAssistantPending(draft.selectedText, "preparing");
-  await advanceAssistantPending(pending, draft.selectedText);
   try {
-    const payload = await api(`/api/revisions/${draft.revisionId}/assistant/ask`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const payload = await runAssistantStream({
+      path: `/api/revisions/${draft.revisionId}/assistant/ask`,
+      question: draft.selectedText,
+      showQuestion: false,
+      retry: () => sendAssistantFirstTurn(),
+      streamKey: `draft:${draft.readerSessionId}`,
+      body: {
         reader_session_id: draft.readerSessionId,
         provider: state.assistantActiveProvider,
         source_kind: "ORIGINAL_PDF",
         ...draft.request,
-      }),
+      },
     });
     if (state.readerSessionId !== draft.readerSessionId) return;
     state.assistantDraft = null;
     applyAssistantState(payload.assistant);
   } catch (error) {
     if (state.readerSessionId === draft.readerSessionId
-        && error.code !== "ASSISTANT_REQUEST_CANCELLED") showAssistantError(error);
+        && error.code !== "ASSISTANT_REQUEST_CANCELLED" && error.name !== "AbortError") {
+      // The streaming view already owns the partial answer, error, and explicit retry.
+    }
     if (error.code?.startsWith("AI_")) {
       await refreshAssistantStatus();
     }
@@ -1882,18 +1983,18 @@ async function sendAssistantFollowUp() {
   if (!question || !current || !readerSessionId || state.assistantPending) return;
   state.assistantPending = true;
   elements["assistant-send"].disabled = true;
-  const pending = showAssistantPending(question, "preparing");
-  await advanceAssistantPending(pending, question);
   try {
-    const payload = await api("/api/assistant/follow-up", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const payload = await runAssistantStream({
+      path: "/api/assistant/follow-up",
+      question,
+      retry: () => sendAssistantFollowUp(),
+      streamKey: assistantLocationKey(current.root_id, current.node_id),
+      body: {
         reader_session_id: readerSessionId,
         root_id: current.root_id,
         node_id: current.node_id,
         question,
-      }),
+      },
     });
     if (state.readerSessionId !== readerSessionId) return;
     state.assistantViewDrafts.delete(assistantLocationKey(current.root_id, current.node_id));
@@ -1903,7 +2004,9 @@ async function sendAssistantFollowUp() {
     const stillBound = state.assistantState.current?.root_id === current.root_id
       && state.assistantState.current?.node_id === current.node_id;
     if (state.readerSessionId === readerSessionId && stillBound
-        && error.code !== "ASSISTANT_REQUEST_CANCELLED") showAssistantError(error);
+        && error.code !== "ASSISTANT_REQUEST_CANCELLED" && error.name !== "AbortError") {
+      // The streaming view retains the partial answer and retry control.
+    }
     if (error.code?.startsWith("AI_")) {
       await refreshAssistantStatus();
     }
@@ -1916,6 +2019,7 @@ async function sendAssistantFollowUp() {
 async function clearAssistantSession({ keepalive = false } = {}) {
   const readerSessionId = state.readerSessionId;
   if (!readerSessionId) return;
+  abortAssistantStreams();
   await api("/api/assistant/close", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1991,7 +2095,7 @@ function optimisticChildState(childSelection, nodeId) {
   return true;
 }
 
-function markOptimisticChildError(rootId, nodeId, message) {
+function markOptimisticChildError(rootId, nodeId, message, render = true) {
   const root = state.assistantState.roots.find((candidate) => candidate.root_id === rootId);
   const node = root?.nodes.find((candidate) => candidate.node_id === nodeId);
   if (!node) return;
@@ -2004,16 +2108,22 @@ function markOptimisticChildError(rootId, nodeId, message) {
   if (state.assistantState.current?.node_id === nodeId) {
     state.assistantState.current.pending = false;
     state.assistantState.current.error = node.error;
-    renderAssistantWorkspace();
+    if (render) renderAssistantWorkspace();
   }
 }
 
 async function retryAssistantChild(rootId, nodeId, button) {
   const sessionId = state.readerSessionId;
+  const current = state.assistantState.current;
   button.disabled = true;
   try {
-    const payload = await api('/api/assistant/retry-child', {method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({reader_session_id:sessionId,root_id:rootId,node_id:nodeId})});
+    const payload = await runAssistantStream({
+      path: '/api/assistant/retry-child',
+      question: current?.label || "这层解释",
+      retry: () => retryAssistantChild(rootId, nodeId, button),
+      streamKey: assistantLocationKey(rootId, nodeId),
+      body: {reader_session_id:sessionId,root_id:rootId,node_id:nodeId},
+    });
     if(state.readerSessionId === sessionId) applyAssistantState(payload.assistant);
   } catch(error) {
     if(state.readerSessionId === sessionId && error.code !== 'ASSISTANT_REQUEST_CANCELLED') {
@@ -2042,6 +2152,9 @@ async function closeFocusedAssistantLevel() {
   const current = state.assistantState.current;
   const readerSessionId = state.readerSessionId;
   if (!current || !readerSessionId) return;
+  state.assistantStreamControllers.get(
+    assistantLocationKey(current.root_id, current.node_id)
+  )?.abort();
   rememberAssistantScroll();
   hideAssistantAnswerActions(true);
   const closingChild = current.depth > 1;
@@ -2143,14 +2256,14 @@ async function sendAssistantChild() {
   rememberAssistantScroll();
   hideAssistantAnswerActions(true);
   if (!optimisticChildState(childSelection, nodeId)) return;
-  const pending = elements["assistant-turns"].querySelector(".assistant-pending:last-child");
-  await advanceAssistantPending(pending, childSelection.selectedText);
   state.assistantChildRequests.set(requestKey, nodeId);
   try {
-    const payload = await api("/api/assistant/child", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const payload = await runAssistantStream({
+      path: "/api/assistant/child",
+      question: childSelection.selectedText,
+      retry: () => retryAssistantChild(childSelection.rootId, nodeId, { disabled: false }),
+      streamKey: assistantLocationKey(childSelection.rootId, nodeId),
+      body: {
         reader_session_id: readerSessionId,
         root_id: childSelection.rootId,
         parent_node_id: childSelection.nodeId,
@@ -2159,15 +2272,13 @@ async function sendAssistantChild() {
         end_offset: childSelection.endOffset,
         source_spans: childSelection.sourceSpans,
         node_id: nodeId,
-      }),
+      },
     });
     if (state.readerSessionId === readerSessionId) applyAssistantState(payload.assistant);
   } catch (error) {
     if (state.readerSessionId === readerSessionId
         && error.code !== "ASSISTANT_REQUEST_CANCELLED") {
-      markOptimisticChildError(childSelection.rootId, nodeId, error.message);
-      // Read the server-owned retry eligibility; a transport failure alone does not grant it.
-      if(state.assistantState.current?.node_id === nodeId) await focusAssistant(childSelection.rootId, nodeId);
+      markOptimisticChildError(childSelection.rootId, nodeId, error.message, false);
     }
     if (error.code?.startsWith("AI_")) await refreshAssistantStatus();
   } finally {

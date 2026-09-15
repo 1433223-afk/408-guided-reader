@@ -76,6 +76,9 @@
 #reader-kp-action[hidden] { display:none; }
 #reader-kp-action:disabled { cursor:default; }
 .ai-progress::after,.assistant-pending::after { content:"";display:inline-block;width:8px;height:8px;margin-left:6px;border:1px solid currentColor;border-right-color:transparent;border-radius:50%;animation:reader-activity 1s linear infinite; }
+.assistant-pending.assistant-complete::after { display:none; }
+.assistant-answer-streaming { white-space:pre-wrap; }
+.assistant-stream-error button { margin-left:10px; }
 @keyframes reader-activity { to { transform:rotate(360deg); } }
 @media(prefers-reduced-motion:reduce) { .ai-progress::after,.assistant-pending::after { animation:none; } }
 

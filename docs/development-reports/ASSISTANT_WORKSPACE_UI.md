@@ -469,3 +469,50 @@ review feedback. Validation: 71 Assistant Python tests PASS; 43 JavaScript tests
 syntax PASS; real 348-page `ask-about-this.mjs` PASS after narrowing one stale test selector to the
 Assistant model list. Live 8767 Zhipu status/draft/real answer path passed. No new endpoint,
 dependency, persistence, telemetry, context category, vector DB, RAG or Frozen change.
+
+## Genuine Assistant streaming (2026-09-14)
+
+Assistant Root, same-level follow-up, Child and explicit Child retry now negotiate SSE on the
+existing endpoints. The sole OpenAI-compatible provider adapter parses fragmented UTF-8 SSE,
+multiline `data:` fields, `choices[0].delta.content`, final usage and `[DONE]`; it does not turn a
+non-stream response into a typing animation. DeepSeek and Zhipu both passed direct authenticated
+protocol probes before integration, so no second adapter, endpoint or dependency was required.
+Reasoning-only deltas remain internal and do not delay or contaminate the visible answer with
+reasoning text.
+
+The Reader lifecycle is visibly `准备上下文…` → `正在回答…` → incrementally appended plain text →
+`完成`, after which the existing Markdown/KaTeX/sanitizer path renders the final answer. No
+percentage is shown. If the provider stream ends or fails after visible content, that partial text
+stays in the current temporary view and an explicit `重新回答` action is shown. Runtime retry remains
+bounded only before the first visible delta; after a visible delta it never silently replays and
+duplicates text. Closing a level, Root or Reader aborts its live browser stream; the existing
+generation/session checks still prevent closed state from being resurrected.
+
+Metrics come from the real provider stream, not animation timing. On the real 348-page textbook,
+exact PDF-page-169 selection `地址码` through the actual Reader Assistant endpoint measured:
+
+- DeepSeek: 259 visible deltas; client/runtime TTFT 869/833 ms; client/runtime total latency
+  2398/2361 ms; 259 provider-reported output tokens; 445 output characters.
+- Zhipu: 151 visible deltas; client/runtime TTFT 917/878 ms; client/runtime total latency
+  2773/2734 ms; 154 provider-reported output tokens; 259 output characters.
+
+The live UI was also driven with real pointer selection and right-click on that textbook for both
+providers. Zhipu was additionally observed during a longer follow-up: the `正在回答…` state was
+followed by a visibly growing unparsed plain-text stream, then a 1516-character safely rendered
+final answer. DeepSeek completed the same selection flow. Browser diagnostics contained no Assistant
+error and no secret; only the source PDF's existing optional-content-group warning appeared.
+
+Validation after integration: `python -m pytest` **296 passed, 2 skipped**; `npm test` **47 passed**;
+real-library `ask-about-this.mjs`, `assistant-workspace.mjs` and `assistant-rendering.mjs` all
+**PASS**. The workspace/rendering provider fixtures were updated to emit real SSE instead of JSON
+when `stream=true`, so affected regression exercises the actual protocol. Tests cover fragmented
+UTF-8, lifecycle/deltas/metrics, preserved partial content, explicit same-identity Child retry,
+no retry after a visible partial, Root/follow-up/Child contracts, close races, current-view
+projection, sanitizer rendering and AI-off/Reader neighbors.
+
+Grounding construction, selected/source context, complete triggering-parent Child handoff, bounded
+same-level history, provider pinning and egress categories are unchanged. Provider payload
+inspection remains bounded and in memory; API keys/Authorization headers are absent from events,
+logs and errors. Conversation lifetime remains Core-Service memory only. No vector DB, RAG,
+telemetry, persistence, Frozen Blueprint change or unrelated performance architecture was added.
+This is an Assistant streaming increment, not a new Phase closure or independent-review claim.

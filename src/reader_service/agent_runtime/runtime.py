@@ -73,6 +73,10 @@ class ProviderFailure(RuntimeError):
         self.diagnostics = copy.deepcopy(diagnostics)
 
 
+class StreamConsumerDisconnected(RuntimeError):
+    """The local client stopped consuming a live response; never retry provider egress."""
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderResponse:
     answer: str
@@ -87,6 +91,7 @@ class ProviderCompletion:
     usage: dict | None
     effective_config: dict
     response_metadata: dict | None = None
+    ttft_ms: int | None = None
 
 
 class ProviderAdapter(Protocol):
@@ -94,6 +99,15 @@ class ProviderAdapter(Protocol):
 
     def complete(
         self, endpoint: str, api_key: str, body: dict, timeout: float
+    ) -> ProviderResponse | str: ...
+
+    def stream(
+        self,
+        endpoint: str,
+        api_key: str,
+        body: dict,
+        timeout: float,
+        on_delta: Callable[[str], None],
     ) -> ProviderResponse | str: ...
 
 
@@ -149,6 +163,7 @@ class ProviderConfig:
         thinking_mode: str | None = None,
         reasoning_effort: str | None = None,
         json_object: bool = False,
+        streaming: bool = False,
     ) -> dict:
         effective_max_tokens = self.max_tokens if max_tokens is None else max_tokens
         answer_mapping = (
@@ -159,7 +174,7 @@ class ProviderConfig:
         request_parameters = {
             "temperature": self.temperature,
             "max_tokens": effective_max_tokens,
-            "stream": False,
+            "stream": streaming,
             "timeout_seconds": self.timeout_seconds,
         }
         if thinking_mode is not None:
@@ -307,6 +322,7 @@ class AgentRuntime:
         model: str | None = None,
         timeout_seconds: float | None = None,
         json_object: bool = False,
+        stream_callback: Callable[[str], None] | None = None,
     ) -> ProviderCompletion:
         config = self.config
         if type(json_object) is not bool or (json_object and config.provider != "openrouter"):
@@ -359,13 +375,16 @@ class AgentRuntime:
                     "cooling",
                     f"{config.provider} 连续失败，正在短暂冷却；教材阅读功能不受影响。",
                 )
+        streaming = stream_callback is not None
         body = {
             "model": config.model,
             "messages": copy.deepcopy(messages),
             "temperature": config.temperature,
             "max_tokens": effective_max_tokens,
-            "stream": False,
+            "stream": streaming,
         }
+        if streaming:
+            body["stream_options"] = {"include_usage": True}
         if thinking_mode is not None:
             body["thinking"] = {"type": thinking_mode}
         if reasoning_effort is not None:
@@ -374,9 +393,11 @@ class AgentRuntime:
             body["response_format"] = {"type": "json_object"}
         call_id = interaction_id or str(uuid4())
         started = time.perf_counter()
+        first_content_at: float | None = None
         last_failure: ProviderFailure | None = None
         for attempt in range(1, config.max_attempts + 1):
             transport_started = time.perf_counter()
+            attempt_emitted_content = False
             if retain_request_body:
                 self.inspector.record(
                     provider=config.provider,
@@ -403,10 +424,43 @@ class AgentRuntime:
                 },
             )
             try:
-                response = self.adapter.complete(
-                    config.endpoint, api_key, body, config.timeout_seconds
-                )
+                if streaming:
+                    def emit_delta(delta: str) -> None:
+                        nonlocal first_content_at, attempt_emitted_content
+                        if not delta:
+                            return
+                        attempt_emitted_content = True
+                        if first_content_at is None:
+                            first_content_at = time.perf_counter()
+                        assert stream_callback is not None
+                        stream_callback(delta)
+
+                    response = self.adapter.stream(
+                        config.endpoint,
+                        api_key,
+                        body,
+                        config.timeout_seconds,
+                        emit_delta,
+                    )
+                else:
+                    response = self.adapter.complete(
+                        config.endpoint, api_key, body, config.timeout_seconds
+                    )
+            except StreamConsumerDisconnected:
+                raise
             except ProviderFailure as failure:
+                elapsed_ms = max(0, round((time.perf_counter() - started) * 1000))
+                ttft_ms = (
+                    max(0, round((first_content_at - started) * 1000))
+                    if first_content_at is not None
+                    else None
+                )
+                failure.diagnostics = {
+                    **copy.deepcopy(failure.diagnostics or {}),
+                    "latency_ms": elapsed_ms,
+                    "ttft_ms": ttft_ms,
+                    "partial_content_received": attempt_emitted_content,
+                }
                 last_failure = failure
                 self._notify_attempt(
                     attempt_observer,
@@ -435,6 +489,11 @@ class AgentRuntime:
                     self._start_cooling()
                     raise
                 if failure.kind is not ProviderFailureKind.TRANSIENT:
+                    raise
+                if attempt_emitted_content:
+                    # Replaying a visible partial answer would duplicate text and violate
+                    # explicit recovery. The user decides whether to retry this turn.
+                    self._start_cooling()
                     raise
                 if attempt < config.max_attempts:
                     self.sleeper(0.35 * (2 ** (attempt - 1)))
@@ -474,11 +533,29 @@ class AgentRuntime:
                         thinking_mode=thinking_mode,
                         reasoning_effort=reasoning_effort,
                         json_object=json_object,
+                        streaming=streaming,
                     ),
                     response_metadata=response_metadata,
+                    ttft_ms=(
+                        max(0, round((first_content_at - started) * 1000))
+                        if first_content_at is not None
+                        else None
+                    ),
                 )
         assert last_failure is not None
         raise last_failure
+
+    def stream_with_metadata(
+        self,
+        messages: list[dict],
+        on_delta: Callable[[str], None],
+        **kwargs,
+    ) -> ProviderCompletion:
+        if not callable(on_delta):
+            raise ValueError("stream callback is required")
+        return self.complete_with_metadata(
+            messages, stream_callback=on_delta, **kwargs
+        )
 
     def _read_key(self) -> str | None:
         return self._credential_read().key
@@ -645,6 +722,22 @@ class ProviderRuntimeSet:
             timeout_seconds=timeout_seconds,
             json_object=json_object,
         )
+
+    def stream_for_with_metadata(
+        self,
+        provider: str,
+        messages: list[dict],
+        on_delta: Callable[[str], None],
+        **kwargs,
+    ) -> ProviderCompletion:
+        runtime = self.runtimes.get(provider)
+        if runtime is None:
+            raise ProviderFailure(
+                ProviderFailureKind.UNCONFIGURED,
+                "invalid_active_provider",
+                "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
+            )
+        return runtime.stream_with_metadata(messages, on_delta, **kwargs)
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:
         selected = provider or self.active_provider

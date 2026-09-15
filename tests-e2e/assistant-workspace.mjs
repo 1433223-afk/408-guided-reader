@@ -51,8 +51,7 @@ const provider = createServer(async (request, response) => {
     ].join("\n");
   }
   await new Promise((resolve) => setTimeout(resolve, 120));
-  response.writeHead(200, { "Content-Type": "application/json" });
-  response.end(JSON.stringify({ choices: [{ message: { content: answer } }] }));
+  sendProviderAnswer(response, body, answer);
 });
 await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
 
@@ -79,12 +78,12 @@ try {
   assert.equal(await page.locator("#assistant-start").isEnabled(), true);
   const rootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
-  const firstRootState = (await (await rootResponse).json()).assistant;
-  const firstRootId = firstRootState.current.root_id;
-  assert.equal('turns' in firstRootState.roots[0], false);
-  const callsAfterRoot = providerCalls.length;
   const rootBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
-  await rootBubble.waitFor();
+  assert.equal((await rootResponse).status(), 200);
+  await rootBubble.locator("h2").waitFor({ state: "attached" });
+  const firstRootId = await rootBubble.getAttribute("data-root-id");
+  assert.ok(firstRootId);
+  const callsAfterRoot = providerCalls.length;
   assert.equal(await rootBubble.locator("h2").textContent(), "时钟脉冲信号");
   assert.equal(await rootBubble.locator("h2").isVisible(), false);
   assert.equal(await page.locator("#assistant-title").isVisible(), false);
@@ -129,8 +128,11 @@ try {
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
   assert.equal(await page.locator("#assistant-title").textContent(), "像乐队里的节拍器");
   assert.equal(await page.locator('.assistant-answer-bubble[data-current-answer="true"]').count(), 0);
-  const childState = (await (await childResponse).json()).assistant;
-  const childId = childState.current.node_id;
+  assert.equal((await childResponse).status(), 200);
+  const childBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  await childBubble.waitFor();
+  const childId = await childBubble.getAttribute("data-node-id");
+  assert.ok(childId);
   assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 2 层，最多 5 层");
   assert.equal(await page.locator("#assistant-root-switcher option:checked").textContent(), "时钟脉冲信号");
   assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
@@ -144,8 +146,11 @@ try {
   await page.locator("#assistant-ask-deeper").click();
   await page.locator(".assistant-pending").waitFor({ state: "visible" });
   assert.equal(await page.locator("#assistant-depth").textContent(), "递归深度：第 3 层，最多 5 层");
-  const grandchildState = (await (await grandchildResponse).json()).assistant;
-  const grandchildId = grandchildState.current.node_id;
+  assert.equal((await grandchildResponse).status(), 200);
+  const grandchildBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  await grandchildBubble.waitFor();
+  const grandchildId = await grandchildBubble.getAttribute("data-node-id");
+  assert.ok(grandchildId);
   assert.deepEqual(await page.locator("#assistant-breadcrumb button").allTextContents(), [
     "像乐队里的节拍器", "高低电平变化",
   ]);
@@ -165,8 +170,11 @@ try {
   assert.equal(await selectAssistantTextByMouse(page, "时钟周期"), "时钟周期");
   const siblingResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/child"));
   await page.locator("#assistant-ask-deeper").click();
-  const siblingState = (await (await siblingResponse).json()).assistant;
-  const siblingId = siblingState.current.node_id;
+  assert.equal((await siblingResponse).status(), 200);
+  const siblingBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  await siblingBubble.waitFor();
+  const siblingId = await siblingBubble.getAttribute("data-node-id");
+  assert.ok(siblingId);
 
   focusResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/focus"));
   await chooseTopic(page, firstRootId, null);
@@ -217,8 +225,11 @@ try {
   assert.equal(providerCalls.length, 4);
   const secondRootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));
   await page.locator("#assistant-start").click();
-  const secondRootState = (await (await secondRootResponse).json()).assistant;
-  const secondRootId = secondRootState.current.root_id;
+  assert.equal((await secondRootResponse).status(), 200);
+  const secondRootBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
+  await secondRootBubble.waitFor();
+  const secondRootId = await secondRootBubble.getAttribute("data-root-id");
+  assert.ok(secondRootId);
   assert.notEqual(secondRootId, firstRootId);
 
   const callsBeforeSwitch = providerCalls.length;
@@ -565,6 +576,23 @@ async function stopService(child) {
   if (!child || child.exitCode !== null) return;
   child.kill();
   await new Promise((resolve) => child.once("exit", resolve));
+}
+
+function sendProviderAnswer(response, body, answer) {
+  if (!body.stream) {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: { content: answer } }] }));
+    return;
+  }
+  response.writeHead(200, { "Content-Type": "text/event-stream" });
+  for (const content of [answer.slice(0, Math.ceil(answer.length / 2)), answer.slice(Math.ceil(answer.length / 2))]) {
+    if (content) response.write(`data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`);
+  }
+  response.write(`data: ${JSON.stringify({
+    choices: [{ delta: {}, finish_reason: "stop" }],
+    usage: { completion_tokens: answer.length },
+  })}\n\n`);
+  response.end("data: [DONE]\n\n");
 }
 
 function readyUrl(child, errors) {

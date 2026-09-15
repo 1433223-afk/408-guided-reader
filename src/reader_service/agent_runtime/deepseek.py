@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import ipaddress
+import codecs
 import os
 import socket
 import sys
@@ -16,7 +17,12 @@ from urllib.request import (
     proxy_bypass,
 )
 
-from .runtime import ProviderFailure, ProviderFailureKind, ProviderResponse
+from .runtime import (
+    ProviderFailure,
+    ProviderFailureKind,
+    ProviderResponse,
+    StreamConsumerDisconnected,
+)
 
 
 class OpenAICompatibleAdapter:
@@ -96,6 +102,117 @@ class OpenAICompatibleAdapter:
         return ProviderResponse(
             answer=answer.strip(), usage=usage, diagnostics=metadata
         )
+
+    def stream(
+        self,
+        endpoint: str,
+        api_key: str,
+        body: dict,
+        timeout: float,
+        on_delta,
+    ) -> ProviderResponse:
+        request = Request(
+            endpoint,
+            data=json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+                "User-Agent": "408-guided-reader/0.1",
+            },
+        )
+        pieces: list[str] = []
+        usage = None
+        finish_reason = None
+        reasoning_length = 0
+        completed = False
+        try:
+            with build_opener(self._proxy_handler(endpoint), _NoRedirect()).open(
+                request, timeout=timeout
+            ) as response:
+                content_type = str(response.headers.get("Content-Type", "")).casefold()
+                if "text/event-stream" not in content_type:
+                    raise ProviderFailure(
+                        ProviderFailureKind.TRANSIENT,
+                        "invalid_stream_response",
+                        "AI 服务没有返回可读取的流式结果，请稍后再试。",
+                    )
+                for data in _iter_sse_data(response):
+                    if data == "[DONE]":
+                        completed = True
+                        break
+                    try:
+                        payload = json.loads(data)
+                    except (TypeError, ValueError) as error:
+                        raise ProviderFailure(
+                            ProviderFailureKind.TRANSIENT,
+                            "invalid_stream_response",
+                            "AI 服务返回了无法读取的流式结果，请稍后再试。",
+                        ) from error
+                    if not isinstance(payload, dict):
+                        raise ProviderFailure(
+                            ProviderFailureKind.TRANSIENT,
+                            "invalid_stream_response",
+                            "AI 服务返回了无法读取的流式结果，请稍后再试。",
+                        )
+                    candidate_usage = self._safe_usage(payload.get("usage"))
+                    if candidate_usage is not None:
+                        usage = candidate_usage
+                    choices = payload.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    choice = choices[0]
+                    if not isinstance(choice, dict):
+                        continue
+                    if isinstance(choice.get("finish_reason"), str):
+                        finish_reason = choice["finish_reason"]
+                    delta = choice.get("delta")
+                    if not isinstance(delta, dict):
+                        continue
+                    reasoning = delta.get("reasoning_content")
+                    if isinstance(reasoning, str):
+                        reasoning_length += len(reasoning)
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        pieces.append(content)
+                        on_delta(content)
+        except StreamConsumerDisconnected:
+            raise
+        except HTTPError as error:
+            self._raise_http_failure(error)
+        except ProviderFailure:
+            raise
+        except (TimeoutError, socket.timeout, URLError, OSError, IncompleteRead) as error:
+            raise ProviderFailure(
+                ProviderFailureKind.TRANSIENT,
+                "network",
+                "AI 服务暂时无法连接，请稍后再试。",
+            ) from error
+
+        answer = "".join(pieces)
+        metadata = self._safe_response_metadata(
+            answer=answer,
+            reasoning="x" * reasoning_length,
+            finish_reason=finish_reason,
+        )
+        if usage is not None:
+            metadata["usage"] = usage
+        if not completed:
+            raise ProviderFailure(
+                ProviderFailureKind.TRANSIENT,
+                "incomplete_stream",
+                "AI 服务的流式回答意外中断；已保留收到的内容，可明确重试。",
+                diagnostics=metadata,
+            )
+        if not answer.strip():
+            raise ProviderFailure(
+                ProviderFailureKind.TRANSIENT,
+                "empty_response",
+                "AI 服务没有返回解释，请稍后再试。",
+                diagnostics=metadata,
+            )
+        return ProviderResponse(answer=answer.strip(), usage=usage, diagnostics=metadata)
 
     def _proxy_handler(self, endpoint: str) -> ProxyHandler:
         if self.provider_name != "openrouter" or _is_loopback_endpoint(endpoint):
@@ -281,3 +398,41 @@ def _is_loopback_endpoint(endpoint: str) -> bool:
         return ipaddress.ip_address(hostname).is_loopback
     except ValueError:
         return False
+
+
+def _iter_sse_data(response):
+    """Yield complete SSE data fields while tolerating arbitrary byte fragmentation."""
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    buffer = ""
+    data_lines: list[str] = []
+    read = getattr(response, "read1", None) or response.read
+    while True:
+        chunk = read(4096)
+        if not chunk:
+            buffer += decoder.decode(b"", final=True)
+            break
+        buffer += decoder.decode(chunk)
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            line = line.removesuffix("\r")
+            if not line:
+                if data_lines:
+                    yield "\n".join(data_lines)
+                    data_lines = []
+                continue
+            if line.startswith(":"):
+                continue
+            field, separator, value = line.partition(":")
+            if separator and value.startswith(" "):
+                value = value[1:]
+            if field == "data":
+                data_lines.append(value)
+    if buffer:
+        line = buffer.removesuffix("\r")
+        field, separator, value = line.partition(":")
+        if separator and value.startswith(" "):
+            value = value[1:]
+        if field == "data":
+            data_lines.append(value)
+    if data_lines:
+        yield "\n".join(data_lines)

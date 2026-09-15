@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import copy
 import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Callable
 from uuid import uuid4
 
-from reader_service.agent_runtime import AgentRuntime, ProviderFailure, ProviderFailureKind
+from reader_service.agent_runtime import (
+    AgentRuntime,
+    ProviderCompletion,
+    ProviderFailure,
+    ProviderFailureKind,
+)
 
 from .context import (
     AssistantContextBuilder,
@@ -24,6 +31,7 @@ MAX_ANSWER_SELECTION_CHARS = 2_000
 MAX_HISTORY_TURNS = 6
 MAX_HISTORY_CHARS = 8_000
 MAX_DEPTH = 5
+StreamEmitter = Callable[[dict], None]
 SYSTEM_BOUNDARY = (
     "你是附着在原始教材页面上的临时中文讲解助手。用简体中文清楚、直接地回答。"
     "凡由选区触发的解释（首轮或继续再问一层），用户消息第一块"
@@ -291,31 +299,39 @@ class AssistantService:
         end: dict,
         provider: str | None = None,
         source_kind: str | SelectionSourceKind = SelectionSourceKind.ORIGINAL_PDF,
+        stream: StreamEmitter | None = None,
     ) -> dict:
         kind = self._root_source_kind(source_kind)
         context = lambda: self.contexts.build(revision_id, page_index, start=start, end=end)
-        return self._ask_context(reader_session_id, revision_id, page_index, context, kind, provider)
+        return self._ask_context(
+            reader_session_id, revision_id, page_index, context, kind, provider, stream
+        )
 
-    def ask_guide(self, reader_session_id, revision_id, context, provider=None):
+    def ask_guide(self, reader_session_id, revision_id, context, provider=None, stream=None):
         return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
-                                 context, SelectionSourceKind.READING_GUIDE, provider)
+                                 context, SelectionSourceKind.READING_GUIDE, provider, stream)
 
-    def ask_inline(self, reader_session_id, revision_id, context, provider=None):
+    def ask_inline(self, reader_session_id, revision_id, context, provider=None, stream=None):
         return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
-                                 context, SelectionSourceKind.INLINE_GUIDANCE, provider)
+                                 context, SelectionSourceKind.INLINE_GUIDANCE, provider, stream)
 
-    def _ask_context(self, reader_session_id, revision_id, page_index, context, kind, provider):
+    def _ask_context(self, reader_session_id, revision_id, page_index, context, kind, provider, stream=None):
         session_id = self._validate_session_id(reader_session_id)
         slot = self._slot_for(session_id)
         generation, focus_version = self._begin(slot, session_id)
+        context_started = time.perf_counter()
         context = context() if callable(context) else context
         selected_provider, selected_model = self._provider_identity(provider)
         turn_id = str(uuid4())
         user_content = provider_user_message(context)
+        self._emit_stage(stream, context_started)
+        completions: list[ProviderCompletion] = []
         answer = self._complete(
             selected_provider,
             self._messages([], user_content),
             interaction_id=turn_id,
+            stream=stream,
+            completions=completions,
         )
         root_id = str(uuid4())
         source = SelectionSource(
@@ -349,7 +365,9 @@ class AssistantService:
                     slot.state.focused_root_id = root_id
                     root.focused_node_id = None
                     slot.state.focus_version += 1
-                return slot.state.public()
+                public = slot.state.public()
+        self._emit_complete(stream, public, completions)
+        return public
 
     def create_child(
         self,
@@ -362,6 +380,7 @@ class AssistantService:
         end_offset: int,
         node_id: str | None = None,
         source_spans: list[dict] | None = None,
+        stream: StreamEmitter | None = None,
     ) -> dict:
         session_id = self._validate_session_id(reader_session_id)
         clean_root_id = self._validate_id(root_id, "Root id")
@@ -439,9 +458,16 @@ class AssistantService:
                 state.state_version += 1
         return self._finish_child(session_id, slot, generation, clean_root_id,
                                   clean_node_id, requested_node_id, interaction_id,
-                                  provider, selected_text, user_content)
+                                  provider, selected_text, user_content, stream)
 
-    def retry_child(self, reader_session_id: str, root_id: str, node_id: str) -> dict:
+    def retry_child(
+        self,
+        reader_session_id: str,
+        root_id: str,
+        node_id: str,
+        *,
+        stream: StreamEmitter | None = None,
+    ) -> dict:
         """Retry only the retained failed first turn, with its original private grounding."""
         session_id = self._validate_session_id(reader_session_id)
         clean_root_id = self._validate_id(root_id, "Root id")
@@ -468,16 +494,22 @@ class AssistantService:
         # Completion never steals focus after the user navigates elsewhere.
         return self._finish_child(session_id, slot, generation, clean_root_id,
                                   parent_id, clean_node_id, interaction_id,
-                                  provider, selected_text, user_content)
+                                  provider, selected_text, user_content, stream)
 
     def _finish_child(self, session_id, slot, generation, clean_root_id,
                       clean_node_id, requested_node_id, interaction_id,
-                      provider, selected_text, user_content):
+                      provider, selected_text, user_content, stream=None):
+        context_started = time.perf_counter()
+        messages = self._messages([], user_content)
+        self._emit_stage(stream, context_started)
+        completions: list[ProviderCompletion] = []
         try:
             answer = self._complete(
                 provider,
-                self._messages([], user_content),
+                messages,
                 interaction_id=interaction_id,
+                stream=stream,
+                completions=completions,
             )
         except Exception as exc:
             failure_recorded = self._fail_pending_child(
@@ -519,7 +551,9 @@ class AssistantService:
                 child.first_user_content = None
                 child.turns.append(Turn(interaction_id, selected_text, answer, user_content))
                 slot.state.state_version += 1
-                return slot.state.public()
+                public = slot.state.public()
+        self._emit_complete(stream, public, completions)
+        return public
 
     def follow_up(
         self,
@@ -528,6 +562,7 @@ class AssistantService:
         question: str,
         *,
         node_id: str | None = None,
+        stream: StreamEmitter | None = None,
     ) -> dict:
         session_id = self._validate_session_id(reader_session_id)
         clean_root_id = self._validate_id(root_id, "Root id")
@@ -554,8 +589,17 @@ class AssistantService:
                 level.pending_turn_id = turn_id
                 messages = self._messages(level.turns, clean_question)
                 provider = root.provider
+        context_started = time.perf_counter()
+        self._emit_stage(stream, context_started)
+        completions: list[ProviderCompletion] = []
         try:
-            answer = self._complete(provider, messages, interaction_id=turn_id)
+            answer = self._complete(
+                provider,
+                messages,
+                interaction_id=turn_id,
+                stream=stream,
+                completions=completions,
+            )
         except Exception as exc:
             failure_recorded = self._clear_pending_turn(
                 session_id, slot, generation, clean_root_id, clean_node_id, turn_id
@@ -581,7 +625,9 @@ class AssistantService:
                 level.pending_turn_id = None
                 level.turns.append(Turn(turn_id, clean_question, answer, clean_question))
                 slot.state.state_version += 1
-                return slot.state.public()
+                public = slot.state.public()
+        self._emit_complete(stream, public, completions)
+        return public
 
     def focus(
         self, reader_session_id: str, root_id: str, *, node_id: str | None = None
@@ -835,12 +881,49 @@ class AssistantService:
         return configured_provider, status.get("model")
 
     def _complete(
-        self, provider: str, messages: list[dict], *, interaction_id: str
+        self,
+        provider: str,
+        messages: list[dict],
+        *,
+        interaction_id: str,
+        stream: StreamEmitter | None = None,
+        completions: list[ProviderCompletion] | None = None,
     ) -> str:
         provider_options = {
             "deepseek": {"thinking_mode": "disabled"},
             "zhipu": {"reasoning_effort": "low"},
         }.get(provider, {})
+        if stream is not None:
+            stream_for_with_metadata = getattr(
+                self.runtime, "stream_for_with_metadata", None
+            )
+            if stream_for_with_metadata is not None:
+                completion = stream_for_with_metadata(
+                    provider,
+                    messages,
+                    lambda delta: stream({"type": "delta", "content": delta}),
+                    interaction_id=interaction_id,
+                    **provider_options,
+                )
+            else:
+                stream_with_metadata = getattr(
+                    self.runtime, "stream_with_metadata", None
+                )
+                if stream_with_metadata is None:
+                    raise ProviderFailure(
+                        ProviderFailureKind.UNCONFIGURED,
+                        "streaming_unavailable",
+                        "当前 Assistant provider 不支持真实流式回答。",
+                    )
+                completion = stream_with_metadata(
+                    messages,
+                    lambda delta: stream({"type": "delta", "content": delta}),
+                    interaction_id=interaction_id,
+                    **provider_options,
+                )
+            if completions is not None:
+                completions.append(completion)
+            return completion.answer
         complete_for_with_metadata = getattr(
             self.runtime, "complete_for_with_metadata", None
         )
@@ -862,6 +945,35 @@ class AssistantService:
         if complete_for is not None:
             return complete_for(provider, messages, interaction_id=interaction_id)
         return self.runtime.complete(messages, interaction_id=interaction_id)
+
+    @staticmethod
+    def _emit_stage(stream: StreamEmitter | None, started: float) -> None:
+        if stream is not None:
+            stream({
+                "type": "stage",
+                "stage": "answering",
+                "context_ms": max(0, round((time.perf_counter() - started) * 1000)),
+            })
+
+    @staticmethod
+    def _emit_complete(
+        stream: StreamEmitter | None,
+        public: dict,
+        completions: list[ProviderCompletion],
+    ) -> None:
+        if stream is None:
+            return
+        completion = completions[0]
+        usage = completion.usage or {}
+        stream({
+            "type": "complete",
+            "assistant": public,
+            "metrics": {
+                "ttft_ms": completion.ttft_ms,
+                "total_latency_ms": completion.latency_ms,
+                "output_tokens": usage.get("completion_tokens"),
+            },
+        })
 
     def _slot_for(self, session_id: str) -> _ReaderSessionSlot:
         with self._state_lock:
