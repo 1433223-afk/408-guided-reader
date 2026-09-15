@@ -45,7 +45,7 @@ test('memory collect retry preserves displayed intent after committed response l
   } finally { await browser.close(); }
 });
 
-test('memory exposes the entire durable original beyond the formatted rendering limit', async () => {
+test('memory keeps raw Markdown and technical review detail out of the reading view', async () => {
   const source = fs.readFileSync(new URL('../src/reader_service/static/memory-ui.js', import.meta.url), 'utf8')
     .replace(/^import .*;\r?\n/gm, '').replace('export function createMemoryUI', 'function createMemoryUI');
   const browser = await chromium.launch({ executablePath: process.env.READER_CHROMIUM || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', headless: true });
@@ -61,12 +61,14 @@ test('memory exposes the entire durable original beyond the formatted rendering 
       createMemoryUI({ api: async path => path === '/api/memory' ? { items: [item] } : { item }, announce: () => {}, returnToSource: () => {} });
     });
     await page.locator('.memory-open').first().click();
-    await page.getByRole('button', { name: '查看原回答', exact: true }).click();
-    await page.getByText('查看完整原文（含 Markdown 标记）', { exact: true }).click();
-    const content = await page.locator('#memory-detail pre').textContent();
-    assert.equal(content, await page.evaluate(() => window.expectedOriginal));
+    await page.locator('.memory-card-open').click();
+    await page.locator('#memory-detail[data-detail-id="membership"]').waitFor();
+    const content = await page.locator('#memory-detail .memory-answer').textContent();
+    assert.equal(content, '文'.repeat(50000));
+    assert.equal(await page.locator('#memory-detail pre').count(), 0);
     assert.equal(await page.locator('#memory-detail script').count(), 0);
-    assert.match(await page.locator('#memory-detail').textContent(), /AI 审查未通过/);
+    assert.equal((await page.locator('#memory-detail').textContent()).includes('完整末尾'), false);
+    assert.match(await page.locator('#memory-detail').textContent(), /内容需要核对/);
   } finally { await browser.close(); }
 });
 
@@ -89,9 +91,10 @@ test('switching Memory detail immediately removes stale destructive actions', as
       }});
     });
     await page.locator('.memory-open').click();await page.locator('#memory-detail[data-detail-id="a"]').waitFor();
-    await page.locator('[data-memory-id="b"] button').click();
+    await page.locator('[data-memory-id="b"] .memory-card-open').click();
     assert.equal(await page.locator('#memory-detail button').count(),0);
     await page.evaluate(()=>window.resolveSecond());await page.locator('#memory-detail[data-detail-id="b"]').waitFor();
+    await page.locator('#memory-detail .memory-more > summary').click();
     await page.getByRole('button',{name:'移出学习记忆',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.deletes),['/api/revisions/revision/memory/b']);
   } finally {await browser.close();}

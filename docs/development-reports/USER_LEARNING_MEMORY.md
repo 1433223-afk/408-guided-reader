@@ -2,18 +2,41 @@
 
 ## Result
 
-**CLOSED / COMPLETE — 2026-09-12.**
+**CLOSED / COMPLETE — 2026-09-12. Latest UI deletion pass READY_FOR_USER_RETEST — 2026-09-15.**
 User acceptance explicitly confirmed **PASS** by the user. Final independent narrow review **PASS**
 (P0=0 / P1=0 / P2=0, recommendation **CLOSE**); machine and real-use acceptance PASS.
-Closure is docs-only; accepted product code `c702316` is unchanged.
+The accepted durable product boundary remains unchanged; the latest presentation-only deletion pass
+awaits user retest and does not supersede the earlier acceptance claim.
 
 Completed Master answers and durable AI_SAVED notes offer explicit collection and collected status.
-Library home opens an independent Learning Memory page outside Reader with Book/Section/KP filters, original
-question/focus, exact answer, current trust metadata, and return to the actual Master message or
-saved note/PDF. Removing membership preserves its source. No automatic enrolment or learning update.
+Library home opens an independent Learning Memory page outside Reader with Book/Section/KP filters,
+content-first details, quiet source context, and one return action to the actual Master message or
+saved note/PDF. Normal PASS and engineering provenance remain out of the learning view; only pending
+or failed Review states appear in compact form. Removing membership preserves its source. No automatic
+enrolment or learning update.
 Reader contains no Learning Memory browser or removal action; management belongs to the independent page.
 
 ## Implemented
+
+### UI deletion pass (2026-09-15)
+
+Removed the standing explanatory copy, second-level collection timestamps, duplicate original-answer
+and raw-Markdown disclosures, provider/model/reviewer provenance, missing-anchor engineering copy and
+normal PASS labels. List rows now contain a title, two-line rendered-text excerpt, one compact source
+line and only an actionable exceptional state. Master and Assistant use quiet source markers. Details
+lead with the rendered content; one **返回来源** action preserves the existing type-specific return
+route, while **移出学习记忆** moved into `···` without changing its DELETE boundary.
+
+- TARGETED: `tests/test_memory.py` **4 PASS**; `npm test` **47 PASS**; JS syntax checks PASS.
+- AGENT REAL USE: `tests-e2e/learning-memory.mjs` PASS on an isolated copy of the real 348-page
+  textbook, SHA-256 `6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`.
+  It exercised Master and Assistant collection, compact list/detail rendering, a real
+  `TECHNICAL_FAILURE`, both source-return routes, restart, remove/recollect and source deletion.
+  Providers stayed disabled; protected learning/publication table hashes and Assistant inspection
+  remained unchanged.
+- BROAD: full `python -m pytest -q` PASS with the repository's two unchanged optional skips.
+  Screenshots `memory-list.png`, `memory-master.png` and `memory-review-failure.png` were visually
+  inspected at 1600×1000; the collection also passed its 1000×800 overflow check.
 
 ### Content-first detail follow-through (2026-09-12)
 
@@ -72,9 +95,9 @@ Source return reuses existing book/Master/Marks navigation. Review colors retain
   Section is derived only when its entire original PDF geometry lies in one resolved Section, or
   from existing legitimate KP ownership. Absent/ambiguous associations stay unassociated; no title
   matching, answer-text inference or synthetic Master PDF anchor.
-- Existing sanitized Markdown/math rendering plus expandable **complete original text** preserves
-  access beyond the shared formatter's 50,000-character display bound. Trust metadata remains live;
-  collection does not retry Review, change verification or imply mastery.
+- Existing sanitized Markdown/math rendering remains bounded at 50,000 characters in this normal
+  learning view. The durable source remains unchanged, but raw Markdown is no longer duplicated in
+  the UI. Trust state remains live; collection does not retry Review, change verification or imply mastery.
 - SQLite backup is integrity checked and compared against the full existing database before migration.
   The startup statement explains the additive relation and preservation of existing assets.
 
@@ -139,8 +162,8 @@ Save-to-Notes promotion is proven separately by the existing controlled-provider
 regression. No live generation is needed for this provider-free feature. Optional real-OCR external
 fixtures remain unavailable and unchanged; the required full 348-page material was available.
 User acceptance is the user's explicit PASS, distinct from the independent implementation review.
-Full formatted rendering keeps its existing bound; the complete unmodified original is always
-available in the detail disclosure.
+Full formatted rendering keeps its existing bound; the durable source remains unmodified even though
+the normal detail view no longer duplicates the raw Markdown.
 
 ## Reproduction and entry points
 
@@ -163,4 +186,5 @@ Core files: `memory.py`, `memory_schema.py`, `static/memory-ui.js`; integrations
 
 Accepted implementation: `c702316` (original implementation `5f03c06`; independent-page amendment
 `9d5d7b1`; final brief clarification `14b2172`). Closure commit is the commit containing the final
-report/status/review update, reported by hash in the handoff.
+report/status/review update, reported by hash in the handoff. The 2026-09-15 UI deletion pass
+checkpoint is likewise reported in its user-retest handoff.
