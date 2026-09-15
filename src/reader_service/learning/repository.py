@@ -213,6 +213,19 @@ class LearningRepository:
                 self._event(c, point, "UNDERSTOOD", "KP_EXPLICIT_UNDERSTOOD", topic_id)
         return self.snapshot(revision_id, kp_id)
 
+    def understand_without_topic(self, revision_id, kp_id):
+        """Record an explicit first-pass KP confirmation without creating Master state."""
+        with self.database.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            point = self.point(c, revision_id, kp_id)
+            if point["scope_kind"] != "KP":
+                raise ValueError("单个知识点确认不适用于 Section。")
+            if self._thread(c, point) is not None:
+                raise ValueError("该知识点已有 Master 对话，请在对话中确认。")
+            if self._status(c, point) != "UNDERSTOOD":
+                self._event(c, point, "UNDERSTOOD", "KP_EXPLICIT_UNDERSTOOD")
+        return self.snapshot(revision_id, kp_id)
+
     def clear_section(self, revision_id, section_id, topic_id=None):
         with self.database.connect() as c:
             c.execute("BEGIN IMMEDIATE")

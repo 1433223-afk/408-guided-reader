@@ -104,6 +104,44 @@ def test_explicit_evidence_recovery_and_no_automatic_downgrade(learning, service
             c.execute("DELETE FROM learning_events")
 
 
+def test_first_pass_understanding_does_not_create_master_topic(learning, service):
+    f, master, _runtime, points = learning
+    revision = f['revision']['id']
+    point = points[0]['knowledge_point_id']
+
+    confirmed = master.repository.understand_without_topic(revision, point)
+    assert confirmed['status'] == 'UNDERSTOOD'
+    assert confirmed['thread_id'] is None
+    assert confirmed['topics'] == []
+    assert confirmed['messages'] == []
+
+    # A repeated explicit click is idempotent and cannot manufacture durable Master state.
+    master.repository.understand_without_topic(revision, point)
+    with master.repository.database.connect() as connection:
+        assert connection.execute('SELECT COUNT(*) FROM master_threads').fetchone()[0] == 0
+        assert connection.execute('SELECT COUNT(*) FROM master_topics').fetchone()[0] == 0
+        event = connection.execute(
+            'SELECT event_type, status, topic_id FROM learning_events WHERE knowledge_point_id=?',
+            (point,),
+        ).fetchone()
+        assert tuple(event) == ('KP_EXPLICIT_UNDERSTOOD', 'UNDERSTOOD', None)
+
+    with running_server(service, learning=master) as (base_url, token):
+        other = points[1]['knowledge_point_id']
+        _, payload = request_json(
+            f'{base_url}/api/revisions/{revision}/learning/{other}/understand',
+            token,
+            method='POST',
+            data=b'{}',
+        )
+        assert payload['status'] == 'UNDERSTOOD'
+        assert payload['thread_id'] is None
+
+    master.repository.open(revision, point)
+    with pytest.raises(ValueError, match='已有 Master 对话'):
+        master.repository.understand_without_topic(revision, point)
+
+
 def test_topic_navigation_is_read_only_and_preserves_real_identity(learning):
     f, master, runtime, points = learning
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']

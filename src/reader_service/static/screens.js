@@ -241,7 +241,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
 }
 
 // Current-chapter preparation only; the full map remains owned by Book Overview.
-export function createChapterEntry({api, revision, openOverview, published, goToPage}) {
+export function createChapterEntry({api, revision, openOverview, published, goToPage, closePeers = () => {}}) {
   const entry = document.createElement('button');
   entry.id = 'reader-kp-action'; entry.type = 'button'; entry.hidden = true;
   document.getElementById('outline-toggle').after(entry);
@@ -255,6 +255,7 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
   async function openList() {
     const stamp = epoch, request = ++listEpoch, targetChapter = chapter;
     const points = snapshot.knowledge_points;
+    closePeers();
     panel.replaceChildren(); panel.hidden = false; entry.setAttribute('aria-expanded', 'true');
     const heading = node('div', '', 'reader-kp-heading');
     heading.append(node('strong', snapshot.chapter_title || '本章知识点'), action('关闭', () => closeList(true)));
@@ -334,7 +335,7 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     } catch(e) { if (stamp === epoch) error = e.message; }
     finally { if (stamp === epoch) {pending = false; render(); if(!error) load();} }
   };
-  return {sync, reset};
+  return {sync, reset, close: closeList};
 }
 
 

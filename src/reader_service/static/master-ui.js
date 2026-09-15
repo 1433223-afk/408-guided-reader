@@ -301,6 +301,19 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       if (footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
     }
   }
+  async function understandPoint(point, control) {
+    control.disabled = true;
+    control.textContent = "确认中…";
+    try {
+      await post(base(scopeId(point)) + "/understand");
+      announce("已确认这个知识点。");
+      await refreshEntries();
+    } catch (error) {
+      control.disabled = false;
+      control.textContent = "我已清楚";
+      announce(error.message, true);
+    }
+  }
   function renderPage(index) {
     const page = pages.children[index];
     if (!page) return;
@@ -326,7 +339,11 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
         const title = document.createElement("p");
         title.textContent = `${point.title} · ${STATUS[point.status]}`;
         popover.append(title, button("这里没完全懂", () => open(point, true)));
-        if (point.thread_id) popover.append(button("继续 Master 对话", () => open(point)));
+        if (point.thread_id) {
+          popover.append(button("继续 Master 对话", () => open(point)));
+        } else if (point.status === "UNCONFIRMED") {
+          popover.append(button("我已清楚", (event) => understandPoint(point, event.currentTarget)));
+        }
       }
       marker.append(popover);
       marker.addEventListener("toggle", () => {

@@ -170,6 +170,18 @@ const screens = createScreens({api, home: showHome, memory: () => memory.open(),
   remove: removeBook, revision: chooseRevision, announce, isAuxiliary:isAuxiliaryOutlineRoot});
 const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.revision?.id,
   published: () => master.refreshEntries().catch(() => {}),
+  closePeers: () => {
+    setAssistantPanelOpen(false);
+    elements["outline-panel"].hidden = true;
+    elements["search-panel"].hidden = true;
+    elements["marks-panel"].hidden = true;
+    elements["knowledge-panel"].hidden = true;
+    elements["outline-toggle"].setAttribute("aria-expanded", "false");
+    elements["search-toggle"].setAttribute("aria-expanded", "false");
+    elements["marks-toggle"].setAttribute("aria-expanded", "false");
+    state.searchRequest += 1;
+    clearSearchMatch();
+  },
   openOverview: async chapterId => {
     const book = state.book; if (!book) return;
     await savePosition(); closeReader(); await loadBooks();
@@ -919,6 +931,7 @@ async function openKnowledgePanel(chapterId = null) {
     announce("教材目录中还没有可准备的章节。", true);
     return;
   }
+  chapterEntry.close();
   state.knowledgeChapterId = chapter.outline_node_id;
   elements["knowledge-panel"].hidden = false;
   elements["outline-panel"].hidden = true;
@@ -1591,6 +1604,7 @@ function resetAssistantPanel() {
 
 function openAssistantPanel() {
   master.selectAssistant();
+  chapterEntry.close();
   setAssistantPanelOpen(true);
   elements["search-panel"].hidden = true;
   elements["marks-panel"].hidden = true;
@@ -2878,6 +2892,7 @@ elements["outline-toggle"].addEventListener("click", async () => {
   elements["outline-panel"].hidden = !opening;
   elements["outline-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    chapterEntry.close();
     elements["search-panel"].hidden = true;
     elements["marks-panel"].hidden = true;
     elements["knowledge-panel"].hidden = true;
@@ -2904,6 +2919,7 @@ elements["search-toggle"].addEventListener("click", () => {
   elements["search-panel"].hidden = !opening;
   elements["search-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    chapterEntry.close();
     setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
@@ -2941,6 +2957,7 @@ elements["marks-toggle"].addEventListener("click", async () => {
   elements["marks-panel"].hidden = !opening;
   elements["marks-toggle"].setAttribute("aria-expanded", String(opening));
   if (opening) {
+    chapterEntry.close();
     setAssistantPanelOpen(false);
     elements["outline-panel"].hidden = true;
     elements["outline-toggle"].setAttribute("aria-expanded", "false");

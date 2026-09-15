@@ -400,7 +400,7 @@ def handler_factory(
                     return
                 self._json(HTTPStatus.OK, result)
                 return
-            match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning/([0-9a-f-]+)/(open|send|retry|confirm|confirm-section|check-section)", parsed.path)
+            match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/learning/([0-9a-f-]+)/(open|send|retry|confirm|understand|confirm-section|check-section)", parsed.path)
             if match:
                 if not self._authorized():
                     return
@@ -418,6 +418,8 @@ def handler_factory(
                         result = learning.retry(revision_id, scope_id, payload["message_id"])
                     elif action == "confirm":
                         result = learning.repository.confirm(revision_id, scope_id, payload["topic_id"])
+                    elif action == "understand":
+                        result = learning.repository.understand_without_topic(revision_id, scope_id)
                     elif action == "check-section":
                         result = learning.repository.clear_section(revision_id, scope_id)
                     else:

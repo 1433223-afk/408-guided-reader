@@ -10,9 +10,9 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
     await page.setContent('<button id="outline-toggle">目录</button>');
     await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
     await page.evaluate(()=>{
-      window.posts=[];window.opened=[];window.jumps=[];window.published=0;
+      window.posts=[];window.opened=[];window.jumps=[];window.published=0;window.closedPeers=0;
       window.snapshot={status:'NOT_PREPARED',knowledge_points:[]};
-      window.ui=createChapterEntry({revision:()=> 'revision',published:()=>window.published++,openOverview:id=>window.opened.push(id),goToPage:(...args)=>window.jumps.push(args),
+      window.ui=createChapterEntry({revision:()=> 'revision',published:()=>window.published++,closePeers:()=>window.closedPeers++,openOverview:id=>window.opened.push(id),goToPage:(...args)=>window.jumps.push(args),
         api:async(url,options={})=>{
           if(url.endsWith('/outline')) return {nodes:[{kind:'SECTION',parent_id:'current',outline_node_id:'s',title:'第一节'}]};
           if(url.endsWith('/learning')) return {points:[{knowledge_point_id:'kp',status:'UNDERSTOOD'}]};
@@ -32,6 +32,7 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
     await page.locator('#reader-kp-action').filter({hasText:'2 个知识点'}).waitFor();
     await page.locator('#reader-kp-action').click();
     assert.deepEqual(await page.evaluate(()=>window.opened),[]);
+    assert.equal(await page.evaluate(()=>window.closedPeers),1);
     await page.getByText('已理解',{exact:true}).waitFor();
     await page.getByRole('button',{name:'PDF 8 ↗',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.jumps),[[7,0.25]]);

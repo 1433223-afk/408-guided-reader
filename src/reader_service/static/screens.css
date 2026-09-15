@@ -90,16 +90,17 @@
 #reader .toolbar button:hover,#reader .toolbar button[aria-expanded="true"],#reader .toolbar button[aria-pressed="true"] { background:#e3e8df;border-color:#94a694;color:#304d3e; }
 #reader .toolbar button:active { background:#d6e0d3; }
 #reader .toolbar button[hidden] { display:none; }
-.reader-kp-list { position:absolute;z-index:30;top:74px;right:12px;width:min(420px,calc(100% - 24px));max-height:calc(100% - 90px);display:flex;flex-direction:column;background:#f6f5ee;border:1px solid #c7cec3;border-radius:2px;box-shadow:0 4px 18px #26332b22; }
+.reader-kp-list { position:fixed;z-index:30;top:78px;right:14px;width:min(300px,calc(100% - 28px));max-height:calc(100% - 94px);display:flex;flex-direction:column;background:#f6f5ee;border:1px solid #c7cec3;border-radius:2px;box-shadow:0 3px 12px #26332b18; }
 .reader-kp-list[hidden] { display:none; }
 .reader-kp-heading { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid #ccccc2; }
-.reader-kp-body { overflow:auto;padding:0 16px; }
-.reader-kp-body h3 { font-size:13px;margin:18px 0 6px;color:#526052; }
-.reader-kp-row { display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid #deded4;font-size:13px; }
+.reader-kp-body { min-height:0;overflow:auto;padding:0 14px; }
+.reader-kp-body h3 { font-size:12px;margin:15px 0 5px;color:#526052;font-weight:600; }
+.reader-kp-row { display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #deded4;font-size:12px; }
 .reader-kp-row .kp-state { display:block;margin-top:5px; }
 .reader-kp-footer { flex-shrink:0;min-height:40px;border:0;border-top:1px solid #ccccc2;background:transparent;color:#3b5848; }
 #reader .reader-kp-list button { font:12px "Segoe UI","Microsoft YaHei UI",sans-serif;min-height:28px;padding:4px 8px;border:1px solid #c9cec3;background:#f1f2ea;color:#3b5848;cursor:pointer; }
 #reader .reader-kp-list .reader-kp-footer { min-height:40px;border-width:1px 0 0;background:transparent; }
+#reader .kp-learning-marker .learning-marker-content > button { min-width:0; }
 
 /* Reader color cleanup only: no sizing, positioning or interaction changes. */
 #reader { --reader-ink:#24352c; --reader-muted:#66756c; --reader-line:#cbd5cd; --reader-paper:#fafbf6; --reader-soft:#edf2ed; --reader-green:#315c46; --reader-active:#dceade; --reader-error:#b3313b; color:var(--reader-ink); }
