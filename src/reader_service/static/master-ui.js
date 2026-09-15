@@ -3,7 +3,7 @@ import { createComposerChoice, createMessageRail } from "/screens.js";
 
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 
-export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, relayout, memoryControl, toggleExpanded }) {
+export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, memoryControl, toggleExpanded }) {
   document.addEventListener("pointerdown", event => {
     for (const marker of pages.querySelectorAll(".kp-learning-marker[open]")) {
       if (!marker.contains(event.target)) marker.open = false;
@@ -124,7 +124,6 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     const hasControls = entries.points.length > 0;
     if (pages.classList.contains("has-learning-controls") !== hasControls) {
       pages.classList.toggle("has-learning-controls", hasControls);
-      relayout();
     }
     for (const label of document.querySelectorAll("[data-learning-status]")) {
       const point = entries.points.find((p) => p.knowledge_point_id === label.dataset.learningStatus);
@@ -432,7 +431,6 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     entries = { points: [], sections: [] };
     if (pages.classList.contains("has-learning-controls")) {
       pages.classList.remove("has-learning-controls");
-      relayout();
     }
     sendIntent = null;
     select(false);

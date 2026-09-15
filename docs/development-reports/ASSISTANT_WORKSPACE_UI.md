@@ -639,3 +639,59 @@ AI-off recovery. Screenshots are `test-results/assistant-morph-before.png` and
 No Root/Child, maximum-depth, context handoff, provider routing, request payload, persistence,
 Assistant/Master authority, PDF geometry or other Reader interaction changed. This UAT correction is
 `READY_FOR_USER_RETEST`; it does not claim user acceptance or reopen a Phase.
+
+## Reader auxiliary-panel performance audit (2026-09-15)
+
+The Reader's auxiliary panels now change presentation without calling the PDF rebuild path. The
+audit covered Assistant, Master, Reading Guide, Inline Teaching/Guidance, Outline, the current
+chapter KP drawer, Search, and Notes/Marks in both directions, plus Assistant/Guide resizing and
+Assistant/Master/Guide expand and restore. The frozen Guide split-reader behavior remains: Guide
+still occupies its separate resizable reading column and the PDF stays visible. Existing panel
+ownership, source anchors, provider requests, Master lifecycle, Learning Memory ownership and PDF
+zoom behavior are unchanged.
+
+The shared cause was broader than the earlier selection-to-Assistant path. Ordinary Assistant and
+Master close/reopen still captured geometry for every one of the 348 page wrappers and scheduled
+`relayoutPages()`. Search, Marks and the former Knowledge panel inherited the same cost when they
+closed the Dock. Guide and Inline Teaching shared a layout callback that called the same rebuild for
+open, close, expand, restore and every divider-width update. A direct baseline on the real book
+measured 74–99 ms Long Tasks for Assistant open/close and the panels that closed it, and 87–147 ms
+Long Tasks for Guide transitions. Each action removed 8–12 rendered PDF descendants, replaced the
+canvas nodes and, for Guide, displaced the saved scroll position while the new placeholders were
+laid out.
+
+Panel layout callbacks now only apply their panel DOM/class change. Dock and Guide resizing no
+longer capture a PDF anchor or rebuild page wrappers; only actual Zoom and browser-window resize
+retain `relayoutPages()`. The selection-created Assistant still uses the accepted overlay entry,
+while ordinary toolbar reopen keeps the existing Dock presentation. Master learning-control
+refreshes now decorate already-rendered pages directly instead of using PDF relayout as a refresh
+mechanism. `captureZoomAnchor()` itself locates the nearest ordered page with a binary search over
+page offsets and reads one final rectangle, replacing the previous whole-book rectangle scan while
+preserving the same normalized anchor result.
+
+Inline Guidance exposed one second issue after the shared rebuild was removed: opening a card could
+synchronously recalculate every rendered page and then repeat the work through Viewer and card
+`ResizeObserver`s. One run reached exactly 50 ms without touching a canvas. Card open now lays out
+only its anchored source page, and observer-triggered marker recomputations are coalesced into one
+animation frame. Source availability, marker collision rules, active-card placement and local
+on/off persistence are unchanged.
+
+The reproducible audit is `tests-e2e/reader-panel-performance.mjs`. It runs against an isolated
+SQLite backup and the real 348-page textbook
+(`6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`). For each of 29 pointer
+operations it observes Long Tasks for 600 ms, PDF subtree removals, wrapper and canvas object
+identity, backing and CSS canvas dimensions, zoom, vertical scroll and horizontal scroll. The final
+run recorded zero Long Tasks at or above 50 ms, zero PDF subtree removals, unchanged canvas/wrapper
+identity and dimensions, and zero zoom/scroll movement for every operation. Representative shell
+state timings were Assistant close 5.8 ms and open 0.4 ms; Master open 15.2 ms and close 6.2 ms;
+Guide open 15.8 ms and reopen 19.1 ms; Inline card open 21.5 ms, close 28.2 ms and disable 38.4 ms;
+KP drawer open 18.6 ms; Search open 26.6 ms; Marks open 11.1 ms. These are local browser timings,
+not a cross-device latency SLA.
+
+Validation passed: all 47 JavaScript tests; the new real-book panel-performance audit;
+`assistant-workspace.mjs`; `ask-about-this.mjs`; `guide-split-reader.mjs`;
+`inline-teaching.mjs`; `kp-reader-overlay.mjs`; and `reading-position.mjs`. The two older affected
+browser fixtures were updated only to enter through the current Book Overview route and consume the
+already-established Assistant SSE contract. No real provider call, backend/schema change, new
+dependency or Frozen Product change was made. This correction is `READY_FOR_USER_RETEST`; it does
+not claim user acceptance.

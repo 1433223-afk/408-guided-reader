@@ -43,8 +43,14 @@ const provider = createServer(async (req, res) => {
     })) });
   }
   await new Promise(r => setTimeout(r, 200));
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ choices: [{ message: { content: answer }, finish_reason: 'stop' }] }));
+  if (body.stream) {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.write(`data: ${JSON.stringify({choices:[{delta:{content:answer}}]})}\n\n`);
+    res.end(`data: ${JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);
+  } else {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { content: answer }, finish_reason: 'stop' }] }));
+  }
 });
 await new Promise(r => provider.listen(0, '127.0.0.1', r));
 const loopback = {
@@ -130,7 +136,14 @@ try {
     await page.mouse.click(rect.x+60,rect.y+12,{button:'right'});
     await page.locator('#selection-actions #ask-selection').click();
     const [answerResponse] = await Promise.all([page.waitForResponse(r=>r.url().endsWith('/assistant/ask') && r.request().method()==='POST'),page.locator('#assistant-start').click()]);
-    const assistant=(await answerResponse.json()).assistant;
+    const request=answerResponse.request().postDataJSON();
+    const bubble=page.locator('.assistant-answer-bubble').first();
+    await bubble.waitFor({timeout:30000});
+    const target=await bubble.evaluate(node=>({root_id:node.dataset.rootId,node_id:node.dataset.nodeId||null}));
+    const assistant=await page.evaluate(async ({request,target}) => (await (await fetch('/api/assistant/focus', {
+      method:'POST',headers:{'Content-Type':'application/json','X-Assistant-View':'current'},
+      body:JSON.stringify({reader_session_id:request.reader_session_id,...target}),
+    })).json()).assistant,{request,target});
     assert.equal(assistant.roots.length,1); assert.equal(assistant.roots[0].created_from.kind,'INLINE_GUIDANCE');
     assert.equal(assistant.roots[0].created_from.teaching_lineage.asset_id,first.published.id);
     await page.locator('.assistant-answer-bubble').first().waitFor({timeout:30000});

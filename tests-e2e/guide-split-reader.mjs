@@ -6,7 +6,8 @@ const page = await browser.newPage({viewport:{width:1440,height:1000}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 try {
  await page.goto(process.env.READER_URL || 'http://127.0.0.1:8766/');
- await page.locator('.book-card').filter({hasText:'348 个 PDF 页面'}).click();
+ await page.locator('.book-card').filter({hasText:'348 个 PDF 页面'}).locator('.book-open').click();
+ await page.locator('#book-overview .overview-book-heading .primary-action').click();
  await page.locator('.page canvas').first().waitFor({timeout:30000});
  await page.locator('#outline-toggle').click();
  const outline=await page.evaluate(async()=>{const books=await (await fetch('/api/books')).json();const rev=books.books.find(b=>b.active_revision.page_count===348).active_revision.id;return (await fetch(`/api/revisions/${rev}/outline`)).json();});

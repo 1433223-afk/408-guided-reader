@@ -192,6 +192,7 @@ try {
   assert.equal(await page.locator("#assistant-title").textContent(), "像乐队里的节拍器");
   assert.equal(await page.locator('.assistant-answer-bubble[data-current-answer="true"]').count(), 0);
   assert.equal((await childResponse).status(), 200);
+  await page.waitForFunction(() => !document.querySelector('#reader').classList.contains('assistant-workspace-morphing'));
   const childBubble = page.locator('.assistant-answer-bubble[data-current-answer="true"]');
   await childBubble.waitFor();
   const childId = await childBubble.getAttribute("data-node-id");

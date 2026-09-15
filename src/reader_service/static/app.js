@@ -53,7 +53,7 @@ const state = {
   assistantScrollPositions: new Map(), assistantChildRequests: new Map(),
   assistantViewDrafts: new Map(), assistantRenderedKey: null,
   assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
-  assistantExpanded: false, assistantResizeAnchor: null,
+  assistantExpanded: false,
 };
 
 const MASTER_WORKSPACE_MOTION = Object.freeze({
@@ -76,7 +76,7 @@ const master = createMasterUI({ api, revision: () => state.revision?.id,
   toggleExpanded: () => setAssistantExpanded(!state.assistantExpanded),
   pages: elements.pages, dock: elements["assistant-panel"],
   openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
-  goToPage, announce, relayout: () => relayoutPages(),
+  goToPage, announce,
   memoryControl: (...args) => memory.control(...args) });
 
 document.getElementById("master-expand")?.addEventListener("pointerdown", () => {
@@ -137,8 +137,8 @@ const teachingUiOptions = { state, api, goToPage,
     state.guideSelection = { text, explain };
     syncAskEligibility(); showSelectionActions(x, y);
   },
-  layout: change => { const anchor = captureZoomAnchor(); change(); if (state.revision) relayoutPages(anchor); },
-  closeDock: () => setAssistantPanelOpen(false, { relayout: false }),
+  layout: change => change(),
+  closeDock: () => setAssistantPanelOpen(false),
   explain: (selectedText, request) => {
   if (!state.readerSessionId || state.assistantPending) return;
   rememberAssistantScroll();
@@ -370,7 +370,7 @@ function closeReader() {
   elements["search-panel"].hidden = true;
   elements["outline-panel"].hidden = true;
   elements["knowledge-panel"].hidden = true;
-  setAssistantPanelOpen(false, { relayout: false });
+  setAssistantPanelOpen(false);
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
@@ -663,15 +663,23 @@ function captureZoomAnchor(clientX, clientY) {
   const viewerRect = elements.viewer.getBoundingClientRect();
   const x = clientX ?? (viewerRect.left + viewerRect.width / 2);
   const y = clientY ?? (viewerRect.top + viewerRect.height / 2);
-  let bestPage = null;
-  let bestDistance = Infinity;
-  for (const page of elements.pages.children) {
-    const rect = page.getBoundingClientRect();
-    const distanceY = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
-    if (distanceY < bestDistance) {
-      bestDistance = distanceY;
-      bestPage = page;
-    }
+  const contentY = elements.viewer.scrollTop + y - viewerRect.top;
+  const pages = elements.pages.children;
+  let low = 0, high = pages.length - 1, bestPage = null;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const page = pages[middle];
+    const top = page.offsetTop, bottom = top + page.offsetHeight;
+    if (contentY < top) high = middle - 1;
+    else if (contentY > bottom) low = middle + 1;
+    else { bestPage = page; break; }
+  }
+  if (!bestPage) {
+    const before = pages[Math.max(0, high)];
+    const after = pages[Math.min(pages.length - 1, low)];
+    const beforeDistance = before ? Math.max(0, contentY - before.offsetTop - before.offsetHeight) : Infinity;
+    const afterDistance = after ? Math.max(0, after.offsetTop - contentY) : Infinity;
+    bestPage = beforeDistance <= afterDistance ? before : after;
   }
   if (!bestPage) return null;
   const pageRect = bestPage.getBoundingClientRect();
@@ -1946,20 +1954,17 @@ function setAssistantExpanded(expanded, { animate = true } = {}) {
   hideAssistantAnswerActions(true);
 }
 
-function setAssistantPanelOpen(open, { focusViewer = false, relayout = true } = {}) {
+function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = {}) {
   if (open) guide.close();
-  const wasOpen = !elements["assistant-panel"].hidden;
-  const anchor = relayout && wasOpen !== open ? captureZoomAnchor() : null;
   if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   elements["assistant-panel"].hidden = !open;
-  const overlayOpen = open && !relayout;
+  const overlayOpen = open && overlay;
   elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
   elements["assistant-panel"].classList.toggle("assistant-overlay-open", overlayOpen);
   elements["assistant-toggle"].setAttribute("aria-expanded", String(open));
   renderAssistantViewportMode();
   hideAssistantAnswerActions(true);
   if (focusViewer) elements.viewer.focus({ preventScroll: true });
-  if (anchor && state.revision) requestAnimationFrame(() => relayoutPages(anchor));
 }
 
 function updateAssistantDockFromPointer(clientX) {
@@ -1970,8 +1975,6 @@ function beginAssistantResize(event) {
   if (event.button !== 0 || state.assistantExpanded) return;
   event.preventDefault();
   event.stopPropagation();
-  state.assistantResizeAnchor = elements["assistant-panel"].classList.contains("assistant-overlay-open")
-    ? null : captureZoomAnchor();
   elements["assistant-panel"].classList.add("resizing");
   elements["assistant-resize-handle"].setPointerCapture(event.pointerId);
   updateAssistantDockFromPointer(event.clientX);
@@ -1993,9 +1996,6 @@ function finishAssistantResize(event) {
   if (elements["assistant-resize-handle"].hasPointerCapture(event.pointerId)) {
     elements["assistant-resize-handle"].releasePointerCapture(event.pointerId);
   }
-  const anchor = state.assistantResizeAnchor;
-  state.assistantResizeAnchor = null;
-  if (anchor && state.revision) relayoutPages(anchor);
 }
 
 function resetAssistantPanel() {
@@ -2024,10 +2024,10 @@ function resetAssistantPanel() {
   syncModelSelector();
 }
 
-function openAssistantPanel({ relayout = true } = {}) {
+function openAssistantPanel({ overlay = false } = {}) {
   master.selectAssistant();
   chapterEntry.close();
-  setAssistantPanelOpen(true, { relayout });
+  setAssistantPanelOpen(true, { overlay });
   elements["search-panel"].hidden = true;
   elements["marks-panel"].hidden = true;
   elements["knowledge-panel"].hidden = true;
@@ -2374,7 +2374,7 @@ function stageAssistantSelection() {
       end: { line_ordinal: selection.focus.lineOrdinal, boundary: selection.focus.boundary },
     },
   };
-  openAssistantPanel({ relayout: false });
+  openAssistantPanel({ overlay: true });
   renderAssistantDraft();
   refreshAssistantStatus();
   clearSelection({ animateActions: true });
@@ -3477,9 +3477,7 @@ elements["assistant-resize-handle"].addEventListener("keydown", (event) => {
   else if (event.key === "End") width = maximum;
   else return;
   event.preventDefault();
-  const anchor = captureZoomAnchor();
   applyAssistantDockWidth(width);
-  if (anchor && state.revision) relayoutPages(anchor);
 });
 elements["assistant-model"].addEventListener("change", () => {
   if ((state.assistantState.current && !state.assistantDraft) || state.assistantPending) {

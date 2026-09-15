@@ -22,6 +22,7 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
   const activating = new Set();
   const cache = new Map(), loading = new Map(), intents = new Map(), pending = new Set(), visible = new Map();
   const requestErrors = new Map();
+  let repaintFrame = 0;
   const base = id => `/api/revisions/${revision}/sections/${id}/inline-teaching`;
   const key = id => `inline-teaching:${revision}:${id}`;
   const on = id => {
@@ -34,7 +35,8 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
   }
   function reset() {
     epoch++; revision = state.revision?.id || null; selected = active = null;
-    clearTimeout(timer); cache.clear(); loading.clear(); intents.clear(); pending.clear(); visible.clear(); requestErrors.clear(); activating.clear();
+    clearTimeout(timer); cancelAnimationFrame(repaintFrame); repaintFrame = 0;
+    cache.clear(); loading.clear(); intents.clear(); pending.clear(); visible.clear(); requestErrors.clear(); activating.clear();
     close(false); closeMenu();
   }
   function sync() {
@@ -59,7 +61,7 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     closeMenu(); selected = id; active = itemId;
     refresh();
     if (!reader.classList.contains("inline-open")) layout(() => reader.classList.add("inline-open"));
-    repaint();
+    repaintActive();
   }
   toggle.onclick = async () => {
     const id = currentSection(), stamp = epoch;
@@ -214,6 +216,16 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
   }
   function sections(index) { return state.outlineNodes.filter(n => n.kind === "SECTION" && n.resolution_state === "RESOLVED" && n.start_page <= index && n.end_page >= index); }
   function repaint() { for (const index of state.rendered) renderPage(index); }
+  function repaintActive() {
+    const published = cache.get(selected)?.published;
+    const item = published?.content.items.find(candidate => candidate.id === active);
+    const index = item && published.sources[item.target_id]?.pdf_page_index;
+    if (Number.isInteger(index)) renderPage(index);
+  }
+  function scheduleRepaint() {
+    if (repaintFrame) return;
+    repaintFrame = requestAnimationFrame(() => { repaintFrame = 0; repaint(); });
+  }
   function renderPage(index) {
     if (revision !== state.revision?.id) { reset(); return; }
     const page = document.querySelector(`.page[data-index="${index}"]`);
@@ -269,8 +281,8 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     const text = range.toString();
     contextMenu(event.clientX, event.clientY, text, () => explain(text, request));
   });
-  new ResizeObserver(repaint).observe(viewer);
-  new ResizeObserver(() => { if (active) repaint(); }).observe(panel);
+  new ResizeObserver(scheduleRepaint).observe(viewer);
+  new ResizeObserver(() => { if (active) scheduleRepaint(); }).observe(panel);
   viewer.addEventListener("scroll", () => {
     const id = currentSection();
     refresh(); load(id);
