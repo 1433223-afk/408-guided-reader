@@ -138,7 +138,9 @@ def handler_factory(
                     return
                 try:
                     service.revision(match[1])
-                    result = learning.snapshot(match[1], match[2]) if match[2] else learning.repository.entries(match[1])
+                    chapter_id = _first(parse_qs(parsed.query), "chapter_id")
+                    result = (learning.snapshot(match[1], match[2]) if match[2]
+                              else learning.repository.entries(match[1], chapter_id))
                 except LookupError as exc:
                     self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                     return

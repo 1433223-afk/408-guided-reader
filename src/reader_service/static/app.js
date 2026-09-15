@@ -54,6 +54,7 @@ const state = {
   assistantViewDrafts: new Map(), assistantRenderedKey: null,
   assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
   assistantExpanded: false,
+  learningChapterId: null,
 };
 
 const MASTER_WORKSPACE_MOTION = Object.freeze({
@@ -73,6 +74,7 @@ let assistantSidebarScrollPosition = 0;
 let selectionActionsDismissal = null;
 
 const master = createMasterUI({ api, revision: () => state.revision?.id,
+  chapter: () => state.learningChapterId,
   stream: streamMasterResponse,
   toggleExpanded: () => setAssistantExpanded(!state.assistantExpanded),
   pages: elements.pages, dock: elements["assistant-panel"],
@@ -303,6 +305,7 @@ async function openBook(book) {
   state.assistantScrollPositions.clear();
   state.assistantChildRequests.clear();
   state.zoom = state.revision.position.zoom || 1;
+  state.learningChapterId = null;
   state.currentPage = state.revision.position.pdf_page_index || 0;
   state.pdf = null;
   elements["reader-title"].textContent = book.title;
@@ -351,6 +354,7 @@ function closeReader() {
   clearSearchMatch();
   state.book = null;
   state.revision = null;
+  state.learningChapterId = null;
   master.reset();
   state.pdf = null;
   state.readerSessionId = null;
@@ -512,7 +516,11 @@ function renderReaderSectionHint() {
     if (candidate?.resolution_state === "PARTIAL"
         && chapters.filter(n => n.start_page === candidate.start_page).length === 1) chapter = candidate;
   }
-  chapterEntry.sync(chapter?.outline_node_id || null, section?.outline_node_id || null);
+  const learningChapterId = chapter?.outline_node_id || null;
+  const chapterChanged = state.learningChapterId !== learningChapterId;
+  state.learningChapterId = learningChapterId;
+  chapterEntry.sync(learningChapterId, section?.outline_node_id || null);
+  if (chapterChanged) master.viewportChanged();
 }
 
 function updateViewport() {

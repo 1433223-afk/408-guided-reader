@@ -302,19 +302,132 @@ def test_topic_navigation_is_read_only_and_preserves_real_identity(learning):
             before_counts[table] = c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
     restarted = LearningService(master.repository.database, f['foundation'], runtime)
     current = restarted.snapshot(rev, kp)
-    entries = restarted.repository.entries(rev)
+    entries = restarted.repository.entries(rev, f['chapter']['outline_node_id'])
     assert {t['id'] for t in entries['topics']} == {t['id'] for t in current['topics']}
     old = next(t for t in entries['topics'] if t['id'] == topic)
     assert old['state'] == 'RESOLVED'
     assert old['label'] == '为什么？'
     assert old['scope_id'] == kp and old['scope_kind'] == 'KP'
     assert current == resolved
-    assert restarted.repository.entries(rev) == entries
+    assert restarted.repository.entries(rev, f['chapter']['outline_node_id']) == entries
     assert restarted.snapshot(rev, kp) == current
     with master.repository.database.connect() as c:
         assert {table: c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
                 for table in before_counts} == before_counts
     assert len(runtime.calls) == 1
+
+
+def test_master_history_projection_is_chapter_local_and_requires_completed_exchange(learning, service):
+    f, master, _runtime, points = learning
+    revision = f['revision']['id']
+    first_chapter = f['chapter']['outline_node_id']
+    first_point = points[0]['knowledge_point_id']
+
+    empty = master.repository.open(revision, first_point)
+    empty_topic_id = empty['topics'][0]['id']
+    assert master.repository.entries(revision)['topics'] == []
+    assert master.repository.entries(revision, first_chapter)['topics'] == []
+
+    pending, created = master.repository.enqueue(
+        revision, first_point, 'chapter-one-first', '第一章为什么这样？',
+        'Fast', 'deepseek', 'deepseek-model', 'Quick',
+    )
+    assert created
+    assert master.repository.entries(revision, first_chapter)['topics'] == []
+    master.repository.update_message(pending['id'], state='FAILED')
+    master.retry(revision, first_point, pending['id'])
+    idle(master)
+    first_entries = master.repository.entries(revision, first_chapter)['topics']
+    assert [(topic['id'], topic['label']) for topic in first_entries] == [
+        (empty_topic_id, '第一章为什么这样？')
+    ]
+
+    master.repository.confirm(revision, first_point, empty_topic_id)
+    master.send(revision, first_point, {
+        'intent_id': 'chapter-one-follow-up', 'question': '继续追问。',
+        'review_mode': 'Fast',
+    })
+    idle(master)
+    after_follow_up = master.repository.entries(revision, first_chapter)['topics']
+    assert len(after_follow_up) == 1
+    assert after_follow_up[0]['id'] == empty_topic_id
+    assert after_follow_up[0]['state'] == 'RESOLVED'
+
+    second_chapter = f['sibling']['outline_node_id']
+    f['knowledge'].request_prepare(revision, second_chapter)
+    claim_and_run(f)
+    with master.repository.database.connect() as connection:
+        template = dict(connection.execute(
+            'SELECT * FROM knowledge_points WHERE knowledge_point_id=?', (first_point,)
+        ).fetchone())
+        second_section = connection.execute(
+            "SELECT outline_node_id FROM outline_nodes WHERE book_source_revision_id=? AND parent_id=? AND kind='SECTION'",
+            (revision, second_chapter),
+        ).fetchone()[0]
+        structure_version = connection.execute(
+            'SELECT structure_version FROM chapter_preparations WHERE book_source_revision_id=? AND chapter_outline_node_id=?',
+            (revision, second_chapter),
+        ).fetchone()[0]
+        if structure_version < 1:
+            structure_version = 1
+        ready_metadata = connection.execute("""SELECT generator_provider,generator_model,
+            reviewer_provider,reviewer_model,published_at FROM chapter_preparations
+            WHERE book_source_revision_id=? AND chapter_outline_node_id=?""",
+            (revision, first_chapter)).fetchone()
+        connection.execute(
+            """UPDATE chapter_preparations SET status='READY', structure_version=?,
+                generator_provider=?,generator_model=?,reviewer_provider=?,reviewer_model=?,published_at=?,
+                failure_stage=NULL,failure_kind=NULL,failure_code=NULL
+                WHERE book_source_revision_id=? AND chapter_outline_node_id=?""",
+            (structure_version, *ready_metadata, revision, second_chapter),
+        )
+        template.update({
+            'knowledge_point_id': str(uuid4()), 'chapter_outline_node_id': second_chapter,
+            'chapter_structure_version': structure_version, 'primary_section_id': second_section,
+            'order_index': 0, 'title': '第二章知识点', 'start_page': 4, 'start_y': .2,
+            'end_page': 5, 'end_y': .5,
+        })
+        connection.execute(
+            f"INSERT INTO knowledge_points ({','.join(template)}) VALUES ({','.join('?' for _ in template)})",
+            tuple(template.values()),
+        )
+    second_point = template
+    with master.repository.database.connect() as connection:
+        second_thread, second_topic, intent = str(uuid4()), str(uuid4()), 'chapter-two-first'
+        connection.execute(
+            "INSERT INTO master_threads(id,book_source_revision_id,knowledge_point_id,created_at) VALUES (?,?,?,'2026-09-15T00:00:00Z')",
+            (second_thread, revision, second_point['knowledge_point_id']),
+        )
+        connection.execute(
+            "INSERT INTO master_topics VALUES (?,?,'ACTIVE','2026-09-15T00:00:00Z',NULL,NULL)",
+            (second_topic, second_thread),
+        )
+        connection.execute("""INSERT INTO master_messages(
+            id,thread_id,topic_id,intent_id,role,content,created_at,state,review_mode,
+            review_state,provider,model,reasoning_mode)
+            VALUES (?,?,?,?, 'user','第二章的问题。','2026-09-15T00:00:01Z','COMPLETE','Fast',NULL,'deepseek','deepseek-model','Quick')""",
+            (str(uuid4()), second_thread, second_topic, intent),
+        )
+        connection.execute("""INSERT INTO master_messages(
+            id,thread_id,topic_id,intent_id,role,content,created_at,state,review_mode,
+            review_state,provider,model,reasoning_mode)
+            VALUES (?,?,?,?, 'assistant','第二章回答。','2026-09-15T00:00:02Z','COMPLETE','Fast','NOT_REQUESTED','deepseek','deepseek-model','Quick')""",
+            (str(uuid4()), second_thread, second_topic, intent),
+        )
+    second_entries = master.repository.entries(revision, second_chapter)['topics']
+    assert len(second_entries) == 1
+    assert second_entries[0]['label'] == '第二章的问题。'
+    assert second_entries[0]['id'] != empty_topic_id
+    assert {topic['id'] for topic in master.repository.entries(revision, first_chapter)['topics']} == {empty_topic_id}
+    with pytest.raises(LookupError, match='当前章节不存在'):
+        master.repository.entries(revision, str(uuid4()))
+    with running_server(service, learning=master) as (base, token):
+        _, unscoped = request_json(f'{base}/api/revisions/{revision}/learning', token)
+        _, scoped = request_json(
+            f'{base}/api/revisions/{revision}/learning?chapter_id={first_chapter}', token
+        )
+        assert unscoped['topics'] == []
+        assert [topic['id'] for topic in scoped['topics']] == [empty_topic_id]
 
 
 def test_concurrent_explicit_open_reuses_one_topic(learning):

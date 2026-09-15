@@ -58,7 +58,7 @@ credential is retained. Review calls added in both Fast cases: `0`; no provider 
 `conversation-composer.mjs`, `master-streaming.mjs` and the broader `master-learning.mjs` all PASS.
 The focused E2E covers genuine Quick and Deep incremental delivery, separate transient reasoning,
 provider-specific request mapping, Fast Review isolation, readiness isolation and stale-readiness
-recovery. Integration reran the closure-level Python suite at **318 passed / 2 unchanged optional OCR
+recovery. Final integration reran the closure-level Python suite at **319 passed / 2 unchanged optional OCR
 skips** and updated only the broader E2E's obsolete entry path to use the current PDF-local KP marker
 and low-frequency Topic menu; no Product behavior changed.
 The later DeepSeek budget adjustment passed **12 targeted Python cases** covering Quick/Deep request
@@ -498,6 +498,36 @@ No UI, source scope, provider payload, status, schema, mastery rule or dependenc
 - Refreshed port 8766 after a consistent backup and no-pending-message check; HTTP 200. All source
   KP, Master thread/topic/message, KP status and event rows equal their pre-restart snapshots.
 
+## Same-Phase chapter-local Master conversation history (2026-09-15)
+
+The expanded Master sidebar is a read-only conversation-history projection for the Reader's current
+Chapter. It no longer treats KP/Section state, `open`, preparation, or an empty durable Topic as a
+navigation item. A Topic appears only after one `COMPLETE` user message has a matching `COMPLETE`
+Master answer for the same intent. ACTIVE and RESOLVED Topics use the same rule, so `已弄懂` remains
+a lightweight state on an existing conversation rather than sidebar identity.
+
+The authenticated Learning GET accepts a validated `chapter_id`; KP Topics are scoped through the
+published KP's Chapter and Section Topics through their owning Chapter. Missing Chapter identity
+returns no Topic list, and a Chapter outside the revision is rejected. The Reader updates this
+identity from its actual viewport; the expanded sidebar refreshes on Chapter changes and ignores a
+late response for a Chapter that is no longer current. The UI says `本章对话`, has an explicit empty
+state, and contains history-open buttons only—there is no create input or new-conversation action.
+Clicking an item reads its complete durable history without a Learning write.
+
+No Topic, message, Learning History, Memory, KP/Section state, mastery value, provider payload, or
+durable identity was changed or deleted. Empty/state-only legacy Topics remain intact in storage and
+are hidden only by the authoritative server projection; this is not title deduplication.
+
+- TARGETED: the Learning tests cover open-only, state-only and incomplete-message exclusion;
+  complete-exchange inclusion; RESOLVED retention; same-Topic follow-up; Chapter isolation;
+  missing/invalid Chapter identity; and read-only Topic navigation.
+- REAL USE: `test:e2e:master-history` PASS on an isolated copy of the real 348-page Library. It proves
+  current-Chapter-only entries, complete-conversation-only inclusion, zero Learning writes when
+  reopening history, zero entries in an empty Chapter, and restoration after returning. Result:
+  `navigationWrites=0`, `emptyChapterItems=0`.
+- UI hygiene: semantic buttons, current-item state, the descriptive `当前章节 Master 对话` label and
+  a visible empty state are retained. No visual redesign or additional navigation is introduced.
+
 ## Reproducible entry points
 
 ```powershell
@@ -505,6 +535,7 @@ python -m pytest tests/test_learning.py -q
 $env:READER_DATA_DIR='D:\codex\408-guided-reader\var\manual-browser'
 $env:READER_CHROMIUM='C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 npm run test:e2e:master
+npm run test:e2e:master-history
 $env:MASTER_E2E_REAL='1'
 npm run test:e2e:master
 Remove-Item Env:MASTER_E2E_REAL

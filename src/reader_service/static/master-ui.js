@@ -3,7 +3,7 @@ import { createComposerChoice, createMessageRail } from "/screens.js";
 
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 
-export function createMasterUI({ api, stream, revision, pages, dock, openDock, goToPage, announce, memoryControl, toggleExpanded }) {
+export function createMasterUI({ api, stream, revision, chapter, pages, dock, openDock, goToPage, announce, memoryControl, toggleExpanded }) {
   document.addEventListener("pointerdown", event => {
     for (const marker of pages.querySelectorAll(".kp-learning-marker[open]")) {
       if (!marker.contains(event.target)) marker.open = false;
@@ -24,6 +24,7 @@ export function createMasterUI({ api, stream, revision, pages, dock, openDock, g
   let activeStream = null;
   let streamView = null;
   let providerReadinessMessage = '';
+  let entriesChapterId = undefined;
   const topicDrafts = new Map();
   const recentReasoning = new Map();
   const tabs = document.createElement("nav");
@@ -59,8 +60,8 @@ export function createMasterUI({ api, stream, revision, pages, dock, openDock, g
   const el = (id) => panel.querySelector(`#master-${id}`);
   const conversation = document.createElement('div'); conversation.className='master-conversation';
   conversation.append(...panel.children);
-  const sidebar = document.createElement('nav'); sidebar.id='master-topic-sidebar'; sidebar.setAttribute('aria-label','本书 Master 主题');
-  const topicHeading=document.createElement('strong'); topicHeading.textContent='本书主题';
+  const sidebar = document.createElement('nav'); sidebar.id='master-topic-sidebar'; sidebar.setAttribute('aria-label','当前章节 Master 对话');
+  const topicHeading=document.createElement('strong'); topicHeading.textContent='本章对话';
   const topicList=document.createElement('div'); topicList.id='master-topic-list';
   sidebar.append(topicHeading, topicList); panel.append(sidebar, conversation);
   const resume=button('继续提问', () => {
@@ -189,7 +190,7 @@ export function createMasterUI({ api, stream, revision, pages, dock, openDock, g
       const detail=document.createElement('small'); detail.textContent=`${topic.scope_title} · ${topic.state==='ACTIVE'?'未完全清楚':'已解决'}`;
       item.append(title,detail); return item;
     }));
-    if(!topicList.children.length) { const empty=document.createElement('p'); empty.textContent='还没有 Master 话题'; topicList.append(empty); }
+    if(!topicList.children.length) { const empty=document.createElement('p'); empty.textContent='本章还没有 Master 对话'; topicList.append(empty); }
   }
   function button(text, action) {
     const control = document.createElement("button");
@@ -201,8 +202,11 @@ export function createMasterUI({ api, stream, revision, pages, dock, openDock, g
   async function refreshEntries() {
     const owner = revision();
     if (!owner) return;
-    const result = await api(`/api/revisions/${owner}/learning`);
-    if (owner !== revision()) return;
+    const chapterId = chapter?.() || null;
+    const query = chapterId ? `?chapter_id=${encodeURIComponent(chapterId)}` : '';
+    const result = await api(`/api/revisions/${owner}/learning${query}`);
+    if (owner !== revision() || chapterId !== (chapter?.() || null)) return;
+    entriesChapterId = chapterId;
     entries = result;
     renderTopicList();
     const hasControls = entries.points.length > 0;
@@ -571,7 +575,8 @@ export function createMasterUI({ api, stream, revision, pages, dock, openDock, g
     current = null;
     selectedTopicId=null; composingNew=false; topicDrafts.clear();
     canConfirm=false; composerMore.hidden=true; memorySlot.replaceChildren(); menuMessageId=null;
-    entries = { points: [], sections: [] };
+    entries = { points: [], sections: [], topics: [] };
+    entriesChapterId = undefined;
     if (pages.classList.contains("has-learning-controls")) {
       pages.classList.remove("has-learning-controls");
     }
@@ -584,7 +589,10 @@ export function createMasterUI({ api, stream, revision, pages, dock, openDock, g
     el("confirm").hidden = true;
     resume.hidden=true; renderTopicList();
   }
-  return { refreshEntries, renderPage, decorateKnowledgeItem, reset, viewportChanged: () => { if(current) render(); }, selectAssistant: () => select(false),
+  return { refreshEntries, renderPage, decorateKnowledgeItem, reset, viewportChanged: () => {
+      if(current) render();
+      if(entriesChapterId !== (chapter?.() || null)) refreshEntries().catch(error => announce(error.message, true));
+    }, selectAssistant: () => select(false),
     openMemory: async (scope, messageId) => {
       await open({ scope_id: scope, title: 'Master 学习上下文' });
       const message=current?.messages.find(m=>m.id===messageId);

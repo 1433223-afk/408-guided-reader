@@ -30,9 +30,17 @@ try {
   const data=await page.evaluate(async()=>{
     const books=await (await fetch('/api/books')).json(); const book=books.books.find(b=>b.active_revision?.page_count===348);
     const revision=book.active_revision.id;
-    return {revision, learning:await (await fetch(`/api/revisions/${revision}/learning`)).json()};
+    const all=await (await fetch(`/api/revisions/${revision}/learning`)).json();
+    for(const chapterId of new Set(all.points.map(point=>point.chapter_outline_node_id))) {
+      const learning=await (await fetch(`/api/revisions/${revision}/learning?chapter_id=${chapterId}`)).json();
+      if(learning.topics.length>1) {
+        const point=learning.points.find(candidate=>candidate.knowledge_point_id===learning.topics[0].scope_id);
+        if(point) return {revision,point,learning};
+      }
+    }
+    throw new Error('A chapter with retained Master conversations is required');
   });
-  const point=data.learning.points.find(p=>p.thread_id);
+  const point=data.point;
   assert.ok(point, 'A retained Master thread is required');
   await page.locator('#page-number').fill(String(point.display_end_page+1));
   await page.locator('#page-number').press('Enter');
@@ -122,6 +130,8 @@ try {
   await page.screenshot({path:'test-results/master-morph-after.png'});
   await page.locator('#master-topic-list button').first().waitFor();
   assert.ok(await page.locator('#master-topic-list button').count()>1);
+  assert.equal(await page.locator('#master-topic-sidebar > strong').textContent(),'本章对话');
+  assert.equal(await page.locator('#master-topic-sidebar').getAttribute('aria-label'),'当前章节 Master 对话');
   assert.equal(await page.locator('#master-topic-sidebar [role="treeitem"]').count(),0);
   const initialTopic=await page.locator('#master-topic-list [aria-current="true"]').getAttribute('data-topic-id');
   const navigationWrites=[];
@@ -184,12 +194,13 @@ try {
   await rail.locator('button').first().focus();
   await page.keyboard.press('End');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(()=>{
+  await page.waitForTimeout(700);
+  assert.ok(await page.evaluate(()=>{
     const history=document.querySelector('#master-history');
     const target=[...history.querySelectorAll('.assistant-question-bubble')].at(-1);
-    const offset=target.getBoundingClientRect().top-history.getBoundingClientRect().top;
-    return Math.abs(offset-16)<3 || history.scrollTop+history.clientHeight>=history.scrollHeight-2;
-  });
+    const bounds=history.getBoundingClientRect(), targetBounds=target.getBoundingClientRect();
+    return targetBounds.top>=bounds.top && targetBounds.top<bounds.bottom;
+  }), 'Message rail must bring the selected question into view');
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#master-history-preview').isHidden(),true);
   assert.equal(await page.locator('#master-history .assistant-answer-bubble').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');

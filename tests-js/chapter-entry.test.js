@@ -55,7 +55,8 @@ test('Reader identifies an unprepared chapter from page bookmarks without invent
   let target;
   const context={state:{outlineNodes:nodes},document:{getElementById:()=>({})},
     elements:{viewer:{getBoundingClientRect:()=>({top:68})}},
-    captureZoomAnchor:()=>({pageIndex:19,normalizedY:0.5}),chapterEntry:{sync:id=>target=id}};
+    captureZoomAnchor:()=>({pageIndex:19,normalizedY:0.5}),chapterEntry:{sync:id=>target=id},
+    master:{viewportChanged:()=>{}}};
   runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'a');
   context.captureZoomAnchor=()=>({pageIndex:20,normalizedY:0});
   runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'b');

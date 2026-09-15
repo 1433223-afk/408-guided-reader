@@ -69,8 +69,14 @@ class LearningRepository:
             return {"point": point, "status": status,
                     "thread_id": thread["id"] if thread else None, "topics": topics, "messages": messages}
 
-    def entries(self, revision_id):
+    def entries(self, revision_id, chapter_id=None):
         with self.database.connect() as c:
+            if chapter_id is not None:
+                chapter = c.execute("""SELECT outline_node_id FROM outline_nodes
+                    WHERE book_source_revision_id=? AND outline_node_id=? AND kind='CHAPTER'""",
+                    (revision_id, chapter_id)).fetchone()
+                if chapter is None:
+                    raise LookupError("当前章节不存在。")
             points = [dict(r) for r in c.execute("""
                 SELECT kp.*, node.title AS section_title,
                     COALESCE(s.status, 'UNCONFIRMED') AS status,
@@ -105,22 +111,38 @@ class LearningRepository:
                 for groups, key in ((section_counts, point['primary_section_id']), (chapter_counts, point['chapter_outline_node_id'])):
                     counts = groups.setdefault(key, {'UNDERSTOOD': 0, 'NOT_FULLY_CLEAR': 0, 'UNCONFIRMED': 0})
                     counts[point['status']] += 1
-            # Read-only navigation projection of existing, currently published scopes.
-            scopes = {p['thread_id']: p for p in [*points, *sections] if p.get('thread_id')}
+            # Read-only navigation projection. The sidebar is chapter-local and lists
+            # completed conversations, never Topic/KP state by itself.
+            scopes = {
+                p['thread_id']: p for p in [*points, *sections]
+                if p.get('thread_id') and chapter_id is not None and (
+                    p.get('chapter_outline_node_id') == chapter_id
+                    or (p.get('kind') == 'SECTION' and p.get('parent_id') == chapter_id)
+                )
+            }
             topics = []
             for row in c.execute("""SELECT topic.*,
-                (SELECT substr(content, 1, 100) FROM master_messages message
-                 WHERE message.topic_id=topic.id AND message.role='user'
-                 ORDER BY message.created_at, message.rowid LIMIT 1) AS question
+                (SELECT substr(user.content, 1, 100) FROM master_messages user
+                 WHERE user.topic_id=topic.id AND user.role='user' AND user.state='COMPLETE'
+                   AND EXISTS (SELECT 1 FROM master_messages answer
+                       WHERE answer.topic_id=user.topic_id AND answer.intent_id=user.intent_id
+                         AND answer.role='assistant' AND answer.state='COMPLETE')
+                 ORDER BY user.created_at, user.rowid LIMIT 1) AS question
                 FROM master_topics topic JOIN master_threads thread ON thread.id=topic.thread_id
-                WHERE thread.book_source_revision_id=? ORDER BY topic.created_at DESC, topic.rowid DESC""", (revision_id,)):
+                WHERE thread.book_source_revision_id=?
+                  AND EXISTS (SELECT 1 FROM master_messages user
+                      JOIN master_messages answer ON answer.topic_id=user.topic_id
+                        AND answer.intent_id=user.intent_id AND answer.role='assistant'
+                        AND answer.state='COMPLETE'
+                      WHERE user.topic_id=topic.id AND user.role='user' AND user.state='COMPLETE')
+                ORDER BY topic.created_at DESC, topic.rowid DESC""", (revision_id,)):
                 scope = scopes.get(row['thread_id'])
                 if scope is None:
                     continue
                 topics.append({'id': row['id'], 'state': row['state'],
                     'scope_id': scope.get('knowledge_point_id') or scope['outline_node_id'],
                     'scope_kind': 'KP' if scope.get('knowledge_point_id') else 'SECTION',
-                    'scope_title': scope['title'], 'label': row['question'] or scope['title']})
+                    'scope_title': scope['title'], 'label': row['question']})
             return {"points": points, "sections": sections,
                     "topics": topics,
                     "section_counts": section_counts, "chapter_counts": chapter_counts}
