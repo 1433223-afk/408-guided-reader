@@ -412,7 +412,23 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader.assistant-expanded .assistant-turn-actions button { background:transparent; border-color:transparent; font-size:12px; color:#69776b; }
 #reader.assistant-expanded #master-workspace > #master-topic-sidebar { background:#f5f6f2; border-right:0; }
 #reader.assistant-expanded #master-history > .master-message { padding-top:0; padding-bottom:0; }
-@media (prefers-reduced-motion:reduce) { .message-scroll-shell * { scroll-behavior:auto; } }
+#reader.master-workspace-morphing #assistant-panel,
+#reader.master-workspace-morphing .master-conversation,
+#reader.master-workspace-morphing #master-topic-sidebar { will-change:transform,opacity,clip-path; }
+.master-workspace-morph-surface { position:fixed; z-index:6; pointer-events:none; background:#faf8f2; will-change:transform; }
+.master-topic-sidebar-ghost { position:fixed; z-index:8; box-sizing:border-box; overflow:hidden; pointer-events:none; background:#f5f6f2; color:#39443b; will-change:transform,opacity; }
+.master-topic-sidebar-ghost > strong { display:block; padding:18px 20px 16px; font-size:13px; color:#637060; }
+.master-topic-sidebar-ghost button { display:block; width:calc(100% - 20px); margin:3px 10px; padding:11px 10px; text-align:left; border:0; border-radius:7px; background:transparent; color:#52665a; font:inherit; }
+.master-topic-sidebar-ghost button[aria-current=true] { background:#e0e9d9; color:#304d35; }
+.master-topic-sidebar-ghost button span,.master-topic-sidebar-ghost button small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.master-topic-sidebar-ghost button span { font-size:13px; }
+.master-topic-sidebar-ghost button small { margin-top:5px; color:#6f7a69; font-size:11px; }
+@media (prefers-reduced-motion:reduce) {
+  .message-scroll-shell * { scroll-behavior:auto; }
+  #reader.master-workspace-morphing #assistant-panel,
+  #reader.master-workspace-morphing .master-conversation,
+  #reader.master-workspace-morphing #master-topic-sidebar { will-change:auto; }
+}
 #reader.assistant-expanded #assistant-panel :is(#master-question,#assistant-question) { border:0; border-radius:0; background:transparent; box-shadow:none; }
 #reader.assistant-expanded #assistant-panel .message-rail button { background:transparent; border:0; }
 #reader.assistant-expanded .master-topic-actions { position:relative; padding-right:90px; min-height:28px; }

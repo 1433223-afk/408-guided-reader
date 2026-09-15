@@ -56,12 +56,32 @@ const state = {
   assistantExpanded: false, assistantResizeAnchor: null,
 };
 
+const MASTER_WORKSPACE_MOTION = Object.freeze({
+  workspace: 220,
+  sidebarDelay: 96,
+  sidebarReveal: 124,
+  restoreWorkspaceDelay: 36,
+  restoreWorkspace: 184,
+  sidebarHide: 96,
+});
+let masterWorkspaceMorph = null;
+let masterMorphFocusOrigin = null;
+let masterSidebarScrollPosition = 0;
+
 const master = createMasterUI({ api, revision: () => state.revision?.id,
   toggleExpanded: () => setAssistantExpanded(!state.assistantExpanded),
   pages: elements.pages, dock: elements["assistant-panel"],
   openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
   goToPage, announce, relayout: () => relayoutPages(),
   memoryControl: (...args) => memory.control(...args) });
+
+document.getElementById("master-expand")?.addEventListener("pointerdown", () => {
+  const active = document.activeElement;
+  masterMorphFocusOrigin = null;
+  if (active instanceof HTMLElement && document.getElementById("master-workspace")?.contains(active)) {
+    masterMorphFocusOrigin = captureMasterFocus(active);
+  }
+});
 
 const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: async () => { await loadBooks(); const b = state.books.filter(b => b.active_revision?.position.updated_at).sort((a,b) => b.active_revision.position.updated_at.localeCompare(a.active_revision.position.updated_at))[0]; if(b) await enterReader(b); else await showHome(); },
   enterView: () => { screens.close(); elements['library-home'].hidden = true; elements.reader.hidden = true; },
@@ -1517,9 +1537,225 @@ function renderAssistantViewportMode() {
   master.viewportChanged();
 }
 
-function setAssistantExpanded(expanded) {
+function captureMasterFocus(element = document.activeElement) {
+  if (!(element instanceof HTMLElement)) return null;
+  const selection = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+    ? { start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection }
+    : null;
+  return { element, selection };
+}
+
+function masterFocusAnchor(workspace, preferredFocus) {
+  const focused = preferredFocus?.element;
+  if (focused instanceof HTMLElement && workspace.contains(focused)) return focused;
+  const history = workspace.querySelector("#master-history");
+  if (history) {
+    const bounds = history.getBoundingClientRect();
+    const visible = [...history.querySelectorAll(".master-message")].find((message) => {
+      const rect = message.getBoundingClientRect();
+      return rect.bottom > bounds.top + 8 && rect.top < bounds.bottom - 8;
+    });
+    if (visible) return visible;
+  }
+  return workspace.querySelector("#master-title") || workspace;
+}
+
+function masterAnchorDescriptor(anchor) {
+  if (!(anchor instanceof HTMLElement)) return null;
+  if (anchor.id) return { kind: "id", value: anchor.id };
+  const message = anchor.closest("[data-message-id]");
+  if (message?.dataset.messageId) return { kind: "message", value: message.dataset.messageId };
+  return null;
+}
+
+function resolveMasterAnchor(workspace, descriptor) {
+  if (!descriptor) return workspace.querySelector("#master-title") || workspace;
+  if (descriptor.kind === "id") return document.getElementById(descriptor.value);
+  if (descriptor.kind === "message") {
+    return [...workspace.querySelectorAll("[data-message-id]")]
+      .find((message) => message.dataset.messageId === descriptor.value) || null;
+  }
+  return null;
+}
+
+function captureMasterMorphSnapshot() {
+  const workspace = document.getElementById("master-workspace");
+  const panel = elements["assistant-panel"];
+  const sidebar = workspace.querySelector("#master-topic-sidebar");
+  if (sidebar?.offsetParent) masterSidebarScrollPosition = sidebar.scrollTop;
+  const preferredFocus = masterMorphFocusOrigin || captureMasterFocus();
+  masterMorphFocusOrigin = null;
+  const anchor = masterFocusAnchor(workspace, preferredFocus);
+  return {
+    workspace,
+    panelRect: panel.getBoundingClientRect(),
+    anchor: masterAnchorDescriptor(anchor),
+    anchorRect: anchor.getBoundingClientRect(),
+    historyScroll: workspace.querySelector("#master-history")?.scrollTop || 0,
+    sidebarScroll: masterSidebarScrollPosition,
+    focus: preferredFocus,
+  };
+}
+
+function restoreMasterMorphState(snapshot, { focus = false } = {}) {
+  const history = snapshot.workspace.querySelector("#master-history");
+  const sidebar = snapshot.workspace.querySelector("#master-topic-sidebar");
+  if (history) history.scrollTop = snapshot.historyScroll;
+  masterSidebarScrollPosition = snapshot.sidebarScroll;
+  if (sidebar?.offsetParent) sidebar.scrollTop = snapshot.sidebarScroll;
+  if (!focus) return;
+  const target = snapshot.focus?.element;
+  if (!(target instanceof HTMLElement) || !target.isConnected || target.hidden) return;
+  target.focus({ preventScroll: true });
+  if (snapshot.focus.selection && (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement)) {
+    target.setSelectionRange(
+      snapshot.focus.selection.start,
+      snapshot.focus.selection.end,
+      snapshot.focus.selection.direction,
+    );
+  }
+}
+
+function masterMorphSurface(rect) {
+  const surface = document.createElement("div");
+  surface.className = "master-workspace-morph-surface";
+  Object.assign(surface.style, {
+    top: `${rect.top}px`,
+    right: `${Math.max(0, innerWidth - rect.right)}px`,
+    bottom: `${Math.max(0, innerHeight - rect.bottom)}px`,
+    left: `${rect.left}px`,
+  });
+  document.body.append(surface);
+  return surface;
+}
+
+function masterSidebarGhost(sidebar) {
+  if (!(sidebar instanceof HTMLElement) || !sidebar.offsetParent) return null;
+  const rect = sidebar.getBoundingClientRect();
+  const ghost = sidebar.cloneNode(true);
+  ghost.className = "master-topic-sidebar-ghost";
+  ghost.removeAttribute("id");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+  ghost.querySelectorAll("button, a, input, select, textarea").forEach((node) => node.tabIndex = -1);
+  Object.assign(ghost.style, {
+    top: `${rect.top}px`, left: `${rect.left}px`, width: `${rect.width}px`, height: `${rect.height}px`,
+  });
+  document.body.append(ghost);
+  return ghost;
+}
+
+function finishMasterWorkspaceMorph(token) {
+  if (!masterWorkspaceMorph || masterWorkspaceMorph.token !== token) return;
+  const { animations, surface, sidebarGhost, snapshot } = masterWorkspaceMorph;
+  animations.forEach((animation) => animation.cancel());
+  surface?.remove();
+  sidebarGhost?.remove();
+  elements.reader.classList.remove("master-workspace-morphing");
+  delete elements.reader.dataset.masterMorphPhase;
+  restoreMasterMorphState(snapshot, { focus: true });
+  masterWorkspaceMorph = null;
+}
+
+function cancelMasterWorkspaceMorph() {
+  if (!masterWorkspaceMorph) return;
+  finishMasterWorkspaceMorph(masterWorkspaceMorph.token);
+}
+
+function animateMasterWorkspace(expanded) {
+  cancelMasterWorkspaceMorph();
+  const snapshot = captureMasterMorphSnapshot();
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const sidebarBefore = snapshot.workspace.querySelector("#master-topic-sidebar");
+  const sidebarGhost = expanded || reduced ? null : masterSidebarGhost(sidebarBefore);
+  const surface = expanded || reduced ? null : masterMorphSurface(snapshot.panelRect);
+
+  if (expanded) state.assistantDockWidthBeforeExpanded = state.assistantDockWidth;
+  state.assistantExpanded = expanded;
+  if (!expanded) applyAssistantDockWidth(state.assistantDockWidthBeforeExpanded);
+  renderAssistantViewportMode();
+  hideAssistantAnswerActions(true);
+  restoreMasterMorphState(snapshot);
+
+  if (reduced) {
+    restoreMasterMorphState(snapshot, { focus: true });
+    return;
+  }
+
+  const workspace = snapshot.workspace;
+  const conversation = workspace.querySelector(".master-conversation");
+  const afterAnchor = resolveMasterAnchor(workspace, snapshot.anchor)
+    || workspace.querySelector("#master-title") || workspace;
+  const afterRect = afterAnchor.getBoundingClientRect();
+  const deltaX = snapshot.anchorRect.left - afterRect.left;
+  const deltaY = snapshot.anchorRect.top - afterRect.top;
+  const easing = "cubic-bezier(.2,.72,.22,1)";
+  const token = Symbol("master-workspace-morph");
+  const animations = [];
+  elements.reader.classList.add("master-workspace-morphing");
+  elements.reader.dataset.masterMorphPhase = expanded ? "expanding" : "restoring";
+
+  if (expanded) {
+    const panel = elements["assistant-panel"];
+    animations.push(panel.animate([
+      { clipPath: `inset(0 0 0 ${Math.max(0, snapshot.panelRect.left)}px)` },
+      { clipPath: "inset(0 0 0 0)" },
+    ], { duration: MASTER_WORKSPACE_MOTION.workspace, easing, fill: "both" }));
+    animations.push(conversation.animate([
+      { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`, opacity: .985 },
+      { transform: "translate3d(0, 0, 0)", opacity: 1 },
+    ], { duration: MASTER_WORKSPACE_MOTION.workspace, easing, fill: "both" }));
+    const sidebar = workspace.querySelector("#master-topic-sidebar");
+    if (sidebar) animations.push(sidebar.animate([
+      { opacity: 0, transform: "translate3d(-10px, 0, 0)" },
+      { opacity: 1, transform: "translate3d(0, 0, 0)" },
+    ], {
+      delay: MASTER_WORKSPACE_MOTION.sidebarDelay,
+      duration: MASTER_WORKSPACE_MOTION.sidebarReveal,
+      easing,
+      fill: "both",
+    }));
+  } else {
+    const targetRect = elements["assistant-panel"].getBoundingClientRect();
+    if (surface) {
+      animations.push(surface.animate([
+        { transform: "translate3d(0, 0, 0)", opacity: 1 },
+        { transform: `translate3d(${targetRect.left}px, 0, 0)`, opacity: 1 },
+      ], {
+        delay: MASTER_WORKSPACE_MOTION.restoreWorkspaceDelay,
+        duration: MASTER_WORKSPACE_MOTION.restoreWorkspace,
+        easing,
+        fill: "both",
+      }));
+    }
+    animations.push(conversation.animate([
+      { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`, opacity: .985 },
+      { transform: "translate3d(0, 0, 0)", opacity: 1 },
+    ], {
+      delay: MASTER_WORKSPACE_MOTION.restoreWorkspaceDelay,
+      duration: MASTER_WORKSPACE_MOTION.restoreWorkspace,
+      easing,
+      fill: "both",
+    }));
+    if (sidebarGhost) animations.push(sidebarGhost.animate([
+      { opacity: 1, transform: "translate3d(0, 0, 0)" },
+      { opacity: 0, transform: "translate3d(-10px, 0, 0)" },
+    ], { duration: MASTER_WORKSPACE_MOTION.sidebarHide, easing, fill: "both" }));
+  }
+
+  masterWorkspaceMorph = { token, animations, surface, sidebarGhost, snapshot };
+  Promise.allSettled(animations.map((animation) => animation.finished))
+    .then(() => finishMasterWorkspaceMorph(token));
+}
+
+function setAssistantExpanded(expanded, { animate = true } = {}) {
   if (elements["assistant-panel"].hidden && expanded) return;
   if (expanded === state.assistantExpanded) return;
+  if (animate && elements["assistant-panel"].classList.contains("master-active")) {
+    animateMasterWorkspace(expanded);
+    return;
+  }
+  cancelMasterWorkspaceMorph();
   if (expanded) state.assistantDockWidthBeforeExpanded = state.assistantDockWidth;
   state.assistantExpanded = expanded;
   if (!expanded) applyAssistantDockWidth(state.assistantDockWidthBeforeExpanded);
@@ -1531,7 +1767,7 @@ function setAssistantPanelOpen(open, { focusViewer = false, relayout = true } = 
   if (open) guide.close();
   const wasOpen = !elements["assistant-panel"].hidden;
   const anchor = relayout && wasOpen !== open ? captureZoomAnchor() : null;
-  if (!open && state.assistantExpanded) setAssistantExpanded(false);
+  if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   elements["assistant-panel"].hidden = !open;
   elements.reader.classList.toggle("assistant-dock-open", open);
   elements["assistant-toggle"].setAttribute("aria-expanded", String(open));

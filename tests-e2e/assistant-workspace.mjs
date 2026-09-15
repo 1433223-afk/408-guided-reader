@@ -73,7 +73,7 @@ try {
   assert.equal(await page.locator("#selection-actions").isVisible(), true);
   await page.locator("#ask-selection").click();
   await page.locator("#assistant-model-trigger").click();
-  await page.locator('.assistant-model-options [data-value="deepseek"]').click();
+  await page.locator('#assistant-model-options [data-value="deepseek"]').click();
   assert.equal(providerCalls.length, 0);
   assert.equal(await page.locator("#assistant-start").isEnabled(), true);
   const rootResponse = page.waitForResponse((response) => response.url().endsWith("/assistant/ask"));

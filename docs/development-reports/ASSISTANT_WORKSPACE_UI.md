@@ -537,3 +537,25 @@ PASSes against the genuine SSE mock provider, including preserved partial conten
 same-identity retry. The first browser invocation did not reach Reader because the default stale
 local data directory lacked the expected 348-page book; rerunning with the current manual-browser
 library passed. No real provider call was needed for this deterministic protocol correction.
+
+## Master workspace morph UAT polish (2026-09-15)
+
+Master Expand/Restore now keeps the existing workspace and Composer DOM in place while the Dock
+surface opens from its right-edge origin. The workspace and focused conversation anchor move for
+220 ms with `cubic-bezier(.2,.72,.22,1)`; the Topic sidebar starts after 96 ms and fades/slides 10 px
+for 124 ms. Restore reverses the ordering: the sidebar leaves in 96 ms while the paper surface and
+conversation begin after 36 ms and settle over 184 ms, still ending at 220 ms. Width is never
+animated, so long answers reflow once at the final layout instead of on every frame. Reduced-motion
+switches to the same final state synchronously.
+
+The real 348-page retained-Master flow verifies the same `#master-question` node, draft, selection,
+focus, current Topic, answer scroll and Topic-list scroll across expand and restore. The focused
+browser run measured 269 ms from pointer click through Playwright polling after the declared 220 ms
+animation. Screenshots are `test-results/master-morph-before.png` and
+`test-results/master-morph-after.png`. `conversation-composer.mjs`, all 47 JavaScript tests, and the
+real-book `assistant-workspace.mjs` regression PASS; the latter required only narrowing its stale
+model-option test selector to the Assistant-owned menu after Master gained its own menu. External
+provider calls remained zero. Port 8767 serves the current app and is ready for direct retest.
+
+No Assistant behavior, Reader layout, PDF geometry, Master Topic/history/model/Review/Mastery
+semantics, persistence, API, schema or dependency changed in this motion-only correction.
