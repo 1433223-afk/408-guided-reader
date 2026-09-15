@@ -277,13 +277,22 @@ class LearningRepository:
                 raise ValueError("本节尚无已发布知识点。")
             return {"changed": changed, "unclear": unclear}
 
-    def enqueue(self, revision_id, kp_id, intent_id, question, mode):
+    def enqueue(
+        self, revision_id, kp_id, intent_id, question, review_mode,
+        provider, model, reasoning_mode,
+    ):
         if not isinstance(intent_id, str) or not 1 <= len(intent_id) <= 120:
             raise ValueError("发送标识无效。")
         if not isinstance(question, str) or not 1 <= len(question.strip()) <= 2000:
             raise ValueError("请输入 1–2000 字的问题。")
-        if mode not in {"Fast", "Standard", "Deep"}:
+        if review_mode not in {"Fast", "Standard", "Deep"}:
             raise ValueError("审查模式无效。")
+        if reasoning_mode not in {"Quick", "Deep"}:
+            raise ValueError("回答推理模式无效。")
+        if provider not in {"deepseek", "zhipu", "openrouter"}:
+            raise ValueError("回答模型无效。")
+        if not isinstance(model, str) or not model.strip() or len(model) > 120:
+            raise ValueError("回答模型无效。")
         with self.database.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             point = self.point(c, revision_id, kp_id)
@@ -292,8 +301,12 @@ class LearningRepository:
             existing = c.execute("""SELECT m.* FROM master_messages m JOIN master_threads t ON t.id = m.thread_id
                 WHERE t.id = ? AND m.intent_id = ? AND m.role = 'user'""", (thread_id, intent_id)).fetchone()
             if existing:
-                if existing["content"] != question.strip() or existing["review_mode"] != mode:
-                    raise ValueError("同一次发送不能改变问题或审查模式。")
+                if (existing["content"] != question.strip()
+                        or existing["review_mode"] != review_mode
+                        or existing["reasoning_mode"] != reasoning_mode
+                        or existing["provider"] != provider
+                        or existing["model"] != model):
+                    raise ValueError("同一次发送不能改变问题、模型、推理或审查设置。")
                 return dict(existing), False
             pending = c.execute("""SELECT 1 FROM master_messages m JOIN master_threads t ON t.id = m.thread_id
                 WHERE t.id = ? AND m.role = 'user' AND m.state IN ('PENDING', 'FAILED')""", (thread_id,)).fetchone()
@@ -301,8 +314,12 @@ class LearningRepository:
                 raise ValueError("请先等待或重试上一条未完成的问题。")
             thread_id, topic_id = self._open(c, point)
             message_id = str(uuid4())
-            c.execute("""INSERT INTO master_messages(id, thread_id, topic_id, intent_id, role, content, created_at, state, review_mode)
-                VALUES (?, ?, ?, ?, 'user', ?, ?, 'PENDING', ?)""", (message_id, thread_id, topic_id, intent_id, question.strip(), now(), mode))
+            c.execute("""INSERT INTO master_messages(
+                id, thread_id, topic_id, intent_id, role, content, created_at, state,
+                review_mode, provider, model, reasoning_mode)
+                VALUES (?, ?, ?, ?, 'user', ?, ?, 'PENDING', ?, ?, ?, ?)""",
+                (message_id, thread_id, topic_id, intent_id, question.strip(), now(),
+                 review_mode, provider, model.strip(), reasoning_mode))
             return dict(c.execute("SELECT * FROM master_messages WHERE id = ?", (message_id,)).fetchone()), True
 
     def recover(self):
@@ -322,9 +339,11 @@ class LearningRepository:
         with self.database.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             c.execute("""INSERT INTO master_messages(id, thread_id, topic_id, intent_id, role, content, created_at,
-                state, review_mode, review_state, provider, model) VALUES (?, ?, ?, ?, 'assistant', ?, ?, 'COMPLETE', ?, ?, ?, ?)""",
+                state, review_mode, review_state, provider, model, reasoning_mode)
+                VALUES (?, ?, ?, ?, 'assistant', ?, ?, 'COMPLETE', ?, ?, ?, ?, ?)""",
                 (answer_id, question["thread_id"], question["topic_id"], question["intent_id"], completion.answer, now(),
                  question["review_mode"], "NOT_REQUESTED" if question["review_mode"] == "Fast" else "PENDING",
-                 completion.effective_config["provider"], completion.effective_config["model"]))
+                 completion.effective_config["provider"], completion.effective_config["model"],
+                 question["reasoning_mode"]))
             c.execute("UPDATE master_messages SET state = 'COMPLETE', detail = NULL WHERE id = ?", (question["id"],))
         return answer_id

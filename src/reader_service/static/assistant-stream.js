@@ -1,14 +1,17 @@
-export async function streamAssistantResponse(path, options, onEvent, fetchImpl = fetch) {
+export async function streamAssistantResponse(
+  path, options, onEvent, fetchImpl = fetch,
+  { label = "Assistant", codePrefix = "ASSISTANT" } = {},
+) {
   const response = await fetchImpl(path, options);
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ error: `请求失败（${response.status}）` }));
     throw streamError(payload.error || `请求失败（${response.status}）`, payload.code, response.status);
   }
   if (!String(response.headers.get("Content-Type") || "").toLowerCase().includes("text/event-stream")) {
-    throw streamError("Assistant 没有返回真实流式响应，请重试。", "ASSISTANT_STREAM_PROTOCOL");
+    throw streamError(`${label} 没有返回真实流式响应，请重试。`, `${codePrefix}_STREAM_PROTOCOL`);
   }
   if (!response.body) {
-    throw streamError("Assistant 流式响应不可读取，请重试。", "ASSISTANT_STREAM_UNREADABLE");
+    throw streamError(`${label} 流式响应不可读取，请重试。`, `${codePrefix}_STREAM_UNREADABLE`);
   }
 
   const reader = response.body.getReader();
@@ -25,7 +28,7 @@ export async function streamAssistantResponse(path, options, onEvent, fetchImpl 
     try {
       event = JSON.parse(raw);
     } catch (_error) {
-      throw streamError("Assistant 返回了无法读取的流式事件，请重试。", "ASSISTANT_STREAM_PROTOCOL");
+      throw streamError(`${label} 返回了无法读取的流式事件，请重试。`, `${codePrefix}_STREAM_PROTOCOL`);
     }
     onEvent(event);
     if (event.type === "complete") terminal = true;
@@ -65,7 +68,7 @@ export async function streamAssistantResponse(path, options, onEvent, fetchImpl 
   if (buffer) consumeLine(buffer);
   dispatch();
   if (!terminal) {
-    throw streamError("流式回答意外中断；已保留收到的内容，可以重试。", "ASSISTANT_STREAM_INTERRUPTED");
+    throw streamError("流式回答意外中断；已保留问题，可以重试。", `${codePrefix}_STREAM_INTERRUPTED`);
   }
 }
 

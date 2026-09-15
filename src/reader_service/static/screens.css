@@ -324,6 +324,7 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader #assistant-panel :is(#assistant-question,#master-question):focus { outline:2px solid #426f5540; outline-offset:1px; border-color:#688875; }
 #reader #assistant-panel #master-title { font-family:var(--conversation-font); font-size:18px; line-height:1.5; font-weight:600; }
 #reader #assistant-panel .master-composer-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; }
+#reader #assistant-panel #master-form .assistant-model-control { display:flex; align-items:center; flex-wrap:wrap; gap:2px; min-width:0; margin-right:auto; }
 #reader #assistant-panel :is(.composer-choice-trigger,#assistant-model-trigger) { padding:7px 9px; border:0; border-radius:6px; background:transparent; color:#52665a; box-shadow:none; font-size:13px; line-height:1.5; font-weight:400; cursor:pointer; }
 #reader #assistant-panel .composer-choice-trigger:hover { background:#e9eee7; }
 #reader #assistant-panel .composer-choice-trigger:focus-visible { outline:2px solid #426f55; outline-offset:1px; }
@@ -460,5 +461,11 @@ body:has(#reader:not([hidden])) #status.error { background-color:#b3313b; }
 #reader #master-workspace .master-actions-popover button { width:100%; margin:0; border:0; background:transparent; text-align:left; padding:8px 10px; font-weight:400; }
 #reader #master-workspace .master-actions-popover button:hover { background:#f1f3ef; }
 #reader #master-more { background:transparent; border:0; padding:4px 8px; font-size:18px; }
+#reader #master-workspace .master-review-setting { display:grid; gap:5px; padding:8px 10px 10px; color:#667168; }
+#reader #master-workspace .master-review-setting select { max-width:260px; padding:6px 8px; border:1px solid #d7ddd7; border-radius:6px; background:#fff; color:#39443b; font:inherit; }
+#reader #master-workspace .master-reasoning { margin:0 0 10px; color:#68736b; font-size:13px; line-height:1.65; }
+#reader #master-workspace .master-reasoning summary { width:fit-content; cursor:pointer; color:#59665d; font-size:12px; }
+#reader #master-workspace .master-reasoning-content { margin-top:7px; padding-left:10px; border-left:2px solid #dbe1db; white-space:pre-wrap; overflow-wrap:anywhere; }
+#reader #master-workspace .assistant-answer-streaming { white-space:pre-wrap; }
 .message-tick::after { transform:scaleX(var(--tick-scale,.53846)); transition:transform 140ms cubic-bezier(.2,.7,.25,1),background-color 140ms ease-out; }
 @media (prefers-reduced-motion:reduce) { .message-tick::after { transition:none; } }

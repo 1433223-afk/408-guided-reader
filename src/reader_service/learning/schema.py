@@ -165,3 +165,9 @@ CREATE TRIGGER learning_events_no_update BEFORE UPDATE ON learning_events
 BEGIN SELECT RAISE(ABORT, 'Learning history is append-only'); END;
 DROP TABLE master_topic_identity_merge_plan;
 """
+
+
+MASTER_REASONING_SCHEMA = """
+ALTER TABLE master_messages ADD COLUMN reasoning_mode TEXT NOT NULL DEFAULT 'Quick'
+    CHECK(reasoning_mode IN ('Quick', 'Deep'));
+"""

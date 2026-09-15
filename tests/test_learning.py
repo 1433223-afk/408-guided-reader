@@ -22,6 +22,7 @@ from uuid import uuid4
 class Runtime:
     def __init__(self):
         self.calls = []
+        self.options = []
         self.fail = False
         self.review = 'PASS'
         self.started = threading.Event()
@@ -31,8 +32,18 @@ class Runtime:
     def provider_identity(self, provider):
         return provider, provider + '-model'
 
+    def status(self):
+        providers = [
+            {'provider': provider, 'model': provider + '-model', 'configured': True,
+             'configuration_valid': True, 'credential_available': True,
+             'cooling': False, 'ai_off_reason': None}
+            for provider in ('deepseek', 'zhipu', 'openrouter')
+        ]
+        return {'providers': providers}
+
     def complete_for_with_metadata(self, provider, messages, **kwargs):
         self.calls.append((provider, json.loads(messages[1]['content'])))
+        self.options.append(kwargs)
         self.started.set()
         assert self.release.wait(5)
         if self.fail:
@@ -42,6 +53,21 @@ class Runtime:
         else:
             answer = '根据所附教材，这是该知识点的解释。补充解释：可以用日常例子理解。'
         return ProviderCompletion(answer, 1, None, {'provider': provider, 'model': provider + '-model'})
+
+    def stream_for_with_metadata(self, provider, messages, on_delta, on_reasoning_delta=None, **kwargs):
+        self.calls.append((provider, json.loads(messages[1]['content'])))
+        self.options.append(kwargs)
+        self.started.set()
+        assert self.release.wait(5)
+        if self.fail:
+            raise ProviderFailure(ProviderFailureKind.TRANSIENT, 'test_failure', '调用失败')
+        answer = '根据所附教材，这是该知识点的解释。补充解释：可以用日常例子理解。'
+        if kwargs.get('thinking_mode') == 'enabled' and on_reasoning_delta:
+            on_reasoning_delta('REAL_REASONING_STREAM_CANARY')
+        for delta in ('根据所附教材，', '这是该知识点的解释。', '补充解释：可以用日常例子理解。'):
+            on_delta(delta)
+        return ProviderCompletion(answer, 1, None, {'provider': provider, 'model': provider + '-model'},
+                                  {'reasoning_present': kwargs.get('thinking_mode') == 'enabled'})
 
 
 @pytest.fixture
@@ -67,6 +93,125 @@ def idle(master):
     pytest.fail('Master did not finish')
 
 
+def test_master_status_confirms_answer_and_review_defaults(learning):
+    _f, master, _runtime, _points = learning
+    status = master.status()
+    assert (status['answer_provider'], status['answer_model']) == ('deepseek', 'deepseek-model')
+    assert (status['review_provider'], status['review_model']) == ('zhipu', 'zhipu-model')
+    assert status['default_reasoning_mode'] == 'Quick'
+    assert status['default_review_mode'] == 'Fast'
+
+
+@pytest.mark.parametrize(
+    'provider,reasoning_mode,expected_options,reasoning_visible',
+    [
+        ('deepseek', 'Quick', {'thinking_mode': 'disabled'}, False),
+        ('zhipu', 'Quick', {'reasoning_effort': 'low'}, False),
+        ('openrouter', 'Quick', {'reasoning_effort': 'low'}, False),
+        ('deepseek', 'Deep', {'thinking_mode': 'enabled', 'max_tokens': 12_288}, True),
+        ('zhipu', 'Deep', {'thinking_mode': 'enabled', 'reasoning_effort': 'high'}, True),
+        ('openrouter', 'Deep', {'reasoning_effort': 'high'}, False),
+    ],
+)
+def test_master_true_streaming_reasoning_and_model_persistence(
+    learning, provider, reasoning_mode, expected_options, reasoning_visible
+):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    events = []
+    result = master.send(rev, kp, {
+        'intent_id': f'stream-{provider}-{reasoning_mode}',
+        'question': '请解释当前概念。',
+        'provider': provider,
+        'reasoning_mode': reasoning_mode,
+    }, stream=events.append)
+    kinds = [event['type'] for event in events]
+    assert kinds[0] == 'stage' and events[0]['stage'] == 'answering'
+    assert kinds[-1] == 'complete'
+    assert ''.join(event['content'] for event in events if event['type'] == 'delta') == result['messages'][-1]['content']
+    reasoning = ''.join(event['content'] for event in events if event['type'] == 'reasoning_delta')
+    assert bool(reasoning) is reasoning_visible
+    assert ('REAL_REASONING_STREAM_CANARY' in reasoning) is reasoning_visible
+    assert 'REAL_REASONING_STREAM_CANARY' not in json.dumps(result, ensure_ascii=False)
+    question, answer = result['messages']
+    assert (question['provider'], question['model'], question['reasoning_mode'], question['review_mode']) == (
+        provider, provider + '-model', reasoning_mode, 'Fast'
+    )
+    assert (answer['provider'], answer['model'], answer['reasoning_mode'], answer['review_state']) == (
+        provider, provider + '-model', reasoning_mode, 'NOT_REQUESTED'
+    )
+    assert len(runtime.calls) == 1
+    for key, value in expected_options.items():
+        assert runtime.options[0][key] == value
+    assert not ({'thinking_mode', 'reasoning_effort'} - set(expected_options)) & set(runtime.options[0])
+    assert ('max_tokens' in runtime.options[0]) is ('max_tokens' in expected_options)
+
+
+def test_answer_reasoning_and_review_are_independent(learning):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    events = []
+    state = master.send(rev, kp, {
+        'intent_id': 'deep-answer-standard-review',
+        'question': '请深入解释。',
+        'provider': 'deepseek',
+        'reasoning_mode': 'Deep',
+        'review_mode': 'Standard',
+    }, stream=events.append)
+    assert [call[0] for call in runtime.calls] == ['deepseek', 'zhipu']
+    assert runtime.options[0]['thinking_mode'] == 'enabled'
+    assert 'thinking_mode' not in runtime.options[1]
+    assert any(event.get('stage') == 'reviewing' for event in events)
+    assert state['messages'][-1]['review_state'] == 'PASS'
+
+
+def test_failed_deep_send_restart_retry_retains_execution_identity(learning):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    runtime.fail = True
+    payload = {'intent_id': 'durable-deep', 'question': '深入解释。', 'provider': 'zhipu',
+               'reasoning_mode': 'Deep', 'review_mode': 'Fast'}
+    master.send(rev, kp, payload)
+    idle(master)
+    failed = master.snapshot(rev, kp)['messages'][0]
+    assert (failed['provider'], failed['model'], failed['reasoning_mode']) == ('zhipu', 'zhipu-model', 'Deep')
+    runtime.fail = False
+    restarted = LearningService(master.repository.database, f['foundation'], runtime)
+    restarted.retry(rev, kp, failed['id'])
+    idle(restarted)
+    assert runtime.calls[-1][0] == 'zhipu'
+    assert runtime.options[-1]['model'] == 'zhipu-model'
+    assert runtime.options[-1]['thinking_mode'] == 'enabled'
+    assert runtime.options[-1]['reasoning_effort'] == 'high'
+    assert restarted.snapshot(rev, kp)['messages'][-1]['reasoning_mode'] == 'Deep'
+
+
+def test_failed_deepseek_deep_retry_retains_raised_bounded_generation_budget(learning):
+    f, master, runtime, points = learning
+    rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    runtime.fail = True
+    master.send(rev, kp, {
+        'intent_id': 'durable-deepseek-budget',
+        'question': '请深入解释，但避免无止境展开。',
+        'provider': 'deepseek',
+        'reasoning_mode': 'Deep',
+        'review_mode': 'Fast',
+    })
+    idle(master)
+    failed = master.snapshot(rev, kp)['messages'][0]
+    runtime.fail = False
+
+    restarted = LearningService(master.repository.database, f['foundation'], runtime)
+    restarted.retry(rev, kp, failed['id'])
+    idle(restarted)
+
+    assert runtime.calls[-1][0] == 'deepseek'
+    assert runtime.options[-1]['model'] == 'deepseek-model'
+    assert runtime.options[-1]['thinking_mode'] == 'enabled'
+    assert runtime.options[-1]['max_tokens'] == 12_288
+    assert restarted.snapshot(rev, kp)['messages'][-1]['reasoning_mode'] == 'Deep'
+
+
 def test_explicit_evidence_recovery_and_no_automatic_downgrade(learning, service):
     f, master, runtime, points = learning
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
@@ -76,7 +221,7 @@ def test_explicit_evidence_recovery_and_no_automatic_downgrade(learning, service
     topic = opened['topics'][0]['id']
     with pytest.raises(ChapterRegenerationBlocked):
         f['repository'].request_regenerate(rev, f['chapter']['outline_node_id'])
-    master.send(rev, kp, {'intent_id': 'first', 'question': '这个概念为什么如此？'})
+    master.send(rev, kp, {'intent_id': 'first', 'question': '这个概念为什么如此？', 'review_mode': 'Standard'})
     idle(master)
     state = master.snapshot(rev, kp)
     assert len(state['messages']) == 2
@@ -198,7 +343,7 @@ def test_master_openrouter_review_requests_json_without_weakening_verdict(learni
     runtime.complete_for_with_metadata = complete
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
     runtime.review = 'FAIL'
-    master.send(rev, kp, {'intent_id':'json-review','question':'为什么？'})
+    master.send(rev, kp, {'intent_id':'json-review','question':'为什么？','review_mode':'Standard'})
     idle(master)
     answer = master.snapshot(rev,kp)['messages'][-1]
     assert answer['review_state'] == 'FAIL'
@@ -294,7 +439,7 @@ def test_grounding_failure_preserves_intent_and_retry_before_review(learning, mo
 def test_grounding_blocks_review_retry_of_legacy_unsupported_answer(learning):
     f, master, runtime, points = learning
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
-    master.send(rev, kp, {'intent_id': 'legacy', 'question': '为什么？'})
+    master.send(rev, kp, {'intent_id': 'legacy', 'question': '为什么？', 'review_mode': 'Standard'})
     idle(master)
     answer = master.snapshot(rev, kp)['messages'][-1]
     with master.repository.database.connect() as c:
@@ -314,7 +459,7 @@ def test_review_failure_never_pass_never_mastery_and_retry(learning, verdict):
     f, master, runtime, points = learning
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
     runtime.review = verdict
-    master.send(rev, kp, {'intent_id': 'one', 'question': '为什么？'})
+    master.send(rev, kp, {'intent_id': 'one', 'question': '为什么？', 'review_mode': 'Standard'})
     idle(master)
     state = master.snapshot(rev, kp)
     assert state['messages'][-1]['review_state'] == ('FAIL' if verdict == 'FAIL' else 'TECHNICAL_FAILURE')
@@ -368,7 +513,9 @@ def test_transaction_rolls_back_lock_and_projection(learning, service, monkeypat
 def test_restart_interruption_and_ownership_cascade(learning, service):
     f, master, runtime, points = learning
     rev, kp = f['revision']['id'], points[0]['knowledge_point_id']
-    message, _ = master.repository.enqueue(rev, kp, 'pending', '问题', 'Standard')
+    message, _ = master.repository.enqueue(
+        rev, kp, 'pending', '问题', 'Standard', 'deepseek', 'deepseek-model', 'Quick'
+    )
     restarted = LearningService(service.database, f['foundation'], runtime)
     assert restarted.snapshot(rev, kp)['messages'][0]['state'] == 'FAILED'
     pdf = make_pdf(((420, 600),))
@@ -404,6 +551,46 @@ def test_migration_11_to_12_is_additive(tmp_path, monkeypatch):
         assert all(after[name] == sql for name, sql in before)
         assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert list(c.execute('PRAGMA foreign_key_check')) == []
+
+
+def test_migration_19_adds_reasoning_mode_without_changing_master_records(learning, service, tmp_path):
+    f, master, _runtime, points = learning
+    revision, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    master.send(revision, kp, {
+        'intent_id': 'pre-19-message', 'question': '历史问题',
+        'provider': 'deepseek', 'review_mode': 'Fast',
+    })
+    idle(master)
+    path = tmp_path / 'master-v18.sqlite3'
+    source = sqlite3.connect(service.database.path)
+    destination = sqlite3.connect(path)
+    try:
+        source.backup(destination)
+    finally:
+        source.close()
+        destination.close()
+    with sqlite3.connect(path) as c:
+        c.execute('DELETE FROM schema_migrations WHERE version=19')
+        c.execute('ALTER TABLE master_messages DROP COLUMN reasoning_mode')
+        before = {
+            table: c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+            for table in ('master_threads', 'master_topics', 'master_messages', 'learning_events', 'kp_status')
+        }
+    Database(path).initialize()
+    backup = path.with_name(path.name + '.pre-migration-19.bak')
+    assert backup.exists()
+    with sqlite3.connect(backup) as c:
+        assert 'reasoning_mode' not in {row[1] for row in c.execute('PRAGMA table_info(master_messages)')}
+        assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+    with Database(path).connect() as c:
+        assert c.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 19
+        assert {row['reasoning_mode'] for row in c.execute('SELECT reasoning_mode FROM master_messages')} == {'Quick'}
+        assert {
+            table: c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+            for table in before
+        } == before
+        assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+        assert not c.execute('PRAGMA foreign_key_check').fetchall()
 
 
 def test_http_authority_and_replay(learning, service):
@@ -449,7 +636,7 @@ def test_resolution_during_provider_call_does_not_lose_turn_or_reopen_topic(lear
     assert state['topics'][0]['id'] == topic
     assert state['topics'][0]['state'] == 'RESOLVED'
     assert state['status'] == 'UNDERSTOOD'
-    assert [message['content'] for message in runtime.calls[-2][1]['topic_messages']] == [
+    assert [message['content'] for message in runtime.calls[-1][1]['topic_messages']] == [
         '问题', '根据所附教材，这是该知识点的解释。补充解释：可以用日常例子理解。', '新的问题'
     ]
 
@@ -511,7 +698,7 @@ def test_stable_topic_migration_merges_references_and_preserves_state(learning, 
         assert c.execute('SELECT status FROM kp_status WHERE knowledge_point_id=?', (kp,)).fetchone()[0] == 'UNDERSTOOD'
         assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
-        assert c.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 18
+        assert c.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 19
         with pytest.raises(sqlite3.IntegrityError):
             c.execute("UPDATE learning_events SET topic_id='canonical' WHERE id='event-one'")
         with pytest.raises(sqlite3.IntegrityError):

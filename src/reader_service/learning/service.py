@@ -4,7 +4,7 @@ import re
 import threading
 import unicodedata
 
-from reader_service.agent_runtime import ProviderFailure
+from reader_service.agent_runtime import ProviderFailure, StreamConsumerDisconnected
 from reader_service.saved_explanations import SavedExplanationService
 from .repository import LearningRepository
 
@@ -38,6 +38,11 @@ FIGURE_ID = r"\d+(?:\s*[.-]\s*\d+)*(?:\s*\([a-z]\))?"
 FIGURE_REFERENCES = re.compile(
     rf"(?:图(?:号)?\s*|(?<![A-Za-z0-9])(?:figures?|figs?\.?)\s*)[:：]?\s*({FIGURE_ID}(?:\s*(?:,|、|和|及|and)\s*{FIGURE_ID})*)", re.I)
 
+# DeepSeek accounts for provider reasoning and the visible answer in the same
+# generation budget. Deep mode needs more room than the provider-wide quick
+# default, while remaining below the runtime's per-call hard ceiling.
+DEEPSEEK_DEEP_MAX_TOKENS = 12_288
+
 
 def figure_ids(text):
     return {re.sub(r"\s+", "", identifier).lower()
@@ -59,14 +64,55 @@ class LearningService:
     def snapshot(self, revision_id, kp_id):
         return self.repository.snapshot(revision_id, kp_id)
 
-    def send(self, revision_id, kp_id, payload):
-        with self._lock:
-            message, created = self.repository.enqueue(revision_id, kp_id, payload["intent_id"], payload["question"], payload.get("review_mode", "Standard"))
-            if created:
-                self._schedule(revision_id, kp_id, message, review=False)
-        return self.snapshot(revision_id, kp_id)
+    def status(self):
+        runtime_status = self.runtime.status()
+        providers = runtime_status.get("providers", [])
+        answer_model = next(
+            (item.get("model") for item in providers if item.get("provider") == self.provider),
+            None,
+        )
+        review_model = next(
+            (item.get("model") for item in providers if item.get("provider") == self.reviewer),
+            None,
+        )
+        return {
+            "answer_provider": self.provider,
+            "answer_model": answer_model,
+            "review_provider": self.reviewer,
+            "review_model": review_model,
+            "default_reasoning_mode": "Quick",
+            "default_review_mode": "Fast",
+            "providers": providers,
+        }
 
-    def retry(self, revision_id, kp_id, message_id):
+    def send(self, revision_id, kp_id, payload, stream=None):
+        provider = payload.get("provider", self.provider)
+        provider, model = self.runtime.provider_identity(provider)
+        with self._lock:
+            message, created = self.repository.enqueue(
+                revision_id,
+                kp_id,
+                payload["intent_id"],
+                payload["question"],
+                payload.get("review_mode", "Fast"),
+                provider,
+                model,
+                payload.get("reasoning_mode", "Quick"),
+            )
+            if created:
+                if stream is None:
+                    self._schedule(revision_id, kp_id, message, review=False)
+                else:
+                    self._inflight.add(message["id"])
+        answer_id = self._run(revision_id, kp_id, message, False, stream) if created and stream else None
+        result = self.snapshot(revision_id, kp_id)
+        if stream is not None:
+            stream({"type": "complete", "learning": result, "answer_message_id": answer_id})
+        return result
+
+    def retry(self, revision_id, kp_id, message_id, stream=None):
+        execute = False
+        review = False
         with self._lock:
             snapshot = self.snapshot(revision_id, kp_id)
             message = next((m for m in snapshot["messages"] if m["id"] == message_id), None)
@@ -76,8 +122,16 @@ class LearningService:
             retryable = message["review_state"] in {"FAIL", "TECHNICAL_FAILURE"} if review else message["state"] == "FAILED"
             if retryable and message_id not in self._inflight:
                 self.repository.update_message(message_id, **({"review_state": "PENDING"} if review else {"state": "PENDING"}), detail=None)
-                self._schedule(revision_id, kp_id, message, review=review)
-        return self.snapshot(revision_id, kp_id)
+                if stream is None:
+                    self._schedule(revision_id, kp_id, message, review=review)
+                else:
+                    self._inflight.add(message_id)
+                    execute = True
+        answer_id = self._run(revision_id, kp_id, message, review, stream) if execute else None
+        result = self.snapshot(revision_id, kp_id)
+        if stream is not None:
+            stream({"type": "complete", "learning": result, "answer_message_id": answer_id})
+        return result
 
     def _schedule(self, revision_id, kp_id, message, *, review):
         self._inflight.add(message["id"])
@@ -128,28 +182,85 @@ class LearningService:
         if figure_ids(answer) - supplied_figures:
             raise ValueError("回答引用了本次教材证据中不存在的图号；未将其作为完成回答保存，可重试。")
 
-    def _run(self, revision_id, kp_id, message, review):
+    @staticmethod
+    def _answer_runtime_options(message):
+        provider = message.get("provider")
+        mode = message.get("reasoning_mode") or "Quick"
+        options = {"model": message.get("model")} if message.get("model") else {}
+        if mode == "Quick":
+            if provider == "deepseek":
+                options["thinking_mode"] = "disabled"
+            elif provider in {"zhipu", "openrouter"}:
+                options["reasoning_effort"] = "low"
+        else:
+            if provider in {"deepseek", "zhipu"}:
+                options["thinking_mode"] = "enabled"
+            if provider == "deepseek":
+                options["max_tokens"] = DEEPSEEK_DEEP_MAX_TOKENS
+            elif provider == "zhipu":
+                options["reasoning_effort"] = "high"
+            elif provider == "openrouter":
+                options["reasoning_effort"] = "high"
+        return options
+
+    def _run(self, revision_id, kp_id, message, review, stream=None):
         operation_id = message["id"]
+        answer_id = None
         try:
             snapshot = self.snapshot(revision_id, kp_id)
             source = self.source(snapshot["point"])
             if not review:
                 history = [{"role": m["role"], "content": m["content"]} for m in snapshot["messages"]
                            if m["topic_id"] == message["topic_id"] and (m["state"] == "COMPLETE" or m["id"] == message["id"])]
-                completion = self.runtime.complete_for_with_metadata(self.provider, [
+                messages = [
                     {"role": "system", "content": MASTER_SYSTEM + ("\n当前范围是整个 Section。围绕这一节回答，不猜测哪些知识点未掌握；整节确认只能由用户明确点击。" if snapshot["point"]["scope_kind"] == "SECTION" else "")},
                     {"role": "user", "content": json.dumps({"source": source, "topic_messages": history}, ensure_ascii=False)}
-                ], interaction_id=f"master:{message['id']}")
+                ]
+                provider = message.get("provider") or self.provider
+                options = self._answer_runtime_options({**message, "provider": provider})
+                if stream is not None:
+                    stream({
+                        "type": "stage",
+                        "stage": "answering",
+                        "message_id": message["id"],
+                        "learning": snapshot,
+                    })
+                    completion = self.runtime.stream_for_with_metadata(
+                        provider,
+                        messages,
+                        lambda delta: stream({"type": "delta", "content": delta}),
+                        lambda delta: stream({"type": "reasoning_delta", "content": delta}),
+                        interaction_id=f"master:{message['id']}",
+                        **options,
+                    )
+                else:
+                    completion = self.runtime.complete_for_with_metadata(
+                        provider,
+                        messages,
+                        interaction_id=f"master:{message['id']}",
+                        **options,
+                    )
                 self.grounding(completion.answer, source)
                 answer_id = self.repository.save_answer(message, completion)
                 if message["review_mode"] == "Fast":
-                    return
+                    return answer_id
                 message = next(m for m in self.snapshot(revision_id, kp_id)["messages"] if m["id"] == answer_id)
                 review = True
+            if stream is not None:
+                stream({"type": "stage", "stage": "reviewing", "message_id": message["id"]})
             self._review(revision_id, kp_id, message, source)
+            return answer_id
+        except StreamConsumerDisconnected:
+            self.repository.update_message(
+                message["id"],
+                **({"review_state": "TECHNICAL_FAILURE"} if review else {"state": "FAILED"}),
+                detail="流式连接已中断；问题和已有对话已保留，可重试。",
+            )
+            raise
         except Exception as exc:
             detail = exc.user_message if isinstance(exc, ProviderFailure) else str(exc) if isinstance(exc, ValueError) else "调用出现技术失败，已保存的对话不受影响，可重试。"
             self.repository.update_message(message["id"], **({"review_state": "TECHNICAL_FAILURE"} if review else {"state": "FAILED"}), detail=detail)
+            return answer_id
         finally:
             with self._lock:
                 self._inflight.discard(operation_id)

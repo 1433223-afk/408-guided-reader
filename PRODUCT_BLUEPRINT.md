@@ -1539,16 +1539,24 @@ The user may switch AI Teaching off, but may not publish a formal System Teachin
 
 Master prioritizes trustworthy learning decisions but should not force maximum latency on every interaction.
 
+Master answer execution and independent Review are separate controls. The Composer exposes the named
+answer model and `Quick` / `Deep` answer reasoning; Review strength is a lower-frequency action and
+defaults to `Fast`. Quick/Deep asks the selected answer provider for its real reasoning capability and
+never fabricates reasoning when the provider does not return it. Answer text streams as it is produced;
+provider-returned reasoning may stream in a separate, clearly labelled transient surface, but only the
+final answer is durable and eligible for Review. Provider reasoning is not independent verification and
+never substitutes for Review.
+
 The first version supports conceptually:
 
-### Fast
+### Fast — default
 
 - normally no independent reviewer call;
 - fastest response;
 - grounding/trust rules still apply;
 - risk triggers may escalate verification.
 
-### Standard — default
+### Standard
 
 - independent verification focused on **academic/objective correctness**;
 - checks technical facts, logic, formulas when relevant, source attribution and fabricated textbook/exam claims;

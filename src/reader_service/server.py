@@ -149,6 +149,19 @@ def handler_factory(
                     return
                 self._json(HTTPStatus.OK, {"status": "ok"})
                 return
+            if parsed.path == "/api/learning/status":
+                if not self._authorized():
+                    return
+                if learning is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "学习服务不可用。"})
+                    return
+                try:
+                    result = learning.status()
+                except ProviderFailure as exc:
+                    self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             context_match = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/reading-context", parsed.path)
             if context_match:
                 if not self._authorized():
@@ -407,15 +420,29 @@ def handler_factory(
                 if learning is None:
                     self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "学习服务不可用。"})
                     return
+                streaming = False
                 try:
                     payload = self._read_json()
                     revision_id, scope_id, action = match.groups()
+                    streaming = action in {"send", "retry"} and self._wants_assistant_stream()
+                    if streaming:
+                        self._start_assistant_stream()
                     if action == "open":
                         result = learning.repository.open(revision_id, scope_id)
                     elif action == "send":
-                        result = learning.send(revision_id, scope_id, payload)
+                        result = learning.send(
+                            revision_id,
+                            scope_id,
+                            payload,
+                            self._assistant_stream_event if streaming else None,
+                        )
                     elif action == "retry":
-                        result = learning.retry(revision_id, scope_id, payload["message_id"])
+                        result = learning.retry(
+                            revision_id,
+                            scope_id,
+                            payload["message_id"],
+                            self._assistant_stream_event if streaming else None,
+                        )
                     elif action == "confirm":
                         result = learning.repository.confirm(revision_id, scope_id, payload["topic_id"])
                     elif action == "understand":
@@ -425,12 +452,22 @@ def handler_factory(
                     else:
                         result = learning.repository.confirm_section(revision_id, scope_id)
                 except LookupError as exc:
-                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.NOT_FOUND, "MASTER_CONTEXT_NOT_FOUND", str(exc)
+                    )
                     return
                 except (KeyError, ValueError, TypeError) as exc:
-                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    self._assistant_failure(
+                        streaming, HTTPStatus.BAD_REQUEST, "INVALID_MASTER_REQUEST", str(exc)
+                    )
                     return
-                self._json(HTTPStatus.OK, result)
+                except ProviderFailure as exc:
+                    self._provider_failure(exc, streaming=streaming)
+                    return
+                except StreamConsumerDisconnected:
+                    return
+                if not streaming:
+                    self._json(HTTPStatus.OK, result)
                 return
             regenerate_knowledge = _CHAPTER_KNOWLEDGE_REGENERATE.fullmatch(parsed.path)
             if regenerate_knowledge:

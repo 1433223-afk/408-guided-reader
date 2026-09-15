@@ -20,6 +20,7 @@
 | Chapter Knowledge Map Review convergence correction | User-approved amendment, 2026-09-07, after real Chapter 1/7 Review failures exposed genuine local reducer defects plus non-exhaustive discovery across untouched packets. §12.2 keeps all seven Review dimensions while reserving `BLOCKING` for high-confidence unpublishable defects, moves short-heading/reference-only closure upstream and permits only cumulative-bounded repair of newly implicated untouched packets. Repeated local blockers and budget exhaustion still fail closed; Chapter Review and atomic publication are unchanged. |
 | Chapter Knowledge Map taxonomy-granularity correction | User-approved amendment, 2026-09-08, after Chapter 7.1.3 incorrectly published four overview enumeration items as four durable KPs. §12.2 now makes consecutive brief taxonomy/composition/step/peer runs one upstream Section-level `MERGE`; separate KPs require sufficient current source evidence for independently assessable mechanisms, methods or relationships. Packet-local validation/retry enforces the rule before materialization; final Chapter Review is not its primary repair layer. |
 | Chapter Knowledge Map semantic-reducer simplification | User-approved amendment, 2026-09-08, after controlled Chapter 2 calibration showed multi-pass absorption/audit could oscillate between over-split and over-merge. §12.2 now requires exactly one group-first final partition per real Outline-subsection semantic window, with bounded same-input technical retry only. It supersedes packet `KEEP`/`MERGE`/`DROP`, forced enumeration/character/count heuristics, semantic cleanup/re-partition and Review-driven repair/re-review. Chapter Review remains a strict final gate whose valid FAIL ends the attempt. Existing Outline/OCR/source authority, private drafts, deterministic materialization/validation, persistence and atomic publication are unchanged. |
+| Master answer/reasoning streaming | User-approved amendment, 2026-09-15. §13.7 separates the answer model and `Quick`/`Deep` provider reasoning from independent Review, makes Review `Fast` by default, streams answer/reasoning on separate SSE events, and keeps reasoning transient. Migration 19 persists only each durable message's reasoning-mode choice. Master Topic, Mastery, grounding and Review verdict authority are unchanged. |
 | Authorizes | **Gate D: CLOSED (PASS).** This document is now engineering authority for 408 Guided Reader — where it and `PRODUCT_BLUEPRINT.md` disagree, the Product Blueprint still wins. **Gate E (code porting / implementation) is a separate, still-unopened authorization** — this closure does not itself authorize writing, porting, or installing anything. |
 
 ### 0.1 Why the clean-room, and what happens next
@@ -1330,7 +1331,7 @@ additional signal.
 | Target | Policy |
 |---|---|
 | **System teaching assets** | Independent review **mandatory** before publication. No bypass. |
-| **Master** | User-selectable Fast / Standard (default) / Deep. Risk signals may **raise**, never lower. |
+| **Master** | User-selectable Fast (default) / Standard / Deep. Risk signals may **raise**, never lower. |
 | **Assistant** | Off by default; user-enablable ("Verified"); bounded automatic escalation on the risk conditions in §30.4 |
 | **Saving AI wording as a durable note** | Verification required (§30.5) |
 
@@ -1341,6 +1342,21 @@ call. A candidate failing them is rejected without spending a call.
 **Review never touches mastery** (§30.6). A reviewer may accept an answer; only the user can change
 learning state. These write to different contexts and there is no code path from review outcome to
 learning state.
+
+**Master answer execution is not Review.** The Composer selects a named answer provider/model and
+`Quick` or `Deep` reasoning independently of Review strength. The durable user message records that
+provider/model and reasoning-mode selection before egress, so retry/restart reuses the same execution
+identity; migration 19 adds only `MasterMessage.reasoning_mode`, defaulting historical rows to
+`Quick`. Review remains `Fast` by default and lives with the Topic's low-frequency actions; the
+answer's reasoning mode never changes reviewer routing or Review semantics.
+
+Master answer delivery uses SSE. The runtime exposes separate answer-delta and provider-reasoning-
+delta callbacks. The UI renders returned reasoning in a distinct `正在思考` / `思考过程` surface and
+never synthesizes it for a provider that emits none. Only the final grounded answer is persisted and
+passed to Review; reasoning text is transient, is not a `MasterMessage` field, and is not replayed as
+Topic history. A visible answer or reasoning delta makes automatic provider replay unsafe, while a
+failure before any visible output may use the runtime's existing bounded retry policy. There is no
+cross-provider fallback.
 
 ### 13.7a Semantic rework counter and terminal failure — `FROZEN_FROM_PRODUCT` (§33.2.1–§33.2.3)
 

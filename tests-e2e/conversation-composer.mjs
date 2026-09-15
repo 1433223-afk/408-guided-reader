@@ -13,7 +13,8 @@ await cp(source, dataDir, {recursive:true});
 let browser;
 const service = spawn('python', ['-m','reader_service','--no-open','--port','0','--data-dir',dataDir],
   {windowsHide:true, stdio:['ignore','pipe','pipe'], env:{...process.env,
-    GUIDED_READER_DEEPSEEK_DISABLED:'1', GUIDED_READER_ZHIPU_DISABLED:'1', GUIDED_READER_OPENROUTER_DISABLED:'1'}});
+    GUIDED_READER_DEEPSEEK_API_KEY:'test-key', GUIDED_READER_DEEPSEEK_ENDPOINT:'http://127.0.0.1:9/chat',
+    GUIDED_READER_ZHIPU_DISABLED:'1', GUIDED_READER_OPENROUTER_DISABLED:'1'}});
 try {
   const url = await new Promise((resolve,reject) => {
     const timeout=setTimeout(()=>reject(new Error('Service startup timed out')),30000);
@@ -55,18 +56,22 @@ try {
   await page.locator('#master-question').fill('');
   assert.equal(await page.locator('#master-question').evaluate(el=>el.getBoundingClientRect().height),compactHeight);
   assert.equal(await page.locator('#master-mode').isHidden(),true);
-  assert.equal(await page.locator('#master-review-trigger').textContent(),'标准');
-  await page.locator('#master-review-trigger').click();
-  await page.locator('#master-review-options [data-value="Deep"]').click();
-  assert.equal(await page.locator('#master-mode').inputValue(),'Deep');
-  await page.locator('#master-review-trigger').click();
-  await page.keyboard.press('Home'); await page.keyboard.press('Enter');
   assert.equal(await page.locator('#master-mode').inputValue(),'Fast');
-  await page.locator('#master-review-trigger').click(); await page.keyboard.press('Escape');
-  assert.equal(await page.locator('#master-review-options').isHidden(),true);
-  assert.equal(await page.locator('#master-review-trigger').evaluate(el=>el===document.activeElement),true);
-  await page.locator('#master-review-trigger').click();
-  await page.locator('#master-review-options [data-value="Standard"]').click();
+  assert.equal(await page.locator('#master-provider-choice-trigger').textContent(),'DeepSeek');
+  assert.equal(await page.locator('#master-reasoning-choice-trigger').textContent(),'快速');
+  await page.locator('#master-reasoning-choice-trigger').click();
+  await page.locator('#master-reasoning-choice-options [data-value="Deep"]').click();
+  assert.equal(await page.locator('#master-reasoning').inputValue(),'Deep');
+  await page.locator('#master-more').click();
+  await page.locator('#master-mode').selectOption('Deep');
+  assert.equal(await page.locator('#master-mode').inputValue(),'Deep');
+  await page.locator('#master-mode').selectOption('Fast');
+  assert.equal(await page.locator('#master-mode').inputValue(),'Fast');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.master-actions-popover').isHidden(),true);
+  await page.locator('#master-more').click();
+  await page.locator('#master-mode').selectOption('Standard');
+  await page.keyboard.press('Escape');
   const captured=[];
   await page.route('**/learning/*/send', async route=>{
     captured.push(route.request().postDataJSON());
@@ -76,19 +81,20 @@ try {
   await page.locator('#master-send').click();
   await page.locator('#master-status').filter({hasText:'测试暂不可用'}).waitFor();
   assert.equal(captured[0].review_mode,'Standard');
+  assert.equal(captured[0].provider,'deepseek');
+  assert.equal(captured[0].reasoning_mode,'Deep');
   assert.equal(await page.locator('#master-question').inputValue(),'请解释这个概念');
   const typography=await page.evaluate(()=>Object.fromEntries(['master-question','assistant-question'].map(id=>{
     const s=getComputedStyle(document.getElementById(id)); return [id,{family:s.fontFamily,size:s.fontSize,line:s.lineHeight}];
   })));
   assert.deepEqual(typography['master-question'],typography['assistant-question']);
   assert.equal(typography['master-question'].size,'15px');
-  await page.locator('#master-review-trigger').click();
+  await page.locator('#master-more').click();
   const positions=await page.evaluate(()=>{
-    const menu=document.querySelector('#master-review-options').getBoundingClientRect();
-    const trigger=document.querySelector('#master-review-trigger').getBoundingClientRect();
-    return {above:menu.bottom<=trigger.top,onscreen:menu.top>=0&&menu.right<=innerWidth};
+    const menu=document.querySelector('.master-actions-popover').getBoundingClientRect();
+    return {onscreen:menu.top>=0&&menu.bottom<=innerHeight&&menu.right<=innerWidth};
   });
-  assert.deepEqual(positions,{above:true,onscreen:true});
+  assert.deepEqual(positions,{onscreen:true});
   await mkdir('test-results',{recursive:true});
   await page.screenshot({path:'test-results/master-composer-polish.png'});
   await page.keyboard.press('Escape');
@@ -136,7 +142,8 @@ try {
     await route.fulfill({response,json:body});
   };
   await page.route('**/learning/*',reviewFixture);
-  const snapshotResponse=page.waitForResponse(response=>/\/learning\/[^/]+$/.test(new URL(response.url()).pathname));
+  const otherScope=data.learning.topics.find(topic=>topic.id===otherId).scope_id;
+  const snapshotResponse=page.waitForResponse(response=>new URL(response.url()).pathname.endsWith(`/learning/${otherScope}`));
   await page.locator(`#master-topic-list [data-topic-id="${otherId}"]`).click();
   const snapshot=await (await snapshotResponse).json();
   await page.locator(`#master-topic-list [data-topic-id="${otherId}"][aria-current="true"]`).waitFor();

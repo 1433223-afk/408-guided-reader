@@ -8,6 +8,13 @@
 > same Topic; ordinary chat changes neither Topic state nor Mastery. This amendment supersedes any
 > older wording below that permits a new unresolved/continuation Topic.
 
+> **Authority amendment (2026-09-15).** Master answer execution now exposes a named answer model and
+> `Quick` / `Deep` provider reasoning in the Composer, with true SSE answer delivery and a separate
+> transient reasoning surface when the provider actually returns reasoning. Independent Review is
+> decoupled into the low-frequency Topic menu and defaults to `Fast`; `Standard` and `Deep` Review
+> remain explicitly selectable. Migration 19 persists only the per-message reasoning-mode choice.
+> Topic identity, Mastery authority, grounding, Review verdicts and history durability are unchanged.
+
 The user explicitly reopened this implementation conversation for the formal Section two-option
 check and durable Section Master, initially stopping at READY_FOR_USER_RETEST. The user explicitly
 accepted the addition and reading-position UAT fix at `f4c76db`, and authorized closure only.
@@ -124,8 +131,12 @@ No external code, framework or dependency is adopted.
   profile, Teaching assets or secrets may leave the machine.
 - A strong configured model answers directly. Do not add a planner, tool loop, RAG, multi-agent
   teaching pipeline or generic workflow/state-machine framework.
-- Review strength is user-selectable: `Fast` normally makes no independent reviewer call;
-  `Standard` is the default and checks academic/objective correctness; `Deep` also checks reasoning
+- Answer provider/model and answer reasoning are explicit Composer choices. `Quick` requests the
+  provider's low/no-thinking path; `Deep` requests the provider's real thinking capability. Answer and
+  provider-returned reasoning stream separately; reasoning is never fabricated, persisted or sent to
+  Review. Retry preserves the durable question's provider/model/reasoning identity and never falls back.
+- Review strength is user-selectable in low-frequency Topic actions: `Fast` is the default and normally
+  makes no independent reviewer call; `Standard` checks academic/objective correctness; `Deep` checks reasoning
   completeness and teaching usefulness. Grounding is mandatory in every mode. Risk routing may raise
   but never silently lower the selected strength.
 - Review uses an independent role and fresh allowlisted context. Review failure or invocation failure
@@ -173,6 +184,8 @@ No external code, framework or dependency is adopted.
   append-only `LearningEvent` state, including ownership, migration, restart recovery and cascade.
 - One ACTIVE Topic conversation with durable user questions, completed Master answers and same-topic
   follow-ups; explicit retry for failed Send/Review and explicit user resolution.
+- Low-weight Composer answer-model and `快速` / `深度` controls; genuine SSE answer/reasoning events,
+  separate transient reasoning display, and migration 19 for the durable reasoning-mode choice only.
 - A narrowly assembled Master context grounded in the KP's real source evidence, plus existing
   provider routing for Fast/Standard/Deep Review behavior and the minimum honest status UI.
 - The transactional permanent-Chapter-lock call required by the first learning-state write.
@@ -184,7 +197,7 @@ No external code, framework or dependency is adopted.
 - Learner profile/global memory, assessment, quiz, scoring, spaced repetition or a wrong-question
   system.
 - Reading Guide, Inline Guidance, Recall, TeachingAsset, RAG or an external knowledge corpus.
-- Streaming, persistent Assistant history, Knowledge Map generation/regeneration changes, OCR or
+- Persistent Assistant history, Knowledge Map generation/regeneration changes, OCR or
   formula correction, general UI polish, or a generic chat/workflow/state-machine framework.
 
 ## Acceptance
@@ -198,8 +211,10 @@ No external code, framework or dependency is adopted.
 3. A user question and ACTIVE Topic are durable before provider execution. Provider failure preserves
    both, and double submission, HTTP retry and response-loss replay create at most one logical
    message/Topic/answer.
-4. Fast, Standard and Deep route according to the selected policy; grounding is always active, the
-   selected strength is never silently lowered, and actual provider/model metadata is honest.
+4. The selected answer provider/model and Quick/Deep execution identity survive retry/restart; answer
+   and real provider reasoning stream separately, reasoning is not persisted, and there is no fallback.
+   Fast, Standard and Deep Review route independently; grounding is always active, selected Review
+   strength is never silently lowered, and actual answer/reviewer metadata is honest.
 5. Review PASS updates only its review result. Semantic or technical Review failure is not PASS,
    preserves the conversation, is retryable, and cannot write Mastery.
 6. `这里没完全懂` may change only `UNCONFIRMED → NOT_FULLY_CLEAR` with an appended event. It never

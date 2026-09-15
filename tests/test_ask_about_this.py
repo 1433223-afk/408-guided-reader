@@ -88,7 +88,7 @@ class NamedMockAdapter(MockAdapter):
 
 
 class StreamingMockAdapter(MockAdapter):
-    def stream(self, endpoint, api_key, body, timeout, on_delta):
+    def stream(self, endpoint, api_key, body, timeout, on_delta, on_reasoning_delta=None):
         self.calls.append({
             "endpoint": endpoint,
             "api_key": api_key,
@@ -895,6 +895,49 @@ def test_streaming_runtime_retries_only_before_visible_content():
     assert caught.value.diagnostics["ttft_ms"] is not None
 
 
+def test_streaming_runtime_treats_reasoning_as_visible_only_when_exposed():
+    transient = ProviderFailure(
+        ProviderFailureKind.TRANSIENT, "network", "暂时失败"
+    )
+
+    class ReasoningThenFailureAdapter(MockAdapter):
+        def stream(
+            self, endpoint, api_key, body, timeout, on_delta,
+            on_reasoning_delta=None,
+        ):
+            self.calls.append({"body": body})
+            if on_reasoning_delta is not None:
+                on_reasoning_delta("内部推理")
+            if len(self.calls) == 1:
+                raise transient
+            on_delta("恢复")
+            return ProviderResponse("恢复")
+
+    hidden_adapter = ReasoningThenFailureAdapter()
+    hidden_runtime = runtime(hidden_adapter, max_attempts=2)
+    answer_deltas = []
+    completion = hidden_runtime.stream_with_metadata(
+        [{"role": "user", "content": "bounded"}], answer_deltas.append
+    )
+    assert completion.answer == "恢复"
+    assert answer_deltas == ["恢复"]
+    assert len(hidden_adapter.calls) == 2
+
+    visible_adapter = ReasoningThenFailureAdapter()
+    visible_runtime = runtime(visible_adapter, max_attempts=2)
+    reasoning_deltas = []
+    with pytest.raises(ProviderFailure) as caught:
+        visible_runtime.stream_with_metadata(
+            [{"role": "user", "content": "bounded"}],
+            lambda _delta: None,
+            reasoning_deltas.append,
+        )
+    assert reasoning_deltas == ["内部推理"]
+    assert len(visible_adapter.calls) == 1
+    assert caught.value.diagnostics["partial_content_received"] is True
+    assert caught.value.diagnostics["ttft_ms"] is not None
+
+
 def test_assistant_provider_budgets_match_current_fast_and_light_reasoning_modes(
     assistant_fixture,
 ):
@@ -1306,14 +1349,17 @@ def test_openai_compatible_stream_parser_handles_fragmented_utf8_done_and_usage(
 
     monkeypatch.setattr(provider_adapter, "build_opener", lambda *_args: Opener())
     deltas = []
+    reasoning_deltas = []
     result = OpenAICompatibleAdapter(provider).stream(
         "http://127.0.0.1:9999/chat/completions",
         "stream-secret",
         {"model": "test", "messages": [], "stream": True},
         2,
         deltas.append,
+        reasoning_deltas.append,
     )
     assert deltas == ["地", "址码"]
+    assert reasoning_deltas == ["private"]
     assert result.answer == "地址码"
     assert result.usage == {
         "prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10,

@@ -17,19 +17,35 @@ assert.equal(backup.status, 0, backup.stderr);
 let fail = false;
 let unsupportedReference = null;
 const payloads = [];
+const providerBodies = [];
 const provider = createServer(async (req, res) => {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks));
   const payload = JSON.parse(body.messages[1].content);
   payloads.push(payload);
+  providerBodies.push(body);
   if (fail) { res.writeHead(401); res.end('{}'); return; }
   const answer = payload.candidate
     ? JSON.stringify({ verdict: "PASS", summary: "教材归属和解释已检查。" })
     : unsupportedReference || "依据所附教材，这个知识点需要区分概念本身与它的实现条件。补充解释：先看成立条件，再用例子检查边界。";
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ choices: [{ message: { content: answer }, finish_reason: "stop" }] }));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  if(body.stream) {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    if(body.thinking?.type === 'enabled') {
+      res.write(`data: ${JSON.stringify({choices:[{delta:{reasoning_content:'先核对教材范围，'},finish_reason:null}]})}\n\n`);
+      await new Promise(resolve=>setTimeout(resolve,60));
+      res.write(`data: ${JSON.stringify({choices:[{delta:{reasoning_content:'再组织解释。'},finish_reason:null}]})}\n\n`);
+    }
+    const midpoint=Math.max(1,Math.floor(answer.length/2));
+    res.write(`data: ${JSON.stringify({choices:[{delta:{content:answer.slice(0,midpoint)},finish_reason:null}]})}\n\n`);
+    await new Promise(resolve=>setTimeout(resolve,120));
+    res.write(`data: ${JSON.stringify({choices:[{delta:{content:answer.slice(midpoint)},finish_reason:'stop'}]})}\n\n`);
+    res.end('data: [DONE]\n\n');
+  } else {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: answer }, finish_reason: "stop" }] }));
+  }
 });
 await new Promise((resolve) => provider.listen(0, "127.0.0.1", resolve));
 const loopbackEnv = {
@@ -86,21 +102,32 @@ try {
   await mkdir("test-results", { recursive: true });
   await page.screenshot({ path: "test-results/learning-boundary-39-40.png", fullPage: true });
   assert.deepEqual(await json(page, base), entries, "Display navigation must not write source ranges or learning state");
-  await openMap(page, point.chapter_outline_node_id);
-  const kpRow = page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first();
-  await kpRow.getByRole("button", { name: "这里没完全懂", exact: true }).click();
+  await openPointMaster(page, point, "这里没完全懂");
   await page.locator("#master-title").filter({ hasText: point.title }).waitFor();
   assert.ok(await page.locator("#knowledge-panel").isHidden());
+  await setReviewMode(page, 'Standard');
   await page.locator("#master-question").fill(`学习“${point.title}”时，我应该抓住什么核心区别？请结合当前教材解释。`);
   await page.locator("#master-send").click();
+  await page.locator('.master-stream-message .assistant-answer-streaming').waitFor();
+  assert.ok((await page.locator('.master-stream-message .assistant-answer-streaming').textContent()).length > 0);
   await completed(page, 2);
+  await page.locator('#master-reasoning-choice-trigger').click();
+  await page.locator('#master-reasoning-choice-options [data-value="Deep"]').click();
   await page.locator("#master-question").fill("如果只记定义而不理解成立条件，最容易在哪里混淆？请接着刚才的解释举例。");
   await page.locator("#master-send").click();
+  await page.locator('.master-stream-message .master-reasoning').waitFor();
+  assert.ok((await page.locator('.master-stream-message .master-reasoning-content').textContent()).includes('核对教材范围'));
+  await mkdir("test-results", { recursive: true });
+  await page.screenshot({ path: "test-results/master-deep-reasoning-stream.png" });
   await completed(page, 4);
   const initial = await snapshot();
   assert.equal(initial.status, "NOT_FULLY_CLEAR");
   assert.equal(initial.topics[0].state, "ACTIVE");
   assert.equal(initial.messages.filter((m) => m.review_state === "PASS").length, 2);
+  assert.deepEqual(initial.messages.filter(m=>m.role==='user').map(m=>m.reasoning_mode), ['Quick','Deep']);
+  const answerBodies=providerBodies.filter(body=>body.stream);
+  assert.deepEqual(answerBodies[0].thinking,{type:'disabled'});
+  assert.deepEqual(answerBodies[1].thinking,{type:'enabled'});
   await page.getByRole("button", { name: "解释 Assistant", exact: true }).click();
   assert.ok(await page.locator("#assistant-empty").isVisible());
   await page.getByRole("button", { name: "学习 Master", exact: true }).click();
@@ -146,7 +173,7 @@ try {
   assert.equal(confirmationPlacement.page, subsectionLast.display_end_page);
   assert.ok(confirmationPlacement.belowPdf && confirmationPlacement.aligned, "Batch card belongs below its ending PDF page, aligned with the reading column");
   await assertLearningControlPlacement(page);
-  await page.locator("#assistant-toggle").click();
+  await openPointMaster(page, point, "继续 Master 对话");
   await page.waitForTimeout(250);
   await subMarker.scrollIntoViewIfNeeded();
   await assertLearningControlPlacement(page);
@@ -170,8 +197,7 @@ try {
   running = await start({ ...loopbackEnv, GUIDED_READER_DEEPSEEK_DISABLED: "1", GUIDED_READER_ZHIPU_DISABLED: "1" });
   await page.goto(running.url);
   await openBook(page);
-  await openMap(page, point.chapter_outline_node_id);
-  await page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first().getByRole("button", { name: "继续 Master 对话", exact: true }).click();
+  await openPointMaster(page, point, "继续 Master 对话");
   await page.locator("#master-history .master-message").nth(3).waitFor();
   assert.deepEqual(await snapshot(), initial);
   const restoredEntries = await json(page, base);
@@ -181,10 +207,9 @@ try {
   running = await start(loopbackEnv);
   await page.goto(running.url);
   await openBook(page);
-  await openMap(page, point.chapter_outline_node_id);
-  await page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first().getByRole("button", { name: "继续 Master 对话", exact: true }).click();
+  await openPointMaster(page, point, "继续 Master 对话");
   assert.ok(await page.locator("#knowledge-panel").isHidden());
-  await page.locator("#master-mode").selectOption("Fast");
+  await setReviewMode(page, "Fast");
   await page.locator("#master-question").fill("能再用一句话说明关键条件吗？");
   await page.locator("#master-send").click();
   await page.getByRole("button", { name: "重试发送", exact: true }).waitFor({ timeout: 20_000 });
@@ -197,14 +222,13 @@ try {
   running = await start(loopbackEnv);
   await page.goto(running.url);
   await openBook(page);
-  await openMap(page, point.chapter_outline_node_id);
-  await page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first().getByRole("button", { name: "继续 Master 对话", exact: true }).click();
+  await openPointMaster(page, point, "继续 Master 对话");
   assert.ok(await page.locator("#knowledge-panel").isHidden());
   for (const [answer, error] of [["PDF p. 999", "PDF 页码"], ["教材图 999-9", "图号"]]) {
     unsupportedReference = answer;
     await page.getByRole("button", { name: "重试发送", exact: true }).click();
-    await page.waitForFunction((error) => [...document.querySelectorAll(".master-message-status")]
-      .some((p) => p.textContent.includes(error)), error);
+    await page.waitForFunction((error) => document.querySelector("#master-history")
+      ?.textContent.includes(error), error);
     const grounded = await snapshot();
     assert.equal(grounded.messages.length, 5);
     assert.deepEqual(grounded.messages.map((m) => m.id), failed.messages.map((m) => m.id));
@@ -230,8 +254,9 @@ try {
   const marker = page.locator(`.page[data-index="${sectionLast.display_end_page}"] .section-learning-marker`).filter({ hasText: section.title }).first();
   const beforeSectionCheck = await json(page, base);
   await marker.getByRole("button", { name: "还有些地方不完全清楚", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector("#master-status")?.textContent.includes("本节还有未完全清楚"));
+  await page.locator("#master-title").filter({ hasText: section.title }).waitFor();
   assert.deepEqual((await json(page, base)).points.map((p) => [p.knowledge_point_id, p.status]), beforeSectionCheck.points.map((p) => [p.knowledge_point_id, p.status]));
+  await setReviewMode(page, 'Standard');
   await page.locator("#master-question").fill("这一节的几个知识点如何联系起来？请先说明整节的主线。");
   await page.locator("#master-send").click();
   await completed(page, 2);
@@ -270,15 +295,14 @@ try {
     if (p.primary_section_id === section.outline_node_id) assert.equal(p.status, "UNDERSTOOD");
     else if (p.primary_section_id !== section.outline_node_id) assert.equal(p.status, before.status);
   }
-  await openMap(page, point.chapter_outline_node_id);
-  await page.locator("#knowledge-map li").filter({ has: page.locator("strong", { hasText: point.title }) }).first().getByRole("button", { name: "继续 Master 对话", exact: true }).click();
+  await openPointMaster(page, point, "继续 Master 对话");
   assert.ok(await page.locator("#knowledge-panel").isHidden());
+  await page.locator("#master-more").click();
   await Promise.all([
     page.waitForResponse((response) => response.url().endsWith(`/learning/${point.knowledge_point_id}/confirm`)
       && response.request().method() === "POST"),
     page.locator("#master-confirm").click(),
   ]);
-  await page.waitForFunction(() => document.querySelector("#master-status")?.textContent.includes("已弄懂"));
   const final = await snapshot();
   assert.equal(final.topics[0].state, "RESOLVED");
   assert.equal(final.status, "UNDERSTOOD");
@@ -335,10 +359,29 @@ async function openBook(page) {
   await page.locator("#book-overview .overview-book-heading .primary-action").click();
   await page.locator(".page canvas").first().waitFor({ timeout: 30_000 });
 }
-async function openMap(page, chapter) {
-  if (!(await page.locator("#outline-panel").isVisible())) await page.locator("#outline-toggle").click();
-  await page.locator(`li[data-node-id="${chapter}"] > .outline-row .outline-map-action`).click();
-  await page.locator("#knowledge-map li").first().waitFor();
+async function openPointMaster(page, point, actionName) {
+  await page.locator("#page-number").fill(String(point.display_end_page + 1));
+  await page.locator("#page-number").press("Enter");
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const marker = page.locator(`.page[data-index="${point.display_end_page}"] .kp-learning-marker`)
+      .filter({ hasText: point.title }).first();
+    try {
+      await marker.scrollIntoViewIfNeeded();
+      if (!(await marker.evaluate((element) => element.open))) await marker.locator("summary").click();
+      await marker.getByRole("button", { name: actionName, exact: true }).click({ timeout: 5_000 });
+      await page.locator("#master-title").filter({ hasText: point.title }).waitFor();
+      return;
+    } catch (error) {
+      if (await page.locator("#master-title").filter({ hasText: point.title }).isVisible().catch(() => false)) return;
+      if (attempt === 3) throw error;
+      await page.waitForTimeout(150);
+    }
+  }
+}
+async function setReviewMode(page, mode) {
+  await page.locator("#master-more").click();
+  await page.locator("#master-mode").selectOption(mode);
+  await page.keyboard.press("Escape");
 }
 async function completed(page, count) {
   await page.waitForFunction(({ count }) => {

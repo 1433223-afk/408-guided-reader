@@ -2,12 +2,81 @@
 
 ## Result
 
-The previously closed Phase remains historical acceptance. A user-approved same-Phase authority
-amendment on 2026-09-14 replaces continuation Topics with stable Master Topic identity; that narrow
-repair is `IMPLEMENTATION_READY / READY_FOR_USER_RETEST` and does not claim new user acceptance.
+The previously closed Phase remains historical acceptance. User-approved same-Phase amendments now
+cover stable Master Topic identity (2026-09-14) and model/reasoning/Review streaming controls
+(2026-09-15). The current rework is `IMPLEMENTATION_READY / READY_FOR_USER_RETEST` and does not claim
+new user acceptance.
 The earlier Section Learning Check and reading-position UAT correction remain `CLOSED / COMPLETE` /
 `USER_ACCEPTANCE PASS` at `f4c76db`; independent narrow acceptance for that earlier closure is PASS.
 No new Phase is created.
+
+### Master model / reasoning / Review streaming rework (2026-09-15)
+
+**Confirmed baseline and authority.** Before implementation, the running service identified the
+Master answer route as native DeepSeek `deepseek-flash` and the independent Review route as Zhipu
+`GLM-5.3-Flash`. The user authorized migration 19 and the same-Phase behavior amendment. Product
+§30.3, Implementation §13.7 and this Phase brief now separate answer-model/reasoning controls from
+Review: Review defaults to `Fast`, while `Standard` and `Deep` Review remain selectable from the
+Topic's low-frequency menu. Topic identity, persistence, Mastery, grounding and Review verdict
+semantics are unchanged.
+
+**Execution and UI.** The Composer exposes low-weight answer-model and `快速` / `深度` choices beside
+Send. A durable question records its selected provider/model/reasoning mode before provider egress;
+retry and restart reuse that identity and never fall back. Master now uses the shared SSE transport:
+answer deltas and provider reasoning deltas are distinct events. Returned reasoning appears under
+`正在思考` / `思考过程`; providers that return none get no synthetic reasoning. Only the grounded final
+answer is stored and reviewed. Review remains non-streaming, defaults to Fast, and its selector moved
+from the Composer into `…` beside `已弄懂`. Provider-specific readiness disables only the selected
+provider and gives a concrete reason.
+
+DeepSeek Deep uses a bounded per-call generation budget of `12,288` tokens because provider
+reasoning and the final answer share that budget; Quick keeps the provider default of `4,096`.
+The runtime-wide `16,384` hard ceiling, 120-second timeout, no-fallback rule and explicit-only
+recovery after `response_length_limit` remain unchanged, so the larger budget reduces ordinary
+mid-answer truncation without introducing automatic continuation or an unbounded replay loop.
+
+**Migration 19.** `master_messages.reasoning_mode` is additive, `NOT NULL`, constrained to `Quick` /
+`Deep`, and defaults historical rows to `Quick`; reasoning content has no durable column. Before the
+real 348-page Library upgrade, the service created
+`var/manual-browser/state.sqlite3.pre-migration-19.bak`. The backup has migration 18, 20 messages,
+`integrity_check=ok` and zero FK violations. The upgraded database has migration 19; all 20 historical
+messages were preserved as Quick. The six later real-use question/answer records bring the current
+count to 26 (`Quick=24`, `Deep=2`), with `integrity_check=ok` and zero FK violations.
+
+**Real provider evidence.** On the real 348-page textbook's retained ISA Topic, native DeepSeek
+`deepseek-flash` answered `请深入解释为什么同一 ISA 可以有不同性能的微架构实现，并给一个简短例子。`
+in Deep mode. The visible reasoning stream grew `0 → 87 → 330 → 530 → 715` characters before the
+separate final answer, which correctly distinguished ISA from microarchitecture. The persisted pair
+records `reasoning_mode=Deep`, `review_mode=Fast`, `review_state=NOT_REQUESTED`, and contains no
+reviewer or reasoning body. The subsequent Quick question
+`快速模式下，用一句话说明 ISA 的作用。` streamed visible answer characters
+`0 → 0 → 47 → 105 → complete` with reasoning length always zero. The protected local request
+inspector shows `stream:true` and DeepSeek `thinking:{type:"disabled"}` for that Quick call; no
+credential is retained. Review calls added in both Fast cases: `0`; no provider fallback occurred.
+
+**Verification.** Targeted Learning/Assistant Python tests PASS; frontend `npm test` is **47 PASS**;
+`conversation-composer.mjs`, `master-streaming.mjs` and the broader `master-learning.mjs` all PASS.
+The focused E2E covers genuine Quick and Deep incremental delivery, separate transient reasoning,
+provider-specific request mapping, Fast Review isolation, readiness isolation and stale-readiness
+recovery. Integration reran the closure-level Python suite at **318 passed / 2 unchanged optional OCR
+skips** and updated only the broader E2E's obsolete entry path to use the current PDF-local KP marker
+and low-frequency Topic menu; no Product behavior changed.
+The later DeepSeek budget adjustment passed **12 targeted Python cases** covering Quick/Deep request
+options, durable retry identity, the hard per-call ceiling, bounded transient retry/cooling and
+explicit recovery after a length-limited response. The focused Master streaming E2E also inspected
+the final mock-provider bodies: Quick `max_tokens=4096` with thinking disabled; Deep
+`max_tokens=12288` with thinking enabled; Review calls remained zero.
+
+**Screenshots.** `test-results/master-streaming-reasoning.png` records the live served Master SSE
+surface with an open reasoning stream; `test-results/master-model-reasoning-review-menu.png` records
+the completed separate reasoning surface, answer model/reasoning Composer controls, and Review in the
+low-frequency menu. A computer-use pass also inspected the real retained ISA Topic showing the real
+Deep answer and the later Quick answer in the current served UI.
+
+**Deferred by design.** Reasoning text is session-transient and therefore is not reconstructed after
+reload; no persistent chain-of-thought store, telemetry, generic streaming framework, new provider,
+new endpoint or egress category was introduced. This section supersedes the initial Phase baseline's
+historical `Streaming` Not-now and `Standard`-default wording only for this authorized rework.
 
 Second-level Section cards now offer `都清楚了` and `还有些地方不完全清楚`. Clear sets every owned KP
 to UNDERSTOOD, including previously unclear ones, resolves current Section state/Topic and preserves

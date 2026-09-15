@@ -3,7 +3,7 @@ import { createComposerChoice, createMessageRail } from "/screens.js";
 
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 
-export function createMasterUI({ api, revision, pages, dock, openDock, goToPage, announce, memoryControl, toggleExpanded }) {
+export function createMasterUI({ api, stream, revision, pages, dock, openDock, goToPage, announce, memoryControl, toggleExpanded }) {
   document.addEventListener("pointerdown", event => {
     for (const marker of pages.querySelectorAll(".kp-learning-marker[open]")) {
       if (!marker.contains(event.target)) marker.open = false;
@@ -18,7 +18,14 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   let composingNew = false;
   let canConfirm = false;
   let menuMessageId = null;
+  let providerStatuses = [];
+  let providerSelectionInitialized = false;
+  let answerProvider = 'deepseek';
+  let activeStream = null;
+  let streamView = null;
+  let providerReadinessMessage = '';
   const topicDrafts = new Map();
+  const recentReasoning = new Map();
   const tabs = document.createElement("nav");
   tabs.className = "dock-tabs";
   tabs.setAttribute("aria-label", "AI 工作区");
@@ -41,7 +48,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       <textarea id="master-question" maxlength="2000" rows="3" placeholder="这个知识点哪里还没完全懂？"></textarea>
       <div class="master-composer-actions">
         <div class="assistant-model-control">
-          <label class="assistant-model"><span class="sr-only">审查强度</span><select id="master-mode" aria-label="审查强度"><option value="Fast">快速 · 通常不做独立审查</option><option value="Standard" selected>标准 · 检查学术与客观正确性</option><option value="Deep">深入 · 同时检查推理与教学有效性</option></select></label>
+          <label class="assistant-model"><span class="sr-only">回答模型</span><select id="master-provider" aria-label="回答模型"><option value="deepseek">DeepSeek · deepseek-flash</option><option value="zhipu">智谱 · GLM-5.3-Flash</option><option value="openrouter">OpenRouter · Gemini 3.8 Flash</option></select></label>
+          <label class="assistant-model"><span class="sr-only">回答推理</span><select id="master-reasoning" aria-label="回答推理"><option value="Quick" selected>快速</option><option value="Deep">深度</option></select></label>
         </div>
         <button id="master-send" type="submit">发送</button>
       </div>
@@ -66,13 +74,16 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
   const actionsPopover=document.createElement('div'); actionsPopover.className='master-actions-popover';
   actionsPopover.setAttribute('popover','auto'); actionsPopover.setAttribute('role','dialog');
   actionsPopover.setAttribute('aria-label','更多操作');
+  const reviewSettings=document.createElement('label'); reviewSettings.className='master-review-setting';
+  reviewSettings.innerHTML='<span>回答后审查</span><select id="master-mode" aria-label="回答后审查"><option value="Fast" selected>快速 · 不调用独立审查</option><option value="Standard">标准 · 学术与客观正确性</option><option value="Deep">深入 · 推理与教学有效性</option></select>';
   const memorySlot=document.createElement('div');
-  actionsPopover.append(el('confirm'),memorySlot); panel.append(actionsPopover);
+  actionsPopover.append(reviewSettings,el('confirm'),memorySlot); panel.append(actionsPopover);
   const composerMore=button('…',()=>showActions(null,composerMore));
   composerMore.id='master-more'; composerMore.setAttribute('aria-label','当前主题更多操作');
   composerMore.setAttribute('aria-haspopup','dialog'); el('send').before(composerMore);
   function showActions(message, trigger) {
     menuMessageId=message?.id || null;
+    reviewSettings.hidden=Boolean(message);
     el('confirm').hidden=Boolean(message) || !canConfirm;
     memorySlot.replaceChildren();
     if(message) memorySlot.append(memoryControl(revision(),'MASTER',message.id));
@@ -82,11 +93,84 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     actionsPopover.style.top=`${Math.max(8,Math.min(rect.bottom+8,innerHeight-actionsPopover.offsetHeight-8))}px`;
     actionsPopover.querySelector('button:not([hidden])')?.focus();
   }
-  createComposerChoice(el('mode'), {id:'master-review', label:'审查强度',
-    names:{Fast:'快速', Standard:'标准', Deep:'深入'}});
+  const providerChoice=createComposerChoice(el('provider'), {id:'master-provider-choice', label:'回答模型',
+    names:{deepseek:'DeepSeek', zhipu:'GLM-5.3', openrouter:'Gemini 3.8'}});
+  const reasoningChoice=createComposerChoice(el('reasoning'), {id:'master-reasoning-choice', label:'回答推理',
+    names:{Quick:'快速', Deep:'深度'}});
   const post = (path, body = {}) => api(path, { method: "POST", body: JSON.stringify(body) });
   const scopeId = (point) => point.scope_id || point.knowledge_point_id || point.outline_node_id;
   const base = (id = current && scopeId(current.point)) => `/api/revisions/${revision()}/learning/${id}`;
+
+  async function refreshMasterStatus() {
+    try {
+      const status=await api('/api/learning/status');
+      providerStatuses=Array.isArray(status.providers) ? status.providers : [];
+      if(!providerSelectionInitialized) {
+        answerProvider=status.answer_provider || 'deepseek';
+        providerSelectionInitialized=true;
+      }
+    } catch(_error) {
+      providerStatuses=[];
+    }
+    syncComposer();
+  }
+
+  function selectedProviderStatus() {
+    return providerStatuses.find(item=>item.provider===answerProvider) || null;
+  }
+
+  function providerReady(status) {
+    return Boolean(status?.configured
+      && status.configuration_valid
+      && status.credential_available
+      && !status.cooling
+      && !status.ai_off_reason
+      && status.failure_state==='READY');
+  }
+
+  function providerUnavailableMessage(status) {
+    const label={deepseek:'DeepSeek',zhipu:'智谱 GLM',openrouter:'OpenRouter'}[answerProvider] || '所选模型';
+    if(!status) return `${label} 的状态暂不可用；请稍后重试。`;
+    if(!status.configuration_valid) return `${label} 的 provider 配置无效；Reader 其余功能不受影响。`;
+    if(status.cooling) return `${label} 正在短暂冷却；不会改用其他模型。`;
+    if(status.ai_off_reason==='DEVELOPMENT_DISABLED') return `${label} 当前已停用；不会影响其他模型。`;
+    if(!status.credential_available) return `${label} 尚未配置可读取的凭据；不会影响其他模型。`;
+    return `${label} 当前不可调用；不会自动切换模型。`;
+  }
+
+  function syncComposer() {
+    for(const option of el('provider').options) {
+      const status=providerStatuses.find(item=>item.provider===option.value);
+      if(status?.model) option.textContent=`${{deepseek:'DeepSeek',zhipu:'智谱',openrouter:'OpenRouter'}[option.value]} · ${status.model}`;
+    }
+    el('provider').value=answerProvider;
+    const pending=Boolean(current?.messages.some(m=>m.role==='user' && m.state==='PENDING'));
+    const unanswered=Boolean(current?.messages.some(
+      m=>m.role==='user' && (m.state==='PENDING' || m.state==='FAILED')
+    ));
+    const busy=Boolean(activeStream) || pending;
+    el('provider').disabled=busy;
+    el('reasoning').disabled=busy;
+    const status=selectedProviderStatus();
+    const ready=providerReady(status);
+    el('send').disabled=busy || unanswered || !ready;
+    el('send').title=unanswered && !pending
+      ? '请先重试上一条未完成的问题'
+      : ready ? '发送给当前所选模型' : providerUnavailableMessage(status);
+    providerChoice.sync(); reasoningChoice.sync();
+    if(current && !busy && !ready && !el('form').hidden) {
+      const message=providerUnavailableMessage(status);
+      if(!el('status').textContent || el('status').textContent===providerReadinessMessage) {
+        el('status').textContent=message;
+        providerReadinessMessage=message;
+      }
+    } else if(providerReadinessMessage && el('status').textContent===providerReadinessMessage) {
+      el('status').textContent='';
+      providerReadinessMessage='';
+    }
+  }
+
+  el('provider').addEventListener('change',()=>{answerProvider=el('provider').value;syncComposer();});
 
   function select(master) {
     if(!master) actionsPopover.hidePopover();
@@ -94,7 +178,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     panel.hidden = !master;
     assistantTab.setAttribute("aria-pressed", String(!master));
     masterTab.setAttribute("aria-pressed", String(master));
-    if(master && current) render();
+    if(master) { if(current) render(); refreshMasterStatus(); }
   }
   function renderTopicList() {
     topicList.replaceChildren(...(entries.topics || []).map(topic => {
@@ -156,6 +240,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       render();
       el('history').scrollTop=topicDrafts.get(scopeId(current.point))?.scroll || 0;
       await refreshEntries();
+      await refreshMasterStatus();
     } catch (error) { if (request === generation) el("status").textContent = error.message; }
   }
   function render() {
@@ -181,6 +266,8 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
       content.className = message.role === "user" ? "assistant-question-bubble" : "assistant-answer-bubble";
       if (message.role === "user") content.textContent = message.content;
       else renderAssistantAnswer(content, message.content);
+      const reasoning=recentReasoning.get(message.id);
+      if(reasoning && message.role==='assistant') row.append(reasoningBlock(reasoning));
       row.append(content);
       const metadata = document.createElement("p");
       metadata.className = "master-message-status";
@@ -200,11 +287,12 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
         if(message.detail) { const detail=document.createElement('p'); detail.textContent=message.detail; row.append(detail); }
       }
       if (message.state === "FAILED" || ["FAIL", "TECHNICAL_FAILURE"].includes(message.review_state)) {
-        actions.insertBefore(button(message.role === "user" ? "重试发送" : "重试", () => act("retry", { message_id: message.id })),actions.querySelector('button'));
+        actions.insertBefore(button(message.role === "user" ? "重试发送" : "重试", () => runMasterStream("retry", { message_id: message.id })),actions.querySelector('button'));
       }
       if(actions.childNodes.length) row.append(actions);
       return row;
     });
+    if(streamView) rendered.push(renderStreamView());
     history.replaceChildren(...rendered);
     if (nearBottom) history.scrollTop = history.scrollHeight;
     el("form").hidden = Boolean(historical);
@@ -213,13 +301,13 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     // A second question must not overtake an unanswered durable question.
     el("send").disabled = current.messages.some((m) => m.role === "user" && ["PENDING", "FAILED"].includes(m.state));
     canConfirm = Boolean(active) && !historical && !composingNew;
-    composerMore.hidden=!canConfirm;
+    composerMore.hidden=el('form').hidden;
     el("confirm").hidden = !canConfirm || Boolean(menuMessageId);
     if(!canConfirm && !menuMessageId) actionsPopover.hidePopover();
     el("confirm").textContent = current.point.scope_kind === "SECTION" ? "都清楚了" : "已弄懂";
     el("question").placeholder = current.point.scope_kind === "SECTION" ? "这一节哪些地方还没完全懂？" : "这个知识点哪里还没完全懂？";
     clearTimeout(poll);
-    if (current.messages.some((m) => m.state === "PENDING" || m.review_state === "PENDING")) {
+    if (!activeStream && current.messages.some((m) => m.state === "PENDING" || m.review_state === "PENDING")) {
       const request = generation;
       const url = base();
       poll = setTimeout(async () => {
@@ -230,6 +318,72 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
           render();
         } catch (error) { if (request === generation) el("status").textContent = `${error.message}；重新打开可恢复对话。`; }
       }, 600);
+    }
+    syncComposer();
+  }
+
+  function reasoningBlock(text, streaming=false) {
+    const details=document.createElement('details'); details.className='master-reasoning'; details.open=streaming;
+    const summary=document.createElement('summary'); summary.textContent=streaming ? '正在思考' : '思考过程';
+    const content=document.createElement('div'); content.className='master-reasoning-content'; content.textContent=text;
+    details.append(summary,content); return details;
+  }
+
+  function renderStreamView() {
+    const row=document.createElement('article'); row.className='master-message master-stream-message';
+    row.dataset.masterStream='true';
+    if(streamView.reasoning) row.append(reasoningBlock(streamView.reasoning,true));
+    const answer=document.createElement('div'); answer.className='assistant-answer-bubble assistant-answer-streaming';
+    answer.dataset.masterStreamAnswer='true'; answer.textContent=streamView.answer;
+    if(!streamView.answer) answer.hidden=true;
+    row.append(answer); return row;
+  }
+
+  function appendStreamDelta(kind, content) {
+    if(!streamView || !content) return;
+    streamView[kind]+=content;
+    const history=el('history');
+    let row=history.querySelector('[data-master-stream="true"]');
+    if(!row) { row=renderStreamView(); history.append(row); }
+    if(kind==='answer') {
+      const answer=row.querySelector('[data-master-stream-answer="true"]');
+      answer.hidden=false; answer.append(document.createTextNode(content));
+    } else {
+      let block=row.querySelector('.master-reasoning');
+      if(!block) { block=reasoningBlock('',true); row.prepend(block); }
+      block.querySelector('.master-reasoning-content').append(document.createTextNode(content));
+    }
+    history.scrollTop=history.scrollHeight;
+  }
+
+  async function runMasterStream(action, payload) {
+    const request=generation;
+    const controller=new AbortController(); activeStream=controller; streamView=null; syncComposer();
+    el('status').textContent='准备回答…'; el('status').classList.add('ai-progress');
+    let completed=null;
+    try {
+      await stream(`${base()}/${action}`,payload,event=>{
+        if(request!==generation) return;
+        if(event.type==='stage' && event.learning) {
+          current=event.learning; streamView={answer:'',reasoning:''}; sendIntent=null; el('question').value=''; render();
+        } else if(event.type==='stage' && event.stage==='reviewing') {
+          el('status').textContent='正在审查回答…';
+        } else if(event.type==='delta') appendStreamDelta('answer',event.content);
+        else if(event.type==='reasoning_delta') appendStreamDelta('reasoning',event.content);
+        else if(event.type==='complete') completed=event;
+      },controller.signal);
+      if(request!==generation) return;
+      if(!completed) throw new Error('Master 流式回答未正常完成；问题已保留，可以重试。');
+      if(streamView?.reasoning && completed.answer_message_id) recentReasoning.set(completed.answer_message_id,streamView.reasoning);
+      current=completed.learning; streamView=null; render(); await refreshEntries();
+    } catch(error) {
+      if(error.name==='AbortError' || request!==generation) return;
+      streamView=null;
+      try { current=await api(base()); render(); } catch(_refreshError) { /* retain the visible durable state */ }
+      el('status').classList.remove('ai-progress'); el('status').textContent=`${error.message}；问题已保留，可重试。`;
+    } finally {
+      if(activeStream===controller) activeStream=null;
+      syncComposer();
     }
   }
   async function act(action, payload) {
@@ -247,25 +401,13 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     const question = el("question").value.trim();
     if (!question || el("send").disabled) return;
     const mode = el("mode").value;
-    if (!sendIntent || sendIntent.question !== question || sendIntent.review_mode !== mode) {
-      sendIntent = { intent_id: crypto.randomUUID(), question, review_mode: mode };
+    const reasoningMode=el('reasoning').value;
+    if (!sendIntent || sendIntent.question !== question || sendIntent.review_mode !== mode
+        || sendIntent.provider !== answerProvider || sendIntent.reasoning_mode !== reasoningMode) {
+      sendIntent = { intent_id: crypto.randomUUID(), question, review_mode: mode,
+        provider:answerProvider, reasoning_mode:reasoningMode };
     }
-    el("send").disabled = true;
-    el("status").textContent = "准备发送…"; el("status").classList.add("ai-progress");
-    const request = generation;
-    try {
-      const result = await post(base() + "/send", sendIntent);
-      if (request !== generation) return;
-      current = result;
-      selectedTopicId=current.topics.find(t=>t.state==='ACTIVE')?.id || selectedTopicId;
-      composingNew=false;
-      sendIntent = null;
-      el("question").value = "";
-      render();
-      await refreshEntries();
-    } catch (error) {
-      if (request === generation) { el("status").classList.remove("ai-progress"); el("status").textContent = `${error.message}；再次发送会复用本次问题。`; el("send").disabled = false; }
-    }
+    await runMasterStream('send',sendIntent);
   });
   el("confirm").addEventListener("click", () => {
     const topic = current?.topics.find((t) => t.state === "ACTIVE");
@@ -422,6 +564,7 @@ export function createMasterUI({ api, revision, pages, dock, openDock, goToPage,
     if (saved?.thread_id) item.append(button("继续 Master 对话", () => open(point)));
   }
   function reset() {
+    activeStream?.abort(); activeStream=null; streamView=null; recentReasoning.clear();
     actionsPopover.hidePopover();
     ++generation;
     clearTimeout(poll);

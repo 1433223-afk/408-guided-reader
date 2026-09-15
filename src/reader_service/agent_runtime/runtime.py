@@ -108,6 +108,7 @@ class ProviderAdapter(Protocol):
         body: dict,
         timeout: float,
         on_delta: Callable[[str], None],
+        on_reasoning_delta: Callable[[str], None] | None = None,
     ) -> ProviderResponse | str: ...
 
 
@@ -323,6 +324,7 @@ class AgentRuntime:
         timeout_seconds: float | None = None,
         json_object: bool = False,
         stream_callback: Callable[[str], None] | None = None,
+        reasoning_stream_callback: Callable[[str], None] | None = None,
     ) -> ProviderCompletion:
         config = self.config
         if type(json_object) is not bool or (json_object and config.provider != "openrouter"):
@@ -375,6 +377,8 @@ class AgentRuntime:
                     "cooling",
                     f"{config.provider} 连续失败，正在短暂冷却；教材阅读功能不受影响。",
                 )
+        if reasoning_stream_callback is not None and not callable(reasoning_stream_callback):
+            raise ValueError("reasoning stream callback is invalid")
         streaming = stream_callback is not None
         body = {
             "model": config.model,
@@ -397,7 +401,7 @@ class AgentRuntime:
         last_failure: ProviderFailure | None = None
         for attempt in range(1, config.max_attempts + 1):
             transport_started = time.perf_counter()
-            attempt_emitted_content = False
+            attempt_emitted_output = False
             if retain_request_body:
                 self.inspector.record(
                     provider=config.provider,
@@ -426,14 +430,23 @@ class AgentRuntime:
             try:
                 if streaming:
                     def emit_delta(delta: str) -> None:
-                        nonlocal first_content_at, attempt_emitted_content
+                        nonlocal first_content_at, attempt_emitted_output
                         if not delta:
                             return
-                        attempt_emitted_content = True
+                        attempt_emitted_output = True
                         if first_content_at is None:
                             first_content_at = time.perf_counter()
                         assert stream_callback is not None
                         stream_callback(delta)
+
+                    def emit_reasoning_delta(delta: str) -> None:
+                        nonlocal first_content_at, attempt_emitted_output
+                        if not delta or reasoning_stream_callback is None:
+                            return
+                        attempt_emitted_output = True
+                        if first_content_at is None:
+                            first_content_at = time.perf_counter()
+                        reasoning_stream_callback(delta)
 
                     response = self.adapter.stream(
                         config.endpoint,
@@ -441,6 +454,7 @@ class AgentRuntime:
                         body,
                         config.timeout_seconds,
                         emit_delta,
+                        emit_reasoning_delta,
                     )
                 else:
                     response = self.adapter.complete(
@@ -459,7 +473,7 @@ class AgentRuntime:
                     **copy.deepcopy(failure.diagnostics or {}),
                     "latency_ms": elapsed_ms,
                     "ttft_ms": ttft_ms,
-                    "partial_content_received": attempt_emitted_content,
+                    "partial_content_received": attempt_emitted_output,
                 }
                 last_failure = failure
                 self._notify_attempt(
@@ -495,7 +509,7 @@ class AgentRuntime:
                     raise
                 if failure.kind is not ProviderFailureKind.TRANSIENT:
                     raise
-                if attempt_emitted_content:
+                if attempt_emitted_output:
                     # Replaying a visible partial answer would duplicate text and violate
                     # explicit recovery. The user decides whether to retry this turn.
                     self._start_cooling()
@@ -554,12 +568,16 @@ class AgentRuntime:
         self,
         messages: list[dict],
         on_delta: Callable[[str], None],
+        on_reasoning_delta: Callable[[str], None] | None = None,
         **kwargs,
     ) -> ProviderCompletion:
         if not callable(on_delta):
             raise ValueError("stream callback is required")
         return self.complete_with_metadata(
-            messages, stream_callback=on_delta, **kwargs
+            messages,
+            stream_callback=on_delta,
+            reasoning_stream_callback=on_reasoning_delta,
+            **kwargs,
         )
 
     def _read_key(self) -> str | None:
@@ -733,6 +751,7 @@ class ProviderRuntimeSet:
         provider: str,
         messages: list[dict],
         on_delta: Callable[[str], None],
+        on_reasoning_delta: Callable[[str], None] | None = None,
         **kwargs,
     ) -> ProviderCompletion:
         runtime = self.runtimes.get(provider)
@@ -742,7 +761,9 @@ class ProviderRuntimeSet:
                 "invalid_active_provider",
                 "所选 provider 不在允许的命名集合中；Reader 其余能力仍可使用。",
             )
-        return runtime.stream_with_metadata(messages, on_delta, **kwargs)
+        return runtime.stream_with_metadata(
+            messages, on_delta, on_reasoning_delta, **kwargs
+        )
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:
         selected = provider or self.active_provider

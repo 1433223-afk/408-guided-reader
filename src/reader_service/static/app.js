@@ -73,6 +73,7 @@ let assistantSidebarScrollPosition = 0;
 let selectionActionsDismissal = null;
 
 const master = createMasterUI({ api, revision: () => state.revision?.id,
+  stream: streamMasterResponse,
   toggleExpanded: () => setAssistantExpanded(!state.assistantExpanded),
   pages: elements.pages, dock: elements["assistant-panel"],
   openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
@@ -2239,6 +2240,20 @@ function showAssistantPending(question, phase = "answering") {
   elements["assistant-turns"].append(pending);
   elements["assistant-empty"].hidden = true;
   return pending;
+}
+
+async function streamMasterResponse(path, body, onEvent, signal) {
+  return streamAssistantResponse(path, {
+    method: "POST",
+    credentials: "same-origin",
+    signal,
+    headers: {
+      "X-Reader-Token": launchToken,
+      "Content-Type": "application/json",
+      "Accept": "text/event-stream",
+    },
+    body: JSON.stringify(body),
+  }, onEvent, fetch, { label: "Master", codePrefix: "MASTER" });
 }
 
 function abortAssistantStreams() {

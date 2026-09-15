@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterator
 from reader_service.learning.schema import (
     SCHEMA as LEARNING_SCHEMA,
+    MASTER_REASONING_SCHEMA,
     SECTION_SCHEMA,
     STABLE_TOPIC_SCHEMA,
 )
@@ -742,7 +743,7 @@ from reader_service.teaching.schema import TEACHING_SCHEMA, INLINE_TEACHING_SCHE
 from reader_service.memory_schema import SCHEMA as MEMORY_SCHEMA
 from reader_service.learning.reading import SCHEMA as READING_SCHEMA
 
-MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA))
+MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA), (19, MASTER_REASONING_SCHEMA))
 
 
 class Database:
@@ -777,6 +778,8 @@ class Database:
                     self._backup_learning_memory(connection, 17)
                 if version == 18:
                     self._backup_master_topics(connection, version)
+                if version == 19:
+                    self._backup_master_execution_settings(connection, version)
                 if version == 13:
                     # SQLite's documented table-rebuild procedure: disable cascades outside
                     # the transaction, preserve IDs, and validate all FKs before committing.
@@ -815,6 +818,23 @@ class Database:
             destination.close()
         print(
             "数据升级：已验证备份；合并同一学习范围的重复 Master 话题，保留对话、学习历史、记忆与掌握状态。",
+            flush=True,
+        )
+
+    def _backup_master_execution_settings(self, connection, version):
+        backup_path = self.path.with_name(f"{self.path.name}.pre-migration-{version}.bak")
+        destination = sqlite3.connect(backup_path)
+        try:
+            connection.backup(destination)
+            destination.commit()
+            if destination.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise RuntimeError("Master execution settings backup failed integrity verification")
+            if list(destination.iterdump()) != list(connection.iterdump()):
+                raise RuntimeError("Master execution settings backup differs from existing data")
+        finally:
+            destination.close()
+        print(
+            "数据升级：已验证备份；为 Master 消息增加回答推理模式，保留话题、对话、审查与掌握状态。",
             flush=True,
         )
 
