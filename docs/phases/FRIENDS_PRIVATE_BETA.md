@@ -13,6 +13,16 @@ Windows personal edition and establish its stable private-GitHub baseline before
 Review funding/routing is explicitly accepted under R-1 below. No product code or deployed route has
 changed as part of drafting or recording acceptance.
 
+**User-approved Phase scope amendment, 2026-09-16 — ACCEPTED.** The user explicitly approved
+the reduced implementation-plan direction and this scope amendment. Beta V1 removes persistent
+token quotas/reservation/settlement ledgers, Linux per-UID filesystem hard quotas and the 20 GiB
+per-instance hard cap, and RPO <=24h / RTO <=1h acceptance targets and their automation system.
+Their replacements are the simple AI concurrency/admin switch and disk-space checks in Build §3,
+and stopped-service consistent backup plus a real empty-directory restore with measured elapsed
+time in Build §4 and Acceptance §5. No RPO/RTO SLA is frozen. All other accepted rules, including
+R-1 and the 2/5-instance mixed-load acceptance, remain unchanged. This checkpoint records the
+user's decision only; product coding and deployment remain paused pending a subsequent instruction.
+
 Deliver the smallest operable private Beta, inviting 1–2 people first and expanding to at most 5,
 preserving single-user domain semantics. User-visible result: “我登录自己的地址，配置自己的 DeepSeek
 Key，教材、对话和学习记录只属于我，更新后仍能继续学习。”
@@ -42,7 +52,7 @@ against the target distribution's installed manuals. No external application cod
 ### 0. Preserve the personal edition and establish its baseline first
 
 - Windows local personal use remains supported, including its existing launch flow, local data,
-  credential handling and model choices. Beta-only model visibility, key onboarding, quotas and
+  credential handling and model choices. Beta-only model visibility, key onboarding, AI limits and
   server restrictions must not silently change the local profile or require a server/cloud login.
 - Reader / Master / Guide / KP / Memory and their domain semantics remain shared product code.
   Keep differences in deployment/configuration/security and the smallest profile-aware UI surface
@@ -112,7 +122,8 @@ supported models only in later explicitly scoped work; reuse the existing adapte
 - A key supplied to A cannot be retrieved or used through B. Rotation affects subsequent calls and
   must not silently reissue an in-flight call. Missing/invalid keys disable new AI only; PDF, saved
   learning assets and configuration remain operable. Explain that generation **and Review/retries**
-  use the user's provider balance; local quotas are safeguards, not a promise about currency billing.
+  use the user's provider balance; users bear their own DeepSeek API costs. The concurrency limit
+  is a resource safeguard, not a token or currency spending cap.
 - The service must access the credential to call DeepSeek, so the trusted server administrator can
   technically access it. Do not claim encryption from the host operator. After restoring ordinary
   data backups, users re-enter keys; no hidden centrally funded key is restored.
@@ -170,28 +181,26 @@ transferred during this documentation revision.
 
 ### 3. AI and storage limits
 
-- Per-instance finite daily token allowance and simultaneous provider-call ceiling, enforced at the
-  common egress boundary across Assistant, Master, KP, Guide, Inline, Review and saved-note Review.
-  Initial configurable limits: **200,000 input+output tokens/day, 2 active calls/person**, date boundary
-  Asia/Shanghai. These are accepted starting defaults, not observed usage or a currency price promise.
-  User-supplied keys do not remove these safeguards; all their generation and Review calls count.
-- Atomically reserve a conservative input bound + requested maximum output before each transport
-  attempt, reconcile against validated usage, and retain the reservation when outcome/usage is
-  uncertain. All retries/revisions/recovery calls cost allowance; reasoning counts as provider usage.
-  Reservations survive restart, concurrent admission and day rollover without minting free allowance.
-  Do not hold SQLite write transactions during network I/O. If a safe bound cannot be established,
-  reject before egress; do not label an after-the-fact counter a hard cap.
+- **At most 2 active AI provider calls per instance**, enforced at the common egress boundary across
+  Assistant, Master, KP, Guide, Inline, Review and saved-note Review, including each retry/revision/
+  recovery transport attempt. The administrator can disable new AI calls. Use a simple shared
+  in-process concurrency limit; no persistent token quota, token reservation or settlement ledger,
+  daily token allowance, rollover accounting or corresponding schema migration in Beta V1.
+  Users pay their own DeepSeek API costs, including generation, reasoning, Review and retries.
 - Bound waiting requests and pending generation work; excess gets a clear retryable Chinese response.
   Existing logical idempotency remains. KP internal thread pools consume the same call ceiling.
   With five instances the starting aggregate ceiling is ten calls; lower per-instance ceilings if the
   user's provider account limit requires it. Separate keys may still share a provider account; do not
   assume account-level independence. No distributed limiter. Administrator can disable new AI.
-  Quota/concurrency failures never change mastery, discard questions/notes or bypass Review.
-- Initial storage defaults: **512 MiB/upload, 20 GiB total per instance, 2 GiB host free-space reserve**.
-  Check upload length and reserved space before intake; account for simultaneous uploads, temp files,
-  SQLite/WAL and generated state. Combine application admission with an OS/filesystem hard limit;
-  retain room to complete transactions and reject new growth cleanly. No automatic deletion of
-  user assets. PDF/read access remains available when new AI/upload writes are refused.
+  Concurrency refusal or administrator-disabled AI never changes mastery, discards questions/notes
+  or bypasses Review.
+- **512 MiB per upload**, with disk free-space checks and a default **2 GiB safety margin**.
+  Check upload length and available space before intake; recheck during growth as needed, accounting
+  for simultaneous uploads, temp files, SQLite/WAL and generated state. Reject new data growth when
+  space is insufficient and retain room to complete transactions. No Linux per-UID filesystem hard
+  quota or 20 GiB per-instance hard cap in Beta V1; free-space checks are application safeguards,
+  not an OS-enforced storage guarantee. No automatic deletion of user assets. PDF/read access remains
+  available when new AI/upload writes are refused.
 
 ### 4. systemd, backup and reproducible release
 
@@ -202,10 +211,13 @@ transferred during this documentation revision.
 - Pin a reproducible Linux release including Python dependencies, npm locked static resources and OCR
   weights; verify no first-user implicit model acquisition. Data and secrets outlive release folders.
   A Python package alone currently lacks the required repository-relative `node_modules` resources.
-- Daily low-traffic stop-and-backup per instance: deny/drain writes, stop Core, snapshot the complete
-  SQLite state and blobs together, then restart. Include nonsecret configuration, schema/release IDs
-  and checksums. Encrypt and copy off-host; initial retention 7 daily + 4 weekly, RPO <=24h, restore
-  target <=1h for the validated Beta dataset. Alert on failed backup. Keys are managed separately.
+- Provide a manually runnable stopped-service consistent backup per instance: deny/drain writes,
+  stop Core and confirm exit, snapshot the complete SQLite state and blobs together, then restart.
+  Include nonsecret configuration, schema/release IDs and checksums. Encrypt and copy off-host;
+  keys are managed separately and excluded from ordinary backups. Run a real restore into an empty
+  isolated directory and record the dataset size and actual elapsed restore time. Beta V1 freezes
+  no RPO/RTO SLA and requires no automatic backup scheduling, retention rotation, alerting system
+  or RPO/RTO compliance machinery. Backup/restore failure must still be reported as failure.
 - Take a verified pre-update backup; update one instance at a time. No running-DB main-file-only copy,
   no reliance solely on same-disk migration backups. Restore into an empty isolated directory and
   validate SQLite integrity/FKs, blob hashes and real user flows. Code rollback must match DB schema.
@@ -216,17 +228,20 @@ transferred during this documentation revision.
 0. **Personal baseline/regression:** record the accepted clean personal commit, verified private
    remote and proposed tag (or user-selected equivalent) before Beta implementation. Windows local
    Reader/Master/Guide/KP/Memory still pass real-use and affected regression without Beta login,
-   BYOK onboarding or server quota requirements; demonstrate recovery against compatible personal data.
+   BYOK onboarding or server AI-limit requirements; demonstrate recovery against compatible personal data.
 1. **Identity/security:** two real credentials and separate instances; anonymous/wrong-host access
    fails for HTML, APIs, PDF Range and SSE. A cannot read/change/delete B's PDF, OCR/KP, Guide,
    Master, Memory, marks or progress, even with known B object/session IDs. Cross-instance filesystem
    access fails. Public backend/admin/debug access fails; secret/body canaries never enter logs.
    Key submission/replacement/removal/status never returns a stored full key; verify browser storage,
    errors, logs and backups contain none. Missing/invalid key preserves reading and saved assets.
-2. **Limits:** mock provider tests cover all routes/overrides, simultaneous budget reservation,
-   multi-call Guide/KP, Review/retry, missing usage, interrupted calls, restart and rollover. No
-   unapproved model request leaves. Upload concurrency, oversize, disk exhaustion and quota failure
-   leave durable assets valid. AI exhaustion preserves original-only reading and saved assets.
+2. **Limits:** mock provider tests cover all routes/overrides and the shared 2-active-call ceiling
+   across simultaneous mixed-role calls, multi-call Guide/KP, Review/retry, interrupted calls and
+   restart. Verify slot release after failure and that administrator-disabled AI permits no new
+   calls. No unapproved model request leaves. Upload concurrency, oversize, insufficient free space
+   and disk exhaustion leave durable assets valid. Concurrency refusal, disabled AI and low-space
+   refusal preserve original-only reading and saved assets. No token-ledger, daily allowance,
+   settlement, rollover or per-instance filesystem-quota acceptance is required.
    Beta UI has no provider/model menu; crafted non-DeepSeek requests fail before egress. Verify R-1's
    same-key clean-context Review, rejection of known bad candidates, and unchanged
    publication/mastery authority on representative real KP, Guide, Inline and saved-note material.
@@ -241,11 +256,14 @@ transferred during this documentation revision.
    p95 <=2s on the recorded test network; real SSE deltas flush through Caddy without whole-answer
    buffering. Provider TTFT/completion and queue time are reported separately, not guaranteed <=2s.
 5. **Recovery:** restart/update during work, old published Guide retained, Master retryable, completed
-   OCR not lost; Assistant/Guide drafts remain intentionally temporary. Off-host restore meets the
-   measured RPO/RTO and reopens real PDF, notes, Memory, Master and progress with unchanged identity.
+   OCR not lost; Assistant/Guide drafts remain intentionally temporary. A stopped-service consistent
+   backup restored from off-host into an empty isolated directory passes SQLite integrity/FK and
+   blob-hash checks, and reopens real PDF, notes, Memory, Master and progress with unchanged identity.
+   Record dataset size and actual elapsed restore time; no RPO <=24h / RTO <=1h pass threshold or
+   other frozen RPO/RTO SLA applies.
 
 Targeted tests → agent real-use path → affected regression → full Python/JS closure suites. Independent
-review is **required** for auth/isolation, final egress policy, durable quota/migration, resource denial
+review is **required** for auth/isolation, final egress policy, any durable-state migration, resource denial
 and restore integrity; the implementer/planner cannot provide their own independent acceptance.
 Invocation failure is not PASS. Human Beta acceptance is separate from load scripts and agent checks.
 
@@ -268,6 +286,9 @@ microservices, distributed queue, complete account system, self-registration, ge
 platform, additional Beta models, RAG/vector DB, new
 learning features or zero-downtime releases. Ordinary helpers, test structure and local implementation
 choices are delegated; use existing SQLite/runtime boundaries, not a generic budget/workflow framework.
+The 2026-09-16 scope amendment also excludes persistent token quota/reservation/settlement ledgers,
+Linux per-UID filesystem hard quotas, the 20 GiB instance hard cap, and RPO/RTO compliance automation
+from Beta V1. These are removed requirements, not pending acceptance blockers.
 
 Report before expanding architecture, changing ownership/learning/publication rules, degrading the
 Windows personal edition, weakening personal OpenRouter proxy
