@@ -358,9 +358,11 @@ export function createScreens({api, home, memory, read, remove, revision, announ
       for(const kp of p.status === 'READY' ? p.knowledge_points.filter(k => k.primary_section_id === section.outline_node_id) : []) {
         const row = node('div', '', 'overview-kp'); const current = learning?.points.find(k => k.knowledge_point_id === kp.knowledge_point_id);
         row.dataset.kpId = kp.knowledge_point_id;
-        const desc = node('div'); desc.append(node('strong', kp.title), node('p', kp.one_sentence_definition, 'muted'));
+        const desc = node('div', '', 'overview-kp-content');
+        const heading = node('div', '', 'overview-kp-heading'); heading.append(node('strong', kp.title));
         const state = node('span', current ? ({UNDERSTOOD:'已理解',NOT_FULLY_CLEAR:'仍不清楚',UNCONFIRMED:'待确认'}[current.status]) : '状态暂不可用', `kp-state ${current?.status || ''}`);
-        const target = source(kp, `PDF ${kp.start_page + 1} ↗`); row.append(state, desc, target); region.append(row);
+        heading.append(state); desc.append(heading, node('p', kp.one_sentence_definition, 'muted'));
+        const target = source(kp, `PDF ${kp.start_page + 1} ↗`); row.append(desc, target); region.append(row);
       }
       map.append(region);
     }
