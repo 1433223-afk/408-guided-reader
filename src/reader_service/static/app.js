@@ -15,7 +15,7 @@ import { createAssistantNavigator } from "/assistant-navigator.js";
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "reader-more", "reader-more-toggle", "reader-more-menu", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -3379,6 +3379,18 @@ elements["page-number"].addEventListener("keydown", (event) => {
 });
 elements["zoom-out"].addEventListener("click", () => setZoom(adjacentZoom(-1)));
 elements["zoom-in"].addEventListener("click", () => setZoom(adjacentZoom(1)));
+elements["reader-more-toggle"].addEventListener("click", () => {
+  const open = !elements["reader-more"].classList.contains("open");
+  elements["reader-more"].classList.toggle("open", open);
+  elements["reader-more-toggle"].setAttribute("aria-expanded", String(open));
+});
+elements["reader-more"].addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !elements["reader-more"].classList.contains("open")) return;
+  event.preventDefault();
+  elements["reader-more"].classList.remove("open");
+  elements["reader-more-toggle"].setAttribute("aria-expanded", "false");
+  elements["reader-more-toggle"].focus();
+});
 elements["back-to-library"].addEventListener("click", returnToLibrary);
 elements["printed-page-edit"].addEventListener("click", editPrintedPageLabel);
 elements["outline-toggle"].addEventListener("click", async () => {
@@ -3626,6 +3638,10 @@ document.addEventListener("copy", (event) => {
   announce("已复制所选文字。");
 });
 document.addEventListener("pointerdown", (event) => {
+  if (elements["reader-more"].classList.contains("open") && !elements["reader-more"].contains(event.target)) {
+    elements["reader-more"].classList.remove("open");
+    elements["reader-more-toggle"].setAttribute("aria-expanded", "false");
+  }
   if (!elements["selection-actions"].hidden
       && !elements["selection-actions"].contains(event.target)) hideSelectionActions();
   if (!elements["assistant-answer-actions"].hidden

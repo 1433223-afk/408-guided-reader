@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core';
 const source = process.env.READER_DATA_DIR;
 if (!source) throw new Error('READER_DATA_DIR must name the real prepared Library');
 const resizeOnly = process.env.READER_DOCK_RESIZE_ONLY === '1';
+const viewportWidth = Number(process.env.READER_VIEWPORT_WIDTH || 1440);
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'guided-reader-panel-performance-'));
 const dataDir = path.join(root, 'data');
@@ -30,11 +31,27 @@ const results = [];
 try {
   service = await startService();
   browser = await chromium.launch({ executablePath: chromePath(), headless: true });
-  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({ viewport: { width: viewportWidth, height: 1000 }, deviceScaleFactor: 1 });
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.goto(service.url);
   await openBook(page);
+
+  if (viewportWidth <= 960) {
+    assert.equal(await page.locator('#reader-more-toggle').isVisible(), true,
+      'narrow Reader must expose the more-tools control');
+    assert.equal(await page.locator('#zoom-out').isVisible(), false,
+      'narrow Reader must keep Zoom collapsed initially');
+    await page.locator('#reader-more-toggle').click();
+    assert.equal(await page.locator('#zoom-out').isVisible(), true,
+      'narrow Reader more-tools menu must expose Zoom');
+    await page.locator('#reader-more-toggle').click();
+  } else {
+    assert.equal(await page.locator('#reader-more-toggle').isVisible(), false,
+      'wide Reader must keep the accepted direct toolbar controls');
+    assert.equal(await page.locator('#zoom-out').isVisible(), true,
+      'wide Reader must expose Zoom directly');
+  }
 
   const fixture = await page.evaluate(async (resizeOnly) => {
     const books = (await (await fetch('/api/books')).json()).books;
@@ -183,6 +200,15 @@ try {
       assert.ok(Math.abs(result.scrollTopDelta) < 1, `${result.name} moved PDF scroll by ${result.scrollTopDelta}`);
       assert.ok(Math.abs(result.scrollLeftDelta) < 1, `${result.name} moved horizontal PDF scroll by ${result.scrollLeftDelta}`);
       assert.equal(result.currentPageStable, true, `${result.name} changed the current page`);
+      assert.ok(Math.abs(result.toolbarLayout.left - result.toolbarLayout.readerLeft) < .5
+        && Math.abs(result.toolbarLayout.right - result.toolbarLayout.readerRight) < .5,
+      `${result.name} toolbar does not span the Reader`);
+      assert.ok(result.toolbarLayout.scrollWidth <= result.toolbarLayout.clientWidth,
+        `${result.name} toolbar has horizontal overflow`);
+      assert.ok(result.toolbarLayout.controlsScrollWidth <= result.toolbarLayout.controlsClientWidth,
+        `${result.name} Reader controls have horizontal overflow`);
+      assert.notEqual(result.toolbarLayout.controlsOverflowX, 'auto',
+        `${result.name} Reader controls expose a horizontal scrollbar`);
       if (result.dockLayout) {
         assert.equal(result.dockLayout.position, 'relative', `${result.name} panel is not a real layout column`);
         assert.ok(result.dockLayout.viewerRight <= result.dockLayout.panelLeft + .5,
@@ -191,6 +217,18 @@ try {
           `${result.name} viewer did not yield the resized panel width`);
         if (result.dockLayout.pageFits) assert.ok(result.dockLayout.centerError < 8,
           `${result.name} PDF stayed ${result.dockLayout.centerError}px off center`);
+        assert.equal(result.dockLayout.handleDefault, 'rgba(0, 0, 0, 0)',
+          `${result.name} resize handle is visible at rest`);
+        const handleChannels = result.dockLayout.handleActive.match(/[\d.]+/g).map(Number);
+        assert.ok(Math.max(...handleChannels.slice(0, 3)) - Math.min(...handleChannels.slice(0, 3)) <= 12
+          && (handleChannels[3] ?? 1) <= .35,
+        `${result.name} resize handle is not a subtle neutral color`);
+      }
+      if (result.closedLayout) {
+        assert.ok(Math.abs(result.closedLayout.viewerRight - result.closedLayout.readerRight) < .5,
+          `${result.name} did not return the Dock width to the PDF`);
+        if (result.closedLayout.pageFits) assert.ok(result.closedLayout.centerError < 8,
+          `${result.name} did not recenter the PDF after close`);
       }
     }
   } catch (error) {
@@ -261,9 +299,11 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
     metric.currentPage = currentPage;
     if (dockSelector) {
       const panel = document.querySelector(dockSelector);
+      const handle = document.querySelector(dockSelector === '#guide-panel' ? '#guide-divider' : '#assistant-resize-handle');
       metric.dockSelector = dockSelector;
       metric.viewerRect = viewer.getBoundingClientRect().toJSON();
       metric.panelRect = panel.getBoundingClientRect().toJSON();
+      metric.handleDefault = getComputedStyle(handle, '::after').backgroundColor;
     }
   }, { name, expectedState, dockSelector });
   await action();
@@ -302,9 +342,23 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       scrollTopDelta: viewer.scrollTop - metric.scrollTop,
       scrollLeftDelta: viewer.scrollLeft - metric.scrollLeft,
       currentPageStable: Number(document.querySelector('#page-number').value) === metric.currentPage,
+      toolbarLayout: (() => {
+        const reader = document.querySelector('#reader').getBoundingClientRect();
+        const toolbar = document.querySelector('#reader .toolbar');
+        const toolbarRect = toolbar.getBoundingClientRect();
+        const controls = toolbar.querySelector('.reader-controls');
+        return {
+          readerLeft: reader.left, readerRight: reader.right,
+          left: toolbarRect.left, right: toolbarRect.right,
+          scrollWidth: toolbar.scrollWidth, clientWidth: toolbar.clientWidth,
+          controlsScrollWidth: controls.scrollWidth, controlsClientWidth: controls.clientWidth,
+          controlsOverflowX: getComputedStyle(controls).overflowX,
+        };
+      })(),
       dockLayout: (() => {
         if (!metric.dockSelector) return null;
         const panel = document.querySelector(metric.dockSelector);
+        const handle = document.querySelector(metric.dockSelector === '#guide-panel' ? '#guide-divider' : '#assistant-resize-handle');
         const viewerRect = viewer.getBoundingClientRect();
         const panelRect = panel.getBoundingClientRect();
         const pageIndex = Number(document.querySelector('#page-number').value) - 1;
@@ -318,11 +372,27 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
             + (panelRect.width - metric.panelRect.width),
           pageFits: pageRect.width <= viewerRect.width - 64,
           centerError: Math.abs((pageRect.left + pageRect.right - viewerRect.left - viewerRect.right) / 2),
+          handleDefault: metric.handleDefault,
+          handleActive: getComputedStyle(handle, '::after').backgroundColor,
+        };
+      })(),
+      closedLayout: (() => {
+        const reader = document.querySelector('#reader');
+        if (reader.classList.contains('assistant-dock-open') || reader.classList.contains('guide-open')) return null;
+        const readerRect = reader.getBoundingClientRect();
+        const viewerRect = viewer.getBoundingClientRect();
+        const pageIndex = Number(document.querySelector('#page-number').value) - 1;
+        const pageRect = document.querySelector(`.page[data-index="${pageIndex}"]`).getBoundingClientRect();
+        return {
+          readerRight: readerRect.right, viewerRight: viewerRect.right,
+          pageFits: pageRect.width <= viewerRect.width - 64,
+          centerError: Math.abs((pageRect.left + pageRect.right - viewerRect.left - viewerRect.right) / 2),
         };
       })(),
     };
   });
   results.push(result);
+  if (process.env.READER_TRACE_PROBES === '1') console.log(JSON.stringify(result));
 }
 
 async function settlePdf(page) {

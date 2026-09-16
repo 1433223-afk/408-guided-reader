@@ -725,3 +725,37 @@ navigator/Master marker tests and the served real-book Guide split-reader regres
 No `relayoutPages()` call, geometry scan, PDF/OCR render, backend/schema change, dependency or
 Frozen Product semantic change was introduced. This correction is `READY_FOR_USER_RETEST`; it does
 not claim user acceptance.
+
+## Full-width Reader toolbar and Dock closure correction (2026-09-16)
+
+The first Grid-column correction was being overridden by a later `:has(#inline-open)` rule. Because
+every Reader contains that control, the rule always forced the Reader back to one explicit column
+and enabled horizontal scrolling on the toolbar control group. A docked panel then occupied an
+implicit second column that `grid-column: 1 / -1` did not span, cutting the toolbar at the PDF/Dock
+boundary. This was a CSS cascade defect; Inline Teaching state and behavior were not involved.
+
+The conflicting single-column and toolbar-scroll rules are removed. The toolbar now spans the full
+explicit Reader grid while only the second row switches between one column and `PDF | Dock`.
+Control gaps, divider margins and excess minimum width were tightened enough to keep the accepted
+toolbar hierarchy intact. At 1440 px the accepted direct controls remain visible; at 960 px only the
+Zoom group moves behind a `...` control, with the menu collapsed by default and keyboard Escape
+support. Both widths have zero toolbar/control-group horizontal overflow. Guide, Assistant and
+Master continue to share the same Dock column and page auto-centering rule. Closing any Dock
+immediately returns the second-column width to the Viewer; the real-book runs measured a 0 px
+page-center error after every close without changing the current page, zoom, vertical or horizontal
+scroll.
+
+Assistant and Guide resize handles are transparent at rest. Hover, keyboard focus and dragging use
+one 1 px neutral gray line (`rgba(91, 98, 93, .28)`) instead of the previous green treatment.
+
+The resize-only real-348-page audit now also asserts full Reader-width toolbar bounds, zero toolbar
+and control-group horizontal overflow, immediate Viewer-width restoration and PDF recentering after
+Assistant, Master and Guide close, plus neutral handle states. All checks PASS at 1440 px and 960 px.
+The final 1440 px run recorded no Long Task at or above 50 ms, zero PDF subtree removals, unchanged
+wrapper/canvas identity and dimensions, and stable current page/zoom/scroll. Resize first-frame times
+were 6.8 ms for Assistant, 5.5 ms for Master and 6.7 ms for Guide. The focused Assistant
+navigator/Master marker tests and served real-book Guide split-reader regression also PASS.
+
+No `relayoutPages()` call, full-book geometry scan, PDF/OCR rebuild, backend/schema change,
+dependency or Product semantic change was introduced. This correction is `READY_FOR_USER_RETEST`;
+it does not claim user acceptance.

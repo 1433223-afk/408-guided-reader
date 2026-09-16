@@ -59,22 +59,22 @@ button, label { -webkit-tap-highlight-color: transparent; }
 }
 .toolbar {
   z-index: 3; grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 24px;
-  padding: 0 24px; background: rgb(248 246 240 / 96%); border-bottom: 1px solid #d2cec4;
+  overflow: visible; padding: 0 24px; background: rgb(248 246 240 / 96%); border-bottom: 1px solid #d2cec4;
   box-shadow: 0 2px 12px rgb(42 39 31 / 5%); backdrop-filter: blur(12px);
 }
 .book-heading { display: flex; min-width: 0; align-items: center; gap: 18px; }
 .book-heading h1 { overflow: hidden; max-width: 42vw; margin: 2px 0 0; font: 600 17px Georgia, serif; text-overflow: ellipsis; white-space: nowrap; }
 .back-button { padding: 8px 10px; cursor: pointer; color: #5e5a51; background: transparent; border: 0; border-radius: 6px; font-size: 12px; font-weight: 700; }
 .back-button:hover { color: #252b28; background: #e8e4db; }
-.reader-controls { display: flex; align-items: center; gap: 5px; color: #5f5b53; }
+.reader-controls { display: flex; min-width: 0; align-items: center; gap: 2px; overflow: visible; color: #5f5b53; }
 .icon-button { display: grid; place-items: center; width: 34px; height: 34px; cursor: pointer; color: #5d5a53; background: transparent; border: 0; border-radius: 7px; font-size: 18px; }
 .icon-button:hover { background: #e6e2d9; color: #242a27; }
 .page-control { display: flex; align-items: center; gap: 4px; margin: 0 5px; font-size: 12px; }
 .page-control input { width: 49px; padding: 5px 4px; text-align: center; color: #302e29; background: #fff; border: 1px solid #cdc8bd; border-radius: 5px; -moz-appearance: textfield; }
 .page-control input::-webkit-inner-spin-button { display: none; }
-.control-divider { width: 1px; height: 21px; margin: 0 8px; background: #d2cec4; }
+.control-divider { width: 1px; height: 21px; margin: 0 4px; background: #d2cec4; }
 #zoom-value { width: 46px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
-.preparation-status { min-width: 92px; color: #777166; font-size: 10px; text-align: center; }
+.preparation-status { min-width: 72px; color: #777166; font-size: 10px; text-align: center; }
 .preparation-status.ready { color: #34704f; }
 .preparation-status.failed { color: #9a3f37; }
 .printed-page, .outline-toggle {
@@ -254,7 +254,12 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .guide-source { padding: 3px 5px; border: 0; background: transparent; color: #8c8270; font-size: 11px; cursor: pointer; }
 .guide-source:hover { color: #4f684f; text-decoration: underline; }
 #guide-divider { position: absolute; left: -5px; top: 0; bottom: 0; width: 10px; cursor: col-resize; touch-action: none; }
-#guide-divider:hover, #guide-divider:focus-visible { background: #b59b6566; outline: none; }
+#guide-divider::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 1px;
+  background: transparent; transition: background .12s ease;
+}
+#guide-divider:hover::after, #guide-divider:focus-visible::after, #guide-divider:active::after { background: rgb(91 98 93 / 28%); }
+#guide-divider:focus-visible { outline: 1px solid rgb(91 98 93 / 22%); outline-offset: -2px; }
 #guide-reopen { padding: 7px 9px; background: #f6f2e9; color: #62563f; border: 1px solid #dbd1bc; border-radius: 5px; cursor: pointer; font-size: 12px; white-space: nowrap; }
 @media (max-width: 850px) { #guide-content { padding: 20px 16px 48px; } .guide-heading { flex-wrap: wrap; padding: 12px 16px; } .guide-meta { padding: 0 16px 8px; } }
 .section-guide-entry { position: absolute; z-index: 5; right: 3%;
@@ -385,13 +390,13 @@ button, label { -webkit-tap-highlight-color: transparent; }
   cursor: ew-resize; touch-action: none;
 }
 .assistant-resize-handle::after {
-  content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 2px;
+  content: ""; position: absolute; top: 0; bottom: 0; left: 5px; width: 1px;
   background: transparent; transition: background .15s ease;
 }
 .assistant-resize-handle:hover::after,
 .assistant-resize-handle:focus-visible::after,
-.assistant-panel.resizing .assistant-resize-handle::after { background: #aa8c59; }
-.assistant-resize-handle:focus-visible { outline: 2px solid #b7945e; outline-offset: -3px; }
+.assistant-panel.resizing .assistant-resize-handle::after { background: rgb(91 98 93 / 28%); }
+.assistant-resize-handle:focus-visible { outline: 1px solid rgb(91 98 93 / 22%); outline-offset: -2px; }
 .reader.assistant-expanded .assistant-resize-handle { display: none; }
 .assistant-heading { grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .assistant-heading-title { display: flex; align-items: center; min-height: 28px; }
@@ -579,9 +584,6 @@ button, label { -webkit-tap-highlight-color: transparent; }
 }
 
 /* Page-attached teaching notes reserve their own space beside the PDF. */
-.reader:has(#inline-open) { grid-template-columns: minmax(0, 1fr); }
-.reader:has(#inline-open) .reader-controls { min-width: 0; overflow-x: auto; }
-.reader:has(#inline-open) .reader-controls > * { flex-shrink: 0; }
 .inline-toolbar { position: relative; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 #inline-open { border: 0; background: transparent; color: #766d5d; padding: 3px 7px; font-size: 12px; cursor: pointer; min-width: 104px; }
 #reader #inline-open[aria-pressed="true"] { color: #304d3e; background-color: #dfe6dd; box-shadow: inset 0 -2px #3b5848; }

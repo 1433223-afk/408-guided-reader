@@ -71,11 +71,11 @@
 #reader .toolbar .control-divider { background:#ccccc2; }
 #reader #assistant-toggle[hidden] { display:none; }
 
-/* Center only the page-navigation group; PDF rows and the existing tool scroll stay intact. */
+/* Center the page-navigation group while the full-width toolbar remains a single non-scrolling row. */
 #reader .toolbar { position:relative; }
 .reader-page-controls { position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:5px; }
-#reader .toolbar .book-heading { max-width:calc(50% - 110px); }
-#reader .toolbar .reader-controls { margin-left:auto;max-width:calc(50% - 110px); }
+#reader .toolbar .book-heading { max-width:calc(50% - 90px); }
+#reader .toolbar .reader-controls { margin-left:auto;max-width:calc(50% - 90px); }
 #reader .reader-controls>.control-divider:first-child { display:none; }
 #reader .toolbar :is(#outline-toggle,#search-toggle,#marks-toggle,#inline-open,#inline-more,#guide-reopen,#reader-kp-action) { border:1px solid #c9cec3;background:#f1f2ea;border-radius:2px; }
 #reader-kp-action { padding:4px 7px;font:11px "Segoe UI","Microsoft YaHei UI",sans-serif;color:#3b5848;white-space:nowrap;cursor:pointer; }
@@ -89,13 +89,46 @@
 @media(prefers-reduced-motion:reduce) { .ai-progress::after,.assistant-pending::after { animation:none; } }
 
 /* Bounded toolbar sizing; no viewer or PDF layout changes. */
-#reader .toolbar button { box-sizing:border-box;height:32px;min-height:32px;padding:0 8px;border:1px solid #c9cec3;border-radius:2px;vertical-align:middle; }
+#reader .toolbar button { box-sizing:border-box;height:32px;min-height:32px;padding:0 6px;border:1px solid #c9cec3;border-radius:2px;vertical-align:middle; }
 #reader .toolbar :is(.icon-button,.marks-toggle,#inline-more) { width:32px;min-width:32px;padding:0;flex-shrink:0; }
+#reader .toolbar #inline-open { min-width:0; }
 #reader .toolbar .marks-toggle { margin-left:0; }
 #reader .toolbar button:not([hidden]) { display:inline-flex;align-items:center;justify-content:center;gap:4px; }
 #reader .toolbar button:hover,#reader .toolbar button[aria-expanded="true"],#reader .toolbar button[aria-pressed="true"] { background:#e3e8df;border-color:#94a694;color:#304d3e; }
 #reader .toolbar button:active { background:#d6e0d3; }
 #reader .toolbar button[hidden] { display:none; }
+.reader-more,.reader-more-menu { display:contents; }
+#reader .toolbar .reader-more>#reader-more-toggle { display:none; }
+@media(max-width:1320px) {
+  #reader .toolbar { gap:16px;padding-inline:16px; }
+  #reader .toolbar .preparation-status { display:none; }
+}
+@media(max-width:1180px) {
+  #reader .toolbar .book-heading,#reader .toolbar .reader-controls { max-width:calc(50% - 70px); }
+}
+@media(max-width:960px) {
+  #reader .toolbar { gap:10px;padding-inline:10px; }
+  #reader .toolbar .book-heading,#reader .toolbar .reader-controls { max-width:calc(50% - 60px); }
+  #reader .toolbar .reader-controls { gap:0; }
+  .reader-more { position:relative;display:block;flex:none; }
+  #reader .toolbar .reader-more>#reader-more-toggle {
+    display:flex;align-items:center;justify-content:center;width:32px;height:32px;cursor:pointer;
+    color:#526052;background:#f1f2ea;border:1px solid #c9cec3;border-radius:2px;list-style:none;
+  }
+  .reader-more>#reader-more-toggle:hover,.reader-more.open>#reader-more-toggle { color:#304d3e;background:#e3e8df;border-color:#94a694; }
+  .reader-more-menu { display:none; }
+  .reader-more.open>.reader-more-menu {
+    position:absolute;z-index:30;top:38px;right:0;display:flex;align-items:center;gap:4px;
+    min-width:max-content;padding:6px;color:#526052;background:#f6f5ee;border:1px solid #ccccc2;
+    box-shadow:0 3px 12px #26332b18;
+  }
+  .reader-more-menu>.control-divider { display:none; }
+}
+@media(max-width:920px) {
+  #reader .toolbar { padding-inline:8px; }
+  #reader #printed-page-edit { width:32px;min-width:32px;padding:0;overflow:hidden;font-size:0; }
+  #reader #printed-page-edit::before { content:"页";font-size:11px; }
+}
 .reader-kp-list { position:fixed;z-index:30;top:78px;right:14px;width:min(300px,calc(100% - 28px));max-height:calc(100% - 94px);display:flex;flex-direction:column;background:#f6f5ee;border:1px solid #c7cec3;border-radius:2px;box-shadow:0 3px 12px #26332b18; }
 .reader-kp-list[hidden] { display:none; }
 .reader-kp-heading { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid #ccccc2; }
@@ -128,8 +161,9 @@
 #reader :is(.assistant-answer-bubble td,.assistant-answer-bubble th,.guide-text td,.guide-text th) { border-color:var(--reader-line); }
 #reader #guide-more[open] #guide-actions { background-color:var(--reader-paper);border-color:var(--reader-line); }
 #reader #guide-actions button:hover { background-color:var(--reader-active); }
-#reader .assistant-resize-handle:hover::after { background-color:#8ba995; }
-#reader #guide-divider:hover,#reader #guide-divider:focus-visible { background-color:#8ba99566; }
+#reader .assistant-resize-handle:hover::after,#reader .assistant-panel.resizing .assistant-resize-handle::after { background-color:rgb(91 98 93 / 28%); }
+#reader #guide-divider:hover,#reader #guide-divider:focus-visible { background-color:transparent; }
+#reader #guide-divider:hover::after,#reader #guide-divider:focus-visible::after,#reader #guide-divider:active::after { background-color:rgb(91 98 93 / 28%); }
 #reader :is(button,input,textarea,select,summary,[tabindex]):focus-visible { outline-color:#426f55; }
 #reader .toolbar button:hover,#reader .toolbar button[aria-expanded="true"],#reader .toolbar button[aria-pressed="true"] { color:var(--reader-green);background-color:var(--reader-active);border-color:#8ba995; }
 #reader .toolbar button:active { background-color:#cbded0; }
