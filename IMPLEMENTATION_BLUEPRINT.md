@@ -241,6 +241,21 @@ rendered as such, never an error banner over the book (§20).
 
 ---
 
+### 3.7 Friends Private Beta deployment exception — user decision, 2026-09-16
+
+The user accepted the deployment audit and selected one Linux server, Caddy HTTPS and individual
+authentication, with a separate Core Service and SQLite/PDF data directory per Beta participant
+(2–5 people). This is a scoped hosted deployment of isolated single-user installations, not shared
+multi-tenancy or a user_id/domain-model migration. Core binds only to loopback behind Caddy.
+The Windows/local installation in §3.5 remains supported; §3.6's disconnected-client guarantee does
+not extend to hosted Beta access, which requires reaching the server. AI-provider failure must still
+leave reachable PDF and saved assets usable. For this hosted mode, §21.2 credentials come from
+protected Linux service configuration through the environment boundary, not Windows Credential
+Manager; §21.4 backup must include server-held original PDFs as well as SQLite. No learning/source
+authority or Review publication invariant changes. Implementation scope and acceptance are proposed
+in `docs/phases/FRIENDS_PRIVATE_BETA.md`; this user-selected architecture does not approve that new
+brief's details or authorize deployment.
+
 ## 4. Bounded Contexts and Module Boundaries
 
 ### 4.1 Contexts
