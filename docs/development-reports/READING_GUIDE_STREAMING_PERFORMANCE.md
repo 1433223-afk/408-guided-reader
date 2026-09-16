@@ -146,3 +146,8 @@ an explicit reasoning-stream canary and a database assertion that the canary was
 Human retest remains pending; no `USER_ACCEPTANCE PASS` is claimed.
 
 Follow-up checkpoint: the commit containing this section (`Expose real Guide reasoning stream`).
+
+## User acceptance (2026-09-16)
+
+The user manually retested the served Reader after restart and explicitly reported this Reading
+Guide reasoning-stream correction as passed. `USER_ACCEPTANCE PASS` applies to this correction.
