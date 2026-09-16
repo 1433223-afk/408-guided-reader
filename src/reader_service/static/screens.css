@@ -723,3 +723,12 @@ body,button,input,select,textarea { font-family:var(--font-ui); }
   #book-overview .section-heading { padding-block:6px; }
   #book-overview .overview-kp { padding-block:8px; }
 }
+
+/* Guided Reader: Page + Guide mark, without a container. */
+.home-toolbar .brand { gap:8px; }
+.home-toolbar .brand-mark { display:block;flex:none;width:20px;height:20px;margin:0;padding:0;color:#3b5848;background:transparent;border:0;border-radius:0;box-shadow:none;line-height:0;transition:opacity 120ms ease-out; }
+.home-toolbar .brand-mark svg { display:block;width:100%;height:100%; }
+.home-toolbar .brand strong { font:500 14px/20px var(--font-ui);color:#354d41; }
+.home-toolbar .brand:hover .brand-mark { opacity:.78; }
+@media(prefers-reduced-motion:reduce) { .home-toolbar .brand-mark { transition:none; } }
+@media(forced-colors:active) { .home-toolbar .brand-mark,.home-toolbar .brand strong { color:CanvasText; } }

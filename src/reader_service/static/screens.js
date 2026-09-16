@@ -102,9 +102,10 @@ export const action = (label, run, className = '') => {
     finally { n.disabled = false; }
   }; return n;
 };
+export const GUIDE_MARK = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 20.5V5.5C7 3 11.5 1.5 14 3.5C15.5 4.7 14.8 7.5 14.4 9M3.5 20.5C8 17.3 12 18 18 21"/><path d="M6 13.8C11 10 13.5 18.2 19 13.5"/><circle cx="21" cy="11.5" r="1.5" fill="currentColor" stroke="none"/></svg>`;
 export function header(active, home, memory, extra) {
   const h = node('header', '', 'home-toolbar');
-  const brand = node('div', '', 'brand'); brand.append(node('span', '408', 'brand-mark'), node('strong', 'Guided Reader'));
+  const brand = node('div', '', 'brand'); const mark=node('span', '', 'brand-mark');mark.innerHTML=GUIDE_MARK;mark.setAttribute('aria-hidden','true');brand.append(mark, node('strong', 'Guided Reader'));
   const nav = node('nav', '', 'space-navigation'); nav.setAttribute('aria-label', '学习空间');
   for (const [label, run, key] of [['学习空间', home, 'home'], ['学习记忆', memory, 'memory']]) {
     const b = action(label, run); if (key === active) b.setAttribute('aria-current', 'page'); nav.append(b);
