@@ -318,17 +318,16 @@ export function createScreens({api, home, memory, read, remove, revision, announ
       const cover = createBookCover(book, 'book-spine');
       const info = node('div', '', 'book-info'); info.append(node('h2', book.title, 'book-card-title'), node('p', r ? `${r.page_count} 个 PDF 页面 · ${r.position.updated_at ? `上次读到 PDF ${r.position.pdf_page_index + 1}` : '尚未开始学习'}` : '删除未完成', 'book-card-meta'));
       row.append(cover, info);
-      if(r) row.append(action('打开', () => open(book), 'book-open'));
       if(r) {
-        const availability = node('p', 'PDF 可阅读', 'book-card-meta'); info.append(availability);
-        api(`/api/revisions/${r.id}/preparation`).then(value => {
-          if(!availability.isConnected) return;
-          const ready = value.pages.filter(p => p.status === 'READY').length;
-          availability.textContent = ready === r.page_count ? 'PDF 与文字层可用' : `PDF 可阅读 · 文字层已准备 ${ready} / ${r.page_count} 页`;
-        }).catch(() => { if(availability.isConnected) availability.textContent = 'PDF 可阅读 · 文字准备状态暂不可用'; });
+        const openBook = action('打开 →', () => open(book), 'book-open');
+        openBook.setAttribute('aria-label', `打开教材 ${book.title}`); row.append(openBook);
       }
       const more = node('details', '', 'book-more'); const summary = node('summary', '···'); summary.setAttribute('aria-label', `${book.title} 更多操作`); more.append(summary);
-      if(r) more.append(action('添加新版本', () => revision(book))); more.append(action(r ? '删除教材' : '重试删除', () => remove(book))); row.append(more); list.append(row);
+      const menu = node('div', '', 'book-more-actions');
+      if(r) menu.append(action('查看全书结构', () => open(book)), action('添加新版本', () => revision(book)));
+      menu.append(action(r ? '删除教材' : '重试删除', () => remove(book), 'book-remove')); more.append(menu);
+      more.addEventListener('keydown', event => { if(event.key === 'Escape') { more.open = false; summary.focus(); } });
+      row.append(more); list.append(row);
     }
     const recent = books.filter(b => b.active_revision?.position.updated_at).sort((a,b) => b.active_revision.position.updated_at.localeCompare(a.active_revision.position.updated_at))[0];
     const block = document.getElementById('home-continue'); block.replaceChildren(); block.hidden = !recent;
