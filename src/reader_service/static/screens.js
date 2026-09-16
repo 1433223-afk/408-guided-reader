@@ -215,6 +215,68 @@ export function createBookCover(book, className = '', {
   return cover;
 }
 
+let structureDetailId = 0;
+export function createStructureLifecycle(p, run) {
+  const ready = p.status === 'READY', updating = ready && p.regeneration_state === 'RUNNING';
+  const failed = p.status === 'FAILED' || (ready && p.regeneration_state === 'FAILED');
+  const root = node('div', '', 'structure-lifecycle');
+  const trigger = label => {
+    const button = action(label, run, 'structure-action');
+    button.disabled = ready && (!p.regeneration_allowed || updating);
+    return button;
+  };
+  if(ready) {
+    const menu = node('details', '', 'structure-menu');
+    const summary = node('summary', '···'); summary.setAttribute('aria-label', '学习结构更多操作');
+    menu.append(summary, trigger('重新生成'));
+    if(!p.regeneration_allowed) menu.append(node('p', '已有学习记录，暂不能重新生成。', 'muted'));
+    root.append(menu);
+  }
+  if(p.status === 'NOT_PREPARED') root.append(node('p', '尚未生成本章学习结构'), trigger('生成学习结构'));
+  if(p.status === 'PREPARING' || updating) {
+    const progress = node('div', '', 'structure-progress'); progress.setAttribute('role', 'status');
+    const steps = [['RESOLVING_SOURCE','来源准备'],['GENERATING','生成知识点'],['REVIEWING','独立审查'],['VALIDATING','校验'],['PUBLISHING','发布']];
+    const current = steps.findIndex(([key])=>key===p.prepare_stage);
+    const label = current < 0 ? (p.prepare_stage === 'QUEUED' ? '等待开始' : '准备中') : steps[current][1];
+    const headline = node('p', `${updating ? '正在更新学习结构' : '正在生成学习结构'} · ${label}`, 'structure-progress-title');
+    headline.append(node('span', '…', 'structure-working')); progress.append(headline);
+    const list = node('ol', '', 'structure-steps');
+    steps.forEach(([,text],i)=>{
+      const item = node('li', `${i < current ? '✓ ' : ''}${text}`);
+      if(i===current) item.setAttribute('aria-current','step');
+      if(i<current) item.className='completed'; list.append(item);
+    }); progress.append(list);
+    if(Number.isInteger(p.sections_total) && p.sections_total>0 && Number.isInteger(p.sections_completed)) progress.append(node('p', `${p.sections_completed} / ${p.sections_total} 小节`, 'muted'));
+    if(updating) progress.append(node('p', '仍可使用现有学习结构。', 'muted'));
+    root.append(progress);
+  }
+  if(failed) {
+    const failure = node('div', '', 'structure-failure');
+    failure.append(node('p', ready ? '学习结构更新失败' : '学习结构生成失败'), trigger('重试'));
+    if(ready) failure.append(node('p', '现有学习结构仍可使用。', 'muted'));
+    const code = ready ? p.regeneration_failure_code : p.failure_code;
+    if(ready && code) { const details=node('details', '', 'structure-technical');details.append(node('summary','技术详情'),node('p',code));failure.append(details); }
+    if(!ready) {
+      const button=node('button', '技术详情', 'structure-technical-trigger');button.type='button';
+      const popup=node('div', '', 'structure-error-popover');popup.popover='auto';
+      popup.id=`structure-error-${++structureDetailId}`;popup.setAttribute('role','dialog');popup.setAttribute('aria-label','技术详情');
+      button.setAttribute('aria-controls',popup.id);button.setAttribute('aria-expanded','false');button.setAttribute('aria-haspopup','dialog');
+      popup.append(node('p', `错误代码：${code || '未提供'}`));
+      if(p.generator_provider) popup.append(node('p', `生成服务：${p.generator_provider}`));
+      if(p.reviewer_provider) popup.append(node('p', `审查服务：${p.reviewer_provider}`));
+      button.onclick=()=>{
+        const rect=button.getBoundingClientRect();popup.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-296))}px`;
+        popup.style.top=`${Math.max(8,Math.min(rect.bottom+6,innerHeight-160))}px`;
+        popup.togglePopover({source:button});
+      };
+      popup.addEventListener('toggle',()=>button.setAttribute('aria-expanded',String(popup.matches(':popover-open'))));
+      failure.append(button,popup);
+    }
+    root.append(failure);
+  }
+  return root;
+}
+
 export function createScreens({api, home, memory, read, remove, revision, announce, isAuxiliary}) {
   const overview = node('section', '', 'book-overview'); overview.id = 'book-overview'; overview.hidden = true;
   let selectedBook = null, selectedChapter = null, epoch = 0, timer, nodes = [], learning = null, currentSection = null, reading = [];
@@ -265,7 +327,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
   }
   function source(n, label = '进入教材 ↗') {
     const b = action(label, () => read(selectedBook, {page: n.start_page, y: n.start_y ?? 0}), 'source-action');
-    b.disabled = n.start_page == null || ('resolution_state' in n && n.resolution_state !== 'RESOLVED'); if(b.disabled) b.textContent = '来源位置待确认'; return b;
+    b.disabled = n.start_page == null || ('resolution_state' in n && n.resolution_state !== 'RESOLVED'); if(b.disabled) b.textContent = '暂无法定位教材位置'; return b;
   }
   async function loadMap(refresh = false) {
     clearTimeout(timer); const stamp = ++epoch, chapterId = selectedChapter;
@@ -285,18 +347,10 @@ export function createScreens({api, home, memory, read, remove, revision, announ
   function renderMap(p, chapter) {
     map.replaceChildren(); const h = node('div', '', 'chapter-heading'); h.append(node('h2', chapter.title));
     if(p.status === 'READY') { const meta=node('div'); meta.append(node('p', `${p.knowledge_points.length} 个知识点`, 'muted')); const counts=learning?.chapter_counts?.[selectedChapter]; if(counts) meta.append(node('p', `${counts.UNDERSTOOD} 已理解 · ${counts.NOT_FULLY_CLEAR} 仍不清楚 · ${counts.UNCONFIRMED} 待确认`, 'muted')); h.append(meta); } map.append(h);
-    const phase = {QUEUED:'等待开始',RESOLVING_SOURCE:'来源准备中',GENERATING:'生成中',REVIEWING:'审查中',VALIDATING:'校验中',PUBLISHING:'发布中'}[p.prepare_stage] || '准备中';
-    const status = {NOT_PREPARED:'本章学习结构尚未准备', PREPARING:`${phase} · ${p.sections_completed || 0}/${p.sections_total || '—'} 小节`, FAILED:`本章准备失败 · ${p.failure_code || ''}`} [p.status];
-    if(status) map.append(node('p', status, p.status === 'FAILED' ? 'local-error' : p.status === 'PREPARING' ? 'muted ai-progress' : 'muted'));
-    if(p.regeneration_state === 'RUNNING' || p.regeneration_state === 'FAILED') map.append(node('p', p.regeneration_state === 'RUNNING' ? `${phase}，当前已发布地图仍可使用。` : '重新生成失败，保留当前已发布地图。', p.regeneration_state === 'RUNNING' ? 'muted ai-progress' : 'muted'));
-    if(p.status !== 'PREPARING') {
-      const controls = node('details', '', 'map-options'); controls.append(node('summary', p.status === 'READY' ? '学习结构选项' : '准备学习结构'));
-      const b = action(p.status === 'READY' ? '重新生成本章知识点' : p.status === 'FAILED' ? '重试准备' : '准备本章学习地图', async () => {
-        try { await api(`/api/revisions/${selectedBook.active_revision.id}/chapters/${selectedChapter}/knowledge-map/${p.status === 'READY' ? 'regenerate' : 'prepare'}`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); await loadMap(); }
-        catch(e) { announce(e.message, true); }
-      }); b.disabled = p.status === 'READY' && (!p.regeneration_allowed || p.regeneration_state === 'RUNNING'); controls.append(b);
-      if(b.disabled) controls.append(node('p', '已有学习状态或关联内容，当前地图受保护。', 'muted')); map.append(controls);
-    }
+    map.append(createStructureLifecycle(p, async () => {
+      try { await api(`/api/revisions/${selectedBook.active_revision.id}/chapters/${selectedChapter}/knowledge-map/${p.status === 'READY' ? 'regenerate' : 'prepare'}`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); await loadMap(); }
+      catch(e) { announce(e.message, true); }
+    }));
     const sections = nodes.filter(n => n.kind === 'SECTION' && n.parent_id === selectedChapter);
     for(const section of sections) {
       const region = node('details', '', 'overview-section'); region.open = section.outline_node_id === currentSection; region.dataset.sectionId = section.outline_node_id;

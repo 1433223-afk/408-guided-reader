@@ -561,3 +561,34 @@ body,button,input,select,textarea { font-family:var(--font-ui); }
 #library-home .book-more-actions button { width:100%;padding:5px 10px;line-height:20px;text-align:left;color:var(--ink); }
 #library-home .book-more-actions .book-remove { color:#965b56; }
 @media(prefers-reduced-motion:reduce) { #library-home .book-card,#library-home .book-more { transition:none; } }
+
+/* Chapter lifecycle: local status without obscuring published learning content. */
+#book-overview .structure-lifecycle { position:relative;color:var(--ink);font:13px/1.6 var(--font-ui); }
+#book-overview .structure-lifecycle>p { margin:18px 0 8px; }
+#book-overview .structure-action { border:1px solid #c4d0c4;background:#edf1e9;padding:5px 12px; }
+#book-overview .structure-menu { position:absolute;right:0;top:5px;z-index:2; }
+#book-overview .structure-menu>summary { list-style:none;cursor:pointer;padding:2px 10px;color:var(--muted); }
+#book-overview .structure-menu[open] { width:210px;padding:5px;background:var(--paper);border:1px solid var(--line); }
+#book-overview .structure-menu[open]>summary { text-align:right; }
+#book-overview .structure-menu .muted { margin:8px; }
+#book-overview .structure-progress { padding:14px 35px 14px 0;border-bottom:1px solid var(--line); }
+#book-overview .structure-progress p { margin:3px 0; }
+#book-overview .structure-progress-title { color:var(--green); }
+#book-overview .structure-steps { display:flex;flex-wrap:wrap;gap:8px 16px;list-style:none;padding:0;margin:9px 0;color:#8a918a;font-size:12px; }
+#book-overview .structure-steps li[aria-current=step] { color:var(--green);font-weight:600;border-bottom:2px solid #79917d; }
+#book-overview .structure-steps .completed { color:#667c69; }
+#book-overview .structure-working { display:inline-block;animation:structure-breathe 1.3s ease-in-out infinite; }
+#book-overview .structure-failure { padding:14px 35px 12px 0; }
+#book-overview .structure-failure>p:first-child { color:#965b56;margin:0 0 8px; }
+#book-overview .structure-technical { margin-top:8px;color:var(--muted);font-size:12px; }
+#book-overview .structure-technical summary { cursor:pointer; }
+@keyframes structure-breathe { 50% { opacity:.35; } }
+@media(prefers-reduced-motion:reduce) { #book-overview .structure-working { animation:none; } }
+
+/* Book Overview heading roles and first-generation failure details. */
+#book-overview .chapter-heading h2 { font:600 29px/40px var(--font-editorial);color:var(--ink);margin:26px 0 28px; }
+#book-overview .section-heading h3 { font:600 20px/30px var(--font-ui);color:#34483c; }
+#book-overview .overview-kp strong { font:550 15px/24px var(--font-ui); }
+#book-overview .structure-technical-trigger { margin-left:8px;padding:5px 8px;color:var(--muted);font-size:12px; }
+#book-overview .structure-error-popover { position:fixed;inset:auto;margin:0;width:280px;max-width:calc(100vw - 16px);padding:12px 14px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:3px;box-shadow:0 3px 12px rgb(32 40 32 / 7%);font:12px/1.7 var(--font-ui);overflow-wrap:anywhere; }
+#book-overview .structure-error-popover p { margin:3px 0; }
