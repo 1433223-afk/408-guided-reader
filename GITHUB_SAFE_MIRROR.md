@@ -1,6 +1,6 @@
 # GitHub-safe development mirror
 
-This repository starts with a new root commit containing a filtered snapshot of the Windows
+This repository has an independent history containing a filtered snapshot of the Windows
 personal stable baseline `df1e3a6c65bd727c037be383c54f0f15653e1cd8` (original tag
 `personal-v0.1`). The original repository, its history and tag remain local and unchanged.
 The tag is a provenance reference, not a ref included in this repository.
@@ -48,7 +48,25 @@ A clone of this repository restores code, not personal PDFs, learning state or c
   The initial test attempt before installing dependencies failed on missing `playwright-core`.
 - Original tracked-file and Git metadata SHA-256 fingerprints remain unchanged; original status
   is clean and the annotated `personal-v0.1` tag object is unchanged.
-- Remote publication is pending at this checkpoint. The GitHub plugin authenticates as
+- Remote publication was pending at the initial local checkpoint. The GitHub plugin authenticates as
   `1433223-afk`, but exposes no repository-creation operation. The browser creation fallback
   reached a sign-in page and subsequent browser control timed out. No noninteractive GitHub
-  Git credential is available locally. No GitHub repository was created and no files uploaded.
+  Git credential was available locally. No files had been uploaded at that initial checkpoint.
+
+## Private GitHub publication
+
+The user subsequently supplied the empty private repository
+https://github.com/1433223-afk/408-guided-reader . The authenticated GitHub plugin published the
+230-file snapshot to `main`, using a provenance initialization commit followed by a complete
+snapshot commit (`507b21dd6f6b20f3d4416690ab091c2cdcda0841`). Its tree
+`0874fbf1e384fe76d00ba1ba0bd6374e8f7c1e2f` exactly matches local export commit
+`c8a21cae53b3c855b203788233e0298568a88e8d`. This publication note is a subsequent documentation
+update. No original personal commit or tag was uploaded. Visibility was verified as private.
+
+The local export and GitHub have independent commit histories, despite identical snapshot trees:
+publication used the GitHub connector because command-line Git authentication/network access was
+unavailable. `origin` is configured only on the safe mirror. No command-line push success is claimed.
+For subsequent development, clone GitHub into a fresh workspace after configuring Git access.
+Do not force-push the local export branch or merge unrelated histories to synchronize it.
+The original personal repository remains unchanged in its product files, branch and tag, and clean.
+No FRIENDS_PRIVATE_BETA implementation or deployment has started.
