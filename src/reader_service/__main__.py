@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import secrets
+import signal
 import threading
 import webbrowser
 from pathlib import Path
@@ -26,6 +27,9 @@ from reader_service.saved_explanations import SavedExplanationService
 from reader_service.storage import ManagedPaths
 from reader_service.learning.service import LearningService
 from reader_service.teaching.service import TeachingService
+from reader_service.instance import InstanceLock, InstanceProfile
+from reader_service.disk import DiskGuard
+from reader_service.agent_runtime.beta import BetaEgress, PrivateCredential
 
 
 def default_data_dir() -> Path:
@@ -44,23 +48,51 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--token", help=argparse.SUPPRESS)
     parser.add_argument("--prepare-workers", type=int, default=1)
     parser.add_argument("--render-dpi", type=int, default=200)
+    parser.add_argument("--profile", choices=("personal", "beta"), default="personal")
+    parser.add_argument("--public-origin")
+    parser.add_argument("--credential-dir", type=Path)
+    parser.add_argument("--ai-disabled-file", type=Path)
+    parser.add_argument("--disk-margin-mib", type=int, default=2048)
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
+    profile = InstanceProfile(args.profile, args.public_origin, args.credential_dir,
+                              args.ai_disabled_file, args.disk_margin_mib * 1024**2)
+    profile.validate(args.data_dir, args.host, args.prepare_workers)
+    if profile.beta:
+        if "--data-dir" not in __import__("sys").argv and not any(a.startswith("--data-dir=") for a in __import__("sys").argv):
+            raise ValueError("Beta requires an explicit data directory")
+        os.umask(0o077)
+    with InstanceLock(args.data_dir):
+        run(args, profile)
+
+
+def run(args, profile):
+    if profile.beta:
+        PrivateCredential._check_private(args.data_dir, directory=True)
     token = args.token or secrets.token_urlsafe(32)
-    service = LibraryService(ManagedPaths(args.data_dir))
+    disk_guard = DiskGuard(args.data_dir, profile.disk_margin) if profile.beta else None
+    if disk_guard and not (args.data_dir / "state.sqlite3").exists():
+        disk_guard.check()
+    service = LibraryService(ManagedPaths(args.data_dir),
+                             max_pdf_bytes=512 * 1024**2 if profile.beta else 2 * 1024**3,
+                             disk_guard=disk_guard)
+    if profile.beta:
+        service.database.pending_ai_limit = 8
     foundation = FoundationService(
         service,
         FoundationRepository(service.database),
-        RapidOcrEngine,
+        (lambda: RapidOcrEngine(offline=True)) if profile.beta else RapidOcrEngine,
         render_dpi=args.render_dpi,
     )
     page_labels = PageLabelService(service, PageLabelRepository(service.database))
     outline = OutlineService(service, OutlineRepository(service.database), page_labels)
     annotations = AnnotationService(foundation, AnnotationRepository(service.database))
-    agent_runtime = ProviderRuntimeSet.from_environment()
+    beta_guard = (BetaEgress(PrivateCredential(profile.credential_dir), profile.ai_disabled_file,
+                             disk_guard.check) if profile.beta else None)
+    agent_runtime = ProviderRuntimeSet.for_beta(beta_guard) if beta_guard else ProviderRuntimeSet.from_environment()
     knowledge = KnowledgeService(
         service,
         foundation,
@@ -87,7 +119,6 @@ def main() -> None:
         annotations,
         agent_runtime,
     )
-    preparation.start()
     learning = LearningService(service.database, foundation, agent_runtime)
     server = ReaderServer(
         (args.host, args.port),
@@ -102,24 +133,39 @@ def main() -> None:
             saved_explanations=saved_explanations,
             learning=learning,
             teaching=teaching,
+            profile=profile,
+            beta_guard=beta_guard,
         ),
+        profile=profile,
     )
+    preparation.start()
     host, port = server.server_address[:2]
-    url = f"http://{host}:{port}/"
+    url = f"{profile.public_origin}/" if profile.beta else f"http://{host}:{port}/"
     print(f"READY {url}", flush=True)
     print(
         "Keep this terminal open while reading. Copy the READY URL into Chrome or Edge if no browser opens.",
         flush=True,
     )
-    if not args.no_open:
+    if not args.no_open and not profile.beta:
         threading.Timer(0.2, lambda: webbrowser.open(url)).start()
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stop)
     try:
         server.serve_forever(poll_interval=0.2)
     except KeyboardInterrupt:
         pass
     finally:
+        server.stopping.set()
+        if beta_guard:
+            beta_guard.stopping = True
         server.server_close()
-        preparation.stop()
+        preparation.stop(timeout=None)
+        # Background Master/save reviews may outlive their initiating HTTP request.
+        # Keep the data lock until their final durable writes have finished.
+        for thread in threading.enumerate():
+            if thread.name.startswith(("master-", "saved-explanation-review-")):
+                thread.join()
 
 
 if __name__ == "__main__":

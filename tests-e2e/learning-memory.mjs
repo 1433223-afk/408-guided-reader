@@ -119,29 +119,30 @@ print(json.dumps({'master':dict(m),'failure':dict(f),'annotation':dict(a)}))`, [
   const openMemory = async () => {
     assert.equal(await page.locator('#reader .memory-open').count(), 0);
     assert.equal(await page.locator('#reader').getByRole('button', { name: '移出学习记忆', exact: true }).count(), 0);
-    if (await page.locator('#reader').isVisible()) {
-      await page.locator('#back-to-library').click();
-      await page.locator('#library-home').waitFor({ state: 'visible' });
-    }
+    await page.goto(running.url);
+    await page.locator('#library-home').waitFor({state:'visible'});
     await page.locator('#library-home .memory-open').click();
-    await page.locator('.memory-card').first().waitFor();
+    await page.locator(`.memory-book-open[data-book-id="${book.id}"]`).click();
+    await page.locator('.memory-item-open').first().waitFor();
     assert.equal(await page.locator('#reader').isVisible(), false);
     assert.equal(await page.locator('#library-home').isVisible(), false);
     assert.equal(await page.locator('#learning-memory').evaluate(n => n.tagName), 'SECTION');
   };
   const openDetail = async item => {
-    await page.locator(`[data-memory-id="${item.id}"] .memory-card-open`).click();
+    item = (await json('/api/memory')).items.find(value=>value.id===item.id);
+    await page.locator(`.memory-section-open[data-section-id="${item.section?.id || 'unassociated'}"]`).click();
+    await page.locator(`[data-memory-id="${item.id}"]`).click();
     await page.waitForFunction(id => document.querySelector('#memory-detail')?.dataset.detailId === id, item.id);
   };
   const removeDetail = async () => {
-    await page.locator('#memory-detail .memory-more > summary').click();
+    if (!(await page.locator('#memory-detail .memory-more').evaluate(n=>n.open))) await page.locator('#memory-detail .memory-more > summary').click();
     await page.locator('#memory-detail').getByRole('button', { name: '移出学习记忆', exact: true }).click();
   };
   await openMemory();
   assert.equal(await page.locator('.memory-intro').count(), 0);
   assert.equal(await page.getByRole('button', { name: '查看原回答', exact: true }).count(), 0);
   assert.equal(await page.getByText('通过有界 AI 审查', { exact: true }).count(), 0);
-  assert.equal(await page.locator('.memory-card-summary').count(), 2);
+  assert.ok(await page.locator('.memory-card-summary').count() >= 1);
   await page.screenshot({ path: 'test-results/memory-list.png' });
   const failureMembership = await page.evaluate(async ({ revision, sourceId }) => {
     const response = await fetch(`/api/revisions/${revision}/memory`, {
@@ -151,34 +152,25 @@ print(json.dumps({'master':dict(m),'failure':dict(f),'annotation':dict(a)}))`, [
     if (!response.ok) throw new Error(await response.text());
     return (await response.json()).item;
   }, { revision: rev, sourceId: existing.failure.id });
-  await page.locator('#memory-filter-toggle').click();
-  await page.locator('#memory-refresh').click();
-  await page.waitForFunction(() => document.querySelectorAll('.memory-card').length === 3);
-  await page.locator('#memory-filter-toggle').click();
+  await page.locator('#memory-close').click();
+  await openMemory();
   await openDetail(failureMembership);
-  assert.equal(await page.locator('#memory-detail .memory-review-status').innerText(), '审查暂不可用');
+  await page.locator('#memory-detail .memory-more > summary').click();
+  assert.equal(await page.locator('#memory-detail .memory-technical-review').innerText(), '审查暂不可用');
   const failureText = await page.locator('#memory-detail').innerText();
   for (const removed of ['审查模型', '审查失败信息', 'provider', 'reviewer', '没有精确 PDF']) assert.equal(failureText.includes(removed), false);
   await page.screenshot({ path: 'test-results/memory-review-failure.png' });
   await removeDetail();
-  await page.waitForFunction(() => document.querySelectorAll('.memory-card').length === 2);
+  await page.waitForFunction(()=>document.querySelector('#memory-detail').hidden);
+  assert.equal((await json('/api/memory')).items.length,2);
   await page.setViewportSize({ width: 1000, height: 800 });
   await page.screenshot({ path: 'test-results/memory-list-narrow.png' });
   assert.ok(await page.locator('#learning-memory').evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth));
   await page.locator('#memory-close').click();
   await openMemory();
   await page.setViewportSize({ width: 1600, height: 1000 });
-  await page.locator('#memory-filter-toggle').click();
-  await page.locator('#memory-book').selectOption(book.id);
-  await page.locator('#memory-section').selectOption(masterItem.section.id);
-  assert.ok(await page.locator(`[data-memory-id="${masterItem.id}"]`).isVisible());
-  await page.locator('#memory-kp').selectOption(masterItem.knowledge_point.id);
-  assert.equal(await page.locator('.memory-card').count(), 1);
-  await page.locator('#memory-section').selectOption('');
-  await page.locator('#memory-kp').selectOption('');
-  await page.locator('#memory-filter-toggle').click();
   await openDetail(masterItem);
-  assert.equal(await page.locator('.memory-filters').isVisible(), false);
+  assert.equal(await page.locator('#memory-search').isVisible(), false);
   assert.ok(await page.locator('.memory-answer').isVisible());
   assert.equal(await page.locator('#memory-detail .memory-review-status').count(), 0);
   const detailText = await page.locator('#memory-detail').innerText();
@@ -206,11 +198,12 @@ print(json.dumps({'master':dict(m),'failure':dict(f),'annotation':dict(a)}))`, [
   assert.deepEqual((await json('/api/memory')).items, items);
   await openDetail(masterItem);
   await removeDetail();
-  await page.waitForFunction(() => document.querySelectorAll('.memory-card').length === 1);
+  await page.waitForFunction(()=>document.querySelector('#memory-detail').hidden);
+  assert.equal((await json('/api/memory')).items.length,1);
   assert.deepEqual(await json(`/api/revisions/${rev}/learning/${scope}`), original);
   await openDetail(noteItem);
   await removeDetail();
-  await page.waitForFunction(() => document.querySelectorAll('.memory-card').length === 0);
+  await page.getByText('还没有学习记忆。',{exact:true}).waitFor();
   assert.deepEqual((await json(`/api/revisions/${rev}/annotations?page=${originalNote.pdf_page_index}`)).annotations.find(a => a.id === originalNote.id), originalNote);
   await page.locator('#memory-close').click();
   await page.locator('#learning-memory').waitFor({ state: 'hidden' });

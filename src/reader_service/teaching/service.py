@@ -33,6 +33,9 @@ class TeachingService:
         self.generator_model = os.environ.get("GUIDED_READER_GUIDE_MODEL") or (
             "openai/gpt-6-astra" if self.provider == "openrouter"
             and not os.environ.get("GUIDED_READER_OPENROUTER_MODEL") else None)
+        if getattr(runtime, "beta_guard", None):
+            self.provider = self.reviewer = "deepseek"
+            self.generator_model = "deepseek-flash"
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
         try:
@@ -45,6 +48,7 @@ class TeachingService:
             old = c.execute(f"SELECT id FROM {self.asset_table} WHERE book_source_revision_id=? AND section_node_id=? AND (intent_id=? OR state IN ('DRAFT','IN_REVIEW','REJECTED'))", (revision_id, section_id, intent_id)).fetchone()
             published = c.execute(f"SELECT asset_id FROM {self.pointer_table} WHERE book_source_revision_id=? AND section_node_id=?", (revision_id, section_id)).fetchone()
             if not old and (regenerate or not published):
+                self.database.check_pending_ai(c)
                 asset_id, job_id = str(uuid4()), str(uuid4())
                 version = c.execute(f"SELECT COALESCE(MAX(version),0)+1 FROM {self.asset_table} WHERE book_source_revision_id=? AND section_node_id=?", (revision_id, section_id)).fetchone()[0]
                 foundation = c.execute("SELECT foundation_version FROM book_source_revisions WHERE id=?", (revision_id,)).fetchone()[0]
@@ -67,6 +71,7 @@ class TeachingService:
             if row is None:
                 raise LookupError("导读任务不存在。")
             if row["state"] == "FAILED" and not row["terminal"]:
+                self.database.check_pending_ai(c)
                 newer = c.execute(f"SELECT 1 FROM {self.asset_table} WHERE book_source_revision_id=? AND section_node_id=? AND version>?", (revision_id, section_id, row["version"])).fetchone()
                 if newer:
                     raise ValueError("已有更新的导读请求，请使用最新任务。")
@@ -228,7 +233,7 @@ class TeachingService:
         allowed = {"state", "stage", "failure_code", "failure_detail", "terminal", "semantic_rework_count", "content_json", "sources_json", "dependencies_json", "issues_json", "generator_json", "reviewer_json", "review_verdict"}
         if not set(values) <= allowed:
             raise ValueError("Invalid Teaching update")
-        with self.database.connect() as c:
+        with self.database.connect(failure_write=values.get("state") == "FAILED" and not set(values) - {"state", "failure_code", "failure_detail", "terminal", "stage"}) as c:
             c.execute(f"UPDATE {self.asset_table} SET {','.join(k+'=?' for k in values)} WHERE id=? AND terminal=0 AND state!='PUBLISHED'", (*values.values(), asset_id))
 
     def _record_call(self, asset_id, key, role, provider, model, completion=None):

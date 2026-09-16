@@ -22,6 +22,9 @@ class InlineTeachingService(TeachingService):
             "google/gemini-3.8-flash" if self.provider == "openrouter" else None)
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "openrouter").strip().lower()
         self.reviewer_model = "google/gemini-3.8-flash" if self.reviewer == "openrouter" else None
+        if getattr(runtime, "beta_guard", None):
+            self.provider = self.reviewer = "deepseek"
+            self.generator_model = self.reviewer_model = "deepseek-flash"
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
         with self.database.connect() as c:

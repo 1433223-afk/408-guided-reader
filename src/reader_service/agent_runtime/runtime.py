@@ -327,6 +327,9 @@ class AgentRuntime:
         reasoning_stream_callback: Callable[[str], None] | None = None,
     ) -> ProviderCompletion:
         config = self.config
+        if getattr(self.adapter, "guard", None) is not None:
+            from .beta import check_route
+            check_route(config.provider, config.endpoint, model or config.model)
         if type(json_object) is not bool or (json_object and config.provider != "openrouter"):
             raise ValueError("JSON object mode is invalid for the selected provider")
         if model is not None:
@@ -630,13 +633,28 @@ class ProviderRuntimeSet:
         active_provider: str = "deepseek",
         bakeoff_enabled: bool = False,
         inspector: PayloadInspector | None = None,
+        beta_guard=None,
     ):
-        if set(runtimes) != set(PROVIDER_NAMES):
+        if set(runtimes) != ({"deepseek"} if beta_guard else set(PROVIDER_NAMES)):
             raise ValueError("the runtime set must contain exactly the named providers")
+        self.beta_guard = beta_guard
         self.runtimes = dict(runtimes)
         self.active_provider = active_provider
         self.bakeoff_enabled = bakeoff_enabled
         self.inspector = inspector or next(iter(runtimes.values())).inspector
+
+    @classmethod
+    def for_beta(cls, guard, adapter=None):
+        from .beta import DisabledInspector, GuardedAdapter
+        from .deepseek import OpenAICompatibleAdapter
+        inspector = DisabledInspector()
+        runtime = AgentRuntime(
+            GuardedAdapter(adapter or OpenAICompatibleAdapter("deepseek", beta=True), guard),
+            config=ProviderConfig(max_tokens=4096, timeout_seconds=120),
+            credential_loader=guard.credentials.load,
+            inspector=inspector,
+        )
+        return cls({"deepseek": runtime}, inspector=inspector, beta_guard=guard)
 
     @classmethod
     def from_environment(cls) -> "ProviderRuntimeSet":
@@ -663,7 +681,10 @@ class ProviderRuntimeSet:
         )
 
     def status(self) -> dict:
-        provider_statuses = [self.runtimes[name].status() for name in PROVIDER_NAMES]
+        provider_statuses = [runtime.status() for runtime in self.runtimes.values()]
+        if self.beta_guard and self.beta_guard.disabled:
+            for item in provider_statuses:
+                item.update(configured=False, failure_state="AI_OFF", ai_off_reason="AI_DISABLED")
         active = next(
             (item for item in provider_statuses if item["provider"] == self.active_provider),
             None,

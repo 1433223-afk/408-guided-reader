@@ -9,10 +9,18 @@ from .geometry import clamp, normalize_quad
 class RapidOcrEngine:
     """The sole translation point from RapidOCR vocabulary to Foundation types."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, offline=False) -> None:
         from rapidocr import RapidOCR
-
-        self._engine = RapidOCR()
+        if offline:
+            from reader_service.release import ocr_paths
+            root = ocr_paths()
+            self._engine = RapidOCR(params={
+                "Det.model_path": str(root / "PP-OCRv6_det_small.onnx"),
+                "Cls.model_path": str(root / "ch_ppocr_mobile_v2.0_cls_mobile.onnx"),
+                "Rec.model_path": str(root / "PP-OCRv6_rec_small.onnx"),
+            })
+        else:
+            self._engine = RapidOCR()
 
     @property
     def profile(self) -> str:

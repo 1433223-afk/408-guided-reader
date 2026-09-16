@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from reader_service.disk import DiskSpaceError
 from typing import TYPE_CHECKING
 
 from reader_service.foundation import FoundationService
@@ -37,6 +38,7 @@ class PreparationCoordinator:
         self._wake = threading.Event()
         self._dispatch_lock = threading.Lock()
         self._threads: list[threading.Thread] = []
+        self.disk_paused = False
 
     def start(self) -> None:
         if self._threads:
@@ -132,35 +134,54 @@ class PreparationCoordinator:
         self._wake.set()
         return result
 
+    def health(self):
+        return {"workers_alive": sum(t.is_alive() for t in self._threads),
+                "workers_expected": self.worker_count, "disk_paused": self.disk_paused}
+
     def _run(self) -> None:
+        job = None
         while not self._stop.is_set():
-            with self._dispatch_lock:
-                job = self.jobs.claim()
-            if job is None:
-                self._wake.wait(0.25)
-                self._wake.clear()
-                continue
-            if job["job_type"] in {"TEACHING_GENERATE", "TEACHING_REVIEW"}:
-                if self.teaching is not None:
-                    self.teaching.run_job(job)
-                self.jobs.complete(job["id"])
-                continue
-            if job["job_type"] == "CHAPTER_PREPARE":
-                if self.knowledge is not None:
-                    self.knowledge.run_job(job)
-                self.jobs.complete(job["id"], cancelled=self._stop.is_set())
-                continue
-            cancelled = False
-            for page_index in range(job["page_start"], job["page_end"] + 1):
-                if self._stop.is_set() or self.jobs.cancellation_requested(job["id"]):
-                    cancelled = True
-                    break
-                status = self.foundation.prepare_page(job["book_source_revision_id"], page_index)
-                if status == "READY" and (
-                    page_index < 20 or page_index % 16 == 15
-                ):
-                    self._refresh_map(job["book_source_revision_id"])
-            self.jobs.complete(job["id"], cancelled=cancelled)
+            try:
+                if self.library.database.growth_check:
+                    self.library.database.growth_check()
+                self.disk_paused = False
+                if job is None:
+                    with self._dispatch_lock:
+                        job = self.jobs.claim()
+                if job is None:
+                    self._wake.wait(0.25)
+                    self._wake.clear()
+                    continue
+                self._run_job(job)
+                job = None
+            except DiskSpaceError:
+                # Retain a claimed job; completed/failed stages are idempotent.
+                self.disk_paused = True
+                self._stop.wait(0.5)
+
+    def _run_job(self, job):
+        if job["job_type"] in {"TEACHING_GENERATE", "TEACHING_REVIEW"}:
+            if self.teaching is not None:
+                self.teaching.run_job(job)
+            self.jobs.complete(job["id"])
+            return
+        if job["job_type"] == "CHAPTER_PREPARE":
+            if self.knowledge is not None:
+                self.knowledge.run_job(job)
+            self.jobs.complete(job["id"], cancelled=self._stop.is_set())
+            return
+        cancelled = False
+        for page_index in range(job["page_start"], job["page_end"] + 1):
+            if self._stop.is_set() or self.jobs.cancellation_requested(job["id"]):
+                cancelled = True
+                break
+            status = self.foundation.prepare_page(job["book_source_revision_id"], page_index)
+            if status == "READY" and (
+                page_index < 20 or page_index % 16 == 15
+            ):
+                self._refresh_map(job["book_source_revision_id"])
+        self.jobs.complete(job["id"], cancelled=cancelled)
+
 
     def _refresh_map(self, revision_id: str) -> None:
         if self.outline is None:

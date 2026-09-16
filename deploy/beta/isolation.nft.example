@@ -1,0 +1,27 @@
+# Render numeric Caddy UID from `id -u caddy`; never use the Core service UID.
+# Load alongside the host firewall; DO NOT flush the host ruleset.
+define caddy_uid = 999
+define core_ports = { 18761, 18762 }
+table inet guided_reader_beta {
+    chain output {
+        type filter hook output priority -10; policy accept;
+        # Root is the trusted operator. Caddy is the sole unprivileged backend client.
+        ip daddr 127.0.0.1 tcp dport $core_ports meta skuid { 0, $caddy_uid } accept
+        ip daddr 127.0.0.1 tcp dport $core_ports reject
+        # Caddy admin stays operator-only, including against other local UIDs.
+        ip daddr 127.0.0.1 tcp dport 2019 meta skuid 0 accept
+        ip daddr 127.0.0.1 tcp dport 2019 reject
+    }
+    chain input {
+        type filter hook input priority -10; policy accept;
+        iifname != "lo" tcp dport $core_ports drop
+        iifname != "lo" tcp dport 2019 drop
+        udp dport 443 drop
+        # Bound new auth connections and all packets even on retained h2 connections.
+        # Per-source time-limited meters have finite size; tune after 2/5-instance load.
+        meta nfproto ipv4 tcp dport { 80, 443 } ct state new meter beta_new4 size 4096 { ip saddr timeout 1m limit rate over 30/minute burst 20 packets } drop
+        meta nfproto ipv6 tcp dport { 80, 443 } ct state new meter beta_new6 size 4096 { ip6 saddr timeout 1m limit rate over 30/minute burst 20 packets } drop
+        meta nfproto ipv4 tcp dport { 80, 443 } meter beta_packets4 size 4096 { ip saddr timeout 1m limit rate over 300/second burst 600 packets } drop
+        meta nfproto ipv6 tcp dport { 80, 443 } meter beta_packets6 size 4096 { ip6 saddr timeout 1m limit rate over 300/second burst 600 packets } drop
+    }
+}

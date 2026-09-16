@@ -78,7 +78,7 @@ criterion names — `IMPLEMENTATION_READY` vs `FULL_REAL_MATERIAL_ACCEPTANCE_PEN
 
 | Phase | Brief | Status |
 |---|---|---|
-| Friends Private Beta | [`FRIENDS_PRIVATE_BETA.md`](./FRIENDS_PRIVATE_BETA.md) | `ACCEPTED BY USER` (2026-09-16), including R-1 DeepSeek same-key independent-context Review; local personal baseline `personal-v0.1`; private GitHub pending (no remote); no implementation/deployment started |
+| Friends Private Beta | [`FRIENDS_PRIVATE_BETA.md`](./FRIENDS_PRIVATE_BETA.md) | `IMPLEMENTATION_READY` (2026-09-16); accepted scope amendment implemented; `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` for target Linux/HTTPS, live BYOK/Review, 2/5-instance load and off-host restore; no deployment/invitations; see [report](../development-reports/FRIENDS_PRIVATE_BETA.md) |
 | R1 — Read the Book | [`R1_READ_THE_BOOK.md`](./R1_READ_THE_BOOK.md) | `IMPLEMENTATION_READY` (see `docs/development-reports/R1_READ_THE_BOOK.md`) |
 | R2 — Selectable Book | [`R2_SELECTABLE_BOOK.md`](./R2_SELECTABLE_BOOK.md) | `IMPLEMENTATION_READY` (see `docs/development-reports/R2_SELECTABLE_BOOK.md`) |
 | R3 — My Marks (core) | [`R3_MY_MARKS.md`](./R3_MY_MARKS.md) | `IMPLEMENTATION_READY`, closed after user acceptance (see `docs/development-reports/R3_MY_MARKS.md`) |

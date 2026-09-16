@@ -7,7 +7,7 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
   const browser=await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',headless:true});
   try {
     const page=await browser.newPage();
-    await page.setContent('<button id="outline-toggle">目录</button>');
+    await page.setContent('<section id="reader"><button id="outline-toggle">目录</button></section>');
     await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
     await page.evaluate(()=>{
       window.posts=[];window.opened=[];window.jumps=[];window.published=0;window.closedPeers=0;

@@ -6,6 +6,8 @@ import mimetypes
 import re
 import sys
 import time
+import threading
+import logging
 from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +27,8 @@ from reader_service.saved_explanations import (
     SavedExplanationService,
 )
 from reader_service.memory import LearningMemory
+from reader_service.instance import InstanceProfile
+from reader_service.disk import DiskSpaceError
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -76,9 +80,46 @@ _SESSION_COOKIE = "reader_launch"
 class ReaderServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def __init__(self, *args, profile=None, **kwargs):
+        self.profile = profile or InstanceProfile()
+        if self.profile.beta:
+            self.daemon_threads = False
+        self.stopping = threading.Event()
+        self._requests = threading.BoundedSemaphore(32)
+        super().__init__(*args, **kwargs)
+        if self.profile.beta and self.server_address[0] != "127.0.0.1":
+            self.server_close()
+            raise ValueError("Beta Core must bind 127.0.0.1")
+
+    def process_request(self, request, client_address):
+        if self.profile.beta and not self._requests.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nRetry-After: 2\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            finally:
+                self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            if self.profile.beta:
+                self._requests.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            if self.profile.beta:
+                request.settimeout(30)
+            super().process_request_thread(request, client_address)
+        finally:
+            if self.profile.beta:
+                self._requests.release()
+
     def handle_error(self, request, client_address) -> None:
         error = sys.exc_info()[1]
         if isinstance(error, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+            return
+        if self.profile.beta:
+            logging.getLogger(__name__).error("request_failed type=%s", type(error).__name__)
             return
         super().handle_error(request, client_address)
 
@@ -95,7 +136,11 @@ def handler_factory(
     saved_explanations: SavedExplanationService | None = None,
     learning=None,
     teaching=None,
+    profile: InstanceProfile | None = None,
+    beta_guard=None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
+    profile = profile or InstanceProfile()
+    cookie_name = "__Host-reader_launch" if profile.beta else _SESSION_COOKIE
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
     pdfjs_root = root.joinpath("node_modules", "pdfjs-dist", "build")
@@ -107,8 +152,85 @@ def handler_factory(
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
 
+        def parse_request(self):
+            if not super().parse_request():
+                return False
+            if not profile.beta:
+                return True
+            path = urlparse(self.path)
+            if (len(self.headers.get_all("Host", [])) != 1 or self.headers.get("Host") != profile.host
+                    or self.headers.get_all("X-Forwarded-Proto", []) != ["https"]
+                    or path.scheme or path.netloc or not self.path.startswith("/")):
+                self._json(HTTPStatus.FORBIDDEN, {"error": "访问地址无效。"})
+                return False
+            origins = self.headers.get_all("Origin", [])
+            mutating = self.command not in {"GET", "HEAD", "OPTIONS"}
+            if ((origins and origins != [profile.public_origin]) or (mutating and not origins)
+                    or self.headers.get("Sec-Fetch-Site") == "cross-site"):
+                self._json(HTTPStatus.FORBIDDEN, {"error": "请求来源无效。"})
+                return False
+            if any(part in {"inspection", "debug", "bake-off"} for part in unquote(path.path).split("/")):
+                self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                return False
+            lengths = self.headers.get_all("Content-Length", [])
+            if self.headers.get("Transfer-Encoding") or len(lengths) > 1:
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "请求大小无效。"})
+                return False
+            if lengths:
+                try:
+                    length = int(lengths[0])
+                except ValueError:
+                    length = -1
+                limit = service.max_pdf_bytes if path.path == "/api/books" and self.command == "POST" else 64 * 1024
+                if length < 0 or length > limit:
+                    self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "文件过大，PDF 上限为 512 MiB。"})
+                    return False
+            if mutating and self.server.stopping.is_set():
+                self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "服务正在停机，请稍后重试。"})
+                return False
+            return True
+
+        def handle_one_request(self):
+            try:
+                super().handle_one_request()
+            except DiskSpaceError:
+                self._json(HTTPStatus.INSUFFICIENT_STORAGE, {"code": "SPACE_LOW", "error": str(DiskSpaceError())})
+
+        def end_headers(self):
+            if profile.beta:
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Cross-Origin-Resource-Policy", "same-origin")
+                self.send_header("X-Frame-Options", "DENY")
+            super().end_headers()
+
+        def _beta_key(self):
+            if not self._authorized():
+                return
+            try:
+                if self.command == "POST":
+                    payload = self._read_json()
+                    if set(payload) != {"key"}:
+                        raise ValueError()
+                    from reader_service.agent_runtime.deepseek import OpenAICompatibleAdapter
+                    beta_guard.replace_key(payload["key"], OpenAICompatibleAdapter("deepseek", beta=True))
+                elif self.command == "DELETE":
+                    beta_guard.disconnect()
+                self._json(HTTPStatus.OK, beta_guard.credentials.status())
+            except ProviderFailure as exc:
+                self._provider_failure(exc)
+            except (ValueError, OSError):
+                self._json(HTTPStatus.BAD_REQUEST, {"error": "Key 无法更新，请检查输入或联系管理员。"})
+
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path == "/api/instance":
+                if self._authorized():
+                    self._json(HTTPStatus.OK, {"profile": profile.name, "ai_disabled": bool(beta_guard and beta_guard.disabled), "preparation": preparation.health() if preparation else None})
+                return
+            if profile.beta and parsed.path == "/api/beta/key":
+                self._beta_key()
+                return
             if self._reading_request(parsed.path, 'GET'):
                 return
             if self._memory_request(parsed.path, 'GET'):
@@ -128,7 +250,7 @@ def handler_factory(
                     revision, section = guide_events.groups()
                     self._start_guide_stream()
                     started = True
-                    while True:
+                    while not self.server.stopping.is_set():
                         event = teaching.draft_event(revision, section, asset_id, after)
                         self._guide_stream_event(event)
                         if event["type"] in {"complete", "error"}:
@@ -426,6 +548,20 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if profile.beta and parsed.path == "/api/beta/heartbeat":
+                if not self._authorized():
+                    return
+                try:
+                    payload = self._read_json()
+                    if assistant:
+                        assistant.heartbeat(payload.get("reader_session_id"))
+                    self._json(HTTPStatus.OK, {"status": "ok"})
+                except ValueError:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": "会话无效。"})
+                return
+            if profile.beta and parsed.path == "/api/beta/key":
+                self._beta_key()
+                return
             if self._reading_request(parsed.path, 'POST'):
                 return
             if self._memory_request(parsed.path, 'POST'):
@@ -1125,6 +1261,9 @@ def handler_factory(
 
         def do_DELETE(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if profile.beta and parsed.path == "/api/beta/key":
+                self._beta_key()
+                return
             if self._memory_request(parsed.path, 'DELETE'):
                 return
             annotation_match = _REVISION_ANNOTATION.fullmatch(parsed.path)
@@ -1194,10 +1333,10 @@ def handler_factory(
             return True
 
         def _authorized(self) -> bool:
-            supplied = self.headers.get("X-Reader-Token", "")
+            supplied = "" if profile.beta else self.headers.get("X-Reader-Token", "")
             cookie = SimpleCookie()
             cookie.load(self.headers.get("Cookie", ""))
-            cookie_token = cookie.get(_SESSION_COOKIE)
+            cookie_token = cookie.get(cookie_name)
             if hmac.compare_digest(supplied, token) or (
                 cookie_token is not None and hmac.compare_digest(cookie_token.value, token)
             ):
@@ -1224,6 +1363,8 @@ def handler_factory(
                     else f"AI_{failure.kind.value}"
                 ),
                 "error": failure.user_message,
+                "retryable": failure.code in {"ai_busy", "key_busy", "ai_disabled"},
+                "failure_code": failure.code,
             }
             diagnostics = failure.diagnostics or {}
             metrics = {
@@ -1270,6 +1411,8 @@ def handler_factory(
             self._assistant_stream_event({"type": "stage", "stage": "preparing"})
 
         def _assistant_stream_event(self, payload: dict) -> None:
+            if self.server.stopping.is_set():
+                raise StreamConsumerDisconnected()
             self._project_assistant_view(payload)
             encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             try:
@@ -1297,7 +1440,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/beta-ui.js", "/screens.js", "/screens.css", "/app.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:
@@ -1311,9 +1454,22 @@ def handler_factory(
             if filename == "index.html":
                 headers = {
                     "Set-Cookie": (
-                        f"{_SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"
+                        f"{cookie_name}={token}; Path=/; HttpOnly; SameSite=Strict" + ("; Secure" if profile.beta else "")
                     )
                 }
+                if profile.beta:
+                    html = target.read_text(encoding="utf-8").replace('<html lang="zh-CN">', '<html lang="zh-CN" data-profile="beta">')
+                    html = re.sub(r'<option value="(?:zhipu|openrouter)"[^>]*>.*?</option>', '', html)
+                    html = html.replace('本地保存', '独立实例保存').replace('仅保存在这台电脑上', '保存在你的独立服务器实例中')
+                    encoded = html.encode("utf-8")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Set-Cookie", headers["Set-Cookie"])
+                    self.end_headers()
+                    self.wfile.write(encoded)
+                    return
             self._file(target, content_type, headers=headers)
 
         def _file(
@@ -1412,7 +1568,7 @@ def handler_factory(
             self.end_headers()
             previous = None
             deadline = time.monotonic() + 25
-            while time.monotonic() < deadline:
+            while time.monotonic() < deadline and not self.server.stopping.is_set():
                 try:
                     pages = coordinator.foundation.statuses(revision_id)
                 except LookupError:
@@ -1435,6 +1591,11 @@ def handler_factory(
                 time.sleep(0.25)
 
         def log_message(self, format: str, *args: object) -> None:
+            if profile.beta:
+                # send_error/log_error also reach this hook with raw request text.
+                code = str(args[1]) if format == '"%s" %s %s' and len(args) > 1 else "error"
+                print(f"request status={code if re.fullmatch(r'[1-5][0-9]{2}', code) else 'error'}")
+                return
             # Deliberately omit URLs so the per-launch token never enters logs.
             print(f"{self.client_address[0]} {args[1] if len(args) > 1 else '-'}")
 

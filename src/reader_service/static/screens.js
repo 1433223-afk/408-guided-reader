@@ -540,6 +540,14 @@ export function createAssistantModelMenu(select) {
 }
 
 export function createComposerChoice(select, {id, label, names}) {
+  if (document.documentElement.dataset.profile === 'beta' && Object.hasOwn(names, 'deepseek')) {
+    select.replaceChildren(new Option('DeepSeek', 'deepseek'));
+    select.value = 'deepseek';
+    select.closest('.assistant-model').hidden = true;
+    const fixed = node('span', 'DeepSeek', 'beta-fixed-model');
+    select.closest('.assistant-model').after(fixed);
+    return {sync() {select.value = 'deepseek';}};
+  }
   const wrapper = node('div', '', 'assistant-model-menu');
   const trigger = node('button', '', 'composer-choice-trigger'); trigger.type = 'button'; trigger.id = `${id}-trigger`;
   trigger.setAttribute('aria-label', label); trigger.setAttribute('aria-haspopup', 'listbox');

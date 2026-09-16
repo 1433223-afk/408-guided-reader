@@ -664,3 +664,20 @@ def test_save_and_review_retry_http_contract_is_commit_first(assistant_fixture):
         assert passed["verification_state"] == "PASS"
         assert passed["body"] == "HTTP 保存的完整正文"
         assert len(annotations.list_page(assistant_fixture["revision_id"], 3)) == 1
+
+
+def test_beta_saturated_saved_review_keeps_note_and_retryable_failure(assistant_fixture):
+    assistant, annotations, saved, providers, _ = services(
+        assistant_fixture, assistant_answers=("已完成的回答",), review_answers=())
+    providers.beta_guard = object()
+    saved._inflight = {(str(i), str(i)) for i in range(8)}
+    state = assistant.ask_selection("reader-beta-save", assistant_fixture["revision_id"], 3, **selection(3))
+    root = focused(state)
+    result = saved.save(assistant_fixture["revision_id"], reader_session_id="reader-beta-save",
+                        root_id=root["root_id"], node_id=None, turn_id=root["turns"][0]["turn_id"],
+                        save_intent_id="beta-busy-note")
+    assert not result["review_scheduled"]
+    persisted=annotations.get(assistant_fixture["revision_id"], result["annotation"]["id"])
+    assert persisted["body"] == "已完成的回答"
+    assert persisted["verification_state"] == "TECHNICAL_FAILURE"
+    assert persisted["review_code"] == "ai_busy"

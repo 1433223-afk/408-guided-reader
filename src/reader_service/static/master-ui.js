@@ -130,6 +130,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
   }
 
   function providerUnavailableMessage(status) {
+    if (betaUnavailable(status)) return betaUnavailable(status);
     const label={deepseek:'DeepSeek',zhipu:'智谱 GLM',openrouter:'OpenRouter'}[answerProvider] || '所选模型';
     if(!status) return `${label} 的状态暂不可用；请稍后重试。`;
     if(!status.configuration_valid) return `${label} 的 provider 配置无效；Reader 其余功能不受影响。`;
@@ -601,3 +602,4 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       if (row) { row.scrollIntoView({ block: 'center' }); row.tabIndex = -1; row.focus({ preventScroll: true }); }
     } };
 }
+import {betaUnavailable} from "/beta-ui.js";

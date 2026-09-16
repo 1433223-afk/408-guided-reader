@@ -345,7 +345,7 @@ class LearningRepository:
             return dict(c.execute("SELECT * FROM master_messages WHERE id = ?", (message_id,)).fetchone()), True
 
     def recover(self):
-        with self.database.connect() as c:
+        with self.database.connect(failure_write=True) as c:
             c.execute("UPDATE master_messages SET state = 'FAILED', detail = '服务已重启，问题已保留，请重试。' WHERE role = 'user' AND state = 'PENDING'")
             c.execute("UPDATE master_messages SET review_state = 'TECHNICAL_FAILURE', detail = '审查被重启中断，请重试审查。' WHERE review_state = 'PENDING'")
 
@@ -353,7 +353,7 @@ class LearningRepository:
         allowed = {"state", "review_state", "provider", "model", "reviewer_provider", "reviewer_model", "detail"}
         if not fields or not set(fields) <= allowed:
             raise ValueError("Invalid message update")
-        with self.database.connect() as c:
+        with self.database.connect(failure_write=fields.get("state") == "FAILED" or fields.get("review_state") == "TECHNICAL_FAILURE") as c:
             c.execute(f"UPDATE master_messages SET {', '.join(key + ' = ?' for key in fields)} WHERE id = ?", (*fields.values(), message_id))
 
     def save_answer(self, question, completion):

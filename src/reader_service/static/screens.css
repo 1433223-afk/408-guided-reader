@@ -758,3 +758,13 @@ body,button,input,select,textarea { font-family:var(--font-ui); }
 :is(#library-home,#book-overview,#learning-memory) .home-toolbar button:focus-visible { outline:2px solid #829887!important;outline-offset:3px; }
 @media(prefers-reduced-motion:reduce) { :is(#library-home,#book-overview,#learning-memory) .home-toolbar button { transition:none; } }
 @media(max-width:700px) { :is(#library-home,#book-overview,#learning-memory) .home-toolbar { padding-inline:16px;gap:12px; } }
+/* Beta connection settings reuse the personal application's controls and colors. */
+.beta-key-dialog { max-width: min(520px, calc(100vw - 32px)); border: 1px solid #c9d0c8; border-radius: 12px; padding: 28px; color: #23382b; background: #fbfbf5; }
+.beta-key-dialog::backdrop { background: rgb(25 40 32 / 35%); }
+.beta-key-dialog p { line-height: 1.65; font-size: 14px; }
+.beta-key-dialog label { display: block; margin: 16px 0 8px; }
+.beta-key-dialog input { width: 100%; box-sizing: border-box; min-height: 44px; }
+.beta-key-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.beta-key-actions button { min-height: 44px; }
+.beta-fixed-model { color: inherit; font-size: 13px; padding: 8px; }
+#beta-key-settings { min-height: 36px; }

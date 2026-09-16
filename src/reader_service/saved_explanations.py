@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from reader_service.disk import DiskSpaceError
 import time
 from dataclasses import dataclass
 
@@ -58,6 +59,8 @@ class SavedExplanationService:
             review_provider
             or os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu")
         ).strip().lower()
+        if getattr(runtime, "beta_guard", None):
+            self.review_provider = "deepseek"
         self._inflight: set[tuple[str, str]] = set()
         self._condition = threading.Condition()
         self.annotations.recover_interrupted_reviews()
@@ -131,6 +134,12 @@ class SavedExplanationService:
         with self._condition:
             if key in self._inflight:
                 return False
+            if getattr(self.runtime, "beta_guard", None) and len(self._inflight) >= 8:
+                # The note is already durable; leave its verification retryable.
+                self.annotations.update_verification(
+                    revision_id, annotation_id, state="TECHNICAL_FAILURE",
+                    summary="AI 正忙，请稍后重试；笔记已保存。", code="ai_busy", failure_kind="TRANSIENT")
+                return False
             self._inflight.add(key)
         thread = threading.Thread(
             target=self._run_review,
@@ -167,6 +176,11 @@ class SavedExplanationService:
             ] not in {"PENDING", "TECHNICAL_FAILURE"}:
                 return
             self._review_annotation(annotation)
+        except DiskSpaceError:
+            self.annotations.update_verification(
+                revision_id, annotation_id, state="TECHNICAL_FAILURE",
+                failure_kind="TRANSIENT", code="disk_space",
+                summary="空间不足，笔记已保留；请联系管理员后重试审查。")
         finally:
             with self._condition:
                 self._inflight.discard(key)

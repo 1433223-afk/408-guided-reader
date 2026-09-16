@@ -1,0 +1,60 @@
+{
+    admin 127.0.0.1:2019
+    servers {
+        # TCP/TLS bounded by nftables. Disable QUIC so it cannot bypass TCP limits.
+        protocols h1 h2
+        timeouts {
+            read_header 10s
+            read_body 120s
+            idle 60s
+        }
+        max_header_size 32KB
+    }
+}
+
+# Replace hosts and password hashes explicitly; keep credentials distinct per host.
+# caddy hash-password --algorithm bcrypt (interactive; no plaintext CLI argument).
+alice.example.invalid {
+    route {
+        basic_auth {
+            alice REPLACE_WITH_ALICE_BCRYPT_HASH
+        }
+        @debug path_regexp debug (?i)/(inspection|debug|bake-off)(/|$)
+        respond @debug 404
+        request_body {
+            max_size 536870912
+        }
+        header Cache-Control "private, no-store"
+        reverse_proxy 127.0.0.1:18761 {
+            header_up Host alice.example.invalid
+            header_up X-Forwarded-Proto https
+            header_up -Authorization
+            header_up -X-Reader-Token
+            flush_interval -1
+        }
+    }
+}
+
+bob.example.invalid {
+    route {
+        basic_auth {
+            bob REPLACE_WITH_BOB_BCRYPT_HASH
+        }
+        @debug path_regexp debug (?i)/(inspection|debug|bake-off)(/|$)
+        respond @debug 404
+        request_body {
+            max_size 536870912
+        }
+        header Cache-Control "private, no-store"
+        reverse_proxy 127.0.0.1:18762 {
+            header_up Host bob.example.invalid
+            header_up X-Forwarded-Proto https
+            header_up -Authorization
+            header_up -X-Reader-Token
+            flush_interval -1
+        }
+    }
+}
+
+# No wildcard reverse proxy. Unconfigured hosts have no application route/certificate.
+# Access logs are deliberately disabled; never enable request/body/header capture.

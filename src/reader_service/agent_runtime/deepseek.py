@@ -6,6 +6,12 @@ import codecs
 import os
 import socket
 import sys
+import time
+import threading
+import ssl
+import queue
+from contextlib import contextmanager
+from http.client import HTTPSConnection
 from http.client import IncompleteRead
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -25,15 +31,137 @@ from .runtime import (
 )
 
 
+_resolver_slots = threading.BoundedSemaphore(2)
+
+
+def _resolve_before(host, port, deadline):
+    # libc DNS has no Python timeout. Bound both waiting and abandoned resolvers;
+    # resolver threads never receive secrets, prompts, or response payloads.
+    if not _resolver_slots.acquire(blocking=False):
+        raise TimeoutError("DNS resolver busy")
+    result = queue.Queue(maxsize=1)
+    def resolve():
+        try:
+            result.put((socket.getaddrinfo(host, port, type=socket.SOCK_STREAM), None))
+        except Exception as error:
+            result.put((None, error))
+        finally:
+            _resolver_slots.release()
+    threading.Thread(target=resolve, name="beta-dns", daemon=True).start()
+    try:
+        addresses, error = result.get(timeout=max(0, deadline-time.monotonic()))
+    except queue.Empty:
+        raise TimeoutError("DNS deadline") from None
+    if error:
+        raise error
+    return addresses
+
+
+class _DeadlineHTTPSConnection(HTTPSConnection):
+    def __init__(self, host, *, deadline):
+        super().__init__(host, context=ssl.create_default_context())
+        self.deadline = deadline
+
+    def _remaining(self):
+        remaining = self.deadline-time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Provider deadline")
+        return remaining
+
+    def connect(self):
+        addresses = _resolve_before(self.host, self.port, self.deadline)
+        for family, kind, proto, _, address in addresses:
+            raw = socket.socket(family, kind, proto)
+            self.sock = raw
+            try:
+                raw.settimeout(self._remaining())
+                raw.connect(address)
+                tls = self._context.wrap_socket(raw, server_hostname=self.host, do_handshake_on_connect=False)
+                self.sock = tls
+                tls.settimeout(self._remaining())
+                tls.do_handshake()
+                self._remaining()
+                return
+            except OSError:
+                self.close()
+                self._remaining()
+        raise OSError("Endpoint connection failed")
+
+
 class OpenAICompatibleAdapter:
     """Thin adapter for the named providers' OpenAI-compatible chat endpoint."""
 
-    def __init__(self, provider_name: str):
+    def __init__(self, provider_name: str, *, beta=False):
         self.provider_name = provider_name
+        self.beta = beta
+
+    @contextmanager
+    def _open(self, request, timeout):
+        if not self.beta:
+            with build_opener(self._proxy_handler(request.full_url), _NoRedirect()).open(request, timeout=timeout) as response:
+                yield response
+            return
+        from .beta import ENDPOINT
+        if request.full_url != ENDPOINT or self.provider_name != "deepseek":
+            raise ProviderFailure(ProviderFailureKind.UNCONFIGURED, "beta_route_denied", "Beta 仅支持 DeepSeek。")
+        # Direct HTTPS only. A watchdog closes the socket during slow headers or
+        # body drip; no ambient proxy, redirect, retry or alternate endpoint.
+        deadline = time.monotonic() + min(timeout, 120)
+        connection = _DeadlineHTTPSConnection("api.deepseek.com", deadline=deadline)
+        expired = threading.Event()
+        transport_socket = [None]
+        def abort():
+            expired.set()
+            sock = transport_socket[0] or connection.sock
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        timer = threading.Timer(max(0, deadline-time.monotonic()), abort)
+        timer.daemon = True
+        timer.start()
+        try:
+            connection.connect()
+            transport_socket[0] = connection.sock
+            if expired.is_set():
+                raise TimeoutError()
+            connection.sock.settimeout(max(.001, deadline-time.monotonic()))
+            connection.request("POST", "/chat/completions", body=request.data, headers=dict(request.header_items()))
+            response = connection.getresponse()
+            if response.status >= 300:
+                # Do not wait for or inspect an error body (it may also drip).
+                self._raise_http_failure(HTTPError(request.full_url, response.status, "", response.headers, None))
+            with response:
+                yield response
+            if expired.is_set():
+                raise TimeoutError()
+        finally:
+            timer.cancel()
+            connection.close()
+
+    @staticmethod
+    def _bounded_body(response, limit):
+        chunks, size = [], 0
+        read = getattr(response, "read1", None) or response.read
+        while True:
+            chunk = read(min(65536, limit-size+1))
+            if not chunk:
+                return b"".join(chunks)
+            size += len(chunk)
+            if size > limit:
+                raise ValueError("Response exceeds size limit")
+            chunks.append(chunk)
+
+    def _validate_authorization(self, body):
+        if self.provider_name == "openrouter" and body.get("model") != "google/gemini-3.8-flash":
+            raise ProviderFailure(ProviderFailureKind.UNCONFIGURED, "model_not_authorized",
+                                  "当前模型未获授权，请检查模型配置。")
 
     def complete(
         self, endpoint: str, api_key: str, body: dict, timeout: float
     ) -> ProviderResponse:
+        self._validate_authorization(body)
         request = Request(
             endpoint,
             data=json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
@@ -48,10 +176,8 @@ class OpenAICompatibleAdapter:
         try:
             # Redirects are refused so one configured endpoint can never turn into
             # an implicit call to a second host or URL.
-            with build_opener(self._proxy_handler(endpoint), _NoRedirect()).open(
-                request, timeout=timeout
-            ) as response:
-                payload = json.load(response)
+            with self._open(request, timeout) as response:
+                payload = json.loads(self._bounded_body(response, 4 * 1024**2)) if self.beta else json.load(response)
         except HTTPError as error:
             self._raise_http_failure(error)
         except (ValueError, TypeError, UnicodeDecodeError) as error:
@@ -113,6 +239,7 @@ class OpenAICompatibleAdapter:
         on_delta,
         on_reasoning_delta=None,
     ) -> ProviderResponse:
+        self._validate_authorization(body)
         request = Request(
             endpoint,
             data=json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
@@ -130,9 +257,7 @@ class OpenAICompatibleAdapter:
         reasoning_length = 0
         completed = False
         try:
-            with build_opener(self._proxy_handler(endpoint), _NoRedirect()).open(
-                request, timeout=timeout
-            ) as response:
+            with self._open(request, timeout) as response:
                 content_type = str(response.headers.get("Content-Type", "")).casefold()
                 if "text/event-stream" not in content_type:
                     raise ProviderFailure(
@@ -140,7 +265,7 @@ class OpenAICompatibleAdapter:
                         "invalid_stream_response",
                         "AI 服务没有返回可读取的流式结果，请稍后再试。",
                     )
-                for data in _iter_sse_data(response):
+                for data in _iter_sse_data(response, max_bytes=8 * 1024**2 if self.beta else None):
                     if data == "[DONE]":
                         completed = True
                         break
@@ -251,7 +376,7 @@ class OpenAICompatibleAdapter:
         # The remote body is used only for coarse classification and is never logged,
         # inspected, or reflected into the UI.
         try:
-            raw = error.read(16 * 1024)
+            raw = b"{}" if self.beta else error.read(16 * 1024)
             remote = json.loads(raw.decode("utf-8", errors="replace"))
             message = str(remote.get("error", {}).get("message", "")).casefold()
         except (AttributeError, TypeError, ValueError, OSError):
@@ -272,7 +397,7 @@ class OpenAICompatibleAdapter:
             raise ProviderFailure(
                 ProviderFailureKind.USER_ACTIONABLE,
                 "auth",
-                f"{label} API 密钥无效或无权访问，请检查 Windows 凭据后重试。",
+                ("DeepSeek Key 无效或无权访问，请在 Key 设置中更换。" if self.beta else f"{label} API 密钥无效或无权访问，请检查 Windows 凭据后重试。"),
             ) from error
         if status == 402 or any(word in message for word in ("quota", "balance", "billing", "insufficient")):
             raise ProviderFailure(
@@ -421,17 +546,21 @@ def _is_loopback_endpoint(endpoint: str) -> bool:
         return False
 
 
-def _iter_sse_data(response):
+def _iter_sse_data(response, max_bytes=None):
     """Yield complete SSE data fields while tolerating arbitrary byte fragmentation."""
     decoder = codecs.getincrementaldecoder("utf-8")()
     buffer = ""
     data_lines: list[str] = []
     read = getattr(response, "read1", None) or response.read
+    size = 0
     while True:
         chunk = read(4096)
         if not chunk:
             buffer += decoder.decode(b"", final=True)
             break
+        size += len(chunk)
+        if max_bytes is not None and size > max_bytes:
+            raise ProviderFailure(ProviderFailureKind.TRANSIENT, "response_size", "AI 响应过大，请缩小问题后重试。")
         buffer += decoder.decode(chunk)
         while "\n" in buffer:
             line, buffer = buffer.split("\n", 1)

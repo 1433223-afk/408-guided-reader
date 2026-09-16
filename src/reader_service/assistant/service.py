@@ -268,6 +268,7 @@ class ReaderAssistantState:
 
 @dataclass(slots=True)
 class _ReaderSessionSlot:
+    last_seen: float = field(default_factory=time.monotonic)
     generation: int = 0
     state: ReaderAssistantState = field(default_factory=ReaderAssistantState)
     comparison: dict | None = None
@@ -1066,11 +1067,27 @@ class AssistantService:
 
     def _slot_for(self, session_id: str) -> _ReaderSessionSlot:
         with self._state_lock:
-            return self._sessions.setdefault(session_id, _ReaderSessionSlot())
+            if getattr(self.runtime, "beta_guard", None):
+                stale = [key for key, slot in self._sessions.items() if time.monotonic() - slot.last_seen > 86400]
+                for key in stale:
+                    self._sessions.pop(key)
+            if getattr(self.runtime, "beta_guard", None) and session_id not in self._sessions and len(self._sessions) >= 32:
+                raise AssistantStateError("BUSY", "临时阅读会话已满，请先关闭不用的阅读窗口。")
+            slot = self._sessions.setdefault(session_id, _ReaderSessionSlot())
+            slot.last_seen = time.monotonic()
+            return slot
+
+    def heartbeat(self, session_id):
+        session_id = self._validate_session_id(session_id)
+        with self._state_lock:
+            if session_id in self._sessions:
+                self._sessions[session_id].last_seen = time.monotonic()
 
     def _existing_slot(self, session_id: str) -> _ReaderSessionSlot:
         with self._state_lock:
             slot = self._sessions.get(session_id)
+            if slot is not None:
+                slot.last_seen = time.monotonic()
         if slot is None:
             raise LookupError("临时解释不存在或已随 Reader 关闭而清除")
         return slot

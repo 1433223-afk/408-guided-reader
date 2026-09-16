@@ -57,6 +57,8 @@ class LearningService:
         self.runtime = runtime
         self.provider = os.environ.get("GUIDED_READER_MASTER_PROVIDER", "deepseek").strip().lower()
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
+        if getattr(runtime, "beta_guard", None):
+            self.provider = self.reviewer = "deepseek"
         self._lock = threading.RLock()
         self._inflight = set()
         self.repository.recover()
@@ -204,6 +206,11 @@ class LearningService:
         return result
 
     def _schedule(self, revision_id, kp_id, message, *, review):
+        if getattr(self.runtime, "beta_guard", None) and len(self._inflight) >= 8:
+            self.repository.update_message(message["id"],
+                **({"review_state": "TECHNICAL_FAILURE"} if review else {"state": "FAILED"}),
+                detail="AI 正忙，请稍后重试；问题已保存。")
+            return
         self._inflight.add(message["id"])
         try:
             threading.Thread(target=self._run, args=(revision_id, kp_id, message, review), daemon=True,

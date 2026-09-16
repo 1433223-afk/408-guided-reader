@@ -1,0 +1,47 @@
+[Unit]
+Description=Guided Reader private Beta (%i)
+After=network-online.target nftables.service
+Wants=network-online.target
+Requires=nftables.service
+
+[Service]
+Type=simple
+User=gr-%i
+Group=gr-%i
+UMask=0077
+WorkingDirectory=/opt/guided-reader/instances/%i/current
+EnvironmentFile=/etc/guided-reader/%i.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=/opt/guided-reader/instances/%i/current/src
+ExecStartPre=/opt/guided-reader/instances/%i/current/.venv/bin/python -m reader_service.release verify --root /opt/guided-reader/instances/%i/current
+ExecStart=/opt/guided-reader/instances/%i/current/.venv/bin/python -m reader_service --profile beta --host 127.0.0.1 --no-open --port ${READER_PORT} --data-dir /var/lib/guided-reader/%i --credential-dir /var/lib/guided-reader-credentials/%i --public-origin ${READER_ORIGIN} --ai-disabled-file /etc/guided-reader/%i.ai-disabled --prepare-workers 1
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=240
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/guided-reader/%i /var/lib/guided-reader-credentials/%i
+MemoryMax=2G
+CPUQuota=150%
+TasksMax=96
+LimitNOFILE=1024
+LimitCORE=0
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=60
+
+[Install]
+WantedBy=multi-user.target

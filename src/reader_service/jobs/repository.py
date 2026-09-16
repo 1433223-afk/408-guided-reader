@@ -77,7 +77,7 @@ class JobRepository:
 
     def recover(self) -> int:
         timestamp = now()
-        with self.database.connect() as connection:
+        with self.database.connect(failure_write=True) as connection:
             cursor = connection.execute(
                 """
                 UPDATE jobs SET status = 'QUEUED', updated_at = ?

@@ -1,4 +1,5 @@
 import {createScreens, createChapterEntry, createAssistantModelMenu, createMessageRail, header, action} from "/screens.js";
+import {isBeta, betaUnavailable, installBetaSettings} from "/beta-ui.js";
 import { streamAssistantResponse } from "/assistant-stream.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
 import {
@@ -225,6 +226,11 @@ const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.re
 const homeHeader = header('home', showHome, () => memory.open(), action('＋ 导入教材', () => elements['import-input'].click(), 'primary-action'));
 elements['library-home'].querySelector('.home-toolbar').replaceWith(homeHeader);
 homeHeader.querySelector('.space-navigation button:last-child').classList.add('memory-open');
+installBetaSettings(homeHeader, api, refreshAssistantStatus);
+if (isBeta) setInterval(() => {
+  if (state.readerSessionId) api('/api/beta/heartbeat', {method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({reader_session_id:state.readerSessionId})}).catch(() => {});
+}, 60000);
 // The hidden file input remains owned by the intake flow.
 elements['library-home'].append(elements['import-input']);
 
@@ -1408,6 +1414,7 @@ function applySelectedProviderStatus() {
 }
 
 function selectedProviderUnavailableMessage(selected) {
+  if (betaUnavailable(selected)) return betaUnavailable(selected);
   const label = ASSISTANT_PROVIDER_LABELS[selected?.provider] || "所选模型";
   if (!selected) return "当前服务没有返回所选模型的状态；请刷新 Reader 后重试。";
   if (!selected.configuration_valid) {

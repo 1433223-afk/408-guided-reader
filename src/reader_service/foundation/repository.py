@@ -192,7 +192,7 @@ class FoundationRepository:
             )
 
     def fail_page(self, revision_id: str, page_index: int, code: str) -> None:
-        with self.database.connect() as connection:
+        with self.database.connect(failure_write=True) as connection:
             connection.execute(
                 """
                 UPDATE ocr_pages SET status = 'FAILED', failure_code = ?, prepared_at = NULL
@@ -202,7 +202,7 @@ class FoundationRepository:
             )
 
     def reset_interrupted_pages(self) -> int:
-        with self.database.connect() as connection:
+        with self.database.connect(failure_write=True) as connection:
             cursor = connection.execute(
                 """
                 UPDATE ocr_pages SET status = 'NOT_PREPARED', failure_code = NULL

@@ -58,6 +58,7 @@ class KnowledgeRepository:
 
             created = current is None
             if current is None or current["status"] == "FAILED":
+                self.database.check_pending_ai(connection)
                 attempt_id = str(uuid4())
                 connection.execute(
                     """
@@ -151,6 +152,7 @@ class KnowledgeRepository:
                 connection, revision_id, chapter_id, current
             )
             attempt_id = str(uuid4())
+            self.database.check_pending_ai(connection)
             cursor = connection.execute(
                 """
                 UPDATE chapter_preparations
@@ -188,7 +190,7 @@ class KnowledgeRepository:
     def recover_preparing_jobs(self) -> int:
         timestamp = now()
         recovered = 0
-        with self.database.connect() as connection:
+        with self.database.connect(failure_write=True) as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
@@ -530,7 +532,7 @@ class KnowledgeRepository:
         source_payload_sha256: str | None = None,
         review_payload_sha256: str | None = None,
     ) -> bool:
-        with self.database.connect() as connection:
+        with self.database.connect(failure_write=True) as connection:
             connection.execute("BEGIN IMMEDIATE")
             state = connection.execute(
                 """

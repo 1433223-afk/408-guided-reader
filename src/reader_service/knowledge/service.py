@@ -159,6 +159,9 @@ class KnowledgeService:
         if isinstance(self.section_generation_workers, bool) or not 1 <= self.section_generation_workers <= 4:
             raise ValueError("KP Section generation workers must be between 1 and 4")
         self.post_review_validator = post_review_validator
+        if getattr(runtime, "beta_guard", None):
+            self.generator_provider = self.reviewer_provider = "deepseek"
+            self.section_generation_workers = min(2, self.section_generation_workers)
         self._inspections: deque[dict] = deque(maxlen=8)
         self._inspection_lock = threading.Lock()
 
@@ -448,6 +451,8 @@ class KnowledgeService:
         }
 
     def _record_inspection(self, inspection: dict) -> None:
+        if getattr(self.runtime, "beta_guard", None):
+            return
         with self._inspection_lock:
             self._inspections.append(copy.deepcopy(inspection))
 

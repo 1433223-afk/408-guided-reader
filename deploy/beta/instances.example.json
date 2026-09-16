@@ -1,0 +1,4 @@
+[
+  {"name":"alice", "uid":21001, "port":18761, "origin":"https://alice.example.invalid", "data_dir":"/var/lib/guided-reader/alice", "credential_dir":"/var/lib/guided-reader-credentials/alice"},
+  {"name":"bob", "uid":21002, "port":18762, "origin":"https://bob.example.invalid", "data_dir":"/var/lib/guided-reader/bob", "credential_dir":"/var/lib/guided-reader-credentials/bob"}
+]

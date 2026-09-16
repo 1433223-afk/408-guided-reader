@@ -1,0 +1,6 @@
+# Install as /etc/systemd/journald.conf.d/guided-reader.conf after checking host policy.
+[Journal]
+SystemMaxUse=256M
+MaxRetentionSec=14day
+RateLimitIntervalSec=30s
+RateLimitBurst=500

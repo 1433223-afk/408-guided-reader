@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import sqlite3
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from typing import BinaryIO
 
@@ -10,8 +12,9 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from reader_service.storage import BlobStore, ManagedPaths
+from reader_service.disk import DiskSpaceError
 
-from .database import Database
+from .database import Database, MIGRATIONS
 from .repository import LibraryRepository
 
 
@@ -20,11 +23,24 @@ class IntakeError(ValueError):
 
 
 class LibraryService:
-    def __init__(self, paths: ManagedPaths, max_pdf_bytes: int = 2 * 1024 * 1024 * 1024):
+    def __init__(self, paths: ManagedPaths, max_pdf_bytes: int = 2 * 1024 * 1024 * 1024, *, disk_guard=None):
         self.paths = paths
         self.paths.initialize()
         self.database = Database(paths.database())
+        if disk_guard:
+            needs_migration = True
+            if paths.database().exists():
+                with sqlite3.connect(paths.database().resolve().as_uri()+"?mode=ro", uri=True) as check:
+                    try:
+                        current = check.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+                        needs_migration = current != MIGRATIONS[-1][0]
+                    except sqlite3.OperationalError:
+                        pass
+            if needs_migration:
+                disk_guard.check()
         self.database.initialize()
+        self.disk_guard = disk_guard
+        self.database.growth_check = disk_guard.check if disk_guard else None
         self.repository = LibraryRepository(self.database)
         self.blobs = BlobStore(paths)
         self.max_pdf_bytes = max_pdf_bytes
@@ -34,6 +50,15 @@ class LibraryService:
         return self.repository.list_books()
 
     def intake(
+        self, stream: BinaryIO, *, content_length: int, **kwargs
+    ) -> dict:
+        if content_length <= 0 or content_length > self.max_pdf_bytes:
+            raise IntakeError("请选择不超过 512 MiB 的 PDF。" if self.disk_guard else "Invalid PDF intake size")
+        reservation = self.disk_guard.upload(content_length) if self.disk_guard else nullcontext(None)
+        with reservation as consumed:
+            return self._intake(stream, content_length=content_length, consumed=consumed, **kwargs)
+
+    def _intake(
         self,
         stream: BinaryIO,
         *,
@@ -42,6 +67,7 @@ class LibraryService:
         book_id: str | None = None,
         title: str | None = None,
         label: str | None = None,
+        consumed=None,
     ) -> dict:
         if content_length <= 0:
             raise IntakeError("The selected file is empty")
@@ -63,6 +89,8 @@ class LibraryService:
                     if not chunk:
                         raise IntakeError("The upload ended before the complete PDF arrived")
                     output.write(chunk)
+                    if consumed:
+                        consumed(len(chunk))
                     digest.update(chunk)
                     remaining -= len(chunk)
                 output.flush()
@@ -95,11 +123,13 @@ class LibraryService:
                         self.blobs.delete(sha256)
                     raise
                 return {"duplicate": False, "book": self.repository.get_book(created_book_id)}
-        except IntakeError:
+        except (IntakeError, DiskSpaceError):
             temporary.unlink(missing_ok=True)
             raise
         except (PdfReadError, OSError, ValueError, TypeError, KeyError) as exc:
             temporary.unlink(missing_ok=True)
+            if self.disk_guard:
+                raise IntakeError("PDF 无法导入，请检查文件或可用空间。") from None
             raise IntakeError(f"The PDF is corrupt or unreadable: {exc}") from exc
 
     def revision(self, revision_id: str) -> dict:

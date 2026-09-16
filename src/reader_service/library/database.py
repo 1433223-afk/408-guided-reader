@@ -749,6 +749,14 @@ MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEA
 class Database:
     def __init__(self, path: Path):
         self.path = path
+        self.growth_check = None
+        self.pending_ai_limit = None
+
+    def check_pending_ai(self, connection):
+        if self.pending_ai_limit is not None:
+            count = connection.execute("SELECT COUNT(*) FROM jobs WHERE job_type IN ('CHAPTER_PREPARE','TEACHING_GENERATE','TEACHING_REVIEW') AND status IN ('QUEUED','RUNNING')").fetchone()[0]
+            if count >= self.pending_ai_limit:
+                raise ValueError("AI 任务正忙，请稍后重试。")
 
     def initialize(self) -> None:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -893,13 +901,15 @@ class Database:
         )
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
+    def connect(self, *, failure_write=False) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.path, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 10000")
         try:
             yield connection
+            if connection.total_changes and self.growth_check and not failure_write:
+                self.growth_check()
             connection.commit()
         except Exception:
             connection.rollback()

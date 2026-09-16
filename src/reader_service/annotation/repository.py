@@ -172,7 +172,7 @@ class AnnotationRepository:
         code: str | None,
         summary: str | None,
     ) -> dict | None:
-        with self.database.connect() as connection:
+        with self.database.connect(failure_write=state == "TECHNICAL_FAILURE") as connection:
             cursor = connection.execute(
                 """
                 UPDATE annotations
@@ -218,7 +218,7 @@ class AnnotationRepository:
         return self.get(annotation_id, revision_id)
 
     def recover_interrupted_reviews(self) -> int:
-        with self.database.connect() as connection:
+        with self.database.connect(failure_write=True) as connection:
             cursor = connection.execute(
                 """
                 UPDATE annotations
