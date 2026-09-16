@@ -115,3 +115,34 @@ then exercise a failure and in-place retry. The PDF must remain readable during 
 ## Git checkpoint
 
 The commit containing this report (`Stream reviewed Reading Guide drafts`).
+
+## Writer TTFT diagnosis and reasoning visibility (2026-09-16)
+
+The served Guide Writer resolves to native DeepSeek `deepseek-flash`. Its request sets
+`temperature=0.2`, `max_tokens=8192`, `stream=true` and a 120-second timeout. It passes neither
+`thinking` nor `reasoning_effort`; those fields are absent from the wire request. Despite that
+omission, the current model returns real `delta.reasoning_content`, so the provider's default
+behavior is effectively reasoning-enabled for this call. DeepSeek accounts reasoning within
+`completion_tokens`, so it consumes the shared 8192-token output allowance rather than a free,
+separate budget.
+
+A direct probe of the same real Section 2.1 Writer prompt measured the first reasoning delta at
+0.594 seconds, the last reasoning delta at 12.699 seconds, and the first visible-content delta at
+12.699 seconds. The response completed in 20.706 seconds with 1,137 prompt tokens and 3,516
+completion tokens. The provider emitted 2,087 reasoning events / 3,122 reasoning characters before
+1,428 content events / 2,265 content characters. This confirms that the previous ~14-second visible
+TTFT was dominated by discarded provider reasoning, not context assembly or connection TTFT.
+
+Guide now forwards only the Writer's real reasoning deltas through the existing process-memory SSE
+state. The pane shows them immediately in a quiet `DeepSeek 正在思考…` region, then collapses that
+region when the first prose delta arrives and continues the existing draft stream. The user may
+reopen the completed thought region while generation remains active. No synthetic thought text is
+created. Reasoning is cleared on completion/failure, is not written to `teaching_assets` or call
+metadata, does not enter Review/source binding/Assistant, and cannot become published Guide content.
+
+Targeted evidence: all Guide unit tests passed; frontend tests 51/51 passed; the isolated real
+348-page Reader Guide path passed preparation → reasoning → prose → Review → publication, including
+an explicit reasoning-stream canary and a database assertion that the canary was not persisted.
+Human retest remains pending; no `USER_ACCEPTANCE PASS` is claimed.
+
+Follow-up checkpoint: the commit containing this section (`Expose real Guide reasoning stream`).

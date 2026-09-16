@@ -90,19 +90,22 @@ class TeachingService:
                     "sequence": int(previous.get("sequence", -1)) + 1,
                     "stage": "preparing",
                     "text": "",
+                    "reasoning": "",
+                    "provider": None,
                     "candidate": None,
                     "terminal": None,
                     "detail": None,
                 }
                 self._draft_condition.notify_all()
 
-    def _draft_update(self, asset_id, *, stage=None, append=None, text=None, terminal=None, detail=None):
+    def _draft_update(self, asset_id, *, stage=None, append=None, text=None,
+                      append_reasoning=None, provider=None, terminal=None, detail=None):
         if not self.draft_streaming:
             return
         with self._draft_condition:
             state = self._drafts.setdefault(asset_id, {
-                "sequence": 0, "stage": "preparing", "text": "", "candidate": None,
-                "terminal": None, "detail": None,
+                "sequence": 0, "stage": "preparing", "text": "", "reasoning": "",
+                "provider": None, "candidate": None, "terminal": None, "detail": None,
             })
             if stage is not None:
                 state["stage"] = stage
@@ -110,10 +113,15 @@ class TeachingService:
                 state["text"] += append
             if text is not None:
                 state["text"] = text
+            if append_reasoning:
+                state["reasoning"] += append_reasoning
+            if provider is not None:
+                state["provider"] = provider
             if terminal is not None:
                 state["terminal"] = terminal
                 if terminal in {"complete", "error"}:
                     state["text"] = ""
+                    state["reasoning"] = ""
                 if terminal == "complete":
                     state["candidate"] = None
             if detail is not None:
@@ -141,8 +149,8 @@ class TeachingService:
                             "code": row["failure_code"] or "GUIDE_FAILED",
                             "error": row["failure_detail"] or "导读生成失败，可以原位重试。"}
                 self._drafts[asset_id] = {
-                    "sequence": 0, "stage": "preparing", "text": "", "candidate": None,
-                    "terminal": None, "detail": None,
+                    "sequence": 0, "stage": "preparing", "text": "", "reasoning": "",
+                    "provider": None, "candidate": None, "terminal": None, "detail": None,
                 }
                 state = self._drafts[asset_id]
             deadline = time.monotonic() + timeout
@@ -157,7 +165,8 @@ class TeachingService:
                 return {"type": "error", "sequence": state["sequence"],
                         "code": "GUIDE_FAILED", "error": state["detail"] or "导读生成失败，可以原位重试。"}
             return {"type": "draft", "sequence": state["sequence"],
-                    "stage": state["stage"], "text": state["text"]}
+                    "stage": state["stage"], "text": state["text"],
+                    "reasoning": state["reasoning"], "provider": state["provider"]}
 
     def _draft_candidate(self, asset_id):
         with self._draft_condition:
@@ -167,8 +176,8 @@ class TeachingService:
     def _store_draft_candidate(self, asset_id, candidate):
         with self._draft_condition:
             state = self._drafts.setdefault(asset_id, {
-                "sequence": 0, "stage": "preparing", "text": "", "candidate": None,
-                "terminal": None, "detail": None,
+                "sequence": 0, "stage": "preparing", "text": "", "reasoning": "",
+                "provider": None, "candidate": None, "terminal": None, "detail": None,
             })
             state["candidate"] = candidate
 
@@ -291,8 +300,14 @@ class TeachingService:
             if callable(stream_call):
                 def on_delta(delta):
                     if role == "WRITE":
-                        self._draft_update(asset["id"], stage="generating", append=delta)
-                completion = stream_call(selected, messages, on_delta, **options)
+                        self._draft_update(asset["id"], stage="generating", append=delta,
+                                           provider=selected)
+                def on_reasoning_delta(delta):
+                    if role == "WRITE":
+                        self._draft_update(asset["id"], stage="reasoning",
+                                           append_reasoning=delta, provider=selected)
+                completion = stream_call(selected, messages, on_delta,
+                                         on_reasoning_delta=on_reasoning_delta, **options)
             else:
                 completion = self.runtime.complete_for_with_metadata(selected, messages, **options)
             self._record_call(asset["id"], metadata_key, role, provider, model_override or model, completion)

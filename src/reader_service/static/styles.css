@@ -240,6 +240,11 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .guide-draft-label,.guide-published-label { margin:0;color:#65756a;font-size:11px;font-weight:650;letter-spacing:.025em; }
 .guide-draft-label { display:inline-flex;align-items:center;gap:7px;margin-bottom:14px;padding:4px 8px;background:#edf2ed;border:1px solid #d2ddd3;border-radius:4px; }
 .guide-draft-label::before { content:"";width:6px;height:6px;border-radius:50%;background:#6f8c78;box-shadow:0 0 0 3px rgb(111 140 120 / 12%); }
+.guide-reasoning { margin:0 0 18px;padding:10px 12px;color:#5f6c63;background:#f1f4ee;border-left:2px solid #9aad9e; }
+.guide-reasoning[hidden] { display:none; }
+.guide-reasoning summary { cursor:pointer;color:#526158;font-size:12px;font-weight:600;list-style-position:outside; }
+.guide-reasoning summary:hover { color:#315c46; }
+#guide-reasoning-text { max-height:220px;margin-top:10px;overflow:auto;white-space:pre-wrap;color:#69756d;font-size:12px;line-height:1.7;scrollbar-color:#b9c1ba transparent;scrollbar-width:thin; }
 .guide-draft-text { color:#344039;font-size:16px;line-height:1.85;overflow-wrap:anywhere;user-select:text; }
 .guide-draft-text > :first-child { margin-top:0; }
 .guide-draft-text > :last-child { margin-bottom:0; }

@@ -14,7 +14,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
   panel.innerHTML = `<div id="guide-divider" role="separator" tabindex="0" aria-label="导读宽度" aria-orientation="vertical" aria-controls="guide-panel"></div>
     <div class="guide-heading"><strong id="guide-title">本节导读</strong><div class="guide-tools"><button id="guide-regenerate" type="button" hidden>重新生成</button><button id="guide-close" type="button" aria-label="收起导读">×</button></div></div>
     <div class="guide-meta"><p id="guide-status" role="status"></p><button id="guide-status-retry" type="button" hidden>重试</button></div>
-    <div id="guide-scroll"><div id="guide-empty-state" class="guide-empty-state" hidden><p id="guide-empty-copy"></p><button id="guide-primary-action" type="button" hidden></button></div><section id="guide-draft" class="guide-draft" hidden><p id="guide-draft-label" class="guide-draft-label"></p><div id="guide-draft-text" class="guide-draft-text"></div></section><p id="guide-published-label" class="guide-published-label" hidden>当前已发布版本</p><div id="guide-content"></div></div>`;
+    <div id="guide-scroll"><div id="guide-empty-state" class="guide-empty-state" hidden><p id="guide-empty-copy"></p><button id="guide-primary-action" type="button" hidden></button></div><section id="guide-draft" class="guide-draft" hidden><p id="guide-draft-label" class="guide-draft-label"></p><details id="guide-reasoning" class="guide-reasoning" hidden><summary id="guide-reasoning-label"></summary><div id="guide-reasoning-text"></div></details><div id="guide-draft-text" class="guide-draft-text"></div></section><p id="guide-published-label" class="guide-published-label" hidden>当前已发布版本</p><div id="guide-content"></div></div>`;
   document.getElementById("reader").append(panel);
   const title = panel.querySelector("#guide-title");
   const status = panel.querySelector("#guide-status");
@@ -29,11 +29,15 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
   const content = panel.querySelector("#guide-content");
   const draftSurface = panel.querySelector("#guide-draft");
   const draftLabel = panel.querySelector("#guide-draft-label");
+  const reasoningSurface = panel.querySelector("#guide-reasoning");
+  const reasoningLabel = panel.querySelector("#guide-reasoning-label");
+  const reasoningContent = panel.querySelector("#guide-reasoning-text");
   const draftContent = panel.querySelector("#guide-draft-text");
   const publishedLabel = panel.querySelector("#guide-published-label");
   let sectionId = null, revisionId = null, snapshot = null, timer = 0, epoch = 0, pending = false;
   let renderedId = null, intent = null;
-  let draftText = "", draftStage = null, draftFrame = 0, streamAssetId = null, streamController = null;
+  let draftText = "", draftReasoning = "", draftProvider = null, draftStage = null;
+  let reasoningWasActive = false, draftFrame = 0, streamAssetId = null, streamController = null;
   const reader = document.getElementById("reader"), scroll = panel.querySelector("#guide-scroll");
   const divider = panel.querySelector("#guide-divider");
   const reopen = document.createElement("button");
@@ -115,18 +119,30 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
   window.addEventListener("resize", () => { if (!panel.hidden) setWidth(width); });
   function base() { return `/api/revisions/${revisionId}/sections/${sectionId}/guide`; }
   function clearDraft() {
-    draftText = ""; draftStage = null;
+    draftText = ""; draftReasoning = ""; draftProvider = null; draftStage = null; reasoningWasActive = false;
     if (draftFrame) cancelAnimationFrame(draftFrame);
-    draftFrame = 0; draftContent.replaceChildren(); draftSurface.hidden = true; publishedLabel.hidden = true;
+    draftFrame = 0; draftContent.replaceChildren(); reasoningContent.textContent = "";
+    reasoningSurface.hidden = true; reasoningSurface.open = false;
+    draftSurface.hidden = true; publishedLabel.hidden = true;
   }
   function paintDraft() {
     draftFrame = 0;
-    const visible = Boolean(draftText);
+    const hasReasoning = Boolean(draftReasoning), visible = hasReasoning || Boolean(draftText);
     draftSurface.hidden = !visible;
     publishedLabel.hidden = !visible || !snapshot?.published;
-    if (!visible) { draftContent.replaceChildren(); return; }
+    if (!visible) { draftContent.replaceChildren(); reasoningContent.textContent = ""; return; }
     draftLabel.textContent = draftStage === "review" ? "生成草稿 · 审查中"
-      : draftStage === "revising" ? "生成草稿 · 修订中" : "生成草稿 · 尚未发布";
+      : draftStage === "revising" ? "生成草稿 · 修订中"
+      : draftStage === "reasoning" ? "生成草稿 · 思考中" : "生成草稿 · 尚未发布";
+    reasoningSurface.hidden = !hasReasoning;
+    if (hasReasoning) {
+      const name = draftProvider === "deepseek" ? "DeepSeek" : "模型";
+      reasoningLabel.textContent = draftStage === "reasoning" ? `${name} 正在思考…` : `${name} 思考过程`;
+      reasoningContent.textContent = draftReasoning;
+      if (draftStage === "reasoning" && !reasoningWasActive) reasoningSurface.open = true;
+      if (draftStage !== "reasoning" && reasoningWasActive) reasoningSurface.open = false;
+    }
+    reasoningWasActive = draftStage === "reasoning";
     renderAssistantAnswer(draftContent, draftText);
   }
   function scheduleDraftPaint() {
@@ -143,7 +159,9 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
     streamGuide(`${base()}/events?asset_id=${encodeURIComponent(assetId)}`, { signal: controller.signal }, event => {
       if (stamp !== epoch || controller.signal.aborted) return;
       if (event.type === "draft") {
-        draftText = event.text || ""; draftStage = event.stage || "generating"; scheduleDraftPaint(); render();
+        draftText = event.text || ""; draftReasoning = event.reasoning || "";
+        draftProvider = event.provider || null; draftStage = event.stage || "generating";
+        scheduleDraftPaint(); render();
       } else if (event.type === "complete") {
         clearDraft(); stopDraftStream(); load();
       } else if (event.type === "error") {
@@ -163,6 +181,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
     status.classList.toggle("ai-progress", Boolean(busy || pending));
     status.textContent = pending ? "准备中…" : draftStage === "review" ? "生成草稿 · 审查中"
       : draftStage === "revising" ? "审查意见已返回，正在修订草稿…"
+      : draftStage === "reasoning" ? "生成草稿 · 正在思考…"
       : draftStage === "generating" ? "生成草稿 · 正文持续生成中…"
       : draftStage === "preparing" ? "准备导读…" : busy ? (task.stage === "REVIEW" ? "正在独立审查…" : "正在生成导读…")
       : task?.state === "FAILED" ? (task.terminal ? "导读未通过审查，已停止本次生成。" : "本次导读生成或审查失败，可重试当前阶段。")
@@ -177,7 +196,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
     } else status.removeAttribute("aria-label");
     regenerate.hidden = !published || Boolean(busy) || task?.state === 'FAILED';
     regenerate.disabled = pending;
-    emptyState.hidden = Boolean(published || draftText);
+    emptyState.hidden = Boolean(published || draftText || draftReasoning);
     primaryAction.hidden = true;
     primaryAction.disabled = pending || Boolean(busy);
     emptyState.classList.toggle('busy', Boolean(pending || busy));

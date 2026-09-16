@@ -63,8 +63,10 @@ class Runtime:
             value['modules'][0]['text'] += '装配擅自新增。'
         return ProviderCompletion('invalid' if self.invalid else json.dumps(value), 1, None, {'provider': provider, 'model': provider + '-model'})
 
-    def stream_for_with_metadata(self, provider, messages, on_delta, **kwargs):
+    def stream_for_with_metadata(self, provider, messages, on_delta, on_reasoning_delta=None, **kwargs):
         completion = self.complete_for_with_metadata(provider, messages, **kwargs)
+        if on_reasoning_delta and len(messages) == 2 and messages[0]['content'].startswith(GENERATOR):
+            on_reasoning_delta('REAL_GUIDE_REASONING_CANARY')
         midpoint = max(1, len(completion.answer) // 2)
         on_delta(completion.answer[:midpoint])
         on_delta(completion.answer[midpoint:])
@@ -142,8 +144,13 @@ def test_streamed_draft_is_memory_only_until_atomic_publication(guide):
     event = g.draft_event(rev, section, asset_id, -1, 0)
     assert event['type'] == 'draft' and event['stage'] == 'review'
     assert '现有办法' in event['text']
+    assert event['reasoning'] == 'REAL_GUIDE_REASONING_CANARY'
+    assert event['provider'] == g.provider
     snapshot = g.snapshot(rev, section)
     assert 'draft' not in snapshot and snapshot['published'] is None
+    with g.database.connect() as c:
+        stored = json.dumps(dict(c.execute('SELECT * FROM teaching_assets WHERE id=?', (asset_id,)).fetchone()), ensure_ascii=False)
+        assert 'REAL_GUIDE_REASONING_CANARY' not in stored
     review = jobs.claim()
     g.run_job(review)
     jobs.complete(review['id'])

@@ -43,6 +43,12 @@ const provider = createServer(async (req, res) => {
     return;
   }
   res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  if (!payload) {
+    for (const thought of ['先辨认本节位置。', '再组织知识之间的关系。']) {
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: thought } }] })}\n\n`);
+      await new Promise(r => setTimeout(r, 45));
+    }
+  }
   const chunkSize = Math.max(1, Math.ceil(answer.length / 4));
   for (let offset = 0; offset < answer.length; offset += chunkSize) {
     res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: answer.slice(offset, offset + chunkSize) } }] })}\n\n`);
@@ -83,9 +89,11 @@ try {
   await page.screenshot({ path: 'test-results/reading-guide-not-generated.png', fullPage: true });
   await page.evaluate(() => {
     window.__guideStages = [];
+    window.__guideReasoningSeen = false;
     const record = () => {
       const value = [document.querySelector('#guide-status')?.textContent?.trim(), document.querySelector('#guide-draft-label')?.textContent?.trim()].filter(Boolean).join(' | ');
       if (value && window.__guideStages.at(-1) !== value) window.__guideStages.push(value);
+      if (document.querySelector('#guide-reasoning-text')?.textContent?.includes('先辨认本节位置')) window.__guideReasoningSeen = true;
     };
     window.__guideStageObserver = new MutationObserver(record);
     window.__guideStageObserver.observe(document.querySelector('#guide-panel'), { subtree: true, childList: true, characterData: true });
@@ -93,10 +101,13 @@ try {
   });
   await action(page, '生成本节导读', 'generate');
   let first = await settled(page, base(ready));
-  const stages = await page.evaluate(() => { window.__guideStageObserver.disconnect(); return window.__guideStages; });
+  const observed = await page.evaluate(() => { window.__guideStageObserver.disconnect(); return { stages: window.__guideStages, reasoningSeen: window.__guideReasoningSeen }; });
+  const stages = observed.stages;
   assert.ok(stages.some(value => value.includes('准备')), JSON.stringify(stages));
+  assert.ok(stages.some(value => value.includes('正在思考')), JSON.stringify(stages));
   assert.ok(stages.some(value => value.includes('正文持续生成')), JSON.stringify(stages));
   assert.ok(stages.some(value => value.includes('生成草稿 · 审查中')), JSON.stringify(stages));
+  assert.equal(observed.reasoningSeen, true);
   assert.ok(first.published, JSON.stringify(first.task));
   await page.locator('.guide-text').first().waitFor();
   assert.equal(await page.locator('#guide-regenerate').isVisible(), true);
