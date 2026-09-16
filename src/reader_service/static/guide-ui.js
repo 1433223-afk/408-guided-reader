@@ -14,13 +14,17 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   panel.innerHTML = `<div id="guide-divider" role="separator" tabindex="0" aria-label="导读宽度" aria-orientation="vertical" aria-controls="guide-panel"></div>
     <div class="guide-heading"><strong id="guide-title">本节导读</strong><div class="guide-tools"><button id="guide-expand" type="button">展开</button><details id="guide-more"><summary aria-label="导读更多操作">更多</summary><div id="guide-actions"></div></details><button id="guide-close" type="button" aria-label="收起导读">×</button></div></div>
     <div class="guide-meta"><p id="guide-status" role="status"></p><button id="guide-status-retry" type="button" hidden>重试</button></div>
-    <div id="guide-scroll"><div id="guide-content"></div></div>`;
+    <div id="guide-scroll"><div id="guide-empty-state" class="guide-empty-state" hidden><p id="guide-empty-copy"></p><button id="guide-primary-action" type="button" hidden></button></div><div id="guide-content"></div></div>`;
   document.getElementById("reader").append(panel);
   const title = panel.querySelector("#guide-title");
   const status = panel.querySelector("#guide-status");
   const actions = panel.querySelector("#guide-actions");
   const statusRetry = panel.querySelector('#guide-status-retry');
+  const emptyState = panel.querySelector('#guide-empty-state');
+  const emptyCopy = panel.querySelector('#guide-empty-copy');
+  const primaryAction = panel.querySelector('#guide-primary-action');
   statusRetry.onclick = () => send(snapshot?.task?.terminal ? 'regenerate' : 'retry');
+  primaryAction.onclick = () => send(primaryAction.dataset.action);
   document.addEventListener("pointerdown", event => {
     const more = panel.querySelector("#guide-more");
     if (!more.contains(event.target)) more.open = false;
@@ -119,7 +123,9 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     title.textContent = `${snapshot.section.title} · 导读`;
     const task = snapshot.task, published = snapshot.published;
     const busy = task && ["DRAFT", "REJECTED", "IN_REVIEW"].includes(task.state);
-    statusRetry.hidden = task?.state !== 'FAILED'; statusRetry.disabled = pending;
+    if (!published && expanded) setExpanded(false);
+    expand.hidden = !published;
+    statusRetry.hidden = task?.state !== 'FAILED' || !published; statusRetry.disabled = pending;
     statusRetry.textContent = task?.terminal ? '重新生成' : '重试';
     status.classList.toggle("ai-progress", Boolean(busy || pending));
     status.textContent = pending ? "准备中…" : busy ? (task.stage === "REVIEW" ? "正在独立审查…" : "正在生成导读…")
@@ -134,11 +140,31 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
       status.setAttribute("aria-label", status.title);
     } else status.removeAttribute("aria-label");
     actions.replaceChildren();
-    if (!busy) {
-      if (task?.state === "FAILED" && !task.terminal) button("重试", "retry");
-      button(published ? "重新生成" : "生成本节导读", published || task?.terminal ? "regenerate" : "generate");
+    if (published && !busy && !(task?.state === 'FAILED' && task.terminal)) button("重新生成", "regenerate");
+    panel.querySelector("#guide-more").hidden = !published || Boolean(busy) || (task?.state === 'FAILED' && task.terminal);
+    emptyState.hidden = Boolean(published);
+    primaryAction.hidden = true;
+    primaryAction.disabled = pending || Boolean(busy);
+    emptyState.classList.toggle('busy', Boolean(pending || busy));
+    if (!published) {
+      if (pending) emptyCopy.textContent = '正在准备本节导读…';
+      else if (busy) emptyCopy.textContent = task.stage === 'REVIEW' || task.state === 'IN_REVIEW'
+        ? '正在独立审查本节导读…' : task.state === 'REJECTED'
+          ? '审查意见已返回，正在修订导读…' : '正在生成本节导读…';
+      else if (task?.state === 'FAILED') {
+        emptyCopy.textContent = task.terminal
+          ? '本节导读未通过审查，可以重新生成。'
+          : '本次生成或审查失败，可以从失败阶段重试。';
+        primaryAction.hidden = false;
+        primaryAction.dataset.action = task.terminal ? 'regenerate' : 'retry';
+        primaryAction.textContent = task.terminal ? '重新生成本节导读' : '重试生成';
+      } else {
+        emptyCopy.textContent = '生成并审查一份本节阅读导读。生成期间 PDF 始终可读。';
+        primaryAction.hidden = false;
+        primaryAction.dataset.action = 'generate';
+        primaryAction.textContent = '生成本节导读';
+      }
     }
-    panel.querySelector("#guide-more").hidden = Boolean(busy);
     // Polling must not destroy a live native selection or the old published Guide.
     if (renderedId !== (published?.id || null)) {
       renderedId = published?.id || null;
@@ -233,6 +259,8 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   async function open(id) {
     close(); sectionId = id; revisionId = state.revision.id; snapshot = null; renderedId = null; pending = false;
     content.replaceChildren(); actions.replaceChildren(); intent = null;
+    if (expanded) setExpanded(false);
+    expand.hidden = true; emptyState.hidden = true;
     closeDock(); reopen.hidden = true;
     layout(() => { panel.hidden = false; reader.classList.add("guide-open"); });
     setWidth(width || GUIDE_DOCK_DEFAULT_WIDTH);

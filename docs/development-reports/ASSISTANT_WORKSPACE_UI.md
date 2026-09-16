@@ -783,3 +783,28 @@ and window resizing. The focused all-Dock performance path also PASSes: no Long 
 zoom and scroll. No PDF relayout, OCR work, business behavior or product semantics changed.
 
 This correction is `READY_FOR_USER_RETEST`; it does not claim user acceptance.
+
+## Reading Guide first-generation interaction correction (2026-09-16)
+
+Opening an unpublished Section Guide previously exposed the expanded reading surface with no primary
+action; the only generation command lived in the overflow menu. The Guide now opens in its normal
+410 px Dock and presents `生成本节导读` directly in the content area. While the task runs, that same
+area reports preparation, generation, independent Review and revision stages. A first-publication
+failure exposes an enabled in-place retry. A published Guide still opens directly to its article;
+its overflow menu contains only the existing low-frequency regeneration action. Expand and overflow
+controls stay hidden until a published article exists, so an unpublished Guide cannot enter the
+empty focus layout or offer a meaningless restore action.
+
+The controlled real-348-page flow PASSes first generation, observable generation and Review stages,
+publication, close/reopen and service-restart recovery, failed regeneration preserving the old
+article, first-publication failure with in-place retry, reviewed replacement and generation without
+a READY KP ledger. The failure CTA is asserted enabled and retains the Reader's green primary-action
+hover instead of inheriting the generic pale button hover. The served split-reader regression also
+PASSes pointer and keyboard resize, expand/restore, close/reopen, source return, retained Guide
+position and PDF visibility. The broader Dock performance harness was attempted but stopped before
+its Guide checks because the current manual Library lacks the `继续 Master 对话` control expected by
+its Master fixture; that unrelated fixture failure is not recorded as a PASS.
+
+No Guide endpoint, persistence, Review/publication rule, PDF geometry, canvas/OCR path, dependency or
+Frozen Product semantic changed. This correction is `READY_FOR_USER_RETEST`; it does not claim user
+acceptance.
