@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Guided Reader</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20viewBox%3D%220%200%2024%2024%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20fill%3D%22none%22%20stroke%3D%22currentColor%22%20stroke-width%3D%221.75%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%20style%3D%22color%3A%23f6f5ee%22%3E%3Crect%20width%3D%2224%22%20height%3D%2224%22%20fill%3D%22%23304d40%22%20stroke%3D%22none%22%2F%3E%3Cg%20transform%3D%22translate%282%201.5%29%20scale%28.82%29%22%3E%3Cpath%20d%3D%22M3.5%2020.5V5.5C7%203%2011.5%201.5%2014%203.5C15.5%204.7%2014.8%207.5%2014.4%209M3.5%2020.5C8%2017.3%2012%2018%2018%2021%22%2F%3E%3Cpath%20d%3D%22M6%2013.8C11%2010%2013.5%2018.2%2019%2013.5%22%2F%3E%3Ccircle%20cx%3D%2221%22%20cy%3D%2211.5%22%20r%3D%221.5%22%20fill%3D%22currentColor%22%20stroke%3D%22none%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
+    <link rel="stylesheet" href="/vendor/katex.css">
+    <link rel="stylesheet" href="/styles.css">
+    <link rel="stylesheet" href="/screens.css">
+  </head>
+  <body>
+    <section id="library-home" class="library-home" aria-label="书库">
+      <header class="home-toolbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3.5 20.5V5.5C7 3 11.5 1.5 14 3.5C15.5 4.7 14.8 7.5 14.4 9M3.5 20.5C8 17.3 12 18 18 21"/><path d="M6 13.8C11 10 13.5 18.2 19 13.5"/><circle cx="21" cy="11.5" r="1.5" fill="currentColor" stroke="none"/></svg></div>
+          <div><strong>Guided Reader</strong><span>始终阅读原始 PDF。</span></div>
+        </div>
+        <label class="import-button" for="import-input">导入 PDF</label>
+        <input id="import-input" type="file" accept="application/pdf,.pdf" hidden>
+      </header>
+      <main class="home-content">
+        <section id="home-continue" hidden></section>
+        <section class="library-shelf">
+          <div class="library-heading"><span><small class="eyebrow">LIBRARY</small>　你的教材</span><span><span id="book-count">0</span> 本教材 · 本地保存</span></div>
+          <div id="book-list" class="book-list"></div>
+          <div id="library-empty" class="library-empty">
+            <p>还没有教材。</p>
+            <button class="primary-action" type="button" onclick="document.getElementById('import-input').click()">选择 PDF</button>
+          </div>
+        </section>
+        <p class="local-note">仅保存在这台电脑上</p>
+      </main>
+    </section>
+
+    <section id="reader" class="reader" hidden>
+      <header class="toolbar">
+        <div class="book-heading">
+          <button id="back-to-library" class="back-button" type="button">← 书库</button>
+          <div><span id="reader-section-hint" class="eyebrow">正在阅读</span><h1 id="reader-title"></h1></div>
+        </div>
+        <div class="reader-page-controls" aria-label="PDF 翻页">
+          <button id="previous-page" class="icon-button" aria-label="上一页">←</button>
+          <label class="page-control"><span class="sr-only">PDF 页码</span><input id="page-number" type="number" min="1" value="1"><span id="page-total">/ 1</span></label>
+          <button id="next-page" class="icon-button" aria-label="下一页">→</button>
+        </div>
+        <div class="reader-controls" aria-label="阅读器控制">
+          <span class="control-divider"></span>
+          <output id="preparation-status" class="preparation-status">正在准备文字…</output>
+          <button id="printed-page-edit" class="printed-page" type="button" title="设置本页印刷页码"><span id="printed-page-label">印刷页未知</span></button>
+          <button id="outline-toggle" class="outline-toggle" type="button" aria-expanded="false" aria-label="目录" title="目录">目录</button>
+          <button id="search-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="书内搜索" title="书内搜索">⌕</button>
+          <button id="marks-toggle" class="marks-toggle" type="button" aria-expanded="false" aria-label="本页笔记与标记" title="笔记与标记"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M4 3h16v12l-6 6H4z"/><path d="M14 21v-6h6M8 8h8M8 12h6"/></svg><span id="marks-count" class="marks-count" hidden>0</span></button>
+          <button id="assistant-toggle" class="assistant-toggle" type="button" aria-expanded="false" aria-label="继续解释" title="继续当前临时解释" hidden>继续解释</button>
+          <div id="reader-more" class="reader-more">
+            <button id="reader-more-toggle" type="button" aria-expanded="false" aria-controls="reader-more-menu" aria-label="更多阅读工具" title="更多阅读工具">···</button>
+            <div id="reader-more-menu" class="reader-more-menu" role="group" aria-label="更多阅读工具">
+              <span class="control-divider"></span>
+              <button id="zoom-out" class="icon-button" aria-label="缩小">−</button>
+              <output id="zoom-value">100%</output>
+              <button id="zoom-in" class="icon-button" aria-label="放大">＋</button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <div id="viewer" class="viewer" tabindex="0" aria-label="PDF 页面">
+        <div id="pages" class="pages"></div>
+      </div>
+      <aside id="outline-panel" class="outline-panel" aria-label="目录" hidden>
+        <div class="marks-panel-heading"><strong>目录</strong><button id="outline-close" type="button" aria-label="关闭目录">×</button></div>
+        <p id="outline-status" class="outline-status">正在读取教材目录…</p>
+        <nav id="outline-tree" class="outline-tree" aria-label="教材目录"></nav>
+        <p id="outline-empty" class="marks-empty">尚未从教材书签或目录页建立目录。</p>
+      </aside>
+      <aside id="search-panel" class="search-panel" aria-label="书内搜索" hidden>
+        <div class="marks-panel-heading"><strong>书内搜索</strong><button id="search-close" type="button" aria-label="关闭书内搜索">×</button></div>
+        <form id="search-form" class="search-form"><input id="search-query" type="search" maxlength="120" placeholder="搜索总线、中断向量……" aria-label="搜索本书"><button type="submit">搜索</button></form>
+        <p id="search-coverage" class="search-coverage">正在读取搜索范围…</p>
+        <div id="search-results" class="search-results"></div>
+        <p id="search-empty" class="marks-empty">输入关键词以搜索已准备页面。</p>
+      </aside>
+      <aside id="knowledge-panel" class="knowledge-panel" aria-label="章节学习地图" hidden>
+        <div class="marks-panel-heading"><strong id="knowledge-title">章节学习地图</strong><button id="knowledge-close" type="button" aria-label="关闭章节学习地图">×</button></div>
+        <p id="knowledge-status" class="outline-status">请先从目录选择一个章节。</p>
+        <button id="knowledge-prepare" class="knowledge-prepare" type="button" hidden>准备本章学习地图</button>
+        <div id="knowledge-map" class="knowledge-map"></div>
+        <p id="knowledge-empty" class="marks-empty">尚未准备这个章节的学习地图。</p>
+      </aside>
+      <aside id="marks-panel" class="marks-panel" aria-label="当前页标记" hidden>
+        <div class="marks-panel-heading"><strong>第 <span id="marks-page">1</span> 页的标记</strong><button id="marks-close" type="button" aria-label="关闭标记面板">×</button></div>
+        <div id="marks-list" class="marks-list"></div>
+        <p id="marks-empty" class="marks-empty">本页没有标记。</p>
+      </aside>
+      <aside id="assistant-panel" class="assistant-panel" aria-label="问 AI" hidden>
+        <div id="assistant-resize-handle" class="assistant-resize-handle" role="separator" tabindex="0"
+             aria-label="调整临时解释面板宽度" aria-orientation="vertical"></div>
+        <div class="assistant-heading">
+          <div class="assistant-heading-title">
+            <span class="eyebrow" title="解释仅保留在当前 Reader 会话中；退出 Reader 或关闭主题会清除对应临时解释。">解释</span><strong id="assistant-title" class="sr-only">问 AI</strong>
+          </div>
+          <div class="assistant-heading-actions">
+            <div class="assistant-model-control">
+              <label class="assistant-model" for="assistant-model">
+                <span class="sr-only">模型</span>
+                <select id="assistant-model" aria-label="当前 AI 模型">
+                  <option value="deepseek">DeepSeek · deepseek-flash</option>
+                  <option value="zhipu">Zhipu · GLM-5.3-Flash</option>
+                  <option value="openrouter">OpenRouter · google/gemini-3.8-flash</option>
+                </select>
+              </label>
+              <small id="assistant-model-lock" class="assistant-model-lock" hidden>当前会话已锁定</small>
+            </div>
+            <button id="assistant-expand" class="assistant-expand" type="button" aria-pressed="false"
+                    aria-label="展开临时解释面板" title="展开临时解释面板">展开</button>
+            <button id="assistant-close" type="button" aria-label="收起临时解释面板" title="收起解释面板">收起</button>
+          </div>
+        </div>
+        <div id="assistant-context-bar" class="assistant-context-bar" hidden>
+          <button id="assistant-back" type="button" aria-label="返回上一层解释">← 上一层</button>
+          <label class="sr-only" for="assistant-root-switcher">切换解释主题</label>
+          <select id="assistant-root-switcher" aria-label="切换保留的解释主题"></select>
+          <nav id="assistant-breadcrumb" class="assistant-breadcrumb" aria-label="解释层级路径" hidden></nav>
+          <output id="assistant-depth" aria-label="当前解释深度">1/5</output>
+          <button id="assistant-close-root" type="button">关闭此主题</button>
+        </div>
+        <section id="assistant-children" class="assistant-children" aria-label="已展开的解释" hidden>
+          <span>已展开</span>
+          <div id="assistant-child-list" class="assistant-child-list"></div>
+        </section>
+        <p id="assistant-scope" class="assistant-scope">等待教材选区</p>
+        <form id="assistant-first-turn" class="assistant-first-turn" hidden>
+          <p><span class="sr-only">准备解释</span><q id="assistant-draft-text"></q></p>
+          <button id="assistant-start" type="submit">发送</button>
+          <p id="assistant-readiness" class="assistant-readiness" role="status" hidden></p>
+        </form>
+        <div id="assistant-turns" class="assistant-turns" aria-live="polite"></div>
+        <p id="assistant-empty" class="assistant-empty">在原始 PDF 中选择文字，右键选择「问 AI」。</p>
+        <form id="assistant-follow-up" class="assistant-follow-up" hidden>
+          <label class="sr-only" for="assistant-question">继续追问</label>
+          <textarea id="assistant-question" maxlength="500" rows="2" placeholder="继续追问，例如：为什么？"></textarea>
+          <button id="assistant-send" type="submit">发送</button>
+        </form>
+        <p class="assistant-lifetime">对话仅保存在当前 Reader 内存中；关闭即清空。</p>
+      </aside>
+      <div id="assistant-answer-actions" class="selection-actions assistant-answer-actions" role="toolbar" aria-label="回答选区操作" hidden>
+        <div class="selection-action-row">
+          <button id="assistant-ask-deeper" type="button">再问一层</button>
+          <button id="assistant-cancel-selection" class="cancel-selection" type="button" aria-label="关闭选区操作">×</button>
+        </div>
+      </div>
+    </section>
+    <div id="selection-actions" class="selection-actions" role="toolbar" aria-label="选区操作" hidden>
+      <div class="selection-action-row">
+        <button id="copy-selection" type="button">复制</button>
+        <button id="ask-selection" type="button" disabled title="正在检查 DeepSeek 配置">问 AI</button>
+        <button id="save-highlight" type="button" aria-expanded="false" aria-controls="highlight-colors">高亮</button>
+        <button id="add-note" type="button" aria-expanded="false">添加笔记</button>
+        <button id="cancel-selection" class="cancel-selection" type="button" aria-label="关闭选区操作">×</button>
+      </div>
+      <fieldset id="highlight-colors" class="highlight-styles" hidden>
+        <legend>高亮样式</legend>
+        <label title="黄色"><input type="radio" name="highlight-style" value="YELLOW" checked><span class="style-swatch yellow" aria-hidden="true"></span><span class="sr-only">黄色</span></label>
+        <label title="绿色"><input type="radio" name="highlight-style" value="GREEN"><span class="style-swatch green" aria-hidden="true"></span><span class="sr-only">绿色</span></label>
+        <label title="蓝色"><input type="radio" name="highlight-style" value="BLUE"><span class="style-swatch blue" aria-hidden="true"></span><span class="sr-only">蓝色</span></label>
+        <label title="无可见高亮"><input type="radio" name="highlight-style" value="NONE"><span class="style-swatch none" aria-hidden="true">×</span><span class="sr-only">无可见高亮</span></label>
+      </fieldset>
+      <form id="note-editor" class="note-editor" hidden>
+        <label class="sr-only" for="annotation-note">短笔记</label>
+        <input id="annotation-note" type="text" maxlength="1000" required placeholder="添加一条短笔记……">
+        <button id="save-note" type="submit">保存笔记</button>
+      </form>
+    </div>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

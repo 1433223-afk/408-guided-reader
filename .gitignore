@@ -1,0 +1,71 @@
+# Secrets and local environment — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.*
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local runtime, caches, build output and scratch state
+var/
+tmp/
+.tmp/
+.cache/
+*.log
+
+# Note: language- and tool-specific ignore rules are deliberately omitted.
+# They belong with the toolchain that IMPLEMENTATION_BLUEPRINT.md selects,
+# and are added when that toolchain is actually introduced.
+
+# Python / Node toolchains selected for R1
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+node_modules/
+test-results/
+playwright-report/
+
+# GitHub-safe mirror: personal materials and runtime data stay local.
+*.pdf
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+*.bak
+/data/
+/blobs/
+/backups/
+/exports/
+/screenshots/
+/logs/
+/temp/
+/cache/
+/build/
+/dist/
+credentials.*
+# Product credential adapter source is code, not a credential file.
+!/src/reader_service/agent_runtime/credentials.py
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+# Do not reintroduce the excluded real-content design masters.
+/docs/ui/masters/01-home-learning-space.png
+/docs/ui/masters/02-book-overview.png
+/docs/ui/masters/03-reader-study-space.png
+/docs/ui/masters/04-learning-memory.png

@@ -1,0 +1,36 @@
+{
+  "name": "408-guided-reader-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests-js/*.test.js",
+    "test:e2e": "node tests-e2e/reader.mjs",
+    "test:e2e:position": "node tests-e2e/reading-position.mjs",
+    "test:e2e:r2": "node tests-e2e/selectable-reader.mjs",
+    "test:e2e:r3": "node tests-e2e/annotations.mjs",
+    "test:e2e:find": "node tests-e2e/find-in-book.mjs",
+    "test:e2e:map": "node tests-e2e/map-the-book.mjs",
+    "test:e2e:ask": "node tests-e2e/ask-about-this.mjs",
+    "test:e2e:save": "node tests-e2e/saved-explanations.mjs",
+    "test:e2e:knowledge": "node tests-e2e/knowledge-map.mjs",
+    "test:e2e:knowledge:regenerate": "node tests-e2e/knowledge-map-regeneration.mjs",
+    "test:e2e:master": "node tests-e2e/master-learning.mjs",
+    "test:e2e:master-history": "node tests-e2e/master-chapter-history.mjs",
+    "test:e2e:master-stream": "node tests-e2e/master-streaming.mjs",
+    "test:e2e:memory": "node tests-e2e/learning-memory.mjs",
+    "test:e2e:guide": "node tests-e2e/reading-guide.mjs",
+    "test:e2e:knowledge:real": "node tests-e2e/knowledge-map-real-provider.mjs",
+    "test:e2e:ask:real": "node tests-e2e/ask-about-this-real.mjs",
+    "test:e2e:bakeoff:real": "node tests-e2e/provider-bakeoff-real.mjs",
+    "test:e2e:recovery": "node tests-e2e/preparation-recovery.mjs"
+  },
+  "dependencies": {
+    "dompurify": "3.4.14",
+    "katex": "0.18.6",
+    "marked": "18.0.11",
+    "pdfjs-dist": "6.3.289"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
+  }
+}
