@@ -111,6 +111,110 @@ export function header(active, home, memory, extra) {
   }
   h.append(brand, nav); if (extra) h.append(extra); return h;
 }
+// Presentation-only extension seam. A future upload owner can supply its resolved local URL;
+// this component neither uploads nor persists assets or changes Book identity.
+export const BOOK_COVER_FAMILY = Object.freeze({
+  coa: {color:'#304d40', label:'COA'}, ds: {color:'#637e90', label:'DS'},
+  os: {color:'#596778', label:'OS'}, cn: {color:'#355e66', label:'CN'},
+  grid: {color:'#718278', label:''}, node: {color:'#788b99', label:''},
+  layer: {color:'#667866', label:''}, flow: {color:'#727c90', label:''},
+  block: {color:'#827d70', label:''}, signal: {color:'#557b7b', label:''},
+});
+// Optional book.cover = {variant, userCoverUrl}; presentation metadata only, no schema write.
+export function resolveBookCoverVariant(book, requested = book.cover?.variant) {
+  if (Object.hasOwn(BOOK_COVER_FAMILY, requested)) return requested;
+  if (requested === 'fallback') return 'layer'; // Earlier presentation callers remain valid.
+  const title = book.title || '';
+  for (const [variant, pattern] of [
+    ['coa', /计算机组成|computer organization/i], ['ds', /数据结构|data structures?/i],
+    ['os', /操作系统|operating systems?/i], ['cn', /计算机网络|computer networks?/i],
+  ]) if (pattern.test(title)) return variant;
+  // Stable book identity, independent of list order, recency, and thumbnail size.
+  let hash = 0;
+  for (const character of String(book.id || title)) hash = (Math.imul(hash, 31) + character.codePointAt(0)) >>> 0;
+  return ['grid','node','layer','flow','block','signal'][hash % 6];
+}
+export function createBookCover(book, className = '', {
+  userCoverUrl = book.cover?.userCoverUrl ?? null, defaultVariant = book.cover?.variant,
+  density = className.split(/\s+/).includes('book-spine') ? 'small' : 'large',
+} = {}) {
+  const variant = resolveBookCoverVariant(book, defaultVariant);
+  const source = ['coa','ds','os','cn'].includes(variant) ? 'system' : 'fallback';
+  const cover = node('div', '', `book-cover ${className}`);
+  cover.dataset.coverVariant = variant;
+  cover.dataset.coverDensity = density === 'small' ? 'small' : 'large';
+  cover.dataset.coverSource = source;
+  cover.setAttribute('aria-hidden', 'true');
+  const patterns = {
+    coa: `<rect x="20" y="38" width="35" height="35" fill="#91a99a"/>
+      <rect x="59" y="38" width="21" height="59" fill="#668471"/>
+      <rect x="20" y="77" width="35" height="20" fill="#c3cec0"/>
+      <path d="M20 108h60M43 108v14M69 108v14" stroke="#91a99a" stroke-width="1"/>
+      <rect x="20" y="119" width="11" height="5" fill="#668471"/>`,
+    ds: `<path d="M20 40h60M20 60h60M20 80h60M20 100h60M20 120h60M20 40v80M40 40v80M60 40v80M80 40v80" stroke="#b5c8c8" stroke-opacity=".22" stroke-width=".7"/>
+      <path d="M40 45v25M40 70H23v27M40 70h30v27M70 97v20" fill="none" stroke="#d9e2d9" stroke-width="1.5"/>
+      <g fill="#d9e2d9"><circle cx="40" cy="45" r="5"/><circle cx="40" cy="70" r="4"/><circle cx="23" cy="97" r="5"/><circle cx="70" cy="97" r="5"/><circle cx="70" cy="117" r="3"/></g>`,
+    os: `<g fill="#bbc7d0"><rect x="20" y="40" width="60" height="13"/><rect x="20" y="66" width="39" height="13" opacity=".8"/><rect x="20" y="92" width="49" height="13" opacity=".6"/></g>
+      <path d="M80 59v59H20M65 72h15M75 98h5" fill="none" stroke="#d8dedf" stroke-width="1.5"/>
+      <path d="m25 114-5 4 5 4" fill="none" stroke="#d8dedf"/>`,
+    cn: `<path d="M22 47 50 65 77 42M50 65 25 105 78 112 50 65M22 47v58M77 42l1 70" fill="none" stroke="#b2cbd0" stroke-width="1.3"/>
+      <g fill="#d2dedd"><rect x="17" y="42" width="10" height="10"/><rect x="72" y="37" width="10" height="10"/><circle cx="50" cy="65" r="7"/><circle cx="25" cy="105" r="5"/><circle cx="78" cy="112" r="5"/></g>`,
+    grid: `<path d="M21 42h58v76H21zM21 61h58M21 80h58M21 99h58M40 42v76M60 42v76" fill="none" stroke="#ccd5c9" stroke-width="1"/>
+      <rect x="41" y="62" width="18" height="17" fill="#c4d0c0"/><rect x="61" y="100" width="17" height="17" fill="#a4b8a6"/>`,
+    node: `<path d="m23 80 28-34 28 34-28 34zM23 80h56M51 46v68" fill="none" stroke="#cdd8de" stroke-width="1.2"/>
+      <g fill="#dde4e2"><circle cx="51" cy="46" r="6"/><circle cx="23" cy="80" r="5"/><circle cx="79" cy="80" r="5"/><circle cx="51" cy="114" r="6"/><circle cx="51" cy="80" r="3"/></g>`,
+    layer: `<path d="M20 44h44v64H20z" fill="#b8c4b4"/>
+      <path d="M32 56h44v64H32z" fill="#8fa18e"/>
+      <path d="M44 68h36v52H44z" fill="#d6dccd"/>
+      <path d="M51 79h22M51 86h22M51 93h14" stroke="#81927f" stroke-width="1"/>`,
+    flow: `<path d="M22 45h27v31h29v39M22 65h14v31h29v19" fill="none" stroke="#d4d9e0" stroke-width="2"/>
+      <path d="m73 110 5 5 5-5m-23 0 5 5 5-5" fill="none" stroke="#d4d9e0" stroke-width="1.5"/>
+      <g fill="#b1bbcf"><rect x="18" y="41" width="8" height="8"/><rect x="18" y="61" width="8" height="8"/><rect x="45" y="72" width="8" height="8"/></g>`,
+    block: `<rect x="20" y="43" width="36" height="36" fill="#d5d2c5"/><rect x="60" y="43" width="20" height="20" fill="#b5b6a7"/>
+      <rect x="20" y="83" width="20" height="34" fill="#b5b6a7"/><rect x="44" y="83" width="36" height="34" fill="#c5c6b8"/><path d="M60 68h20v11H60z" fill="#9da99e"/>`,
+    signal: `<path d="M20 116h60" stroke="#adc8c5" stroke-opacity=".5"/>
+      <path d="M20 83h9V57h10v45h11V42h10v53h10V70h10" fill="none" stroke="#d3e0da" stroke-width="2"/>
+      <path d="M20 126h13m5 0h22m5 0h15" stroke="#a9c6bf" stroke-width="2"/>`,
+  };
+  // Dedicated small artwork: same identity, fewer details at 40–60 px.
+  patterns.node = `<path d="M50 80V43m0 37 30-18M50 80l23 31M50 80l-23 31M50 80 20 62" stroke="#cdd8de" stroke-width="2"/>
+    <g fill="#dde4e2"><circle cx="50" cy="80" r="12"/><circle cx="50" cy="43" r="5"/><circle cx="80" cy="62" r="5"/><circle cx="73" cy="111" r="5"/><circle cx="27" cy="111" r="5"/><circle cx="20" cy="62" r="5"/></g>`;
+  patterns.block = `<path d="M20 91h20v24H20zM40 67h20v48H40zM60 43h20v72H60z" fill="#d5d2c5"/>
+    <path d="M40 91h20m0-24h20M60 91h20" stroke="#827d70" stroke-width="3"/>`;
+  const smallPatterns = {
+    coa: `<path d="M19 38h36v38H19z" fill="#91a99a"/><path d="M60 38h22v65H60z" fill="#668471"/><path d="M19 82h36v21H19z" fill="#c3cec0"/>`,
+    ds: `<path d="M50 43v30H23v35m27-35h27v35" fill="none" stroke="#d9e2d9" stroke-width="3"/><g fill="#d9e2d9"><circle cx="50" cy="43" r="8"/><circle cx="23" cy="108" r="7"/><circle cx="77" cy="108" r="7"/></g>`,
+    os: `<g fill="#bbc7d0"><path d="M19 40h62v17H19zM19 68h43v17H19zM19 96h53v17H19z"/></g><path d="M81 66v57H19" fill="none" stroke="#d8dedf" stroke-width="2"/>`,
+    cn: `<path d="m23 45 54 12-14 54-40-14zM23 45l40 66" fill="none" stroke="#b2cbd0" stroke-width="3"/><g fill="#d2dedd"><path d="M16 38h14v14H16zM70 50h14v14H70zM56 104h14v14H56zM16 90h14v14H16z"/></g>`,
+    grid: `<path d="M20 43h60v72H20zM20 67h60M20 91h60M50 43v72" fill="none" stroke="#ccd5c9" stroke-width="2"/><path d="M52 69h26v20H52z" fill="#c4d0c0"/>`,
+    node: `<path d="M50 80V43m0 37-27 30m27-30 27 30" stroke="#cdd8de" stroke-width="3"/><g fill="#dde4e2"><circle cx="50" cy="80" r="14"/><circle cx="50" cy="43" r="7"/><circle cx="23" cy="110" r="7"/><circle cx="77" cy="110" r="7"/></g>`,
+    layer: `<path d="M19 40h42v62H19z" fill="#b8c4b4"/><path d="M31 53h43v62H31z" fill="#8fa18e"/><path d="M44 66h38v52H44z" fill="#d6dccd"/>`,
+    flow: `<path d="M20 43h29v34h30v37m-9-9 9 9 9-9" fill="none" stroke="#d4d9e0" stroke-width="3"/><path d="M14 37h12v12H14zM43 71h12v12H43z" fill="#b1bbcf"/>`,
+    block: `<path d="M19 91h21v24H19zM40 67h21v48H40zM61 43h21v72H61z" fill="#d5d2c5"/>`,
+    signal: `<path d="M18 94h16V56h17v55h16V39h15" fill="none" stroke="#d3e0da" stroke-width="3"/>`,
+  };
+  const {color:background, label} = BOOK_COVER_FAMILY[variant];
+  cover.innerHTML = `<svg viewBox="0 0 100 144" xmlns="http://www.w3.org/2000/svg" focusable="false">
+    <rect width="100" height="144" fill="#edece2"/>
+    <rect x="5" y="5" width="90" height="134" fill="${background}"/>
+    <path d="M13 5v134" stroke="#eceee1" stroke-opacity=".12"/>
+    <text x="20" y="24" fill="#d4dfd2" font-size="8" letter-spacing="1.6">${label}</text>
+    ${density === 'small' ? smallPatterns[variant] : patterns[variant]}</svg>`;
+  if (userCoverUrl) {
+    // Only already-resolved local assets: no third-party image request from a book title.
+    try {
+      const url = new URL(userCoverUrl, location.href);
+      if (url.origin === location.origin && ['http:', 'https:', 'blob:'].includes(url.protocol)) {
+        const image = document.createElement('img'); image.alt = ''; image.decoding = 'async';
+        image.onload = () => { cover.dataset.coverSource = 'user'; };
+        image.onerror = () => { image.remove(); cover.dataset.coverSource = source; };
+        image.src = url.href; cover.append(image);
+      }
+    } catch { /* Keep the system/fallback illustration available. */ }
+  }
+  return cover;
+}
+
 export function createScreens({api, home, memory, read, remove, revision, announce, isAuxiliary}) {
   const overview = node('section', '', 'book-overview'); overview.id = 'book-overview'; overview.hidden = true;
   let selectedBook = null, selectedChapter = null, epoch = 0, timer, nodes = [], learning = null, currentSection = null, reading = [];
@@ -211,7 +315,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
     const list = document.getElementById('book-list'); list.replaceChildren();
     for(const book of books) {
       const r = book.active_revision, row = node('article', '', 'book-card');
-      const cover = node('div', book.title.replace(/^\d+/, '').slice(0, 4), 'book-spine');
+      const cover = createBookCover(book, 'book-spine');
       const info = node('div', '', 'book-info'); info.append(node('h2', book.title, 'book-card-title'), node('p', r ? `${r.page_count} 个 PDF 页面 · ${r.position.updated_at ? `上次读到 PDF ${r.position.pdf_page_index + 1}` : '尚未开始学习'}` : '删除未完成', 'book-card-meta'));
       row.append(cover, info);
       if(r) row.append(action('打开', () => open(book), 'book-open'));
@@ -232,10 +336,41 @@ export function createScreens({api, home, memory, read, remove, revision, announ
     const r = recent.active_revision, p = r.position;
     block.append(node('p', 'CONTINUE　继续学习', 'eyebrow'));
     const row = node('div', '', 'continue-row'), info = node('div', '', 'continue-info');
-    info.append(node('p', recent.title, 'muted')); const h = node('h1', `继续阅读教材`); info.append(h, node('p', `PDF ${p.pdf_page_index+1} / ${r.page_count} · ${Math.round(p.zoom*100)}%`, 'muted'));
-    const links = node('div', '', 'continue-actions'); links.append(action('继续学习 →', () => read(recent), 'primary-action'), action('查看全书结构', () => open(recent)));
-    row.append(node('div', recent.title.replace(/^\d+/, ''), 'continue-cover'), info, links); block.append(row);
-    try { const c = await api(`/api/revisions/${r.id}/reading-context?page=${p.pdf_page_index}&y=${p.normalized_offset}`); if(h.isConnected) { h.textContent = c.section?.title || c.chapter?.title || '继续阅读教材'; const counts=c.learning_counts; if(counts) info.append(node('p', `${counts.UNDERSTOOD} 已理解　·　${counts.NOT_FULLY_CLEAR} 仍不清楚　·　${counts.UNCONFIRMED} 待确认`, 'continue-stats')); } } catch { /* PDF resume remains independent. */ }
+    const section = node('p', '', 'continue-section');
+    const h = node('h1', '继续阅读教材', 'continue-location');
+    const status = node('div', '', 'continue-progress'); status.setAttribute('aria-live', 'polite');
+    info.append(node('p', recent.title, 'continue-book'), section, h,
+      node('p', `PDF ${p.pdf_page_index+1} / ${r.page_count}`, 'continue-position'), status);
+    const resume = action('继续学习 →', () => read(recent), 'primary-action');
+    resume.setAttribute('aria-label', `继续学习 ${recent.title}，PDF ${p.pdf_page_index+1}`);
+    const links = node('div', '', 'continue-actions');
+    links.append(resume, action('查看全书结构', () => open(recent), 'continue-overview'));
+    row.append(createBookCover(recent, 'continue-cover'), info, links);
+    block.append(row);
+    status.append(node('p', '正在读取学习状态…', 'continue-stats'));
+    try {
+      const c = await api(`/api/revisions/${r.id}/reading-context?page=${p.pdf_page_index}&y=${p.normalized_offset}`);
+      if(!h.isConnected) return;
+      h.textContent = c.subsection?.title || c.section?.title || c.chapter?.title || '继续阅读教材';
+      section.textContent = c.subsection ? (c.section?.title || c.chapter?.title || '') : (c.section ? c.chapter?.title || '' : '');
+      section.hidden = !section.textContent;
+      status.replaceChildren();
+      const counts = c.learning_counts;
+      const total = counts ? counts.UNDERSTOOD + counts.NOT_FULLY_CLEAR + counts.UNCONFIRMED : 0;
+      if(total) {
+        status.append(node('p', `本章 ${counts.UNDERSTOOD + counts.NOT_FULLY_CLEAR} / ${total} 已确认 · ${counts.NOT_FULLY_CLEAR} 个仍需理解`, 'continue-stats'));
+        const strip = node('div', '', 'continue-progress-strip');
+        strip.setAttribute('role', 'img');
+        strip.setAttribute('aria-label', `本章：${counts.UNDERSTOOD} 已理解，${counts.NOT_FULLY_CLEAR} 仍需理解，${counts.UNCONFIRMED} 未确认`);
+        for(const key of ['UNDERSTOOD', 'NOT_FULLY_CLEAR', 'UNCONFIRMED']) {
+          const segment = node('span', '', key.toLowerCase());
+          segment.style.flexGrow = String(counts[key]); strip.append(segment);
+        }
+        status.append(strip);
+      } else status.append(node('p', '学习状态待确认 · 可继续阅读', 'continue-stats'));
+    } catch {
+      if(status.isConnected) status.replaceChildren(node('p', '学习状态暂不可用 · 可继续阅读', 'continue-stats'));
+    }
   }
   return {open, close, library, overview};
 }
