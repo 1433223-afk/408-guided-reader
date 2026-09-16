@@ -66,8 +66,8 @@ try {
   await openGuide(page, ready);
   assert.equal(await page.locator('#guide-primary-action').isVisible(), true);
   assert.equal(await page.locator('#guide-primary-action').textContent(), '生成本节导读');
-  assert.equal(await page.locator('#guide-more').isVisible(), false);
-  assert.equal(await page.locator('#guide-expand').isVisible(), false);
+  assert.equal(await page.locator('#guide-regenerate').isVisible(), false);
+  assert.equal(await page.locator('#guide-more,#guide-expand').count(), 0);
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/reading-guide-not-generated.png', fullPage: true });
   await page.evaluate(() => {
@@ -88,8 +88,8 @@ try {
   assert.ok(stages.some(value => value.includes('独立审查')), JSON.stringify(stages));
   assert.ok(first.published, JSON.stringify(first.task));
   await page.locator('.guide-text').first().waitFor();
-  assert.equal(await page.locator('#guide-more').isVisible(), true);
-  assert.equal(await page.locator('#guide-expand').isVisible(), true);
+  assert.equal(await page.locator('#guide-regenerate').isVisible(), true);
+  assert.equal(await page.locator('#guide-more,#guide-expand').count(), 0);
   const sources = page.locator('.guide-source:not([disabled])');
   const sourceCount = await sources.count(); assert.ok(sourceCount);
   const ordered = first.published.content.modules.flatMap(m => m.source_ids.map(id => first.published.sources[id]));
@@ -105,20 +105,23 @@ try {
     assert.ok(Math.abs(position) < 10, `Source geometry mismatch: ${position}`);
     await openGuide(page, ready);
   }
+  // Guide prose uses the Reader selection treatment and exposes only Copy / Ask AI.
+  const text = page.locator('.guide-text').first();
+  const rect = await text.boundingBox();
+  await page.mouse.move(rect.x + 3, rect.y + 13); await page.mouse.down();
+  await page.mouse.move(rect.x + 180, rect.y + 13, { steps: 15 }); await page.mouse.up();
+  await page.mouse.click(rect.x + 60, rect.y + 13, { button: 'right' });
+  assert.deepEqual(await page.locator('#selection-actions .selection-action-row button:visible').allTextContents(), ['复制', '问 AI']);
+  assert.equal(await text.evaluate(element => getComputedStyle(element, '::selection').backgroundColor), 'rgba(65, 126, 211, 0.2)');
+  await page.screenshot({ path: 'test-results/reading-guide-selection-actions.png', fullPage: true });
   if (!guideUiFlowOnly) {
-    // Select real displayed Guide text through a pointer drag, then use the existing Assistant UI.
-    const text = page.locator('.guide-text').first();
-    const rect = await text.boundingBox();
-    await page.mouse.move(rect.x + 3, rect.y + 13); await page.mouse.down();
-    await page.mouse.move(rect.x + 180, rect.y + 13, { steps: 15 }); await page.mouse.up();
-    await page.mouse.click(rect.x + 60, rect.y + 13, { button: 'right' });
     await page.locator('#selection-actions #ask-selection').click();
     await page.locator('#assistant-draft-text').waitFor();
     await page.locator('#assistant-start').click();
     await page.locator('#assistant-turns .assistant-answer-bubble').first().waitFor({ timeout: 180000 });
     await page.locator('#assistant-close').click();
     await openGuide(page, ready);
-  }
+  } else await page.keyboard.press('Escape');
   await page.locator('#guide-close').click();
   await page.locator('#next-page').click();
   await page.locator('#back-to-library').click();
@@ -154,7 +157,7 @@ try {
       return { backgroundColor: style.backgroundColor, color: style.color, opacity: style.opacity };
     });
     assert.deepEqual(retryStyle, { backgroundColor: 'rgb(37, 73, 54)', color: 'rgb(255, 255, 255)', opacity: '1' });
-    assert.equal(await page.locator('#guide-more').isVisible(), false);
+    assert.equal(await page.locator('#guide-regenerate').isVisible(), false);
     await page.screenshot({ path: 'test-results/reading-guide-failed-retry.png', fullPage: true });
     fail = false;
     await stop(); running = await start(loopback);
@@ -220,6 +223,5 @@ async function stop() {
 }
 
 async function action(page, name, operation) {
-  if (operation === 'regenerate') await page.locator('#guide-more > summary').click();
   await Promise.all([page.waitForResponse(r => r.url().endsWith('/guide/' + operation) && r.request().method() === 'POST'), page.getByRole('button', { name, exact: true }).click()]);
 }

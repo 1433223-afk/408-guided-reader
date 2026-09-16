@@ -174,7 +174,7 @@ print(json.dumps({'master':m['id'],'annotation':a['id'],'annotation_page':a['pdf
   await page.locator('#guide-reopen').click();
   await page.locator('#guide-content .guide-text').first().waitFor();
   assert.ok(Math.abs(await page.locator('#guide-scroll').evaluate(p=>p.scrollTop)-guideScroll)<3);
-  await page.locator('#guide-more>summary').click();await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#guide-regenerate').isVisible(),true);
   assert.ok(await page.locator('#guide-panel').isVisible());
   const citation=page.locator('.guide-source:not([disabled])').first(); await citation.click();
   await page.locator('#guide-close').click();

@@ -808,3 +808,26 @@ its Master fixture; that unrelated fixture failure is not recorded as a PASS.
 No Guide endpoint, persistence, Review/publication rule, PDF geometry, canvas/OCR path, dependency or
 Frozen Product semantic changed. This correction is `READY_FOR_USER_RETEST`; it does not claim user
 acceptance.
+
+## Reading Guide control, selection and close-centering correction (2026-09-16)
+
+The Guide-specific expand interaction and overflow menu are removed. A published Guide now exposes
+`重新生成` directly beside Close; generation and retry continue through the existing task lifecycle
+and in-place status controls. The Guide prose uses the same transparent-blue native selection
+treatment as the Reader. Its shared light selection toolbar is narrowed to exactly `复制` and
+`问 AI`; PDF selections retain Highlight, Note and Close because their source-authority workflow is
+unchanged.
+
+Closing the Guide previously removed the Grid column but allowed an old inline page offset to
+override the normal auto margins. At zoomed layouts this left the PDF visibly off center even when
+horizontal scroll had already returned to zero. Reader page wrappers now keep CSS auto centering
+across Dock transitions. When a page remains wider than the restored viewport, Guide close measures
+only the current page and updates only the Viewer horizontal scroll to center it. No all-book scan,
+`relayoutPages()`, wrapper/canvas replacement or OCR work occurs.
+
+The controlled real-348-page Guide flow PASSes direct regeneration placement, absence of Expand/More,
+transparent-blue Guide selection, the exact Copy/Ask-AI action set, generation/Review/publication,
+failure retry and restart recovery. The served split-reader regression PASSes pointer/keyboard
+resize, close/reopen, source return and high-zoom close centering with the same canvas identity,
+page, zoom and vertical scroll. This correction is `READY_FOR_USER_RETEST`; it does not claim user
+acceptance.

@@ -3153,7 +3153,9 @@ function showSelectionActions(clientX, clientY) {
     animation.cancel();
   }
   elements["selection-actions"].style.removeProperty("pointer-events");
-  for (const id of ["save-highlight", "add-note"]) elements[id].hidden = Boolean(state.guideSelection);
+  for (const id of ["save-highlight", "add-note", "cancel-selection"]) {
+    elements[id].hidden = Boolean(state.guideSelection);
+  }
   elements["selection-actions"].querySelector(".highlight-styles").hidden = true;
   elements["save-highlight"].setAttribute("aria-expanded", "false");
   state.selectionMenuPoint = { x: clientX, y: clientY };

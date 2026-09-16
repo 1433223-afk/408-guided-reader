@@ -161,8 +161,8 @@ try {
     await page.locator('#inline-open').click(); assert.equal(await page.locator(`.inline-marker[data-section-id="${ready.outline_node_id}"]`).count(),0);
     await page.locator('#inline-open').click(); await page.locator('.inline-marker').first().waitFor();
     await openGuide(page,ready);
-    await page.locator('#guide-expand').click(); await page.waitForTimeout(300);
-    await page.locator('#guide-expand').click(); await page.locator('#guide-close').click();
+    assert.equal(await page.locator('#guide-regenerate').isVisible(), true);
+    await page.locator('#guide-close').click();
     await navigateSection(page,ready); await page.locator('#inline-open').click();
     await page.locator('#back-to-library').click();
     await stop(); running=await start({...loopback,GUIDED_READER_DEEPSEEK_DISABLED:'1',GUIDED_READER_ZHIPU_DISABLED:'1'});

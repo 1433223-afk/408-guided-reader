@@ -137,10 +137,7 @@ try {
   await guideEntry.scrollIntoViewIfNeeded();
   await settlePdf(page);
   await probe(page, 'guide-open', () => guideEntry.click(), state('#guide-panel', 'hidden', false), 900);
-  if (!resizeOnly) {
-    await probe(page, 'guide-expand', () => page.locator('#guide-expand').click(), state('#guide-expand', 'aria-pressed', 'true'));
-    await probe(page, 'guide-restore', () => page.locator('#guide-expand').click(), state('#guide-expand', 'aria-pressed', 'false'));
-  }
+  assert.equal(await page.locator('#guide-expand,#guide-more').count(), 0);
   await probe(page, 'guide-resize', async () => {
     const handle = await page.locator('#guide-divider').boundingBox();
     await page.mouse.move(handle.x + 4, handle.y + 220);
@@ -198,7 +195,8 @@ try {
       assert.equal(result.wrapperIdentityPreserved, true, `${result.name} replaced a PDF wrapper`);
       assert.equal(result.zoomStable, true, `${result.name} changed zoom`);
       assert.ok(Math.abs(result.scrollTopDelta) < 1, `${result.name} moved PDF scroll by ${result.scrollTopDelta}`);
-      assert.ok(Math.abs(result.scrollLeftDelta) < 1, `${result.name} moved horizontal PDF scroll by ${result.scrollLeftDelta}`);
+      if (!result.closedLayout) assert.ok(Math.abs(result.scrollLeftDelta) < 1,
+        `${result.name} moved horizontal PDF scroll by ${result.scrollLeftDelta}`);
       assert.equal(result.currentPageStable, true, `${result.name} changed the current page`);
       assert.ok(Math.abs(result.toolbarLayout.left - result.toolbarLayout.readerLeft) < .5
         && Math.abs(result.toolbarLayout.right - result.toolbarLayout.readerRight) < .5,
