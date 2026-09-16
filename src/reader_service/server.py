@@ -113,6 +113,38 @@ def handler_factory(
                 return
             if self._memory_request(parsed.path, 'GET'):
                 return
+            guide_events = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/guide/events", parsed.path)
+            if guide_events:
+                if not self._authorized():
+                    return
+                if teaching is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "导读服务不可用。"})
+                    return
+                started = False
+                try:
+                    params = parse_qs(parsed.query)
+                    asset_id = _first(params, "asset_id") or ""
+                    after = int(_first(params, "after") or -1)
+                    revision, section = guide_events.groups()
+                    self._start_guide_stream()
+                    started = True
+                    while True:
+                        event = teaching.draft_event(revision, section, asset_id, after)
+                        self._guide_stream_event(event)
+                        if event["type"] in {"complete", "error"}:
+                            return
+                        after = event["sequence"]
+                except StreamConsumerDisconnected:
+                    return
+                except (LookupError, TypeError, ValueError) as exc:
+                    if not started:
+                        self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    else:
+                        try:
+                            self._guide_stream_event({"type": "error", "code": "GUIDE_STREAM_FAILED", "error": str(exc)})
+                        except StreamConsumerDisconnected:
+                            pass
+                    return
             guide = re.fullmatch(r"/api/revisions/([0-9a-f-]+)/sections/([0-9a-f-]+)/(guide|inline-teaching)", parsed.path)
             if guide:
                 if not self._authorized():
@@ -1223,6 +1255,22 @@ def handler_factory(
 
         def _assistant_stream_event(self, payload: dict) -> None:
             self._project_assistant_view(payload)
+            encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            try:
+                self.wfile.write(f"data: {encoded}\n\n".encode("utf-8"))
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError) as exc:
+                raise StreamConsumerDisconnected() from exc
+
+        def _start_guide_stream(self) -> None:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+        def _guide_stream_event(self, payload: dict) -> None:
             encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
             try:
                 self.wfile.write(f"data: {encoded}\n\n".encode("utf-8"))

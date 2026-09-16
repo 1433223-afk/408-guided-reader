@@ -11,9 +11,13 @@ from .service import TeachingService
 class InlineTeachingService(TeachingService):
     asset_table = "inline_teaching_assets"
     pointer_table = "section_inline_teaching"
+    draft_streaming = False
 
     def __init__(self, database, runtime):
         super().__init__(database, runtime)
+        # Guide may use its own latency-tuned provider; Inline Teaching keeps the
+        # established System provider and model routing.
+        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "openrouter").strip().lower()
         self.generator_model = os.environ.get("GUIDED_READER_INLINE_MODEL") or (
             "google/gemini-3.8-flash" if self.provider == "openrouter" else None)
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "openrouter").strip().lower()

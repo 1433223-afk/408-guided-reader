@@ -71,7 +71,7 @@ def validate_guide(value, packet):
             raise ValueError("导读引用了未知或其他节的来源。")
         supplied = "\n".join(evidence[x] for x in refs)
         prose(module["title"], 32, supplied)
-        prose(module["text"], 1400, supplied)
+        prose(module["text"], 4500, supplied)
         total += len(module["text"])
     if total > 4500:
         raise ValueError("导读正文超过长度限制。")

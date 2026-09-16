@@ -5,7 +5,7 @@ const GUIDE_DOCK_MIN_WIDTH = 320;
 const GUIDE_DOCK_MAX_WIDTH = 760;
 const GUIDE_READER_MIN_WIDTH = 280;
 
-export function createGuideUI({ state, api, goToPage, explain, layout, closeDock, contextMenu, hideContextMenu }) {
+export function createGuideUI({ state, api, streamGuide, goToPage, explain, layout, closeDock, contextMenu, hideContextMenu }) {
   const panel = document.createElement("aside");
   panel.id = "guide-panel";
   panel.className = "guide-panel";
@@ -14,7 +14,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   panel.innerHTML = `<div id="guide-divider" role="separator" tabindex="0" aria-label="导读宽度" aria-orientation="vertical" aria-controls="guide-panel"></div>
     <div class="guide-heading"><strong id="guide-title">本节导读</strong><div class="guide-tools"><button id="guide-regenerate" type="button" hidden>重新生成</button><button id="guide-close" type="button" aria-label="收起导读">×</button></div></div>
     <div class="guide-meta"><p id="guide-status" role="status"></p><button id="guide-status-retry" type="button" hidden>重试</button></div>
-    <div id="guide-scroll"><div id="guide-empty-state" class="guide-empty-state" hidden><p id="guide-empty-copy"></p><button id="guide-primary-action" type="button" hidden></button></div><div id="guide-content"></div></div>`;
+    <div id="guide-scroll"><div id="guide-empty-state" class="guide-empty-state" hidden><p id="guide-empty-copy"></p><button id="guide-primary-action" type="button" hidden></button></div><section id="guide-draft" class="guide-draft" hidden><p id="guide-draft-label" class="guide-draft-label"></p><div id="guide-draft-text" class="guide-draft-text"></div></section><p id="guide-published-label" class="guide-published-label" hidden>当前已发布版本</p><div id="guide-content"></div></div>`;
   document.getElementById("reader").append(panel);
   const title = panel.querySelector("#guide-title");
   const status = panel.querySelector("#guide-status");
@@ -27,8 +27,13 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   primaryAction.onclick = () => send(primaryAction.dataset.action);
   regenerate.onclick = () => send('regenerate');
   const content = panel.querySelector("#guide-content");
+  const draftSurface = panel.querySelector("#guide-draft");
+  const draftLabel = panel.querySelector("#guide-draft-label");
+  const draftContent = panel.querySelector("#guide-draft-text");
+  const publishedLabel = panel.querySelector("#guide-published-label");
   let sectionId = null, revisionId = null, snapshot = null, timer = 0, epoch = 0, pending = false;
   let renderedId = null, intent = null;
+  let draftText = "", draftStage = null, draftFrame = 0, streamAssetId = null, streamController = null;
   const reader = document.getElementById("reader"), scroll = panel.querySelector("#guide-scroll");
   const divider = panel.querySelector("#guide-divider");
   const reopen = document.createElement("button");
@@ -83,7 +88,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   }
   function close(collapsed = false, recenter = false) {
     if (panel.hidden && reopen.hidden) return;
-    hideContextMenu(); savePosition(); clearTimeout(timer); epoch++;
+    hideContextMenu(); savePosition(); clearTimeout(timer); stopDraftStream(); epoch++;
     layout(() => { panel.hidden = true; reader.classList.remove("guide-open"); });
     reopen.hidden = !collapsed;
     if (recenter) recenterCurrentPage();
@@ -109,6 +114,46 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   };
   window.addEventListener("resize", () => { if (!panel.hidden) setWidth(width); });
   function base() { return `/api/revisions/${revisionId}/sections/${sectionId}/guide`; }
+  function clearDraft() {
+    draftText = ""; draftStage = null;
+    if (draftFrame) cancelAnimationFrame(draftFrame);
+    draftFrame = 0; draftContent.replaceChildren(); draftSurface.hidden = true; publishedLabel.hidden = true;
+  }
+  function paintDraft() {
+    draftFrame = 0;
+    const visible = Boolean(draftText);
+    draftSurface.hidden = !visible;
+    publishedLabel.hidden = !visible || !snapshot?.published;
+    if (!visible) { draftContent.replaceChildren(); return; }
+    draftLabel.textContent = draftStage === "review" ? "生成草稿 · 审查中"
+      : draftStage === "revising" ? "生成草稿 · 修订中" : "生成草稿 · 尚未发布";
+    renderAssistantAnswer(draftContent, draftText);
+  }
+  function scheduleDraftPaint() {
+    if (!draftFrame) draftFrame = requestAnimationFrame(paintDraft);
+  }
+  function stopDraftStream() {
+    streamController?.abort(); streamController = null; streamAssetId = null;
+  }
+  function startDraftStream(assetId) {
+    if (!assetId || streamAssetId === assetId || typeof streamGuide !== "function") return;
+    stopDraftStream(); streamAssetId = assetId;
+    const controller = new AbortController(); streamController = controller;
+    const stamp = epoch;
+    streamGuide(`${base()}/events?asset_id=${encodeURIComponent(assetId)}`, { signal: controller.signal }, event => {
+      if (stamp !== epoch || controller.signal.aborted) return;
+      if (event.type === "draft") {
+        draftText = event.text || ""; draftStage = event.stage || "generating"; scheduleDraftPaint(); render();
+      } else if (event.type === "complete") {
+        clearDraft(); stopDraftStream(); load();
+      } else if (event.type === "error") {
+        clearDraft(); stopDraftStream(); load();
+      }
+    }).catch(error => {
+      if (controller.signal.aborted || stamp !== epoch) return;
+      stopDraftStream(); clearDraft(); status.textContent = error.message; load();
+    });
+  }
   function render() {
     title.textContent = `${snapshot.section.title} · 导读`;
     const task = snapshot.task, published = snapshot.published;
@@ -116,7 +161,10 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     statusRetry.hidden = task?.state !== 'FAILED' || !published; statusRetry.disabled = pending;
     statusRetry.textContent = task?.terminal ? '重新生成' : '重试';
     status.classList.toggle("ai-progress", Boolean(busy || pending));
-    status.textContent = pending ? "准备中…" : busy ? (task.stage === "REVIEW" ? "正在独立审查…" : "正在生成导读…")
+    status.textContent = pending ? "准备中…" : draftStage === "review" ? "生成草稿 · 审查中"
+      : draftStage === "revising" ? "审查意见已返回，正在修订草稿…"
+      : draftStage === "generating" ? "生成草稿 · 正文持续生成中…"
+      : draftStage === "preparing" ? "准备导读…" : busy ? (task.stage === "REVIEW" ? "正在独立审查…" : "正在生成导读…")
       : task?.state === "FAILED" ? (task.terminal ? "导读未通过审查，已停止本次生成。" : "本次导读生成或审查失败，可重试当前阶段。")
       : published ? "已通过独立审查。" : "按需生成本节简明导读，教材阅读始终可用。";
     if (published?.stale) status.textContent += " 教材依赖已变化，保留原导读，可重新生成。";
@@ -129,7 +177,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     } else status.removeAttribute("aria-label");
     regenerate.hidden = !published || Boolean(busy) || task?.state === 'FAILED';
     regenerate.disabled = pending;
-    emptyState.hidden = Boolean(published);
+    emptyState.hidden = Boolean(published || draftText);
     primaryAction.hidden = true;
     primaryAction.disabled = pending || Boolean(busy);
     emptyState.classList.toggle('busy', Boolean(pending || busy));
@@ -152,6 +200,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
         primaryAction.textContent = '生成本节导读';
       }
     }
+    if (busy && task?.id) startDraftStream(task.id);
     // Polling must not destroy a live native selection or the old published Guide.
     if (renderedId !== (published?.id || null)) {
       renderedId = published?.id || null;
@@ -166,14 +215,14 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
         if (!text.firstElementChild?.matches("h1,h2,h3,h4,h5,h6")) block.append(heading);
         block.append(text);
         const references = document.createElement("div"); references.className = "guide-references";
-        for (const [i, sourceId] of module.source_ids.entries()) {
-          const source = published.sources[sourceId], b = document.createElement("button");
-          b.type = "button"; b.className = "guide-source";
-          b.textContent = `[${i + 1}]`;
-          b.title = source.available ? `查看教材 · PDF ${source.pdf_page_index + 1}` : "来源位置待核实";
-          b.setAttribute("aria-label", `${module.title} · 来源 ${i + 1} · ${b.title}`);
-          b.disabled = !source.available;
-          b.onclick = async () => {
+        const sourceId = module.source_ids.find(id => published.sources[id]?.available) || module.source_ids[0];
+        const source = published.sources[sourceId], b = document.createElement("button");
+        b.type = "button"; b.className = "guide-source";
+        b.textContent = "查看教材位置";
+        b.title = source?.available ? `查看教材 · PDF ${source.pdf_page_index + 1}` : "来源位置待核实";
+        b.setAttribute("aria-label", `${module.title} · ${b.title}`);
+        b.disabled = !source?.available;
+        b.onclick = async () => {
             const stamp = epoch;
             try {
               const fresh = await api(base());
@@ -183,15 +232,14 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
               goToPage(verified.pdf_page_index, verified.y);
               savePosition();
             } catch (error) { status.textContent = error.message; }
-          };
-          references.append(b);
-        }
+        };
+        references.append(b);
         block.append(references);
         content.append(block);
       }
       restorePosition(positions.get(locationKey()));
     }
-    if (busy && !panel.hidden) timer = setTimeout(load, 700);
+    if (busy && !panel.hidden) { clearTimeout(timer); timer = setTimeout(load, 700); }
   }
   async function load() {
     const stamp = epoch;
@@ -211,6 +259,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
         body: JSON.stringify(action === "retry" ? { asset_id: snapshot.task.id } : { intent_id: intent.id }) });
       if (stamp !== epoch) return;
       intent = null; snapshot = result;
+      if (snapshot.task?.id) startDraftStream(snapshot.task.id);
     } catch (error) {
       if (stamp === epoch) { pending = false; render(); status.textContent = error.message; }
       return;
@@ -245,6 +294,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   async function open(id) {
     close(); sectionId = id; revisionId = state.revision.id; snapshot = null; renderedId = null; pending = false;
     content.replaceChildren(); intent = null;
+    clearDraft();
     regenerate.hidden = true; emptyState.hidden = true;
     closeDock(); reopen.hidden = true;
     layout(() => { panel.hidden = false; reader.classList.add("guide-open"); });

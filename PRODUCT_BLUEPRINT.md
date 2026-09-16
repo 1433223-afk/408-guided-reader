@@ -1535,6 +1535,14 @@ must pass independent Review before being treated as accepted Teaching Assets.
 
 The user may switch AI Teaching off, but may not publish a formal System Teaching Layer by bypassing its required Review.
 
+**Reading Guide transient-draft amendment — user-approved 2026-09-16.** While a user-requested
+Reading Guide is being generated, its real provider stream may be shown immediately as an explicitly
+labelled `生成草稿 · 尚未审查/审查中` preview. This preview exists only in current process memory: it
+is not persisted, does not update the published pointer, cannot be selected into Assistant, and has
+no PDF/source authority. Independent Review remains mandatory. Only Review `PASS` atomically
+publishes the formal Guide; any terminal generation or Review failure removes the preview and leaves
+the original PDF and any previously published Guide intact with an in-place retry.
+
 ## 30.3 Master: user-selectable Review strength
 
 Master prioritizes trustworthy learning decisions but should not force maximum latency on every interaction.

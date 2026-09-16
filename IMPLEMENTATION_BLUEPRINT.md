@@ -21,6 +21,7 @@
 | Chapter Knowledge Map taxonomy-granularity correction | User-approved amendment, 2026-09-08, after Chapter 7.1.3 incorrectly published four overview enumeration items as four durable KPs. §12.2 now makes consecutive brief taxonomy/composition/step/peer runs one upstream Section-level `MERGE`; separate KPs require sufficient current source evidence for independently assessable mechanisms, methods or relationships. Packet-local validation/retry enforces the rule before materialization; final Chapter Review is not its primary repair layer. |
 | Chapter Knowledge Map semantic-reducer simplification | User-approved amendment, 2026-09-08, after controlled Chapter 2 calibration showed multi-pass absorption/audit could oscillate between over-split and over-merge. §12.2 now requires exactly one group-first final partition per real Outline-subsection semantic window, with bounded same-input technical retry only. It supersedes packet `KEEP`/`MERGE`/`DROP`, forced enumeration/character/count heuristics, semantic cleanup/re-partition and Review-driven repair/re-review. Chapter Review remains a strict final gate whose valid FAIL ends the attempt. Existing Outline/OCR/source authority, private drafts, deterministic materialization/validation, persistence and atomic publication are unchanged. |
 | Master answer/reasoning streaming | User-approved amendment, 2026-09-15. §13.7 separates the answer model and `Quick`/`Deep` provider reasoning from independent Review, makes Review `Fast` by default, streams answer/reasoning on separate SSE events, and keeps reasoning transient. Migration 19 persists only each durable message's reasoning-mode choice. Master Topic, Mastery, grounding and Review verdict authority are unchanged. |
+| Reading Guide transient streaming | User-approved amendment, 2026-09-16. §17.1 permits an explicitly labelled, process-memory-only Writer stream before Review. It never enters `TeachingAsset.content`, never updates `section_guides`, cannot enter Assistant or source authority, and disappears on failure. Review `PASS` remains the only atomic publication path. Deterministic non-body evidence removal, local source binding and candidate-cited Review projection reduce latency without RAG or weaker Review. |
 | Authorizes | **Gate D: CLOSED (PASS).** This document is now engineering authority for 408 Guided Reader — where it and `PRODUCT_BLUEPRINT.md` disagree, the Product Blueprint still wins. **Gate E (code porting / implementation) is a separate, still-unopened authorization** — this closure does not itself authorize writing, porting, or installing anything. |
 
 ### 0.1 Why the clean-room, and what happens next
@@ -1901,6 +1902,22 @@ PUBLISHED → STALE (dependency changed) → user may regenerate
 **Only `PUBLISHED` is ever shown** as accepted teaching (§30.2). `FAILED` is never shown as a
 substitute — see §13.7a/§13.7b for what the Section sees instead. Generation scope is one section,
 maximum (§17) — never adjacent sections merely because they exist.
+
+For Reading Guide only, a user-approved transient preview may show the actual Writer SSE stream
+before publication. The UI labels it `生成草稿 · 尚未发布` and, during Review, `生成草稿 · 审查中`.
+The preview and its structured candidate live only in the Core Service process; `content_json`
+remains `NULL` until the Review-PASS publication transaction writes content and advances the
+`section_guides` pointer together. The preview is excluded from Assistant selection and source
+authority. Failure clears it. If the process restarts before publication, generation restarts from
+the durable job/dependency state rather than recovering or exposing candidate prose. Provider
+streaming reports real deltas and real TTFT; it must never simulate typing.
+
+Guide evidence egress removes deterministically recognized page furniture, exercises, answers and
+exam sidebars before source binding. Initial source binding is local and deterministic over the
+unchanged Writer draft and existing server-owned source IDs. Review receives the candidate plus the
+fresh evidence actually cited by it; targeted semantic rework receives only Review/current-module
+source IDs. These projections do not mint or remap source identity, weaken the Review rubric, or add
+RAG/vector retrieval.
 
 ### 17.2 KP dependence — `FROZEN_FROM_PRODUCT` (§17.1)
 

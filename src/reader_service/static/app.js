@@ -131,6 +131,11 @@ const ASSISTANT_DOCK_MAX_WIDTH = 760;
 const ASSISTANT_READER_MIN_WIDTH = 280;
 
 const teachingUiOptions = { state, api, goToPage,
+  streamGuide: (path, options, onEvent) => streamAssistantResponse(path, {
+    ...options,
+    credentials: "same-origin",
+    headers: { "X-Reader-Token": launchToken, Accept: "text/event-stream", ...(options?.headers || {}) },
+  }, onEvent, fetch, { label: "导读", codePrefix: "GUIDE" }),
   readingAnchor: () => captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1),
   hideContextMenu: hideSelectionActions,
   contextMenu: (x, y, text, explain) => {

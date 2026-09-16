@@ -29,7 +29,8 @@ with sqlite3.connect(Path(data_dir) / "state.sqlite3") as connection:
                     context, _, _ = writing_context.build(connection, rev, packet, ledger)
                     matches.append(draft_messages(GENERATOR, context)[1]['content'])
                 assert call['body']['messages'][1]['content'] in matches
-                assert call['body']['stream'] is False
+                assert call['body']['stream'] is True
+                assert call['body']['stream_options'] == {'include_usage': True}
                 if call['provider'] == 'openrouter':
                     assert call['body']['reasoning_effort'] == 'low'
                 checked += 1
@@ -40,12 +41,12 @@ with sqlite3.connect(Path(data_dir) / "state.sqlite3") as connection:
         section_id = payload["source"]["section"]["id"]
         assert section_id in {ready_section, no_kp_section}
         revision_id = connection.execute("SELECT book_source_revision_id FROM outline_nodes WHERE outline_node_id=?", (section_id,)).fetchone()[0]
-        fresh, fresh_ledger, _ = build(connection, revision_id, section_id, use_kp="kp_ledger" in payload["source"])
+        fresh, fresh_ledger, _ = build(connection, revision_id, section_id, use_kp=True)
+        context, _, _ = writing_context.build(connection, revision_id, fresh, fresh_ledger)
         # Persisted ledgers remain authoritative for older published versions, even
         # after a source-ID implementation refinement. IDs cannot be client-authored.
         supplied = payload["source"]
         if 'draft' in payload:
-            context, _, _ = writing_context.build(connection, revision_id, fresh, fresh_ledger)
             author_texts = []
             for prior in calls:
                 if prior['body']['messages'][0]['content'].startswith(GENERATOR) and prior['body']['messages'][1]['content'] == draft_messages(GENERATOR, context)[1]['content']:
@@ -54,17 +55,27 @@ with sqlite3.connect(Path(data_dir) / "state.sqlite3") as connection:
                     except ValueError:
                         pass  # Rejected author output must not become the assembly input.
             assert payload['draft'] in author_texts
-        assert {k: v for k, v in supplied.items() if k != 'evidence'} == {k: v for k, v in fresh.items() if k != 'evidence'}
-        expected_source = writing_context.formatter_source(fresh, context) if 'draft' in payload else fresh
+        projected = writing_context.formatter_source(fresh, context)
+        if 'candidate' in payload:
+            expected_source = writing_context.review_source(projected, payload['candidate'])
+        elif 'rework' in payload:
+            expected_source = writing_context.rework_source(projected, payload['rework']['issues'], payload['rework']['modules'])
+        else:
+            expected_source = projected
+        assert supplied['section'] == expected_source['section']
         assert supplied['evidence'] == expected_source['evidence']
         ledgers = [json.loads(r['sources_json']) for r in connection.execute('SELECT sources_json FROM teaching_assets WHERE section_node_id=? AND sources_json IS NOT NULL', (section_id,))]
         assert any({e['source_id'] for e in supplied['evidence']} <= set(ledger)
                    and all(ledger[e['source_id']]['quote'] == e['text'] for e in supplied['evidence']) for ledger in ledgers)
-        assert call["body"]["stream"] is False
-        expected_fields = {"model", "messages", "temperature", "max_tokens", "stream"}
+        assert call["body"]["stream"] is True
+        assert call["body"]["stream_options"] == {"include_usage": True}
+        expected_fields = {"model", "messages", "temperature", "max_tokens", "stream", "stream_options"}
         if call["provider"] == "openrouter" and "candidate" not in payload:
             expected_fields.add("reasoning_effort")
             assert call["body"]["reasoning_effort"] == "low"
+        if call["provider"] == "openrouter":
+            expected_fields.add("response_format")
+            assert call["body"]["response_format"] == {"type": "json_object"}
         assert set(call["body"]) == expected_fields
         assert "Authorization" not in json.dumps(call["body"])
         assert "test-loopback-key" not in json.dumps(call["body"])

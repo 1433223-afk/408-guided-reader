@@ -36,6 +36,17 @@ Prior-art: Split.js README, react-resizable-panels README, and W3C APG Window Sp
 borrow min-size constraints, resize handles, restore proportions and keyboard interaction patterns only.
 No copied external implementation or new dependency.
 
+## Accepted transient-streaming amendment — 2026-09-16
+
+The user explicitly reopened this narrow slice and approved displaying the real Writer stream before
+Review as a clearly labelled temporary draft. The draft and structured candidate are process-memory
+only: they are not persisted, cannot advance the published pointer, cannot enter Assistant or source
+authority, and disappear on terminal failure. Review PASS remains the sole publication gate.
+Deterministic non-body evidence removal, local source binding and candidate-cited Review/rework
+projections are authorized latency reductions. They do not introduce RAG/vector storage, expand
+context, mint sources or weaken Review. This amendment awaits user retest; it does not revise the
+historical 2026-09-12 acceptance claim for the earlier baseline into acceptance of this new behavior.
+
 ## Prior-art check
 
 **REQUIRED — completed.** Section-level teaching generation and source-grounded long-document output
@@ -94,9 +105,11 @@ framework or new dependency is adopted.
   content/evidence, for at most three completed semantic cycles. Technical generation or Review
   failure retries only the current request/stage, does not consume the semantic-rework count, and
   never becomes PASS.
-- Only a complete `PUBLISHED` Guide that passed independent Review is user-visible as Guide content.
-  Never expose partial output, a failed placeholder, an unreviewed fallback, silently coerced output,
-  or a technical/reviewer failure as success.
+- Only a complete `PUBLISHED` Guide that passed independent Review is user-visible as accepted Guide
+  content. A real Writer stream may be visible beforehand only as the explicitly labelled,
+  process-memory-only draft defined by the 2026-09-16 amendment. Never persist that preview, expose
+  it to Assistant/source authority, or present partial output, a failed placeholder, an unreviewed
+  fallback, silently coerced output, or a technical/reviewer failure as success.
 - Persist the Guide's durable identity, actual dependency set and versions, lifecycle state, and
   actual generator/reviewer provider metadata. Failure is Section-local and cannot invalidate another
   Section's Guide or block ordinary reading.
@@ -119,7 +132,8 @@ framework or new dependency is adopted.
 - Durable Section Guide identity, dependency/version/provider metadata, recovery, scoped staleness,
   ownership/cascade and atomic first publication/replacement using the existing job and persistence
   architecture.
-- A continuous Section article with natural headings and validated numbered source references.
+- A continuous Section article with natural headings and validated internal source identities. The
+  Reader renders only a light unnumbered `查看教材位置` action, not `[1][2]…` markers.
   PDF + Guide columns have a draggable divider and expand/restore/collapse controls. PDF remains
   visible; source jumps and layout changes preserve the Guide reading position. No new dependency
   or generic layout system. Text remains available to the existing selection-to-Assistant path.
@@ -131,7 +145,7 @@ framework or new dependency is adopted.
 - Mastery personalization, KPStatus/Profile/Memory input, learner modelling or global learning state.
 - ExamEvidence, past-exam RAG, frequency statistics or unsupported exam-weight language.
 - Vision, figure/formula understanding, OCR/formula correction, generic RAG or a vector database.
-- Streaming, a Guide editor, collaborative authoring, persistent Assistant history, or overall
+- A Guide editor, collaborative authoring, persistent Assistant history, or overall
   Reader/Assistant visual redesign.
 - Any deferred debt or UI polish unrelated to making this Guide slice complete.
 
@@ -154,8 +168,10 @@ framework or new dependency is adopted.
    never PASS.
 6. Semantic rework stops after at most three completed cycles. Technical failure retries only its
    current stage and does not consume that count; terminal failure remains honestly failed.
-7. Partial, invalid, failed and unreviewed candidates never become visible Guide content. Duplicate
-   clicks, HTTP retry and response-loss replay create at most one logical job/version/publication.
+7. Partial, invalid, failed and unreviewed candidates never become visible as accepted Guide content.
+   The only pre-Review exception is the labelled memory-only stream: it is absent from storage and
+   Assistant/source authority, disappears on failure, and never changes the published pointer.
+   Duplicate clicks, HTTP retry and response-loss replay create at most one logical job/version/publication.
 8. First publication and replacement are atomic. During regeneration the old Guide remains visible;
    failed or in-progress regeneration cannot overwrite it, and only a fully reviewed replacement
    becomes current.
@@ -171,8 +187,9 @@ framework or new dependency is adopted.
 
 Using the real 348-page textbook:
 
-1. Open one resolved Section whose Chapter KP is `READY`, explicitly generate a Guide, and inspect the
-   actual generation and Review payload boundaries.
+1. Open one resolved Section whose Chapter KP is `READY`, explicitly generate a Guide, observe real
+   Writer deltas followed by `生成草稿 · 审查中`, and inspect actual generation and Review payload
+   boundaries plus TTFT/latency. Confirm no candidate content is persisted before Review PASS.
 2. Verify the real 2.1 Guide opens with the motivating problem and connects ideas in continuous prose,
    without exit criteria, KP enumeration or a fixed template. Exercise drag, expand, restore, collapse
    and reopen; PDF remains visible and the Guide reading position is retained across source jumps.

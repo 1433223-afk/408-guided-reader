@@ -36,9 +36,20 @@ const provider = createServer(async (req, res) => {
     answer = JSON.stringify({ modules: [
       { id: 'm1', kind: 'article', title: '阅读导读', text: payload.draft, source_ids: refs }] });
   }
-  await new Promise(r => setTimeout(r, payload?.candidate ? 1000 : 300));
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ choices: [{ message: { content: answer }, finish_reason: 'stop' }] }));
+  await new Promise(r => setTimeout(r, payload?.candidate ? 650 : 180));
+  if (!body.stream) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { content: answer }, finish_reason: 'stop' }] }));
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  const chunkSize = Math.max(1, Math.ceil(answer.length / 4));
+  for (let offset = 0; offset < answer.length; offset += chunkSize) {
+    res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: answer.slice(offset, offset + chunkSize) } }] })}\n\n`);
+    await new Promise(r => setTimeout(r, 45));
+  }
+  res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: answer.length } })}\n\n`);
+  res.end('data: [DONE]\n\n');
 });
 await new Promise(r => provider.listen(0, '127.0.0.1', r));
 const loopback = {
@@ -73,26 +84,28 @@ try {
   await page.evaluate(() => {
     window.__guideStages = [];
     const record = () => {
-      const value = document.querySelector('#guide-empty-copy')?.textContent?.trim();
+      const value = [document.querySelector('#guide-status')?.textContent?.trim(), document.querySelector('#guide-draft-label')?.textContent?.trim()].filter(Boolean).join(' | ');
       if (value && window.__guideStages.at(-1) !== value) window.__guideStages.push(value);
     };
     window.__guideStageObserver = new MutationObserver(record);
-    window.__guideStageObserver.observe(document.querySelector('#guide-empty-state'), { subtree: true, childList: true, characterData: true });
+    window.__guideStageObserver.observe(document.querySelector('#guide-panel'), { subtree: true, childList: true, characterData: true });
     record();
   });
   await action(page, '生成本节导读', 'generate');
   let first = await settled(page, base(ready));
   const stages = await page.evaluate(() => { window.__guideStageObserver.disconnect(); return window.__guideStages; });
-  assert.ok(stages.some(value => value.includes('准备本节导读')), JSON.stringify(stages));
-  assert.ok(stages.some(value => value.includes('生成本节导读')), JSON.stringify(stages));
-  assert.ok(stages.some(value => value.includes('独立审查')), JSON.stringify(stages));
+  assert.ok(stages.some(value => value.includes('准备')), JSON.stringify(stages));
+  assert.ok(stages.some(value => value.includes('正文持续生成')), JSON.stringify(stages));
+  assert.ok(stages.some(value => value.includes('生成草稿 · 审查中')), JSON.stringify(stages));
   assert.ok(first.published, JSON.stringify(first.task));
   await page.locator('.guide-text').first().waitFor();
   assert.equal(await page.locator('#guide-regenerate').isVisible(), true);
   assert.equal(await page.locator('#guide-more,#guide-expand').count(), 0);
   const sources = page.locator('.guide-source:not([disabled])');
   const sourceCount = await sources.count(); assert.ok(sourceCount);
-  const ordered = first.published.content.modules.flatMap(m => m.source_ids.map(id => first.published.sources[id]));
+  assert.deepEqual(await sources.allTextContents(), Array(sourceCount).fill('查看教材位置'));
+  assert.equal(await page.locator('.guide-references').filter({ hasText: /\[\d+\]/ }).count(), 0);
+  const ordered = first.published.content.modules.map(m => first.published.sources[m.source_ids.find(id => first.published.sources[id]?.available) || m.source_ids[0]]);
   for (let i = 0; i < sourceCount; i++) {
     await sources.nth(i).click();
     await page.waitForTimeout(250);

@@ -235,6 +235,16 @@ button, label { -webkit-tap-highlight-color: transparent; }
 #guide-status-retry { flex:none;min-height:28px;padding:4px 9px;cursor:pointer;color:#315c46;background:#edf2ed;border:1px solid #cbd5cd;border-radius:4px;font-size:11px; }
 #guide-status-retry:hover { background:#dceade; }
 #guide-content { max-width: 760px; margin: auto; padding: 20px 24px 64px; }
+.guide-draft { max-width:760px;margin:0 auto;padding:20px 24px 24px;border-bottom:1px solid #d7e0d8;background:#fbfcf7; }
+.guide-draft[hidden] { display:none; }
+.guide-draft-label,.guide-published-label { margin:0;color:#65756a;font-size:11px;font-weight:650;letter-spacing:.025em; }
+.guide-draft-label { display:inline-flex;align-items:center;gap:7px;margin-bottom:14px;padding:4px 8px;background:#edf2ed;border:1px solid #d2ddd3;border-radius:4px; }
+.guide-draft-label::before { content:"";width:6px;height:6px;border-radius:50%;background:#6f8c78;box-shadow:0 0 0 3px rgb(111 140 120 / 12%); }
+.guide-draft-text { color:#344039;font-size:16px;line-height:1.85;overflow-wrap:anywhere;user-select:text; }
+.guide-draft-text > :first-child { margin-top:0; }
+.guide-draft-text > :last-child { margin-bottom:0; }
+.guide-draft-text p { margin:0 0 1em; }
+.guide-published-label { max-width:760px;margin:18px auto 0;padding:0 24px; }
 #guide-content section { margin-bottom: 30px; }
 #guide-content h3 { margin: 0 0 16px; color: #3c443a; font-size: 20px; line-height: 1.5; font-weight: 600; }
 .guide-text { white-space: normal; line-height: 1.85; font-size: 16px; user-select: text; margin: 0; overflow-wrap: anywhere; }

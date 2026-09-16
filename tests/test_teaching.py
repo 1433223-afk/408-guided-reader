@@ -1,5 +1,6 @@
 import copy
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ import pytest
 from reader_service.agent_runtime import ProviderCompletion, ProviderFailure, ProviderFailureKind
 from reader_service.jobs import JobRepository
 from reader_service.teaching import evidence, writing_context
-from reader_service.teaching.contracts import (GENERATOR, FORMATTER, draft_messages, validate_guide, validate_review,
+from reader_service.teaching.contracts import (GENERATOR, draft_messages, validate_guide, validate_review,
                                               validate_draft, validate_formatted)
 from reader_service.teaching.service import TeachingService
 from test_knowledge_map import build_fixture, claim_and_run
@@ -62,6 +63,14 @@ class Runtime:
             value['modules'][0]['text'] += '装配擅自新增。'
         return ProviderCompletion('invalid' if self.invalid else json.dumps(value), 1, None, {'provider': provider, 'model': provider + '-model'})
 
+    def stream_for_with_metadata(self, provider, messages, on_delta, **kwargs):
+        completion = self.complete_for_with_metadata(provider, messages, **kwargs)
+        midpoint = max(1, len(completion.answer) // 2)
+        on_delta(completion.answer[:midpoint])
+        on_delta(completion.answer[midpoint:])
+        return ProviderCompletion(completion.answer, completion.latency_ms, completion.usage,
+                                  completion.effective_config, completion.response_metadata, 1)
+
 
 @pytest.fixture
 def guide(service):
@@ -94,7 +103,7 @@ def test_publish_retry_restart_atomic_replacement_and_replay(guide):
     assert all(x['published'] is None for x in results)
     drain(g)
     first = g.snapshot(rev, section)['published']
-    assert first and len(runtime.calls) == 3
+    assert first and len(runtime.calls) == 2
     assert g.request(rev, section, intent, regenerate=True)['task']['version'] == 1
     runtime.fail_stage = 'REVIEW'
     g.request(rev, section, str(uuid4()), regenerate=True)
@@ -109,12 +118,55 @@ def test_publish_retry_restart_atomic_replacement_and_replay(guide):
     before = len(runtime.calls)
     restarted.retry(rev, section, failed['task']['id'])
     drain(restarted)
-    assert len(runtime.calls) == before + 1
+    # The unreviewed candidate is intentionally memory-only. A process restart
+    # therefore regenerates before Review instead of recovering draft prose.
+    assert len(runtime.calls) == before + 2
     assert restarted.snapshot(rev, section)['published']['version'] == 2
     with g.database.connect() as c:
         assert c.execute("SELECT COUNT(*) FROM teaching_assets WHERE state='PUBLISHED'").fetchone()[0] == 2
         assert c.execute('SELECT COUNT(*) FROM section_guides').fetchone()[0] == 1
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
+
+
+def test_streamed_draft_is_memory_only_until_atomic_publication(guide):
+    _, _, g, rev, section = guide
+    view = g.request(rev, section, str(uuid4()))
+    asset_id = view['task']['id']
+    jobs = JobRepository(g.database)
+    generation = jobs.claim()
+    g.run_job(generation)
+    jobs.complete(generation['id'])
+    with g.database.connect() as c:
+        row = c.execute('SELECT state,stage,content_json FROM teaching_assets WHERE id=?', (asset_id,)).fetchone()
+        assert tuple(row) == ('IN_REVIEW', 'REVIEW', None)
+    event = g.draft_event(rev, section, asset_id, -1, 0)
+    assert event['type'] == 'draft' and event['stage'] == 'review'
+    assert '现有办法' in event['text']
+    snapshot = g.snapshot(rev, section)
+    assert 'draft' not in snapshot and snapshot['published'] is None
+    review = jobs.claim()
+    g.run_job(review)
+    jobs.complete(review['id'])
+    assert g.draft_event(rev, section, asset_id, event['sequence'], 0)['type'] == 'complete'
+    with g.database.connect() as c:
+        row = c.execute('SELECT state,content_json FROM teaching_assets WHERE id=?', (asset_id,)).fetchone()
+        assert row['state'] == 'PUBLISHED' and row['content_json']
+
+
+def test_same_process_review_retry_reuses_private_candidate(guide):
+    _, runtime, g, rev, section = guide
+    g.request(rev, section, str(uuid4()))
+    drain(g)
+    runtime.fail_stage = 'REVIEW'
+    g.request(rev, section, str(uuid4()), regenerate=True)
+    drain(g)
+    failed = g.snapshot(rev, section)
+    before = len(runtime.calls)
+    runtime.fail_stage = None
+    g.retry(rev, section, failed['task']['id'])
+    drain(g)
+    assert len(runtime.calls) == before + 1
+    assert g.snapshot(rev, section)['published']['version'] == 2
 
 
 def test_semantic_limit_targeted_rework_and_invalid_review(guide):
@@ -124,13 +176,13 @@ def test_semantic_limit_targeted_rework_and_invalid_review(guide):
     drain(g)
     failed = g.snapshot(rev, section)
     assert failed['task']['terminal'] == 1 and failed['task']['semantic_rework_count'] == 3
-    assert failed['published'] is None and len(runtime.calls) == 7
+    assert failed['published'] is None and len(runtime.calls) == 6
     for _, payload in runtime.calls:
         if 'rework' in payload:
             assert [m['id'] for m in payload['rework']['modules']] == ['m1']
     g.retry(rev, section, failed['task']['id'])
     drain(g)
-    assert len(runtime.calls) == 7
+    assert len(runtime.calls) == 6
     runtime.reject = False
     runtime.invalid = True
     g.request(rev, section, str(uuid4()), regenerate=True)
@@ -144,7 +196,8 @@ def test_packet_scope_optional_dependencies_and_staleness(guide):
     g.request(rev, section, str(uuid4()))
     drain(g)
     packet = runtime.calls[1][1]['source']
-    assert set(packet) == {'section', 'parent', 'evidence'}
+    assert set(packet) == {'section', 'evidence'}
+    assert set(packet['section']) == {'id', 'title'}
     with g.database.connect() as c:
         row = c.execute('SELECT * FROM teaching_assets').fetchone()
         deps = json.loads(row['dependencies_json'])
@@ -230,6 +283,34 @@ def test_http_authorization_scope_and_no_candidate_egress(guide, service):
         assert result['published'] and 'generator_json' not in result
         with pytest.raises(HTTPError):
             request_json(endpoint.replace(section, f['chapter']['outline_node_id']), token)
+
+
+def test_http_guide_events_stream_real_draft_then_completes(guide, service):
+    from test_api import running_server, request_json
+    from urllib.request import Request, urlopen
+    _, _, g, rev, section = guide
+    with running_server(service, teaching=g) as (url, token):
+        endpoint = f'{url}/api/revisions/{rev}/sections/{section}/guide'
+        _, started = request_json(endpoint + '/generate', token, method='POST',
+                                  data=json.dumps({'intent_id': str(uuid4())}).encode())
+        opened = threading.Event()
+        def receive():
+            request = Request(endpoint + f"/events?asset_id={started['task']['id']}",
+                              headers={'X-Reader-Token': token, 'Accept': 'text/event-stream'})
+            with urlopen(request) as response:
+                assert response.headers['Content-Type'].startswith('text/event-stream')
+                opened.set()
+                return response.read().decode('utf-8')
+        with ThreadPoolExecutor(1) as pool:
+            result = pool.submit(receive)
+            assert opened.wait(2)
+            drain(g)
+            body = result.result(timeout=3)
+        events = [json.loads(line.removeprefix('data: ')) for line in body.splitlines()
+                  if line.startswith('data: ')]
+        assert any(e['type'] == 'draft' and e.get('text') for e in events)
+        assert any(e['type'] == 'draft' and e.get('stage') == 'review' for e in events)
+        assert events[-1]['type'] == 'complete'
 
 
 def test_publication_rollback_and_source_change_during_review(guide, monkeypatch):
@@ -353,35 +434,37 @@ def test_article_contract_has_no_route_exit_or_kp_checklist(guide):
     value = candidate(packet)
     value['modules'] = value['modules'][:1]
     assert validate_guide(value, packet) == value
-    value['modules'][0]['text'] = '文' * 1401
+    value['modules'][0]['text'] = '文' * 4501
     with pytest.raises(ValueError):
         validate_guide(value, packet)
 
 
 def test_editorial_instruction_preserves_source_and_review_boundary(guide):
-    from reader_service.teaching.contracts import GENERATION_REQUEST, REVIEWER
+    from reader_service.teaching.contracts import REVIEWER
     fixture, runtime, g, rev, section = guide
     with g.database.connect() as c:
         packet, _, _ = evidence.build(c, rev, section)
     g.request(rev, section, str(uuid4()))
     drain(g)
-    written, generated, reviewed = runtime.messages
+    written, reviewed = runtime.messages
     with g.database.connect() as c:
         _, ledger, _ = evidence.build(c, rev, section)
         context, _, _ = writing_context.build(c, rev, packet, ledger)
     assert written == draft_messages(GENERATOR, context)
-    assembly = json.loads(generated[1]['content'])
-    assert assembly['source'] == writing_context.formatter_source(packet, context)
-    assert assembly['draft'] == '\n\n'.join(m['text'] for m in candidate(packet)['modules'])
-    assert generated[0]['content'] == FORMATTER
-    assert len(generated) == 3 and generated[2]['role'] == 'user'
-    assert generated[2]['content'].startswith(GENERATION_REQUEST)
-    assert 'modules必须只含m1一项' in generated[2]['content']
+    draft = '\n\n'.join(m['text'] for m in candidate(packet)['modules'])
+    projected = writing_context.formatter_source(packet, context)
+    assembled = writing_context.bind_draft(draft, projected, context)
+    assert '\n\n'.join(module['text'] for module in assembled['modules']) == draft
+    assert all(set(module['source_ids']) <= {e['source_id'] for e in projected['evidence']}
+               for module in assembled['modules'])
     assert len(reviewed) == 2
     assert reviewed[0] == {'role': 'system', 'content': REVIEWER}
     review_payload = json.loads(reviewed[1]['content'])
     assert set(review_payload) == {'source', 'candidate'}
-    assert review_payload['source'] == packet
+    assert review_payload['source'] == writing_context.review_source(projected, review_payload['candidate'])
+    assert {e['source_id'] for e in review_payload['source']['evidence']} == {
+        source_id for module in review_payload['candidate']['modules'] for source_id in module['source_ids']
+    }
     assert g.snapshot(rev, section)['published'] is not None
 
 
@@ -485,6 +568,15 @@ def test_guide_generator_route_respects_explicit_configuration(guide, monkeypatc
     assert selected.reviewer == 'openrouter'
 
 
+def test_guide_provider_override_does_not_change_inline_provider(guide, monkeypatch):
+    _, runtime, g, _, _ = guide
+    monkeypatch.setenv('GUIDED_READER_SYSTEM_PROVIDER', 'openrouter')
+    monkeypatch.setenv('GUIDED_READER_GUIDE_PROVIDER', 'deepseek')
+    selected = TeachingService(g.database, runtime)
+    assert selected.provider == 'deepseek'
+    assert selected.inline.provider == 'openrouter'
+
+
 def test_guide_reasoning_does_not_change_review_call(guide, monkeypatch):
     fixture, runtime, g, rev, section = guide
     monkeypatch.setenv('GUIDED_READER_SYSTEM_PROVIDER', 'openrouter')
@@ -492,11 +584,9 @@ def test_guide_reasoning_does_not_change_review_call(guide, monkeypatch):
     selected.request(rev, section, str(uuid4()))
     drain(selected)
     assert runtime.options[0]['reasoning_effort'] == 'low'
-    assert runtime.options[1]['reasoning_effort'] == 'low'
-    assert runtime.options[2]['reasoning_effort'] is None
+    assert runtime.options[1]['reasoning_effort'] is None
     assert runtime.options[0]['model'] == selected.generator_model
-    assert runtime.options[1]['model'] == selected.generator_model
-    assert runtime.options[2]['model'] is None
+    assert runtime.options[1]['model'] is None
 
 
 def test_numeric_meaning_is_not_mistaken_for_table_locator(guide):
@@ -530,12 +620,15 @@ def test_formatting_cannot_add_remove_reorder_or_rewrite_author_text():
     assert validate_draft(' “位串”与“数值”\r\n\r\n要分清。 ', packet) == '位串与数值\n\n要分清。'
 
 
-def test_assembly_rewrite_fails_closed_and_old_guide_survives_retry(guide):
+def test_local_binding_failure_keeps_old_guide_and_retry_recovers(guide, monkeypatch):
     _, runtime, g, rev, section = guide
     g.request(rev, section, str(uuid4()))
     drain(g)
     old = g.snapshot(rev, section)['published']
-    runtime.edit_draft = True
+    original = writing_context.bind_draft
+    def fail_binding(*_args):
+        raise ValueError('local binding failed')
+    monkeypatch.setattr(writing_context, 'bind_draft', fail_binding)
     g.request(rev, section, str(uuid4()), regenerate=True)
     drain(g)
     failed = g.snapshot(rev, section)
@@ -543,7 +636,7 @@ def test_assembly_rewrite_fails_closed_and_old_guide_survives_retry(guide):
     assert failed['task']['stage'] == 'GENERATE'
     assert failed['task']['semantic_rework_count'] == 0
     assert failed['task']['state'] == 'FAILED'
-    runtime.edit_draft = False
+    monkeypatch.setattr(writing_context, 'bind_draft', original)
     g.retry(rev, section, failed['task']['id'])
     drain(g)
     assert g.snapshot(rev, section)['published']['version'] == 2
