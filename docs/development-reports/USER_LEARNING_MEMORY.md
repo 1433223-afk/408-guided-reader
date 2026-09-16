@@ -31,14 +31,22 @@ Durable identity and provenance are still resolved by the existing service. The 
 placement only by following the authoritative Outline parent chain; missing Section/KP associations
 remain in an honest **其他** group. Source return and membership removal reuse their existing routes.
 
-- TARGETED FRONTEND: `node --test tests-js/memory-ui.test.js` **3 PASS**, including current-Book
-  search isolation, removal race protection and the absence of the old filter/refresh controls.
+- TARGETED FRONTEND: `node --test tests-js/memory-ui.test.js` **4 PASS**, including current-Book
+  search isolation, removal race protection, Section-only grouping, low-frequency technical Review
+  presentation and the absence of the old filter/refresh controls.
 - SHORTEST REAL PATH: `tests-e2e/memory-navigation.mjs` PASS on an isolated copy of the real Library:
   Learning Memory → Book → Section/KP → item → source → Book list. All providers were disabled.
   The requested full 348-page collect/restart/cascade flow and broad suites were intentionally not
   rerun because this pass changes only the local Memory browser IA.
 - Visual checks: `memory-ia-home.png`, `memory-ia-book.png` and `memory-ia-detail.png` at 1600×1000.
   No new dependency, API, persistence behavior or cross-Book search was introduced.
+
+The accepted IA cleanup keeps the left rail strictly Chapter → Section and the content column grouped
+by authoritative KP. A record with Section but no KP appears only in that Section's subdued
+**未归属知识点** area. Missing structural authority uses the explicit labels **未关联章节** and
+**未关联 Section**, never a parallel “other memory” taxonomy. Technical Review failure is absent
+from list and content surfaces and is available only inside the item's existing `···` menu; PASS
+remains hidden and content FAIL remains the only prominent failure state.
 
 ### UI deletion pass (2026-09-15)
 

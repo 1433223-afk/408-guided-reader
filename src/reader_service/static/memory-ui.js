@@ -4,7 +4,6 @@ import { renderAssistantAnswer } from '/assistant-render.js';
 const REVIEW = {
   PENDING: { text: '正在审查', tone: 'pending' },
   FAIL: { text: '内容需要核对', tone: 'failed' },
-  TECHNICAL_FAILURE: { text: '审查暂不可用', tone: 'failed' },
 };
 
 export function createMemoryUI({ api, announce, returnToSource, enterView = () => {}, leaveView = () => {}, home = () => {}, resume = () => {} }) {
@@ -45,12 +44,13 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
   const text = (tag, value, className = '') => { const node = document.createElement(tag); node.textContent = value; node.className = className; return node; };
   const base = item => `/api/revisions/${item.book_source_revision_id}/memory/${item.id}`;
   const sectionKey = item => item.section?.id || 'unassociated';
-  const kpKey = item => item.knowledge_point?.id || 'unassociated';
   const titleOf = item => item.source.question || item.source.provenance?.answer_question
     || item.source.provenance?.child_focus || item.source.provenance?.root_focus
     || item.knowledge_point?.title || '收录的解释';
   const bodyOf = item => item.source_kind === 'MASTER' ? item.source.content : item.source.body;
-  const reviewOf = item => REVIEW[item.source.review_state || item.source.verification_state] || null;
+  const reviewState = item => item.source.review_state || item.source.verification_state;
+  const reviewOf = item => REVIEW[reviewState(item)] || null;
+  const hasTechnicalReviewFailure = item => reviewState(item) === 'TECHNICAL_FAILURE';
   function summaryOf(item) {
     const rendered = document.createElement('div'); renderAssistantAnswer(rendered, bodyOf(item) || '');
     const value = rendered.textContent.replace(/\s+/g, ' ').trim();
@@ -138,13 +138,13 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
     const sections = new Map();
     for(const item of bookItems) {
       const id = sectionKey(item);
-      if(!sections.has(id)) sections.set(id, {id, title:item.section?.title || '其他记忆', count:0, node:byId.get(id)});
+      if(!sections.has(id)) sections.set(id, {id, title:item.section?.title || '未关联 Section', count:0, node:byId.get(id)});
       sections.get(id).count += 1;
     }
     const chapterOf = section => {
       let current = section.node;
       while(current && current.kind !== 'CHAPTER') current = byId.get(current.parent_id);
-      return current || {outline_node_id:'unassociated', title:'其他'};
+      return current || {outline_node_id:'unassociated', title:'未关联章节'};
     };
     const ordered = [...sections.values()].sort((a,b) => {
       const ap = a.node ? [a.node.start_page ?? Number.MAX_SAFE_INTEGER, a.node.start_y ?? 0] : [Number.MAX_SAFE_INTEGER,0];
@@ -186,14 +186,23 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
     ++detailEpoch; selectedId = null; el('detail').hidden = true;
     const groups = new Map();
     for(const item of shown) {
-      const key = kpKey(item);
-      if(!groups.has(key)) groups.set(key, {id:key, title:item.knowledge_point?.title || '其他记忆', items:[]});
+      const unassigned = !item.knowledge_point;
+      const key = unassigned ? `unassigned:${sectionKey(item)}` : item.knowledge_point.id;
+      if(!groups.has(key)) groups.set(key, {
+        id:key,
+        title:unassigned ? '未归属知识点' : item.knowledge_point.title,
+        sectionTitle:item.section?.title || '未关联 Section',
+        unassigned,
+        items:[],
+      });
       groups.get(key).items.push(item);
     }
     const content = [];
     if(query) content.push(text('p', shown.length ? `${shown.length} 条结果` : '没有找到相关记忆', 'memory-result-count'));
     for(const group of groups.values()) {
-      const section = text('section', '', 'memory-kp-group'); section.dataset.kpId = group.id; section.append(text('h2', group.title));
+      const section = text('section', '', `memory-kp-group${group.unassigned ? ' memory-unassigned-group' : ''}`);
+      section.dataset.kpId = group.id;
+      section.append(text('h2', query && group.unassigned ? `${group.sectionTitle} · ${group.title}` : group.title));
       for(const item of group.items) {
         const row = button('', () => detail(item), 'memory-item-open'); row.dataset.memoryId = item.id;
         row.append(text('strong', titleOf(item)), text('span', summaryOf(item), 'memory-card-summary'));
@@ -237,7 +246,9 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
       });
       const more = text('details', '', 'memory-more');
       const trigger = text('summary', '···'); trigger.setAttribute('aria-label', '更多操作');
-      const menu = text('div', '', 'memory-more-menu'); menu.append(remove); more.append(trigger, menu);
+      const menu = text('div', '', 'memory-more-menu');
+      if(hasTechnicalReviewFailure(item)) menu.append(text('p', '审查暂不可用', 'memory-technical-review'));
+      menu.append(remove); more.append(trigger, menu);
       const actions = text('div', '', 'memory-detail-actions'); actions.append(sourceReturn, more);
       head.append(identity, actions); panel.append(head);
       const body = text('div', '', 'memory-detail-body');

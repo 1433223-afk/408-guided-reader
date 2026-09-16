@@ -126,3 +126,34 @@ test('switching Memory detail immediately removes stale destructive actions', as
     assert.deepEqual(await page.evaluate(()=>window.deletes),['/api/revisions/revision/memory/b']);
   } finally {await browser.close();}
 });
+
+test('section-only records stay subordinate and technical review remains low frequency', async () => {
+  const source=fs.readFileSync(new URL('../src/reader_service/static/memory-ui.js',import.meta.url),'utf8')
+    .replace(/^import .*;\r?\n/gm,'').replace('export function createMemoryUI','function createMemoryUI');
+  const browser=await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true});
+  try {
+    const page=await browser.newPage();await page.setContent('<div class="home-toolbar"></div>');
+    await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
+    await page.addScriptTag({content:'function renderAssistantAnswer(n,s){n.textContent=s;}\n'+source+'\nwindow.createMemoryUI=createMemoryUI;'});
+    await page.evaluate(()=>{
+      const item={id:'technical',book_id:'book',book_title:'教材',book_source_revision_id:'revision',source_kind:'MASTER',source_id:'answer',
+        section:{id:'section',title:'1.1 小节'},knowledge_point:null,source:{question:'问题',content:'回答',review_state:'TECHNICAL_FAILURE'}};
+      createMemoryUI({announce:()=>{},returnToSource:()=>{},api:async path=>path==='/api/memory'?{items:[item]}
+        :path.endsWith('/outline')?{nodes:[
+          {outline_node_id:'chapter',kind:'CHAPTER',title:'第1章',parent_id:null,start_page:0,start_y:0},
+          {outline_node_id:'section',kind:'SECTION',title:'1.1 小节',parent_id:'chapter',start_page:0,start_y:0},
+        ]}:{item}});
+    });
+    await page.locator('.memory-open').click();await page.locator('.memory-book-open').click();
+    assert.equal(await page.locator('.memory-chapter h2').innerText(),'第1章');
+    assert.equal(await page.locator('.memory-section-open span').innerText(),'1.1 小节');
+    assert.equal(await page.locator('.memory-unassigned-group h2').innerText(),'未归属知识点');
+    assert.equal(await page.getByText('审查暂不可用',{exact:true}).count(),0);
+    assert.equal(await page.locator('#memory-items .memory-review-status').count(),0);
+    await page.locator('.memory-item-open').click();await page.locator('#memory-detail[data-detail-id="technical"]').waitFor();
+    assert.equal(await page.locator('.memory-detail-body .memory-review-status').count(),0);
+    assert.equal(await page.locator('.memory-technical-review').isVisible(),false);
+    await page.locator('#memory-detail .memory-more > summary').click();
+    assert.equal(await page.locator('.memory-technical-review').isVisible(),true);
+  } finally {await browser.close();}
+});
