@@ -440,12 +440,14 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
   (document.getElementById('reader') || document.body).append(panel);
   entry.setAttribute('aria-controls', panel.id); entry.setAttribute('aria-expanded', 'false');
   let listEpoch = 0;
-  function closeList(focus = false) { ++listEpoch; panel.hidden = true; entry.setAttribute('aria-expanded', 'false'); if(focus) entry.focus(); }
+  const listPositions = new Map();
+  function closeList(focus = false) { if (!panel.hidden) listPositions.set(chapter, panel.querySelector(".reader-kp-body")?.scrollTop || 0); ++listEpoch; panel.hidden = true; document.getElementById("reader")?.classList.remove("knowledge-dock-open"); entry.setAttribute('aria-expanded', 'false'); if(focus) entry.focus(); }
   panel.addEventListener('keydown', e => { if(e.key === 'Escape') { e.stopPropagation(); closeList(true); } });
   async function openList() {
     const stamp = epoch, request = ++listEpoch, targetChapter = chapter;
     const points = snapshot.knowledge_points;
     closePeers();
+    document.getElementById("reader").classList.add("knowledge-dock-open");
     panel.replaceChildren(); panel.hidden = false; entry.setAttribute('aria-expanded', 'true');
     const heading = node('div', '', 'reader-kp-heading');
     heading.append(node('strong', snapshot.chapter_title || '本章知识点'), action('关闭', () => closeList(true)));
@@ -476,6 +478,7 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
       body.append(region);
     }
     if(!points.length) body.append(node('p', '本章暂无已发布知识点', 'muted'));
+    body.scrollTop = listPositions.get(targetChapter) || 0;
   }
   let owner = null, chapter = null, section = null, snapshot = null, epoch = 0, timer, pending = false, error = null;
   const stages = {QUEUED:'等待开始',RESOLVING_SOURCE:'来源准备中',GENERATING:'生成中',REVIEWING:'审查中',VALIDATING:'校验中',PUBLISHING:'发布中'};

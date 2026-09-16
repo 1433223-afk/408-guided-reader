@@ -593,6 +593,15 @@ body,button,input,select,textarea { font-family:var(--font-ui); }
 #book-overview .structure-error-popover { position:fixed;inset:auto;margin:0;width:280px;max-width:calc(100vw - 16px);padding:12px 14px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:3px;box-shadow:0 3px 12px rgb(32 40 32 / 7%);font:12px/1.7 var(--font-ui);overflow-wrap:anywhere; }
 #book-overview .structure-error-popover p { margin:3px 0; }
 
+/* One right-hand layout slot, shared by chapter navigation and the learning workspaces. */
+.reader.knowledge-dock-open { grid-template-columns:minmax(0,1fr) var(--assistant-dock-width,410px); }
+.reader.knowledge-dock-open .reader-kp-list { position:relative;inset:auto;grid-column:2;grid-row:2;width:100%;max-height:none;min-height:0;border-width:0 0 0 1px;box-shadow:none; }
+.reader.knowledge-dock-open .page { margin-inline:auto!important; }
+@media(max-width:850px) {
+  .reader.knowledge-dock-open { grid-template-columns:minmax(0,1fr); }
+  .reader.knowledge-dock-open .reader-kp-list { position:fixed;top:68px;right:0;bottom:0;width:min(var(--assistant-dock-width,410px),100vw); }
+}
+
 /* Section/KP directory density: retain native disclosure and explicit source actions. */
 #book-overview .overview-section { padding:12px 0;border-left:0;margin-left:0; }
 #book-overview .overview-section[open] { padding-left:0;border-left:0;margin-left:0; }

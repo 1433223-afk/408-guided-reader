@@ -147,7 +147,46 @@ try {
   }, null, 650, '#guide-panel');
   await probe(page, 'guide-close', () => page.locator('#guide-close').click(), state('#guide-panel', 'hidden', true));
   await probe(page, 'guide-reopen', () => page.locator('#guide-reopen').click(), state('#guide-panel', 'hidden', false), 900);
-  await page.locator('#guide-close').click();
+  // Switching ownership must hide peers without destroying workspace state.
+  const guideScroll = await page.locator('#guide-scroll').evaluate(el => { el.scrollTop = 120; return el.scrollTop; });
+  await page.evaluate(() => { window.__guideNode = document.querySelector('#guide-content').firstElementChild; });
+  await page.locator('#assistant-toggle').click();
+  assert.equal(await page.locator('#guide-panel').isVisible(), false);
+  assert.equal(await page.locator('#assistant-panel').isVisible(), true);
+  const draft = page.locator('#assistant-question');
+  if (await draft.isVisible()) await draft.fill('保留的解释草稿');
+  await page.locator('#guide-reopen').click();
+  assert.equal(await page.locator('#assistant-panel').isVisible(), false);
+  await page.waitForTimeout(800);
+  assert.ok(Math.abs(await page.locator('#guide-scroll').evaluate(el => el.scrollTop) - guideScroll) < 1);
+  assert.equal(await page.evaluate(() => document.querySelector('#guide-content').firstElementChild === window.__guideNode), true);
+  await page.locator('#reader-kp-action').filter({hasText:/\d+ 个知识点/}).waitFor();
+  await page.locator('#reader-kp-action').click();
+  await page.locator('#reader-kp-list .reader-kp-row').first().waitFor();
+  assert.equal(await page.locator('#guide-panel').isVisible(), false);
+  assert.equal(await page.locator('#assistant-panel').isVisible(), false);
+  const kpScroll = await page.locator('.reader-kp-body').evaluate(el => { el.scrollTop = 100; return el.scrollTop; });
+  await page.locator('#assistant-toggle').click();
+  assert.equal(await page.locator('#reader-kp-list').isVisible(), false);
+  if (await draft.isVisible()) assert.equal(await draft.inputValue(), '保留的解释草稿');
+  const masterTab = page.locator('#assistant-panel .dock-tabs').getByRole('button', {name:'学习 Master'});
+  await masterTab.click();
+  await page.locator('#master-question').fill('保留 Master 输入');
+  const masterTitle = await page.locator('#master-title').textContent();
+  const masterScroll = await page.locator('#master-history').evaluate(el => { el.scrollTop = 80; return el.scrollTop; });
+  await page.locator('#guide-reopen').click();
+  assert.equal(await page.locator('#assistant-panel').isVisible(), false);
+  await page.locator('#assistant-toggle').click();
+  await masterTab.click();
+  assert.equal(await page.locator('#master-question').inputValue(), '保留 Master 输入');
+  assert.equal(await page.locator('#master-title').textContent(), masterTitle);
+  assert.equal(await page.locator('#master-history').evaluate(el => el.scrollTop), masterScroll);
+  await page.locator('#reader-kp-action').click();
+  await page.locator('#reader-kp-list .reader-kp-row').first().waitFor();
+  assert.equal(await page.locator('.reader-kp-body').evaluate(el => el.scrollTop), kpScroll);
+  await page.locator('#reader-kp-list .reader-kp-heading button').click();
+  assert.equal(await page.locator('#reader').evaluate(el => el.classList.contains('knowledge-dock-open')), false);
+  console.log('SINGLE_DOCK_SWITCH_PASS: Guide → Assistant → Guide → KP → Assistant → KP → close; retained draft, Guide DOM/scroll and KP scroll');
 
   if (!resizeOnly) {
     // Inline Teaching: warm the current-section asset, toggle it, and open/close an anchored Guidance card.

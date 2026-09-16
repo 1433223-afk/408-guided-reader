@@ -5,7 +5,7 @@ const GUIDE_DOCK_MIN_WIDTH = 320;
 const GUIDE_DOCK_MAX_WIDTH = 760;
 const GUIDE_READER_MIN_WIDTH = 280;
 
-export function createGuideUI({ state, api, streamGuide, goToPage, explain, layout, closeDock, contextMenu, hideContextMenu }) {
+export function createGuideUI({ state, api, streamGuide, goToPage, explain, layout, closeDock, setDockWidth, dockWidth, contextMenu, hideContextMenu }) {
   const panel = document.createElement("aside");
   panel.id = "guide-panel";
   panel.className = "guide-panel";
@@ -73,7 +73,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
   function setWidth(value) {
     const saved = readingPosition(), { min, max } = limits();
     width = Math.round(Math.max(min, Math.min(max, value)));
-    layout(() => reader.style.setProperty("--guide-width", `${width}px`));
+    layout(() => setDockWidth ? setDockWidth(width) : reader.style.setProperty("--guide-width", `${width}px`));
     divider.setAttribute("aria-valuemin", String(Math.round(min)));
     divider.setAttribute("aria-valuemax", String(Math.round(max)));
     divider.setAttribute("aria-valuenow", String(width));
@@ -91,6 +91,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
     });
   }
   function close(collapsed = false, recenter = false) {
+    suspended = false;
     if (panel.hidden && reopen.hidden) return;
     hideContextMenu(); savePosition(); clearTimeout(timer); stopDraftStream(); epoch++;
     layout(() => { panel.hidden = true; reader.classList.remove("guide-open"); });
@@ -307,20 +308,39 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
     const rect = rects[0];
     contextMenu(event.clientX || rect?.left || 0, event.clientY || rect?.bottom || 0,
       mapped.selectedText, () => {
-        close(); explain(mapped.selectedText, selection);
+        suspend(); explain(mapped.selectedText, selection);
       });
   });
+  let suspended = false, suspendedScroll = 0;
+  function suspend() {
+    if (panel.hidden) return;
+    savePosition();
+    suspendedScroll = scroll.scrollTop;
+    suspended = true;
+    hideContextMenu();
+    panel.hidden = true; reader.classList.remove("guide-open");
+    reopen.hidden = false;
+  }
   async function open(id) {
+    if (suspended && id === sectionId && revisionId === state.revision.id) {
+      closeDock(); reopen.hidden = true; suspended = false;
+      panel.hidden = false; reader.classList.add("guide-open");
+      setWidth(dockWidth?.() || width || GUIDE_DOCK_DEFAULT_WIDTH);
+      scroll.scrollTop = suspendedScroll;
+      clearTimeout(timer); timer = setTimeout(load, 700);
+      return;
+    }
+    suspended = false;
     close(); sectionId = id; revisionId = state.revision.id; snapshot = null; renderedId = null; pending = false;
     content.replaceChildren(); intent = null;
     clearDraft();
     regenerate.hidden = true; emptyState.hidden = true;
     closeDock(); reopen.hidden = true;
     layout(() => { panel.hidden = false; reader.classList.add("guide-open"); });
-    setWidth(width || GUIDE_DOCK_DEFAULT_WIDTH);
+    setWidth(dockWidth?.() || width || GUIDE_DOCK_DEFAULT_WIDTH);
     status.textContent = "正在读取导读…";
     for (const id of ["outline-panel", "knowledge-panel", "search-panel", "marks-panel"]) document.getElementById(id).hidden = true;
     await load();
   }
-  return { close, open };
+  return { close, open, suspend };
 }

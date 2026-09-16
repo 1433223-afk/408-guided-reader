@@ -146,7 +146,9 @@ const teachingUiOptions = { state, api, goToPage,
     syncAskEligibility(); showSelectionActions(x, y);
   },
   layout: change => change(),
-  closeDock: () => setAssistantPanelOpen(false),
+  closeDock: () => claimRightDock("guide"),
+  setDockWidth: applyAssistantDockWidth,
+  dockWidth: () => state.assistantDockWidth,
   explain: (selectedText, request) => {
   if (!state.readerSessionId || state.assistantPending) return;
   rememberAssistantScroll();
@@ -212,7 +214,7 @@ const screens = createScreens({api, home: showHome, memory: () => memory.open(),
 const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.revision?.id,
   published: () => master.refreshEntries().catch(() => {}),
   closePeers: () => {
-    setAssistantPanelOpen(false);
+    claimRightDock("knowledge");
     elements["outline-panel"].hidden = true;
     elements["search-panel"].hidden = true;
     elements["marks-panel"].hidden = true;
@@ -1539,6 +1541,7 @@ function applyAssistantDockWidth(width) {
   const { minimum, maximum } = assistantDockLimits();
   state.assistantDockWidth = Math.round(Math.max(minimum, Math.min(maximum, width)));
   elements.reader.style.setProperty("--assistant-dock-width", `${state.assistantDockWidth}px`);
+  elements.reader.style.setProperty("--guide-width", `${state.assistantDockWidth}px`);
   elements["assistant-resize-handle"].setAttribute("aria-valuemin", String(minimum));
   elements["assistant-resize-handle"].setAttribute("aria-valuemax", String(maximum));
   elements["assistant-resize-handle"].setAttribute("aria-valuenow", String(state.assistantDockWidth));
@@ -1968,11 +1971,17 @@ function setAssistantExpanded(expanded, { animate = true } = {}) {
   hideAssistantAnswerActions(true);
 }
 
+function claimRightDock(owner) {
+  if (owner !== "guide") guide.suspend();
+  if (owner !== "knowledge") chapterEntry.close();
+  if (owner !== "ai") setAssistantPanelOpen(false);
+}
+
 function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = {}) {
-  if (open) guide.close();
+  if (open) claimRightDock("ai");
   if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   elements["assistant-panel"].hidden = !open;
-  const overlayOpen = open && overlay;
+  const overlayOpen = open && overlay && elements.reader.clientWidth <= 850;
   elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
   elements["assistant-panel"].classList.toggle("assistant-overlay-open", overlayOpen);
   elements["assistant-toggle"].setAttribute("aria-expanded", String(open));
