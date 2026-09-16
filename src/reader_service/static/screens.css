@@ -625,3 +625,72 @@ body,button,input,select,textarea { font-family:var(--font-ui); }
 #book-overview .overview-kp>.source-action { color:#7b857c;font:400 12px/20px var(--font-ui);padding:2px 6px; }
 #book-overview .overview-kp>.source-action:hover { color:var(--green); }
 @media(max-width:700px) { #book-overview .overview-kp { margin-left:12px;gap:6px; } #book-overview .section-heading { gap:7px; } }
+
+/* Final Overview polish: shared type roles, 4px rhythm, stable action alignment. */
+#book-overview { font-family:var(--font-ui); }
+#book-overview :is(button,input,summary) { font-family:var(--font-ui); }
+#book-overview :is(.muted,.eyebrow,.chapter-row small,.chapter-rail summary,.source-action) { font-size:12px;line-height:20px; }
+#book-overview .overview-content { width:min(1200px,calc(100% - 80px)); }
+#book-overview .overview-body { grid-template-columns:240px minmax(0,1fr);gap:40px; }
+#book-overview :is(.overview-map,.chapter-rail,.chapter-heading>div) { min-width:0; }
+#book-overview .chapter-rail { padding-right:24px; }
+#book-overview .chapter-row { gap:8px;padding:12px 8px;min-height:48px;font:400 13px/20px var(--font-ui); }
+#book-overview .chapter-row span { min-width:0;overflow-wrap:anywhere; }
+#book-overview .chapter-row small { flex:none;font-variant-numeric:tabular-nums; }
+#book-overview .chapter-rail>p { margin:0 0 12px; }
+#book-overview .chapter-rail summary { padding:20px 8px; }
+#book-overview .chapter-heading { gap:24px;align-items:center; }
+#book-overview .chapter-heading h2 { font:600 29px/40px var(--font-editorial);margin:24px 0; }
+#book-overview .chapter-heading>div { text-align:right; }
+#book-overview .chapter-heading p { margin:4px 0; }
+#book-overview .section-heading { gap:12px;padding:8px; }
+#book-overview .section-heading h3 { font:600 20px/30px var(--font-ui);overflow-wrap:anywhere; }
+#book-overview .section-heading p { margin:4px 0 0; }
+#book-overview .overview-section[open]>.section-heading { margin-bottom:8px; }
+#book-overview .overview-kp { gap:16px;padding:12px 8px;margin-left:24px; }
+#book-overview .overview-kp strong { font:550 15px/24px var(--font-ui);overflow-wrap:anywhere; }
+#book-overview .overview-kp-heading { gap:4px 12px; }
+#book-overview .overview-kp p { line-height:20px;overflow-wrap:anywhere; }
+#book-overview .overview-kp .kp-state { line-height:20px; }
+#book-overview :is(.section-heading,.overview-kp)>.source-action { padding:4px 8px;line-height:20px;text-align:right; }
+#book-overview .structure-lifecycle:has(>.structure-menu):not(:has(>.structure-progress,>.structure-failure)) { min-height:32px; }
+#book-overview .structure-menu { right:8px;top:4px; }
+#book-overview .structure-menu>summary { padding:4px 8px; }
+#book-overview .structure-menu[open] { padding:8px;width:208px; }
+#book-overview .structure-lifecycle>p { margin:16px 0 8px; }
+#book-overview .structure-action { padding:4px 12px;line-height:20px; }
+#book-overview .structure-progress { padding:16px 40px 16px 0; }
+#book-overview .structure-progress p { margin:4px 0; }
+#book-overview .structure-steps { margin:8px 0; }
+#book-overview .structure-failure { padding:16px 40px 16px 0; }
+#book-overview .structure-technical-trigger { padding:4px 8px;line-height:20px; }
+#book-overview :is(button,summary):focus-visible { outline:2px solid #829887!important;outline-offset:2px; }
+#book-overview :is(.section-heading,.overview-kp,.chapter-row) { transition:background-color 120ms ease-out; }
+@supports (interpolate-size:allow-keywords) {
+  #book-overview .overview-section { interpolate-size:allow-keywords; }
+  #book-overview .overview-section::details-content { block-size:0;overflow:clip;transition:block-size 140ms ease-out,content-visibility 140ms allow-discrete; }
+  #book-overview .overview-section[open]::details-content { block-size:auto; }
+}
+@media(max-width:1280px) {
+  #book-overview .overview-content { width:calc(100% - 64px); }
+  #book-overview .overview-body { grid-template-columns:208px minmax(0,1fr);gap:32px; }
+  #book-overview .chapter-rail { padding-right:16px; }
+}
+@media(max-width:1100px) {
+  #book-overview .overview-content { width:calc(100% - 48px); }
+  #book-overview .overview-body { grid-template-columns:192px minmax(0,1fr);gap:24px; }
+  #book-overview .chapter-row { flex-wrap:wrap;gap:4px 8px; }
+  #book-overview .chapter-row small { margin-left:auto; }
+  #book-overview .chapter-heading { flex-wrap:wrap;gap:0 16px;padding-bottom:16px; }
+  #book-overview .chapter-heading>div { margin-left:auto; }
+}
+@media(prefers-reduced-motion:reduce) {
+  #book-overview :is(.section-heading,.overview-kp,.chapter-row),#book-overview .overview-section::details-content { transition:none; }
+}
+/* Resolve the installed SC family explicitly; avoid generic-serif glyph fallback on Windows. */
+#book-overview { --font-editorial:"Noto Serif SC","Songti SC","Noto Serif CJK SC","Source Han Serif SC",serif; }
+@media(max-width:1280px) {
+  #book-overview .chapter-row { flex-wrap:wrap;gap:4px 8px; }
+  #book-overview .chapter-row span { flex-basis:100%; }
+  #book-overview .chapter-row small { margin-left:auto; }
+}
