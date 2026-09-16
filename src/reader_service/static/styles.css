@@ -53,9 +53,12 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .local-note { margin: 30px 2px 0; color: #807c74; font-size: 10px; }
 .local-note::before { content: "●"; margin-right: 7px; color: #4c9a70; }
 
-.reader { display: grid; grid-template-rows: 68px minmax(0, 1fr); width: 100%; height: 100%; }
+.reader {
+  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 68px minmax(0, 1fr);
+  width: 100%; height: 100%;
+}
 .toolbar {
-  z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  z-index: 3; grid-column: 1 / -1; grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 24px;
   padding: 0 24px; background: rgb(248 246 240 / 96%); border-bottom: 1px solid #d2cec4;
   box-shadow: 0 2px 12px rgb(42 39 31 / 5%); backdrop-filter: blur(12px);
 }
@@ -93,9 +96,13 @@ button, label { -webkit-tap-highlight-color: transparent; }
   color: #fff; background: #8b6731; border: 2px solid #f8f6f0; border-radius: 10px;
   font-size: 9px; font-weight: 800; line-height: 12px; text-align: center;
 }
-.viewer { position: relative; min-width: 0; min-height: 0; overflow: auto; outline: none; background: #d7d4cd; scrollbar-color: #aaa69c transparent; }
-.reader.assistant-dock-open .viewer { margin-right: var(--assistant-dock-width, 410px); }
-.reader.assistant-dock-open.assistant-expanded .viewer { margin-right: 0; }
+.viewer {
+  position: relative; grid-column: 1; grid-row: 2; min-width: 0; min-height: 0;
+  overflow: auto; outline: none; background: #d7d4cd; scrollbar-color: #aaa69c transparent;
+}
+.reader.assistant-dock-open:not(.assistant-expanded) {
+  grid-template-columns: minmax(0, 1fr) var(--assistant-dock-width, 410px);
+}
 .viewer:focus-visible { box-shadow: inset 0 0 0 2px rgb(105 91 68 / 25%); }
 .pages { min-width: 100%; padding: 8px 32px 60px; }
 .page { position: relative; margin: 20px auto; overflow: hidden; background: #fdfcf9; box-shadow: 0 3px 18px rgb(48 44 35 / 19%); }
@@ -203,9 +210,8 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .outline-other-toggle small { color: #9a8f7e; font-size: 9px; }
 .search-panel { width: min(390px, calc(100% - 28px)); }
 .knowledge-panel { width: min(440px, calc(100% - 28px)); }
-.reader.guide-open { grid-template-columns: minmax(0, 1fr); }
-.reader.guide-open .viewer { margin-right: var(--guide-width); }
-.guide-panel { position: absolute; z-index: 24; top: 68px; right: 0; bottom: 0;
+.reader.guide-open { grid-template-columns: minmax(0, 1fr) var(--guide-width, 45%); }
+.guide-panel { position: relative; z-index: 24; grid-column: 2; grid-row: 2;
   width: var(--guide-width, 45%); display: flex; flex-direction: column; min-height: 0;
   background: #fffdf7; border-left: 1px solid #d6d0c3; }
 .guide-heading { display: flex; align-items: center; gap: 10px; padding: 12px 36px 8px; }
@@ -320,6 +326,13 @@ button, label { -webkit-tap-highlight-color: transparent; }
   display: flex; flex-direction: column; padding: 18px;
   background: rgb(250 248 242 / 99%); border-left: 1px solid #c9c1b1;
   box-shadow: -10px 0 32px rgb(52 46 34 / 18%);
+}
+.reader.assistant-dock-open:not(.assistant-expanded) .assistant-panel:not(.assistant-overlay-open) {
+  position: relative; inset: auto; grid-column: 2; grid-row: 2;
+  width: var(--assistant-dock-width, 410px); min-width: 0; min-height: 0;
+}
+.reader:is(.assistant-dock-open:not(.assistant-expanded), .guide-open) .page {
+  margin-left: auto !important; margin-right: auto !important;
 }
 .dock-tabs { display: flex; gap: 8px; margin-bottom: 12px; flex-shrink: 0; }
 .dock-tabs button, #master-workspace button, .learning-marker button {
@@ -553,6 +566,13 @@ button, label { -webkit-tap-highlight-color: transparent; }
   .selection-actions { max-width: calc(100% - 12px); }
   .selection-action-row button { padding-inline: 7px; }
   .note-editor input { width: min(230px, 55vw); }
+  .reader.assistant-dock-open:not(.assistant-expanded), .reader.guide-open { grid-template-columns: minmax(0, 1fr); }
+  .reader.assistant-dock-open:not(.assistant-expanded) .assistant-panel:not(.assistant-overlay-open),
+  .reader.guide-open .guide-panel {
+    position: fixed; z-index: 24; top: 68px; right: 0; bottom: 0; left: auto;
+    width: min(var(--assistant-dock-width, 390px), 100vw);
+  }
+  .reader.guide-open .guide-panel { width: min(var(--guide-width, 100vw), 100vw); }
   .assistant-panel { top: 68px; width: min(var(--assistant-dock-width, 390px), 100vw); }
   .assistant-model span { display: none; }
   .assistant-model select { width: 165px; max-width: 44vw; }

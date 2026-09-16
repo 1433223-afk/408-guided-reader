@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 
 const source = process.env.READER_DATA_DIR;
 if (!source) throw new Error('READER_DATA_DIR must name the real prepared Library');
+const resizeOnly = process.env.READER_DOCK_RESIZE_ONLY === '1';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'guided-reader-panel-performance-'));
 const dataDir = path.join(root, 'data');
@@ -35,7 +36,7 @@ try {
   await page.goto(service.url);
   await openBook(page);
 
-  const fixture = await page.evaluate(async () => {
+  const fixture = await page.evaluate(async (resizeOnly) => {
     const books = (await (await fetch('/api/books')).json()).books;
     const revision = books.find(book => book.active_revision?.page_count === 348).active_revision.id;
     const outline = await (await fetch(`/api/revisions/${revision}/outline`)).json();
@@ -43,12 +44,14 @@ try {
     const guideSection = outline.nodes.find(node => node.kind === 'SECTION' && node.title.startsWith('2.1 '));
     let inlineSection = null;
     let inlineSnapshot = null;
-    for (const section of outline.nodes.filter(node => node.kind === 'SECTION' && node.resolution_state === 'RESOLVED')) {
-      const value = await (await fetch(`/api/revisions/${revision}/sections/${section.outline_node_id}/inline-teaching`)).json();
-      if (value.published?.content?.items?.some(item => value.published.sources?.[item.target_id]?.available)) {
-        inlineSection = section;
-        inlineSnapshot = value;
-        break;
+    if (!resizeOnly) {
+      for (const section of outline.nodes.filter(node => node.kind === 'SECTION' && node.resolution_state === 'RESOLVED')) {
+        const value = await (await fetch(`/api/revisions/${revision}/sections/${section.outline_node_id}/inline-teaching`)).json();
+        if (value.published?.content?.items?.some(item => value.published.sources?.[item.target_id]?.available)) {
+          inlineSection = section;
+          inlineSnapshot = value;
+          break;
+        }
       }
     }
     return {
@@ -59,9 +62,9 @@ try {
       inlineSnapshot,
       masterPoint: learning.points.find(point => point.thread_id),
     };
-  });
+  }, resizeOnly);
   assert.ok(fixture.guideSection, 'real Library needs the accepted Guide section');
-  assert.ok(fixture.inlineSection, 'real Library needs one published Inline Teaching section');
+  if (!resizeOnly) assert.ok(fixture.inlineSection, 'real Library needs one published Inline Teaching section');
   assert.ok(fixture.masterPoint, 'real Library needs one retained Master topic');
 
   // Assistant: a real PDF selection supplies the temporary Root shell without invoking a provider.
@@ -79,11 +82,13 @@ try {
     await page.mouse.down();
     await page.mouse.move(handle.x - 64, handle.y + 220, { steps: 5 });
     await page.mouse.up();
-  });
-  await probe(page, 'assistant-expand', () => page.locator('#assistant-expand').click(),
-    state('#reader', 'class', 'assistant-expanded'));
-  await probe(page, 'assistant-restore', () => page.locator('#assistant-expand').click(),
-    state('#reader', 'class-not', 'assistant-expanded'));
+  }, null, 650, '#assistant-panel');
+  if (!resizeOnly) {
+    await probe(page, 'assistant-expand', () => page.locator('#assistant-expand').click(),
+      state('#reader', 'class', 'assistant-expanded'));
+    await probe(page, 'assistant-restore', () => page.locator('#assistant-expand').click(),
+      state('#reader', 'class-not', 'assistant-expanded'));
+  }
   await probe(page, 'assistant-close-again', () => page.locator('#assistant-close').click(),
     state('#assistant-panel', 'hidden', true));
 
@@ -93,10 +98,19 @@ try {
     .filter({ hasText: fixture.masterPoint.title }).first().getByRole('button', { name: '继续 Master 对话' });
   await probe(page, 'master-open', () => masterAction.click(), state('#master-workspace', 'hidden', false), 900);
   await page.locator('#master-history').waitFor({ state: 'visible' });
-  await probe(page, 'master-expand', () => page.locator('#master-expand').click(),
-    state('#reader', 'class', 'assistant-expanded'));
-  await probe(page, 'master-restore', () => page.locator('#master-expand').click(),
-    state('#reader', 'class-not', 'assistant-expanded'));
+  await probe(page, 'master-resize', async () => {
+    const handle = await page.locator('#assistant-resize-handle').boundingBox();
+    await page.mouse.move(handle.x + 3, handle.y + 220);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + 48, handle.y + 220, { steps: 4 });
+    await page.mouse.up();
+  }, null, 650, '#assistant-panel');
+  if (!resizeOnly) {
+    await probe(page, 'master-expand', () => page.locator('#master-expand').click(),
+      state('#reader', 'class', 'assistant-expanded'));
+    await probe(page, 'master-restore', () => page.locator('#master-expand').click(),
+      state('#reader', 'class-not', 'assistant-expanded'));
+  }
   await probe(page, 'master-close', () => page.locator('#assistant-panel .dock-tabs').getByRole('button', { name: '收起' }).click(),
     state('#assistant-panel', 'hidden', true));
 
@@ -106,50 +120,54 @@ try {
   await guideEntry.scrollIntoViewIfNeeded();
   await settlePdf(page);
   await probe(page, 'guide-open', () => guideEntry.click(), state('#guide-panel', 'hidden', false), 900);
-  await probe(page, 'guide-expand', () => page.locator('#guide-expand').click(), state('#guide-expand', 'aria-pressed', 'true'));
-  await probe(page, 'guide-restore', () => page.locator('#guide-expand').click(), state('#guide-expand', 'aria-pressed', 'false'));
+  if (!resizeOnly) {
+    await probe(page, 'guide-expand', () => page.locator('#guide-expand').click(), state('#guide-expand', 'aria-pressed', 'true'));
+    await probe(page, 'guide-restore', () => page.locator('#guide-expand').click(), state('#guide-expand', 'aria-pressed', 'false'));
+  }
   await probe(page, 'guide-resize', async () => {
     const handle = await page.locator('#guide-divider').boundingBox();
     await page.mouse.move(handle.x + 4, handle.y + 220);
     await page.mouse.down();
     await page.mouse.move(handle.x - 64, handle.y + 220, { steps: 5 });
     await page.mouse.up();
-  });
+  }, null, 650, '#guide-panel');
   await probe(page, 'guide-close', () => page.locator('#guide-close').click(), state('#guide-panel', 'hidden', true));
   await probe(page, 'guide-reopen', () => page.locator('#guide-reopen').click(), state('#guide-panel', 'hidden', false), 900);
   await page.locator('#guide-close').click();
 
-  // Inline Teaching: warm the current-section asset, toggle it, and open/close an anchored Guidance card.
-  const inlineSource = Object.values(fixture.inlineSnapshot.published.sources).find(source => source.available);
-  await goToSource(page, inlineSource.pdf_page_index, Math.min(...inlineSource.quad.map(point => point[1])));
-  await page.waitForFunction(id => document.querySelector('#inline-open')?.dataset.sectionId === id,
-    fixture.inlineSection.outline_node_id);
-  await page.waitForTimeout(900);
-  await settlePdf(page);
-  if (await page.locator('#inline-open').getAttribute('aria-pressed') !== 'true') {
-    await probe(page, 'inline-enable', () => page.locator('#inline-open').click(), state('#inline-open', 'aria-pressed', 'true'), 900);
+  if (!resizeOnly) {
+    // Inline Teaching: warm the current-section asset, toggle it, and open/close an anchored Guidance card.
+    const inlineSource = Object.values(fixture.inlineSnapshot.published.sources).find(source => source.available);
+    await goToSource(page, inlineSource.pdf_page_index, Math.min(...inlineSource.quad.map(point => point[1])));
+    await page.waitForFunction(id => document.querySelector('#inline-open')?.dataset.sectionId === id,
+      fixture.inlineSection.outline_node_id);
+    await page.waitForTimeout(900);
+    await settlePdf(page);
+    if (await page.locator('#inline-open').getAttribute('aria-pressed') !== 'true') {
+      await probe(page, 'inline-enable', () => page.locator('#inline-open').click(), state('#inline-open', 'aria-pressed', 'true'), 900);
+    }
+    const inlineMarker = page.locator('.inline-marker').first();
+    await inlineMarker.waitFor({ state: 'visible' });
+    await probe(page, 'inline-card-open', () => inlineMarker.click(), state('#inline-panel', 'hidden', false));
+    await probe(page, 'inline-card-close', () => page.locator('#inline-close').click(), state('#inline-panel', 'hidden', true));
+    await probe(page, 'inline-card-reopen', () => inlineMarker.click(), state('#inline-panel', 'hidden', false));
+    await probe(page, 'inline-disable', () => page.locator('#inline-open').click(), state('#inline-open', 'aria-pressed', 'false'), 900);
+
+    // Temporary Reader navigation surfaces.
+    await probe(page, 'outline-open', () => page.locator('#outline-toggle').click(), state('#outline-panel', 'hidden', false), 700);
+    await probe(page, 'outline-close', () => page.locator('#outline-close').click(), state('#outline-panel', 'hidden', true));
+
+    await goToSource(page, fixture.masterPoint.display_end_page, fixture.masterPoint.display_end_y);
+    await page.locator('#reader-kp-action').filter({ hasText: /\d+ 个知识点/ }).waitFor({ timeout: 10_000 });
+    await probe(page, 'knowledge-points-open', () => page.locator('#reader-kp-action').click(), state('#reader-kp-list', 'hidden', false), 900);
+    await page.locator('#reader-kp-list .reader-kp-row').first().waitFor();
+    await probe(page, 'knowledge-points-close', () => page.locator('#reader-kp-action').click(), state('#reader-kp-list', 'hidden', true));
+
+    await probe(page, 'search-open', () => page.locator('#search-toggle').click(), state('#search-panel', 'hidden', false), 700);
+    await probe(page, 'search-close', () => page.locator('#search-close').click(), state('#search-panel', 'hidden', true));
+    await probe(page, 'marks-open', () => page.locator('#marks-toggle').click(), state('#marks-panel', 'hidden', false), 900);
+    await probe(page, 'marks-close', () => page.locator('#marks-close').click(), state('#marks-panel', 'hidden', true));
   }
-  const inlineMarker = page.locator('.inline-marker').first();
-  await inlineMarker.waitFor({ state: 'visible' });
-  await probe(page, 'inline-card-open', () => inlineMarker.click(), state('#inline-panel', 'hidden', false));
-  await probe(page, 'inline-card-close', () => page.locator('#inline-close').click(), state('#inline-panel', 'hidden', true));
-  await probe(page, 'inline-card-reopen', () => inlineMarker.click(), state('#inline-panel', 'hidden', false));
-  await probe(page, 'inline-disable', () => page.locator('#inline-open').click(), state('#inline-open', 'aria-pressed', 'false'), 900);
-
-  // Temporary Reader navigation surfaces.
-  await probe(page, 'outline-open', () => page.locator('#outline-toggle').click(), state('#outline-panel', 'hidden', false), 700);
-  await probe(page, 'outline-close', () => page.locator('#outline-close').click(), state('#outline-panel', 'hidden', true));
-
-  await goToSource(page, fixture.masterPoint.display_end_page, fixture.masterPoint.display_end_y);
-  await page.locator('#reader-kp-action').filter({ hasText: /\d+ 个知识点/ }).waitFor({ timeout: 10_000 });
-  await probe(page, 'knowledge-points-open', () => page.locator('#reader-kp-action').click(), state('#reader-kp-list', 'hidden', false), 900);
-  await page.locator('#reader-kp-list .reader-kp-row').first().waitFor();
-  await probe(page, 'knowledge-points-close', () => page.locator('#reader-kp-action').click(), state('#reader-kp-list', 'hidden', true));
-
-  await probe(page, 'search-open', () => page.locator('#search-toggle').click(), state('#search-panel', 'hidden', false), 700);
-  await probe(page, 'search-close', () => page.locator('#search-close').click(), state('#search-panel', 'hidden', true));
-  await probe(page, 'marks-open', () => page.locator('#marks-toggle').click(), state('#marks-panel', 'hidden', false), 900);
-  await probe(page, 'marks-close', () => page.locator('#marks-close').click(), state('#marks-panel', 'hidden', true));
 
   try {
     assert.deepEqual(pageErrors, []);
@@ -164,6 +182,16 @@ try {
       assert.equal(result.zoomStable, true, `${result.name} changed zoom`);
       assert.ok(Math.abs(result.scrollTopDelta) < 1, `${result.name} moved PDF scroll by ${result.scrollTopDelta}`);
       assert.ok(Math.abs(result.scrollLeftDelta) < 1, `${result.name} moved horizontal PDF scroll by ${result.scrollLeftDelta}`);
+      assert.equal(result.currentPageStable, true, `${result.name} changed the current page`);
+      if (result.dockLayout) {
+        assert.equal(result.dockLayout.position, 'relative', `${result.name} panel is not a real layout column`);
+        assert.ok(result.dockLayout.viewerRight <= result.dockLayout.panelLeft + .5,
+          `${result.name} panel overlaps the PDF viewport`);
+        assert.ok(Math.abs(result.dockLayout.widthConservation) < 1,
+          `${result.name} viewer did not yield the resized panel width`);
+        if (result.dockLayout.pageFits) assert.ok(result.dockLayout.centerError < 8,
+          `${result.name} PDF stayed ${result.dockLayout.centerError}px off center`);
+      }
     }
   } catch (error) {
     console.error(JSON.stringify({ status: 'FAIL', realPages: 348, measurements: results }, null, 2));
@@ -178,9 +206,9 @@ try {
 
 function state(selector, attribute, value) { return { selector, attribute, value }; }
 
-async function probe(page, name, action, expectedState = null, observationMs = 650) {
+async function probe(page, name, action, expectedState = null, observationMs = 650, dockSelector = null) {
   await settlePdf(page);
-  await page.evaluate(({ name, expectedState }) => {
+  await page.evaluate(({ name, expectedState, dockSelector }) => {
     const pages = document.querySelector('#pages');
     const viewer = document.querySelector('#viewer');
     const canvases = [...pages.querySelectorAll('canvas')];
@@ -229,7 +257,15 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       metric.clickStart = performance.now();
       requestAnimationFrame(() => { metric.firstFrame = performance.now(); });
     }, { capture: true, once: true });
-  }, { name, expectedState });
+    const currentPage = Number(document.querySelector('#page-number').value);
+    metric.currentPage = currentPage;
+    if (dockSelector) {
+      const panel = document.querySelector(dockSelector);
+      metric.dockSelector = dockSelector;
+      metric.viewerRect = viewer.getBoundingClientRect().toJSON();
+      metric.panelRect = panel.getBoundingClientRect().toJSON();
+    }
+  }, { name, expectedState, dockSelector });
   await action();
   if (expectedState) await page.waitForFunction(({ selector, attribute, value }) => {
     const target = document.querySelector(selector);
@@ -265,6 +301,25 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       zoomStable: document.querySelector('#zoom-value').textContent === metric.zoom,
       scrollTopDelta: viewer.scrollTop - metric.scrollTop,
       scrollLeftDelta: viewer.scrollLeft - metric.scrollLeft,
+      currentPageStable: Number(document.querySelector('#page-number').value) === metric.currentPage,
+      dockLayout: (() => {
+        if (!metric.dockSelector) return null;
+        const panel = document.querySelector(metric.dockSelector);
+        const viewerRect = viewer.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        const pageIndex = Number(document.querySelector('#page-number').value) - 1;
+        const wrapper = document.querySelector(`.page[data-index="${pageIndex}"]`);
+        const pageRect = wrapper.getBoundingClientRect();
+        return {
+          position: getComputedStyle(panel).position,
+          viewerRight: viewerRect.right,
+          panelLeft: panelRect.left,
+          widthConservation: (viewerRect.width - metric.viewerRect.width)
+            + (panelRect.width - metric.panelRect.width),
+          pageFits: pageRect.width <= viewerRect.width - 64,
+          centerError: Math.abs((pageRect.left + pageRect.right - viewerRect.left - viewerRect.right) / 2),
+        };
+      })(),
     };
   });
   results.push(result);

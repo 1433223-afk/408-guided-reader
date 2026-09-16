@@ -695,3 +695,33 @@ browser fixtures were updated only to enter through the current Book Overview ro
 already-established Assistant SSE contract. No real provider call, backend/schema change, new
 dependency or Frozen Product change was made. This correction is `READY_FOR_USER_RETEST`; it does
 not claim user acceptance.
+
+## Docked panel resize layout correction (2026-09-16)
+
+The no-relayout performance correction exposed a presentation regression: desktop Guide and the
+shared Assistant/Master Dock remained absolutely/fixed positioned while the Viewer only simulated
+the occupied width with a right margin. Each PDF page also retained the inline horizontal offset
+computed when the Viewer was full width. Resizing a panel therefore changed neither the page offset
+nor the panel's participation in layout; the PDF could appear clipped beneath the panel instead of
+yielding and recentering.
+
+Desktop Guide and Assistant/Master now occupy a real second CSS Grid column below the shared Reader
+toolbar. Updating the existing width custom property resizes that column and the Viewer together.
+Existing page wrappers use CSS auto margins while a Dock is open, so pages that fit recenter inside
+the new Viewer width without changing canvas dimensions. Pages wider than the remaining Viewer keep
+normal horizontal overflow and the existing scroll position. The selection-created Assistant and
+the explicit narrow-screen presentation remain overlays; expanded workspaces retain their existing
+full-surface behavior. No Reader state, panel lifecycle or provider path changed.
+
+The real-348-page targeted audit now has a resize-only path covering Assistant, Master and Guide.
+It asserts real-column positioning, exact Viewer/panel boundary adjacency, conserved width, page
+centering when the page fits, stable current page/zoom/scroll, unchanged wrapper/canvas identity and
+dimensions, zero PDF subtree removals and no Long Task at or above 50 ms. The final run measured
+Assistant close/open at 5.3/0.4 ms and resize first-frame at 7.3 ms; Master open at 12.9 ms and resize
+first-frame at 7.0 ms; Guide open/close/reopen at 16.2/0.3/16.2 ms and resize first-frame at 11.9 ms.
+Every resize conserved width exactly and produced no qualifying Long Task. The focused Assistant
+navigator/Master marker tests and the served real-book Guide split-reader regression also PASS.
+
+No `relayoutPages()` call, geometry scan, PDF/OCR render, backend/schema change, dependency or
+Frozen Product semantic change was introduced. This correction is `READY_FOR_USER_RETEST`; it does
+not claim user acceptance.
