@@ -133,6 +133,7 @@ test('section-only records stay subordinate and technical review remains low fre
   const browser=await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true});
   try {
     const page=await browser.newPage();await page.setContent('<div class="home-toolbar"></div>');
+    await page.addStyleTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.css',import.meta.url),'utf8')});
     await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
     await page.addScriptTag({content:'function renderAssistantAnswer(n,s){n.textContent=s;}\n'+source+'\nwindow.createMemoryUI=createMemoryUI;'});
     await page.evaluate(()=>{
@@ -147,7 +148,14 @@ test('section-only records stay subordinate and technical review remains low fre
     await page.locator('.memory-open').click();await page.locator('.memory-book-open').click();
     assert.equal(await page.locator('.memory-chapter h2').innerText(),'第1章');
     assert.equal(await page.locator('.memory-section-open span').innerText(),'1.1 小节');
-    assert.equal(await page.locator('.memory-unassigned-group h2').innerText(),'未归属知识点');
+    const fallback = page.locator('.memory-unassigned-group');
+    assert.equal(await fallback.locator('h2').innerText(),'未归属知识点');
+    assert.equal(await fallback.locator('.memory-item-open').count(),1);
+    const fallbackStyle = await fallback.evaluate(element => {
+      const group = getComputedStyle(element); const heading = getComputedStyle(element.querySelector('h2'));
+      return {background:group.backgroundColor,fontSize:heading.fontSize,lineHeight:heading.lineHeight,fontWeight:heading.fontWeight};
+    });
+    assert.deepEqual(fallbackStyle,{background:'rgba(0, 0, 0, 0)',fontSize:'18px',lineHeight:'28px',fontWeight:'600'});
     assert.equal(await page.getByText('审查暂不可用',{exact:true}).count(),0);
     assert.equal(await page.locator('#memory-items .memory-review-status').count(),0);
     await page.locator('.memory-item-open').click();await page.locator('#memory-detail[data-detail-id="technical"]').waitFor();

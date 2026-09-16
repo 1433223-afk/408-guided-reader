@@ -60,9 +60,41 @@ try {
   await page.locator(`.memory-section-open[data-section-id="${item.section.id}"]`).click();
   await page.locator(`.memory-kp-group[data-kp-id="${item.knowledge_point.id}"]`).waitFor();
   const memory = page.locator(`.memory-item-open[data-memory-id="${item.id}"]`);
+  const typography = await page.evaluate(() => {
+    const style = selector => getComputedStyle(document.querySelector(selector));
+    const pick = selector => {
+      const computed = style(selector);
+      return {fontSize:computed.fontSize,lineHeight:computed.lineHeight,fontWeight:computed.fontWeight,fontFamily:computed.fontFamily};
+    };
+    return {
+      book:pick('.memory-book-heading h1'),
+      eyebrow:pick('.memory-book-heading .eyebrow'),
+      chapter:pick('.memory-chapter h2'),
+      section:pick('.memory-section-open'),
+      metadata:pick('.memory-section-open small'),
+      kp:pick('.memory-kp-group h2'),
+      title:pick('.memory-item-open > strong'),
+      summary:pick('.memory-card-summary'),
+      groupColor:style('.memory-kp-group h2').color,
+      titleColor:style('.memory-item-open > strong').color,
+    };
+  });
+  assert.deepEqual(typography.book.fontSize,'31px'); assert.deepEqual(typography.book.lineHeight,'40px');
+  assert.match(typography.book.fontFamily,/Noto Serif|Songti|SimSun/i);
+  assert.deepEqual(typography.eyebrow.fontSize,'11px');
+  assert.deepEqual({...typography.chapter,fontFamily:undefined},{fontSize:'14px',lineHeight:'22px',fontWeight:'600',fontFamily:undefined});
+  assert.deepEqual({...typography.section,fontFamily:undefined},{fontSize:'14px',lineHeight:'22px',fontWeight:'500',fontFamily:undefined});
+  assert.equal(Number.parseFloat(typography.metadata.fontSize) >= 12,true);
+  assert.deepEqual({...typography.kp,fontFamily:undefined},{fontSize:'18px',lineHeight:'28px',fontWeight:'600',fontFamily:undefined});
+  assert.deepEqual({...typography.title,fontFamily:undefined},{fontSize:'17px',lineHeight:'26px',fontWeight:'600',fontFamily:undefined});
+  assert.equal(typography.groupColor,'rgb(63, 87, 73)'); assert.equal(typography.titleColor,'rgb(32, 40, 32)');
+  assert.deepEqual(typography.summary.fontSize,'14px'); assert.deepEqual(typography.summary.lineHeight,'23px');
+  for(const role of ['chapter','section','kp','title','summary']) assert.doesNotMatch(typography[role].fontFamily,/Noto Serif|Songti|SimSun/i);
   await page.screenshot({path:'test-results/memory-ia-book.png'});
   await memory.click();
   await page.locator(`#memory-detail[data-detail-id="${item.id}"]`).waitFor();
+  const detailWidth = await page.locator('.memory-detail-body').evaluate(element => getComputedStyle(element).maxWidth);
+  assert.equal(detailWidth,'690px');
   await page.screenshot({path:'test-results/memory-ia-detail.png'});
   await page.getByRole('button',{name:'返回来源',exact:true}).click();
   await page.locator('#learning-memory').waitFor({state:'hidden'});
