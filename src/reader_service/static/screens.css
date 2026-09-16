@@ -694,3 +694,32 @@ body,button,input,select,textarea { font-family:var(--font-ui); }
   #book-overview .chapter-row span { flex-basis:100%; }
   #book-overview .chapter-row small { margin-left:auto; }
 }
+
+/* Overview follow-up: bounded reading columns and lighter hierarchy. */
+#book-overview .overview-content { width:min(1120px,calc(100% - 64px)); }
+#book-overview .overview-book-heading { margin-top:24px;padding-bottom:20px;gap:32px; }
+#book-overview .overview-body { grid-template-columns:216px minmax(0,1fr);gap:32px;margin-top:24px; }
+#book-overview .chapter-rail { padding-right:16px; }
+#book-overview .overview-map { max-width:800px; }
+#book-overview .chapter-heading { padding-right:40px; }
+#book-overview .chapter-heading h2 { margin:20px 0;font-size:30px;line-height:40px; }
+#book-overview .section-heading h3 { font-size:18px;line-height:28px;font-weight:500; }
+#book-overview .overview-section { max-width:760px; }
+#book-overview .overview-section[open]>.section-heading { background:rgb(83 109 88 / 1.5%);box-shadow:none; }
+#book-overview .overview-kp .kp-state.UNDERSTOOD { color:#56735e; }
+#book-overview .overview-kp .kp-state.NOT_FULLY_CLEAR { color:#85744d; }
+#book-overview .overview-kp .kp-state.UNCONFIRMED { color:#7a827b; }
+#book-overview .overview-kp .kp-state:is(.UNDERSTOOD,.NOT_FULLY_CLEAR,.UNCONFIRMED)::before { color:currentColor; }
+#book-overview .structure-lifecycle:has(>.structure-menu):not(:has(>.structure-progress,>.structure-failure)) { min-height:8px; }
+#book-overview .structure-menu { right:0;top:-42px; }
+@media(max-width:1100px) {
+  #book-overview .overview-content { width:calc(100% - 48px); }
+  #book-overview .overview-body { grid-template-columns:176px minmax(0,1fr);gap:24px;margin-top:20px; }
+  #book-overview .overview-book-heading { margin-top:16px;padding-bottom:16px; }
+  #book-overview .chapter-row { min-height:40px;padding:8px; }
+  #book-overview .chapter-heading { padding-bottom:8px; }
+  #book-overview .chapter-heading h2 { margin:12px 0; }
+  #book-overview .overview-section { padding:8px 0; }
+  #book-overview .section-heading { padding-block:6px; }
+  #book-overview .overview-kp { padding-block:8px; }
+}

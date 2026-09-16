@@ -27,3 +27,21 @@ overview-sections.mjs PASS including independent Section source action, stable h
 correct KP PDF 169 / Y 0.3195564449, and Back. No unrelated/full-book regression.
 Only scoped CSS, this report and the responsive test enter the checkpoint; other worktree
 changes remain uncommitted.
+
+## Follow-up visual polish — 2026-09-16
+
+READY_FOR_USER_RETEST for this follow-up; the user accepted the previous direction and requested
+this additional CSS-only adjustment. Content width capped at 1120px, chapter rail reduced to 216px
+(176px at <=1100), main map capped at 800px and Section/KP reading groups at 760px. Top spacing is
+reduced, Chapter remains editorial 30/40px while Section is lighter 18/28px 500. Expanded Section
+uses 1.5% green tint without the inset stripe. KP states consistently use muted green, muted warm
+neutral and gray-green; dots inherit their status text color. The existing ellipsis is visually
+aligned with Chapter metadata with reserved room, and 1024px rows/spacing are denser. No new UI,
+border, explanatory text, IA, event handler or business-state change.
+
+Real-book overview-polish.mjs PASS at 1600/1280/1024: no overflow, title/PDF alignment, stable
+hover/focus geometry, native Section collapse/reopen, heading consistency and reduced motion.
+Screenshots visually inspected at 1600 and 1024. No broad E2E or generation requests.
+
+Checkpoint requested by the user on 2026-09-16. This records the tested follow-up;
+no additional user-acceptance result is inferred from the commit request.

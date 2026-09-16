@@ -14,7 +14,7 @@ try {
    const s=getComputedStyle(document.querySelector(selector));return [selector,[s.fontFamily,s.fontSize,s.fontWeight,s.lineHeight]];
  })));
  const typeBaseline=await styles();
- assert.deepEqual(Object.values(typeBaseline).map(s=>s[1]),['29px','20px','15px']);
+ assert.deepEqual(Object.values(typeBaseline).map(s=>s[1]),['30px','18px','15px']);
  for(const width of [1600,1280,1024]) {
    await page.setViewportSize({width,height:1100});await page.waitForTimeout(180);
    assert.deepEqual(await styles(),typeBaseline);
