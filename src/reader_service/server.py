@@ -691,6 +691,22 @@ def handler_factory(
                             payload.get("provider"), self._assistant_stream_event if streaming else None,
                             payload.get("continuation"),
                         )
+                    elif payload.get("source_kind") == "MASTER_ANSWER":
+                        if learning is None:
+                            raise ValueError("Master 服务不可用。")
+                        projection = learning.assistant_context_for_master_answer(
+                            ask_match.group(1),
+                            payload["master_message_id"],
+                            payload["source_spans"],
+                        )
+                        state = assistant.ask_master(
+                            payload["reader_session_id"],
+                            ask_match.group(1),
+                            projection,
+                            payload.get("provider"),
+                            self._assistant_stream_event if streaming else None,
+                            payload.get("continuation"),
+                        )
                     else:
                         state = assistant.ask_selection(
                             payload["reader_session_id"],

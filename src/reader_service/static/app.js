@@ -81,6 +81,9 @@ const master = createMasterUI({ api, revision: () => state.revision?.id,
   openDock: (open) => open ? openAssistantPanel() : setAssistantPanelOpen(false),
   goToPage, announce,
   memoryControl: (...args) => memory.control(...args) });
+document.getElementById("master-history")?.addEventListener(
+  "contextmenu", openMasterAnswerContextMenu,
+);
 
 document.getElementById("master-expand")?.addEventListener("pointerdown", () => {
   const active = document.activeElement;
@@ -138,13 +141,7 @@ const teachingUiOptions = { state, api, goToPage,
   }, onEvent, fetch, { label: "导读", codePrefix: "GUIDE" }),
   readingAnchor: () => captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1),
   hideContextMenu: hideSelectionActions,
-  contextMenu: (x, y, text, explain) => {
-    hideSelectionActions();
-    state.selection = null;
-    document.querySelectorAll(".selection-quad").forEach(node => node.remove());
-    state.guideSelection = { text, explain };
-    syncAskEligibility(); showSelectionActions(x, y);
-  },
+  contextMenu: openVisibleSelectionActions,
   layout: change => change(),
   closeDock: () => claimRightDock("guide"),
   setDockWidth: applyAssistantDockWidth,
@@ -2243,6 +2240,7 @@ function renderAssistantDraft() {
   elements["assistant-title"].textContent = "问 AI";
   elements["assistant-scope"].textContent = draft.request.source_kind === "READING_GUIDE"
     ? "正在解释：导读选区" : draft.request.source_kind === "INLINE_GUIDANCE" ? "正在解释：行间教学"
+    : draft.request.source_kind === "MASTER_ANSWER" ? "正在解释：Master 回答选区"
     : `PDF ${draft.request.pdf_page_index + 1} · 教材选区`;
   elements["assistant-draft-text"].textContent = draft.selectedText;
   elements["assistant-first-turn"].hidden = false;
@@ -2415,6 +2413,20 @@ function stageAssistantSelection() {
   renderAssistantDraft();
   refreshAssistantStatus();
   clearSelection({ animateActions: true });
+}
+
+function openAssistantDraftFromVisibleSelection(selectedText, request) {
+  if (!state.readerSessionId || !state.revision?.id || state.assistantPending) return;
+  rememberAssistantScroll();
+  state.assistantDraft = {
+    readerSessionId: state.readerSessionId,
+    revisionId: state.revision.id,
+    selectedText,
+    request,
+  };
+  openAssistantPanel();
+  renderAssistantDraft();
+  refreshAssistantStatus();
 }
 
 async function sendAssistantFirstTurn(continuationText = "") {
@@ -2725,6 +2737,46 @@ function openAssistantAnswerContextMenu(event) {
     action.style.left = `${Math.max(8, Math.min(innerWidth - action.offsetWidth - 8, clientX + 5))}px`;
     action.style.top = `${Math.max(76, Math.min(innerHeight - action.offsetHeight - 8, top))}px`;
   });
+}
+
+function openMasterAnswerContextMenu(event) {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return;
+  const range = selection.getRangeAt(0);
+  const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer : range.startContainer.parentElement;
+  const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE
+    ? range.endContainer : range.endContainer.parentElement;
+  const startBubble = startElement?.closest("#master-history .assistant-answer-bubble");
+  const endBubble = endElement?.closest("#master-history .assistant-answer-bubble");
+  if (!startBubble || startBubble !== endBubble) return;
+  const message = startBubble.closest(".master-message[data-message-id]");
+  if (!message?.dataset.messageId || message.classList.contains("master-stream-message")) return;
+  const mapped = renderedSelectionToRaw(range, startBubble);
+  if (mapped?.blocked) {
+    announce(mapped.reason, true);
+    return;
+  }
+  if (!mapped) {
+    announce("这段渲染内容暂时无法精确对应 Master 回答，请选择普通正文文字。", true);
+    return;
+  }
+  const inside = Array.from(range.getClientRects()).some((rect) => (
+    event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top && event.clientY <= rect.bottom
+  ));
+  if (!inside) return;
+  event.preventDefault();
+  openVisibleSelectionActions(
+    event.clientX,
+    event.clientY,
+    mapped.selectedText,
+    () => openAssistantDraftFromVisibleSelection(mapped.selectedText, {
+      source_kind: "MASTER_ANSWER",
+      master_message_id: message.dataset.messageId,
+      source_spans: mapped.sourceSpans,
+    }),
+  );
 }
 
 function hideAssistantAnswerActions(clearNativeSelection = false) {
@@ -3278,6 +3330,15 @@ function clearSelection({ animateActions = false } = {}) {
   state.selecting = false;
   syncAskEligibility();
   hideSelectionActions({ animate: animateActions });
+}
+
+function openVisibleSelectionActions(clientX, clientY, text, explain) {
+  hideSelectionActions();
+  state.selection = null;
+  document.querySelectorAll(".selection-quad").forEach((node) => node.remove());
+  state.guideSelection = { text, explain };
+  syncAskEligibility();
+  showSelectionActions(clientX, clientY);
 }
 
 function selectedHighlightStyle() {

@@ -43,6 +43,12 @@ try {
   browser=await chromium.launch({executablePath:process.env.READER_CHROMIUM||'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true});
   const page=await browser.newPage({viewport:{width:1440,height:1000}});
   const errors=[]; page.on('pageerror',error=>errors.push(error.message));
+  const assistantRequests=[];
+  page.on('request',request=>{
+    if(request.url().endsWith('/assistant/ask') && request.method()==='POST') {
+      assistantRequests.push(request.postDataJSON());
+    }
+  });
   await page.goto(url);
   const data=await page.evaluate(async()=>{
     const books=(await (await fetch('/api/books')).json()).books;
@@ -106,6 +112,45 @@ try {
   assert.equal(calls[1].max_tokens,12_288,'Deep gets a larger bounded reasoning + answer budget');
   assert.ok(!JSON.stringify(after).includes(reasoningCanary),'Reasoning text is transient, not persisted');
 
+  await selectMasterPhrase(page,'成立的条件');
+  assert.deepEqual(
+    await page.locator('#selection-actions .selection-action-row button:visible').allTextContents(),
+    ['复制','问 AI'],
+  );
+  await page.screenshot({path:'test-results/master-answer-selection-normal.png'});
+  await page.locator('#copy-selection').focus();
+  await page.keyboard.press('Escape');
+
+  await page.locator('#master-expand').click();
+  await page.locator('#reader.assistant-expanded').waitFor();
+  await selectMasterPhrase(page,'反例检查理解边界');
+  assert.deepEqual(
+    await page.locator('#selection-actions .selection-action-row button:visible').allTextContents(),
+    ['复制','问 AI'],
+  );
+  await page.screenshot({path:'test-results/master-answer-selection-expanded.png'});
+  const callsBeforeAssistant=calls.length;
+  const learningBeforeAssistant=await snapshot(page,data.revision,point.knowledge_point_id);
+  await page.locator('#ask-selection').click();
+  await page.locator('#assistant-first-turn').waitFor({state:'visible'});
+  assert.equal(await page.locator('#assistant-draft-text').textContent(),'反例检查理解边界');
+  assert.equal(await page.locator('#assistant-scope').textContent(),'正在解释：Master 回答选区');
+  assert.equal(calls.length,callsBeforeAssistant,'opening the Master selection draft caused provider egress');
+  await page.locator('#assistant-start').click();
+  await page.locator('#assistant-turns .assistant-answer-bubble[data-current-answer="true"]').waitFor();
+  assert.equal(calls.length,callsBeforeAssistant+1);
+  assert.equal(assistantRequests.length,1);
+  assert.equal(assistantRequests[0].source_kind,'MASTER_ANSWER');
+  assert.equal(assistantRequests[0].master_message_id,added.filter(item=>item.role==='assistant').at(-1).id);
+  assert.ok(assistantRequests[0].source_spans.length>=1);
+  const masterSelectionTransport=calls.at(-1).messages.at(-1).content;
+  assert.ok(masterSelectionTransport.startsWith('【当前解释焦点（用户所选）】\n反例检查理解边界\n'));
+  assert.ok(masterSelectionTransport.includes('这段文字来自 Master 回答，不是教材原文'));
+  assert.ok(!/MASTER_ANSWER|thread_id|topic_id|message_id|source_spans/.test(masterSelectionTransport));
+  assert.deepEqual(await snapshot(page,data.revision,point.knowledge_point_id),learningBeforeAssistant);
+  await page.getByRole('button',{name:'学习 Master',exact:true}).click();
+  await page.locator('#master-history').waitFor({state:'visible'});
+
   await page.locator('#master-provider-choice-trigger').click();
   await page.locator('#master-provider-choice-options [data-value="zhipu"]').click();
   assert.equal(await page.locator('#master-send').isDisabled(),true);
@@ -122,6 +167,9 @@ try {
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({status:'PASS',quickStreaming:true,deepStreaming:true,
     reasoningSeparated:true,reasoningPersisted:false,reviewDefault:'Fast',reviewCalls:0,
+    masterSelection:true,masterSelectionSource:'MASTER_ANSWER',
+    normalSelectionScreenshot:'test-results/master-answer-selection-normal.png',
+    expandedSelectionScreenshot:'test-results/master-answer-selection-expanded.png',
     screenshot:'test-results/master-streaming-reasoning.png',menuScreenshot:'test-results/master-model-reasoning-review-menu.png'}));
 } finally {
   if(browser) await browser.close();
@@ -145,4 +193,26 @@ async function snapshot(page,revision,scope) {
 async function messageCount(page,count) {
   await page.waitForFunction(count=>document.querySelectorAll('#master-history .master-message').length===count
     && !document.querySelector('#master-history .master-stream-message'),count,{timeout:30_000});
+}
+
+async function selectMasterPhrase(page,phrase) {
+  const intercepted=await page.locator('#master-history .master-message .assistant-answer-bubble')
+    .filter({hasText:phrase}).last().evaluate((bubble,selected)=>{
+      const span=[...bubble.querySelectorAll('.assistant-source-text')]
+        .find(candidate=>candidate.textContent.includes(selected));
+      if(!span) throw new Error(`Master phrase is not source-mapped: ${selected}`);
+      const node=span.firstChild;
+      const start=node.data.indexOf(selected);
+      const range=document.createRange(); range.setStart(node,start); range.setEnd(node,start+selected.length);
+      const selection=getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      const rect=range.getBoundingClientRect();
+      const event=new MouseEvent('contextmenu',{
+        bubbles:true,cancelable:true,button:2,
+        clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2,
+      });
+      bubble.dispatchEvent(event);
+      return event.defaultPrevented;
+    },phrase);
+  assert.equal(intercepted,true,'Master answer right-click must be intercepted inside the selection');
+  await page.locator('#selection-actions').waitFor({state:'visible'});
 }

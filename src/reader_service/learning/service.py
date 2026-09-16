@@ -64,6 +64,76 @@ class LearningService:
     def snapshot(self, revision_id, kp_id):
         return self.repository.snapshot(revision_id, kp_id)
 
+    def assistant_context_for_master_answer(self, revision_id, message_id, source_spans):
+        """Read and validate one durable Master answer selection without mutating Learning."""
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise ValueError("Master 回答标识无效。")
+        with self.repository.database.connect() as connection:
+            message = connection.execute("""SELECT message.*, thread.book_source_revision_id,
+                    thread.knowledge_point_id, thread.section_outline_node_id
+                FROM master_messages AS message
+                JOIN master_threads AS thread ON thread.id = message.thread_id
+                WHERE message.id = ? AND thread.book_source_revision_id = ?
+                  AND message.role = 'assistant' AND message.state = 'COMPLETE'""",
+                (message_id, revision_id)).fetchone()
+            if message is None:
+                raise LookupError("只能解释当前教材中已完成的 Master 回答。")
+            scope_id = message["knowledge_point_id"] or message["section_outline_node_id"]
+            point = dict(self.repository.point(connection, revision_id, scope_id))
+            question = connection.execute("""SELECT id, content FROM master_messages
+                WHERE thread_id = ? AND topic_id = ? AND intent_id = ? AND role = 'user'""",
+                (message["thread_id"], message["topic_id"], message["intent_id"])).fetchone()
+            if question is None:
+                raise LookupError("Master 回答缺少对应问题，无法建立来源关系。")
+            selected_text, clean_spans = self._master_answer_selection(
+                message["content"], source_spans
+            )
+            provenance = {
+                "kind": "MASTER_ANSWER",
+                "thread_id": message["thread_id"],
+                "topic_id": message["topic_id"],
+                "intent_id": message["intent_id"],
+                "question_message_id": question["id"],
+                "answer_message_id": message["id"],
+                "question": question["content"],
+                "source_spans": clean_spans,
+            }
+        return {
+            "revision_id": revision_id,
+            "selected_text": selected_text,
+            "source_spans": clean_spans,
+            "source_provenance": provenance,
+            "point": point,
+            "reader_source": self.source(point),
+        }
+
+    @staticmethod
+    def _master_answer_selection(answer, source_spans):
+        if not isinstance(source_spans, list) or not 1 <= len(source_spans) <= 128:
+            raise ValueError("Master 回答选区的来源映射无效。")
+        pieces = []
+        clean_spans = []
+        previous_end = -1
+        total = 0
+        for span in source_spans:
+            if not isinstance(span, dict):
+                raise ValueError("Master 回答选区的来源映射无效。")
+            start, end = span.get("start"), span.get("end")
+            if (isinstance(start, bool) or not isinstance(start, int)
+                    or isinstance(end, bool) or not isinstance(end, int)
+                    or start < 0 or end <= start or end > len(answer)
+                    or start < previous_end):
+                raise ValueError("Master 回答选区的来源映射无效。")
+            pieces.append(answer[start:end])
+            clean_spans.append({"start": start, "end": end})
+            total += end - start
+            previous_end = end
+        selected_text = "".join(pieces)
+        if (not selected_text.strip() or selected_text != selected_text.strip()
+                or total > 2_000):
+            raise ValueError("请选择 1 到 2000 个 Master 回答正文文字。")
+        return selected_text, clean_spans
+
     def status(self):
         runtime_status = self.runtime.status()
         providers = runtime_status.get("providers", [])

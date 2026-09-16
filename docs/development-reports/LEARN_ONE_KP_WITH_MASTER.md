@@ -10,6 +10,46 @@ The earlier Section Learning Check and reading-position UAT correction remain `C
 `USER_ACCEPTANCE PASS` at `f4c76db`; independent narrow acceptance for that earlier closure is PASS.
 No new Phase is created.
 
+### Master answer selection to Assistant Root (2026-09-16)
+
+Master answer text now uses the same `#selection-actions` floating toolbar as Reader text. A
+right-click inside one accurately mapped rendered selection exposes only `复制` and `问 AI` in both
+the normal Dock and expanded Master workspace; no second context-menu component or styling system
+was added. Markdown markers are excluded through the existing rendered-to-raw mapping, and code/math
+regions that cannot be mapped honestly remain blocked instead of producing a guessed source span.
+
+`问 AI` creates a new in-memory Assistant Root whose source kind is `MASTER_ANSWER`. The server
+revalidates the supplied spans against the durable completed Master answer and records provenance to
+the exact Master thread, Topic, intent, user question and answer message. This provenance stays in
+application state: the provider-visible payload starts with the exact selected focus, explicitly says
+that it came from a Master answer rather than textbook prose, and adds only bounded Reader grounding
+from the owning KP/Section. Topic/message IDs, raw spans and the `MASTER_ANSWER` enum do not enter the
+provider body. The Master conversation, Topic state and mastery projection are read-only throughout;
+the draft itself performs zero provider calls. Because this source has no original PDF selection
+anchor, saving it as a PDF-anchored note is rejected rather than inventing one.
+
+Verification used the real 348-page `2026计算机组成原理` Library and a retained ISA Master Topic.
+In the current port 8767 site, a real mouse drag over `教材 PDF 第169页进一步列出 ISA` in normal Dock
+showed only `复制 / 问 AI`; opening the action produced an Assistant draft labelled
+`正在解释：Master 回答选区` with the exact visible text. The same real pointer path over bold rendered
+text in expanded mode showed the identical toolbar next to the selection. The focused mock-provider
+E2E additionally sent the Root, proved exact `CURRENT FOCUS`, the Master-source notice, bounded
+Reader grounding, metadata exclusion, and an unchanged before/after Learning snapshot.
+
+- TARGETED: new provenance/API test **PASS**; nearest Assistant context/save regressions **15 PASS**;
+  frontend suite passed **51/51** at the completed implementation state.
+- REAL USE / E2E: `npm run test:e2e:master-stream` **PASS**, including normal and expanded selection,
+  zero provider calls on draft creation, one DeepSeek-only mock call on Send, transport inspection and
+  unchanged Master state.
+- Screenshots: `test-results/master-answer-selection-normal.png` and
+  `test-results/master-answer-selection-expanded.png` (real 348-page Library material).
+- A later whole-frontend run against concurrent, unrelated uncommitted Book Overview lifecycle work
+  reported **50/51** with only `chapter-entry.test.js` timing out while waiting for `已理解`; its
+  isolated rerun timed out identically. That failure is not relabelled PASS and is outside this
+  bounded Master/Assistant interaction delta; the directly related Master E2E above remained PASS.
+
+Status: `IMPLEMENTATION_READY / READY_FOR_USER_RETEST`; no Phase closure or user acceptance claimed.
+
 ### Master model / reasoning / Review streaming rework (2026-09-15)
 
 **Confirmed baseline and authority.** Before implementation, the running service identified the

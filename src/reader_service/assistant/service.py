@@ -70,6 +70,7 @@ class SelectionSource:
     pdf_page_index: int
     foundation_version: int
     teaching_lineage: dict | None = None
+    source_provenance: dict | None = None
 
     @property
     def label(self) -> str:
@@ -83,6 +84,7 @@ class SelectionSource:
             "pdf_page_index": self.pdf_page_index,
             "foundation_version": self.foundation_version,
             **({"teaching_lineage": copy.deepcopy(self.teaching_lineage)} if self.teaching_lineage else {}),
+            **({"source_provenance": copy.deepcopy(self.source_provenance)} if self.source_provenance else {}),
         }
 
 
@@ -180,6 +182,7 @@ class ReaderAssistantState:
                 "kind": root.created_from.kind.value,
                 "selected_text_preview": root.label,
                 **({"teaching_lineage": copy.deepcopy(root.created_from.teaching_lineage)} if root.created_from.teaching_lineage else {}),
+                **({"source_provenance": copy.deepcopy(root.created_from.source_provenance)} if root.created_from.source_provenance else {}),
             },
             "focused_node_id": root.focused_node_id,
             "active_child_id": root.active_child_id,
@@ -322,6 +325,20 @@ class AssistantService:
                                  context, SelectionSourceKind.INLINE_GUIDANCE, provider, stream,
                                  continuation)
 
+    def ask_master(self, reader_session_id, revision_id, projection, provider=None, stream=None,
+                   continuation=None):
+        context = self.contexts.build_master(projection)
+        return self._ask_context(
+            reader_session_id,
+            revision_id,
+            context["scope"].pdf_page_index,
+            context,
+            SelectionSourceKind.MASTER_ANSWER,
+            provider,
+            stream,
+            continuation,
+        )
+
     def _ask_context(self, reader_session_id, revision_id, page_index, context, kind, provider,
                      stream=None, continuation=None):
         session_id = self._validate_session_id(reader_session_id)
@@ -353,6 +370,7 @@ class AssistantService:
             page_index,
             int(context["foundation_version"]),
             copy.deepcopy(context.get("teaching_lineage")),
+            copy.deepcopy(context.get("source_provenance")),
         )
         root = AssistantRoot(
             root_id,
@@ -772,8 +790,15 @@ class AssistantService:
                         "ANSWER_NOT_COMPLETED",
                         "只能保存一条已经完成的 Assistant 回答。",
                     )
-                if root.created_from.kind in {SelectionSourceKind.READING_GUIDE, SelectionSourceKind.INLINE_GUIDANCE}:
-                    raise AssistantStateError("GUIDE_NOTE_SOURCE_UNAVAILABLE", "导读解释没有教材选区，不能保存为教材笔记。")
+                if root.created_from.kind in {
+                    SelectionSourceKind.READING_GUIDE,
+                    SelectionSourceKind.INLINE_GUIDANCE,
+                    SelectionSourceKind.MASTER_ANSWER,
+                }:
+                    raise AssistantStateError(
+                        "NON_PDF_NOTE_SOURCE_UNAVAILABLE",
+                        "这条解释没有原始 PDF 选区锚点，不能保存为教材笔记。",
+                    )
                 concept_path = [root.created_from.selected_text]
                 child_focus = None
                 if clean_node_id is not None:
@@ -1171,6 +1196,8 @@ class AssistantService:
         return {
             "same_page_ocr_context": context["same_page_ocr_context"],
             "printed_page_label": context["printed_page_label"],
+            "pdf_page_numbers": tuple(context.get("pdf_page_numbers", ())),
+            "source_notice": context.get("source_notice"),
         }
 
     @staticmethod
@@ -1205,6 +1232,8 @@ class AssistantService:
                 bounded_same_page_ocr=root.reference_context.get(
                     "same_page_ocr_context", ""
                 ),
+                pdf_page_numbers=tuple(root.reference_context.get("pdf_page_numbers", ())),
+                source_notice=root.reference_context.get("source_notice"),
             ),
         )
 

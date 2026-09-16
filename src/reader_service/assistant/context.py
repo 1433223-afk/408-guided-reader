@@ -40,6 +40,8 @@ class ModelVisibleReaderGrounding:
     section_title: str | None
     printed_page_label: str | None
     bounded_same_page_ocr: str
+    pdf_page_numbers: tuple[int, ...] = ()
+    source_notice: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,8 +217,69 @@ class AssistantContextBuilder:
             "foundation_version": selection["foundation_version"],
         }
 
+    def build_master(self, projection: dict) -> dict:
+        """Build a Root context from one verified durable Master answer selection."""
+        point = projection["point"]
+        reader_source = projection["reader_source"]
+        revision_id = projection["revision_id"]
+        page_index = int(point["start_page"])
+        resolved = self.scopes.resolve(revision_id, page_index)
+        if point["scope_kind"] == "SECTION":
+            scope = ScopeResolution(
+                key=f"SECTION:{point['scope_id']}",
+                kind="SECTION",
+                pdf_page_index=page_index,
+                section_id=point["scope_id"],
+                section_title=point["title"],
+                chapter_title=resolved.chapter_title,
+            )
+        else:
+            scope = ScopeResolution(
+                key=f"SECTION:{point['primary_section_id']}",
+                kind="SECTION",
+                pdf_page_index=page_index,
+                section_id=point["primary_section_id"],
+                section_title=point["section_title"],
+                chapter_title=resolved.chapter_title,
+            )
+        overlay = self.foundation.overlay(revision_id, page_index)
+        if overlay["status"] != "READY":
+            raise ValueError("Master 回答对应的教材文字尚未就绪。")
+        try:
+            printed_label = self.outline.page_labels.repository.get(
+                revision_id, page_index
+            ).get("printed_label")
+        except LookupError:
+            printed_label = None
+        pages = tuple(int(page["pdf_page_number"]) for page in reader_source["pages"])
+        bounded_reader_context = "\n".join(
+            f"PDF {page['pdf_page_number']}\n{page['ocr_text']}"
+            for page in reader_source["pages"]
+            if page["ocr_text"].strip()
+        )[:MAX_CONTEXT_CHARS]
+        provenance = projection["source_provenance"]
+        return {
+            "scope": scope,
+            "selected_text": projection["selected_text"],
+            "source_kind": "MASTER_ANSWER",
+            "source_anchor": {
+                "kind": "MASTER_ANSWER",
+                "message_id": provenance["answer_message_id"],
+                "source_spans": list(projection["source_spans"]),
+                "quote": projection["selected_text"],
+            },
+            "source_provenance": provenance,
+            "same_page_ocr_context": bounded_reader_context,
+            "pdf_page_numbers": pages,
+            "source_notice": "当前焦点来自 Master 回答，不是教材原文。",
+            "printed_page_label": printed_label,
+            "foundation_version": int(overlay["foundation_version"]),
+        }
+
 
 def provider_user_message(context: dict, question: str | None = None) -> str:
+    if context.get("source_kind") == "MASTER_ANSWER":
+        return provider_master_user_message(context, question)
     scope: ScopeResolution = context["scope"]
     lines = [
         "【当前解释焦点（用户所选）】",
@@ -244,6 +307,37 @@ def provider_user_message(context: dict, question: str | None = None) -> str:
     return "\n".join(lines)
 
 
+def provider_master_user_message(context: dict, question: str | None = None) -> str:
+    """Serialize the semantic Master selection without leaking durable app metadata."""
+    scope: ScopeResolution = context["scope"]
+    lines = [
+        "【当前解释焦点（用户所选）】",
+        context["selected_text"],
+    ]
+    if question:
+        lines.extend(["", "【用户问题】", question])
+    lines.extend([
+        "",
+        "【来源说明】",
+        "这段文字来自 Master 回答，不是教材原文。只解释当前焦点；Reader 教材信息仅用于消歧和 grounding。",
+        "",
+        "【Reader 教材依据（仅用于消歧和 grounding）】",
+    ])
+    readable_scope = " › ".join(filter(None, (scope.chapter_title, scope.section_title)))
+    if readable_scope:
+        lines.append(f"Reader 范围：{readable_scope}")
+    pages = context.get("pdf_page_numbers") or (scope.pdf_page_index + 1,)
+    lines.append("PDF 页码：" + "、".join(str(page) for page in pages))
+    if context["printed_page_label"]:
+        lines.append(f"起始印刷页码：{context['printed_page_label']}")
+    lines.extend([
+        "",
+        "【原 Master 学习范围的有界教材语境】",
+        context["same_page_ocr_context"],
+    ])
+    return "\n".join(lines)
+
+
 def provider_child_message(
     context: ModelVisibleContext,
 ) -> str:
@@ -263,18 +357,22 @@ def provider_child_message(
         "",
         "【Reader 教材依据（仅用于消歧和 grounding）】",
     ]
+    if grounding.source_notice:
+        lines.extend([grounding.source_notice, ""])
     readable_scope = " › ".join(filter(None, (
         grounding.chapter_title,
         grounding.section_title,
     )))
     if readable_scope:
         lines.append(f"Reader 范围：{readable_scope}")
-    lines.append(f"PDF 页码：{grounding.pdf_page_number}")
+    pages = grounding.pdf_page_numbers or (grounding.pdf_page_number,)
+    lines.append("PDF 页码：" + "、".join(str(page) for page in pages))
     if grounding.printed_page_label:
         lines.append(f"印刷页码：{grounding.printed_page_label}")
     lines.extend([
         "",
-        "【同一 PDF 页的有界 OCR 语境】",
+        "【有界 Reader 教材语境】" if grounding.source_notice
+        else "【同一 PDF 页的有界 OCR 语境】",
         grounding.bounded_same_page_ocr,
     ])
     return "\n".join(lines)

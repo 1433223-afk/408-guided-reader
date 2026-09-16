@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from reader_service.agent_runtime import ProviderCompletion, ProviderFailure, ProviderFailureKind
+from reader_service.assistant import AssistantContextBuilder, AssistantService
 from reader_service.knowledge import ChapterRegenerationBlocked
 from reader_service.learning.repository import LearningRepository
 from reader_service.learning.service import LearningService
@@ -70,6 +71,22 @@ class Runtime:
                                   {'reasoning_present': kwargs.get('thinking_mode') == 'enabled'})
 
 
+class AssistantCaptureRuntime:
+    def __init__(self):
+        self.calls = []
+
+    def provider_identity(self, provider):
+        selected = provider or 'deepseek'
+        return selected, selected + '-model'
+
+    def complete_for_with_metadata(self, provider, messages, **kwargs):
+        self.calls.append({'provider': provider, 'messages': messages, 'options': kwargs})
+        return ProviderCompletion(
+            '只围绕所选 Master 文字生成的新解释。', 1, None,
+            {'provider': provider, 'model': provider + '-model'},
+        )
+
+
 @pytest.fixture
 def learning(service):
     f = build_fixture(service)
@@ -100,6 +117,74 @@ def test_master_status_confirms_answer_and_review_defaults(learning):
     assert (status['review_provider'], status['review_model']) == ('zhipu', 'zhipu-model')
     assert status['default_reasoning_mode'] == 'Quick'
     assert status['default_review_mode'] == 'Fast'
+
+
+def test_master_answer_selection_creates_provenanced_assistant_root_without_learning_writes(
+    learning, service
+):
+    f, master, _runtime, points = learning
+    revision, kp = f['revision']['id'], points[0]['knowledge_point_id']
+    master.send(revision, kp, {
+        'intent_id': 'master-to-assistant',
+        'question': '这个概念为什么这样工作？',
+        'provider': 'deepseek',
+        'reasoning_mode': 'Quick',
+        'review_mode': 'Fast',
+    })
+    idle(master)
+    before = master.snapshot(revision, kp)
+    answer = next(message for message in before['messages'] if message['role'] == 'assistant')
+    start = answer['content'].index('该知识点')
+    spans = [
+        {'start': start, 'end': start + 2},
+        {'start': start + 2, 'end': start + len('该知识点')},
+    ]
+    projection = master.assistant_context_for_master_answer(
+        revision, answer['id'], spans
+    )
+    assistant_runtime = AssistantCaptureRuntime()
+    assistant = AssistantService(
+        AssistantContextBuilder(f['foundation'], f['outline']), assistant_runtime
+    )
+
+    with running_server(service, assistant=assistant, learning=master) as (base, token):
+        data = json.dumps({
+            'reader_session_id': 'reader-session-master-answer',
+            'source_kind': 'MASTER_ANSWER',
+            'master_message_id': answer['id'],
+            'source_spans': spans,
+            'provider': 'deepseek',
+        }).encode()
+        status, payload = request_json(
+            f'{base}/api/revisions/{revision}/assistant/ask', token,
+            method='POST', data=data,
+            headers={'Content-Type': 'application/json'},
+        )
+
+    assert status == 200
+    root = payload['assistant']['roots'][0]
+    assert root['created_from']['kind'] == 'MASTER_ANSWER'
+    assert root['created_from']['selected_text_preview'] == '该知识点'
+    assert root['created_from']['source_provenance'] == projection['source_provenance']
+    assert root['turns'][0]['question'] == '该知识点'
+    assert master.snapshot(revision, kp) == before
+
+    transport = assistant_runtime.calls[0]['messages'][-1]['content']
+    assert transport.startswith('【当前解释焦点（用户所选）】\n该知识点\n')
+    assert '这段文字来自 Master 回答，不是教材原文' in transport
+    assert '原 Master 学习范围的有界教材语境' in transport
+    assert '补充解释：可以用日常例子理解' not in transport
+    for canary in (
+        answer['id'], before['thread_id'], before['topics'][0]['id'],
+        answer['intent_id'], 'MASTER_ANSWER', 'source_spans',
+    ):
+        assert canary not in transport
+
+    user_message = next(message for message in before['messages'] if message['role'] == 'user')
+    with pytest.raises(LookupError):
+        master.assistant_context_for_master_answer(
+            revision, user_message['id'], [{'start': 0, 'end': 2}]
+        )
 
 
 @pytest.mark.parametrize(
