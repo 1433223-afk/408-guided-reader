@@ -7,7 +7,8 @@ import { chromium } from 'playwright-core';
 
 const source = process.env.READER_DATA_DIR;
 if (!source) throw new Error('READER_DATA_DIR must name the real prepared Library');
-const resizeOnly = process.env.READER_DOCK_RESIZE_ONLY === '1';
+const functionalSmoke = process.env.READER_FUNCTIONAL_SMOKE === '1';
+const resizeOnly = functionalSmoke || process.env.READER_DOCK_RESIZE_ONLY === '1';
 const viewportWidth = Number(process.env.READER_VIEWPORT_WIDTH || 1440);
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'guided-reader-panel-performance-'));
@@ -53,7 +54,7 @@ try {
       'wide Reader must expose Zoom directly');
   }
 
-  const fixture = await page.evaluate(async (resizeOnly) => {
+  const fixture = await page.evaluate(async ({resizeOnly, functionalSmoke}) => {
     const books = (await (await fetch('/api/books')).json()).books;
     const revision = books.find(book => book.active_revision?.page_count === 348).active_revision.id;
     const outline = await (await fetch(`/api/revisions/${revision}/outline`)).json();
@@ -61,7 +62,7 @@ try {
     const guideSection = outline.nodes.find(node => node.kind === 'SECTION' && node.title.startsWith('2.1 '));
     let inlineSection = null;
     let inlineSnapshot = null;
-    if (!resizeOnly) {
+    if (!resizeOnly || functionalSmoke) {
       for (const section of outline.nodes.filter(node => node.kind === 'SECTION' && node.resolution_state === 'RESOLVED')) {
         const value = await (await fetch(`/api/revisions/${revision}/sections/${section.outline_node_id}/inline-teaching`)).json();
         if (value.published?.content?.items?.some(item => value.published.sources?.[item.target_id]?.available)) {
@@ -79,9 +80,9 @@ try {
       inlineSnapshot,
       masterPoint: learning.points.find(point => point.thread_id),
     };
-  }, resizeOnly);
+  }, {resizeOnly, functionalSmoke});
   assert.ok(fixture.guideSection, 'real Library needs the accepted Guide section');
-  if (!resizeOnly) assert.ok(fixture.inlineSection, 'real Library needs one published Inline Teaching section');
+  if (!resizeOnly || functionalSmoke) assert.ok(fixture.inlineSection, 'real Library needs one published Inline Teaching section');
   assert.ok(fixture.masterPoint, 'real Library needs one retained Master topic');
 
   // Assistant: a real PDF selection supplies the temporary Root shell without invoking a provider.
@@ -188,7 +189,7 @@ try {
   assert.equal(await page.locator('#reader').evaluate(el => el.classList.contains('knowledge-dock-open')), false);
   console.log('SINGLE_DOCK_SWITCH_PASS: Guide → Assistant → Guide → KP → Assistant → KP → close; retained draft, Guide DOM/scroll and KP scroll');
 
-  if (!resizeOnly) {
+  if (!resizeOnly || functionalSmoke) {
     // Inline Teaching: warm the current-section asset, toggle it, and open/close an anchored Guidance card.
     const inlineSource = Object.values(fixture.inlineSnapshot.published.sources).find(source => source.available);
     await goToSource(page, inlineSource.pdf_page_index, Math.min(...inlineSource.quad.map(point => point[1])));
@@ -204,6 +205,19 @@ try {
     await probe(page, 'inline-card-open', () => inlineMarker.click(), state('#inline-panel', 'hidden', false));
     await probe(page, 'inline-card-close', () => page.locator('#inline-close').click(), state('#inline-panel', 'hidden', true));
     await probe(page, 'inline-card-reopen', () => inlineMarker.click(), state('#inline-panel', 'hidden', false));
+    if (functionalSmoke) {
+      await page.keyboard.press('Escape');
+      await page.locator('#inline-panel').waitFor({state:'hidden'});
+      await inlineMarker.click();
+      await page.locator('#inline-panel').waitFor({state:'visible'});
+      await page.locator('#zoom-value').click();
+      await page.locator('#inline-panel').waitFor({state:'hidden'});
+      await inlineMarker.click();
+      await page.locator('#inline-panel').getByRole('button',{name:'继续问AI',exact:true}).click();
+      await page.locator('#assistant-panel').waitFor({state:'visible'});
+      await page.locator('#assistant-close').click();
+      console.log('INLINE_DISMISS_AND_ASSISTANT_HANDOFF_PASS');
+    }
     await probe(page, 'inline-disable', () => page.locator('#inline-open').click(), state('#inline-open', 'aria-pressed', 'false'), 900);
 
     // Temporary Reader navigation surfaces.
@@ -272,7 +286,7 @@ try {
     console.error(JSON.stringify({ status: 'FAIL', realPages: 348, measurements: results }, null, 2));
     throw error;
   }
-  console.log(JSON.stringify({ status: 'PASS', realPages: 348, measurements: results }, null, 2));
+  console.log(JSON.stringify({ status: 'PASS', scope: functionalSmoke ? 'functional-smoke; performance not assessed' : 'performance', realPages: 348, measurements: results }, null, 2));
 } finally {
   if (browser) await browser.close();
   await stopService(service?.child);
@@ -282,6 +296,17 @@ try {
 function state(selector, attribute, value) { return { selector, attribute, value }; }
 
 async function probe(page, name, action, expectedState = null, observationMs = 650, dockSelector = null) {
+  if (functionalSmoke) {
+    await settlePdf(page);
+    await action();
+    if (expectedState) await page.waitForFunction(({selector, attribute, value}) => {
+      const element = document.querySelector(selector);
+      if (attribute === 'hidden') return value ? !element || element.hidden : element && !element.hidden;
+      return element?.getAttribute(attribute) === value;
+    }, expectedState);
+    await page.waitForTimeout(observationMs);
+    return;
+  }
   await settlePdf(page);
   await page.evaluate(({ name, expectedState, dockSelector }) => {
     const pages = document.querySelector('#pages');

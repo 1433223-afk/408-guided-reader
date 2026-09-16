@@ -2,7 +2,7 @@
 
 ## Status and goal
 
-`ACCEPTED BY USER — personal stable baseline pending`. On 2026-09-16 the user explicitly accepted
+`ACCEPTED BY USER — local personal baseline personal-v0.1; private GitHub pending`. On 2026-09-16 the user explicitly accepted
 the revised brief and R-1 after revision checkpoint `0654bd9`. The selected architecture remains one
 Linux server → Caddy HTTPS → individual authentication → one Core Service and one SQLite/PDF data
 directory per friend. Acceptance is not implementation or deployment completion. This acceptance
@@ -58,8 +58,10 @@ against the target distribution's installed manuals. No external application cod
 - Continue Beta work from that exact baseline on a separate `codex/friends-private-beta` branch.
   Retain a verified personal-data backup and reproducible local dependencies: restoring the personal
   edition requires compatible code **and** data, not merely a Git checkout. No destructive reset.
-  Current dirty UI work means this prerequisite is not yet satisfied; this revision performs none
-  of the UI closure, baseline, tag, remote creation or push steps.
+  UI closure is user-accepted; the local personal baseline is recorded by `personal-v0.1` and
+  `docs/development-reports/PERSONAL_STABLE_BASELINE.md`. No Git remote is configured, so the
+  private-GitHub push prerequisite remains pending. No Beta implementation, remote creation or
+  deployment is authorized by the baseline checkpoint.
 
 ### 1. Instance, authentication and server boundary
 

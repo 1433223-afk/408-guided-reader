@@ -96,11 +96,15 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     close(); marker?.focus({ preventScroll: true });
   };
   reader.addEventListener("keydown", e => {
-    if (e.key === "Escape" && (panel.contains(e.target) || menu.contains(e.target) || e.target === more && !menu.hidden)) {
-      e.preventDefault(); if (!panel.contains(e.target)) { closeMenu(); more.focus(); } else panel.querySelector("#inline-close").click();
-    }
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    if (!menu.hidden) { e.preventDefault(); closeMenu(); more.focus(); }
+    else if (!panel.hidden) { e.preventDefault(); panel.querySelector("#inline-close").click(); }
   });
-  document.addEventListener("pointerdown", e => { if (!menu.hidden && !menu.contains(e.target) && !controls.contains(e.target)) closeMenu(); });
+  document.addEventListener("pointerdown", e => {
+    if (!menu.hidden && !menu.contains(e.target) && !controls.contains(e.target)) closeMenu();
+    if (!panel.hidden && !panel.contains(e.target)
+        && !e.target.closest(".inline-marker, #selection-actions")) close();
+  });
   controls.parentElement.addEventListener("scroll", closeMenu, {passive:true});
   window.addEventListener("resize", closeMenu);
   generate.onclick = () => {
@@ -159,21 +163,11 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       skip.onclick = close;
       content.append(reveal, skip);
     }
-    const jump = document.createElement("button"); jump.type = "button"; jump.className = "inline-source-action"; jump.textContent = "查看教材位置";
-    jump.onclick = async () => {
-      const id = selected, stamp = epoch;
-      await load(id, true);
-      if (stamp !== epoch || id !== selected) return;
-      const fresh = cache.get(id)?.published;
-      const source = fresh?.id === selectedPub.id && fresh.content.items.some(i => i.id === item.id) && fresh.sources[item.target_id];
-      if (!source?.available) { close(); refresh(); status.textContent = "教材位置已变化，未跳转。"; return; }
-      goToPage(source.pdf_page_index, Math.min(...source.quad.map(p => p[1])));
-    };
-    const ask = document.createElement("button"); ask.type = "button"; ask.className = "inline-assistant-action"; ask.textContent = "继续问 Assistant";
+    const ask = document.createElement("button"); ask.type = "button"; ask.className = "inline-assistant-action"; ask.textContent = "继续问AI";
     ask.onclick = () => explain(item.text, { source_kind: "INLINE_GUIDANCE", section_id: selected,
       asset_id: selectedPub.id, item_id: item.id, field: "text", start_offset: 0, end_offset: Array.from(item.text).length });
     const actions = document.createElement("div"); actions.className = "inline-actions";
-    actions.append(ask, jump); content.append(actions);
+    actions.append(ask); content.append(actions);
   }
   async function load(id, force = false) {
     if (!id || !revision) return;

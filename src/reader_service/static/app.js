@@ -146,12 +146,7 @@ const teachingUiOptions = { state, api, goToPage,
   closeDock: () => claimRightDock("guide"),
   setDockWidth: applyAssistantDockWidth,
   dockWidth: () => state.assistantDockWidth,
-  explain: (selectedText, request) => {
-  if (!state.readerSessionId || state.assistantPending) return;
-  rememberAssistantScroll();
-  state.assistantDraft = { readerSessionId: state.readerSessionId, revisionId: state.revision.id, selectedText, request };
-  openAssistantPanel(); renderAssistantDraft(); refreshAssistantStatus();
-} };
+  explain: openAssistantDraftFromVisibleSelection };
 const guide = createGuideUI(teachingUiOptions);
 const inline = createInlineUI(teachingUiOptions);
 

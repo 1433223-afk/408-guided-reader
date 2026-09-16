@@ -80,7 +80,8 @@ try {
     };
   });
   assert.deepEqual(typography.book.fontSize,'31px'); assert.deepEqual(typography.book.lineHeight,'40px');
-  assert.match(typography.book.fontFamily,/Noto Serif|Songti|SimSun/i);
+  assert.match(typography.book.fontFamily,/Microsoft YaHei UI|Noto Sans CJK SC|Source Han Sans SC/i);
+  assert.doesNotMatch(typography.book.fontFamily,/Noto Serif|Songti|SimSun/i);
   assert.deepEqual(typography.eyebrow.fontSize,'11px');
   assert.deepEqual({...typography.chapter,fontFamily:undefined},{fontSize:'14px',lineHeight:'22px',fontWeight:'600',fontFamily:undefined});
   assert.deepEqual({...typography.section,fontFamily:undefined},{fontSize:'14px',lineHeight:'22px',fontWeight:'500',fontFamily:undefined});
