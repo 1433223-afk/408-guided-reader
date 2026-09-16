@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 const browser = await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',headless:true});
-const page = await browser.newPage({viewport:{width:1440,height:1000}});
+const viewportWidth=Number(process.env.READER_VIEWPORT_WIDTH||1440);
+const page = await browser.newPage({viewport:{width:viewportWidth,height:1000}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 try {
  await page.goto(process.env.READER_URL || 'http://127.0.0.1:8766/');
@@ -37,14 +38,35 @@ try {
  await page.locator('#guide-more > summary').click();
  assert.ok(!await page.getByRole('button',{name:'重新生成',exact:true}).isVisible());
  const width=()=>page.locator('#guide-panel').evaluate(el=>el.getBoundingClientRect().width);
- const pdfVisible=async()=>{const pdf=await page.locator('#viewer').boundingBox(),guide=await page.locator('#guide-panel').boundingBox();assert.ok(pdf.width>=319);assert.ok(pdf.x+pdf.width<=guide.x+1);};
- await pdfVisible();const original=await width();
- const handle=await page.locator('#guide-divider').boundingBox();await page.mouse.move(handle.x+5,handle.y+250);await page.mouse.down();await page.mouse.move(handle.x-110,handle.y+250,{steps:8});await page.mouse.up();assert.ok(await width()>original+80);await pdfVisible();
+ const pdfVisible=async()=>{const pdf=await page.locator('#viewer').boundingBox(),guide=await page.locator('#guide-panel').boundingBox();assert.ok(pdf.width>=279);assert.ok(pdf.x+pdf.width<=guide.x+1);};
+ const guideMinimum=Math.min(320,Math.max(240,viewportWidth-24));
+ const guideMaximum=Math.max(guideMinimum,Math.min(760,viewportWidth-280));
+ const guideExpanded=Math.max(guideMinimum,Math.min(guideMaximum,viewportWidth*.65));
+ await pdfVisible();const original=await width();assert.ok(Math.abs(original-410)<2,`Guide default width ${original} differs from Assistant`);
+ const handleUi=await page.evaluate(()=>{
+  const guide=getComputedStyle(document.querySelector('#guide-divider'));
+  const assistant=getComputedStyle(document.querySelector('#assistant-resize-handle'));
+  const guideScroll=getComputedStyle(document.querySelector('#guide-scroll'));
+  const assistantScroll=getComputedStyle(document.querySelector('#assistant-turns'));
+  return {guide:{left:guide.left,width:guide.width,cursor:guide.cursor},assistant:{left:assistant.left,width:assistant.width,cursor:assistant.cursor},
+    guideScroll:{width:guideScroll.scrollbarWidth,color:guideScroll.scrollbarColor},assistantScroll:{width:assistantScroll.scrollbarWidth,color:assistantScroll.scrollbarColor}};
+ });
+ assert.deepEqual(handleUi.guide,handleUi.assistant);
+ assert.deepEqual(handleUi.guideScroll,handleUi.assistantScroll);
+ const handle=await page.locator('#guide-divider').boundingBox();await page.mouse.move(handle.x+6,handle.y+250);await page.waitForTimeout(180);
+ const activeHandleUi=await page.evaluate(()=>{
+  const assistantPanel=document.querySelector('#assistant-panel');assistantPanel.classList.add('resizing');
+  const guide=getComputedStyle(document.querySelector('#guide-divider'),'::after').backgroundColor;
+  const assistant=getComputedStyle(document.querySelector('#assistant-resize-handle'),'::after').backgroundColor;
+  assistantPanel.classList.remove('resizing');return {guide,assistant};
+ });
+ assert.equal(activeHandleUi.guide,activeHandleUi.assistant);
+ await page.mouse.down();await page.mouse.move(handle.x-110,handle.y+250,{steps:8});await page.mouse.up();assert.ok(await width()>original+80);await pdfVisible();
  // Real wheel scrolling; capture the visible article block before changing layout.
  const body=await page.locator('#guide-scroll').boundingBox();await page.mouse.move(body.x+body.width/2,body.y+250);await page.mouse.wheel(0,650);await page.waitForTimeout(250);
  const pos=()=>page.locator('#guide-scroll').evaluate(el=>{const top=el.getBoundingClientRect().top;const t=[...el.querySelectorAll('.guide-text')].find(t=>t.getBoundingClientRect().bottom>top);const r=t.getBoundingClientRect();return {id:t.dataset.moduleId,fraction:Math.max(0,(top-r.top)/r.height),scroll:el.scrollTop};});
  const before=await pos();assert.ok(before.scroll>0);
- const resized=await width();await page.locator('#guide-expand').click();await pdfVisible();assert.ok(await width()>=resized);await page.locator('#guide-expand').click();assert.ok(Math.abs(await width()-resized)<2);
+ const resized=await width();await page.locator('#guide-expand').click();await pdfVisible();assert.ok(await width()>=resized);assert.ok(Math.abs(await width()-guideExpanded)<2);await page.locator('#guide-expand').click();assert.ok(Math.abs(await width()-resized)<2);
  let after=await pos();assert.equal(after.id,before.id);assert.ok(Math.abs(after.fraction-before.fraction)<.025);
  await page.locator('#guide-close').click();
  assert.ok(await page.locator('.reader-controls #guide-reopen').isVisible());
@@ -52,8 +74,10 @@ try {
  // A source near the current reading position must move only the PDF, keeping Guide open.
  const ref=page.locator(`.guide-text[data-module-id="${after.id}"]`).locator('..').locator('.guide-source').first();
  await ref.scrollIntoViewIfNeeded();const sourceBefore=await pos();await ref.click();await page.waitForTimeout(500);assert.ok(await page.locator('#guide-panel').isVisible());const sourceAfter=await pos();assert.equal(sourceBefore.id,sourceAfter.id);assert.ok(Math.abs(sourceBefore.scroll-sourceAfter.scroll)<2);
- await page.locator('#guide-divider').focus();const keyWidth=await width();await page.keyboard.press('ArrowRight');assert.ok(await width()<keyWidth);await page.keyboard.press('Enter');assert.ok(await page.locator('#guide-reopen').isVisible());await page.keyboard.press('Enter');await page.locator('.guide-text').first().waitFor();
- await page.setViewportSize({width:900,height:800});await page.waitForTimeout(300);await pdfVisible();await page.setViewportSize({width:1440,height:1000});await page.waitForTimeout(300);
+ await page.locator('#guide-divider').focus();const keyWidth=await width();await page.keyboard.press('ArrowRight');assert.ok(await width()<keyWidth);
+ await page.keyboard.press('End');assert.ok(Math.abs(await width()-guideMaximum)<2);await pdfVisible();
+ await page.keyboard.press('Enter');assert.ok(await page.locator('#guide-reopen').isVisible());await page.keyboard.press('Enter');await page.locator('.guide-text').first().waitFor();
+ await page.setViewportSize({width:900,height:800});await page.waitForTimeout(300);await pdfVisible();await page.setViewportSize({width:viewportWidth,height:1000});await page.waitForTimeout(300);
  await page.locator('#guide-scroll').evaluate(el=>el.scrollTop=0);
  await page.locator('.guide-source').first().click();
  await page.waitForTimeout(400);

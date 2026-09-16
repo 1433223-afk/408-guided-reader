@@ -759,3 +759,27 @@ navigator/Master marker tests and served real-book Guide split-reader regression
 No `relayoutPages()` call, full-book geometry scan, PDF/OCR rebuild, backend/schema change,
 dependency or Product semantic change was introduced. This correction is `READY_FOR_USER_RETEST`;
 it does not claim user acceptance.
+
+## Guide and conversation Dock parity correction (2026-09-16)
+
+User retest showed that the Guide could still be resized across most of a 1920 px Reader. It was a
+real Grid column rather than an overlay, but its independent width rule allowed roughly 1600 px and
+left too little PDF viewport to read, producing the same practical failure as covering the source.
+Assistant and Master were already bounded to a 320–760 px Dock with 410 px default width and at
+least 280 px reserved for the Reader.
+
+Guide now uses those same bounds and default width. Its paper background, border, heading controls,
+menu, scrollbars and resize affordance use the same low-saturation Reader treatment as the
+conversation Dock. Guide and conversation resize handles now have identical 12 px hit areas, 1 px
+neutral indicators, hover/focus timing and dragging state. Their content scrollbars also share the
+same thin neutral thumb and hover color.
+
+The served real-348-page Guide split-reader path PASSes at both 1440 px and the reported 1920 px
+viewport. It verifies the 410 px default, exact 760 px maximum, Viewer/Guide boundary adjacency,
+matching Guide/Assistant handle geometry and active color, matching scrollbar properties, pointer
+and keyboard resizing, expand/restore, close/reopen, retained Guide reading position, source return
+and window resizing. The focused all-Dock performance path also PASSes: no Long Task at or above
+50 ms, no PDF subtree removal, stable wrapper/canvas identity and dimensions, and unchanged page,
+zoom and scroll. No PDF relayout, OCR work, business behavior or product semantics changed.
+
+This correction is `READY_FOR_USER_RETEST`; it does not claim user acceptance.

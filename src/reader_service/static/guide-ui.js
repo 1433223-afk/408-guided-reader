@@ -1,5 +1,10 @@
 import { renderAssistantAnswer, renderedSelectionToRaw } from "./assistant-render.js";
 
+const GUIDE_DOCK_DEFAULT_WIDTH = 410;
+const GUIDE_DOCK_MIN_WIDTH = 320;
+const GUIDE_DOCK_MAX_WIDTH = 760;
+const GUIDE_READER_MIN_WIDTH = 280;
+
 export function createGuideUI({ state, api, goToPage, explain, layout, closeDock, contextMenu, hideContextMenu }) {
   const panel = document.createElement("aside");
   panel.id = "guide-panel";
@@ -55,7 +60,9 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   function savePosition() { if (renderedId && !panel.hidden) positions.set(locationKey(), readingPosition()); }
   function limits() {
     const available = reader.clientWidth;
-    return { min: Math.min(360, available * .45), max: Math.max(available * .45, available - Math.min(320, available * .4)) };
+    const min = Math.min(GUIDE_DOCK_MIN_WIDTH, Math.max(240, available - 24));
+    const max = Math.max(min, Math.min(GUIDE_DOCK_MAX_WIDTH, available - GUIDE_READER_MIN_WIDTH));
+    return { min, max };
   }
   function setWidth(value) {
     const saved = readingPosition(), { min, max } = limits();
@@ -85,14 +92,14 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
   expand.onclick = () => setExpanded(!expanded);
   divider.onpointerdown = event => {
     if (event.button !== 0) return;
-    event.preventDefault(); dragging = true; divider.setPointerCapture(event.pointerId);
+    event.preventDefault(); dragging = true; panel.classList.add("resizing"); divider.setPointerCapture(event.pointerId);
   };
   divider.onpointermove = event => {
     if (!dragging) return;
     setWidth(reader.getBoundingClientRect().right - event.clientX);
     if (!expanded) normalWidth = width;
   };
-  const finishDrag = () => { dragging = false; savePosition(); };
+  const finishDrag = () => { dragging = false; panel.classList.remove("resizing"); savePosition(); };
   divider.onpointerup = finishDrag; divider.onpointercancel = finishDrag; divider.onlostpointercapture = finishDrag;
   divider.onkeydown = event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Enter'].includes(event.key)) return;
@@ -228,7 +235,7 @@ export function createGuideUI({ state, api, goToPage, explain, layout, closeDock
     content.replaceChildren(); actions.replaceChildren(); intent = null;
     closeDock(); reopen.hidden = true;
     layout(() => { panel.hidden = false; reader.classList.add("guide-open"); });
-    setWidth(width || reader.clientWidth * .45);
+    setWidth(width || GUIDE_DOCK_DEFAULT_WIDTH);
     status.textContent = "正在读取导读…";
     for (const id of ["outline-panel", "knowledge-panel", "search-panel", "marks-panel"]) document.getElementById(id).hidden = true;
     await load();
