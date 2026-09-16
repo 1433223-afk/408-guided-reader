@@ -2,15 +2,16 @@
 
 ## Status and goal
 
-`DRAFT — implementation brief pending user acceptance`. On 2026-09-16 the user accepted the audit
-and explicitly selected one Linux server → Caddy HTTPS → individual authentication → one Core
-Service and one SQLite/PDF data directory per friend. This records that user decision; it does not
-mark this newly written brief accepted. Current authorization is documentation only: stop after this
-brief, with no product implementation, server provisioning, credential transfer or deployment.
+`ACCEPTED BY USER — personal stable baseline pending`. On 2026-09-16 the user explicitly accepted
+the revised brief and R-1 after revision checkpoint `0654bd9`. The selected architecture remains one
+Linux server → Caddy HTTPS → individual authentication → one Core Service and one SQLite/PDF data
+directory per friend. Acceptance is not implementation or deployment completion. This acceptance
+record is documentation only; the personal stable baseline below must precede Beta implementation.
 
 User revision, 2026-09-16: Beta V1 exposes only DeepSeek with each user's own API key; preserve the
 Windows personal edition and establish its stable private-GitHub baseline before Beta implementation.
-Review funding/routing is reassessed below, not silently approved. This revision changes only this brief.
+Review funding/routing is explicitly accepted under R-1 below. No product code or deployed route has
+changed as part of drafting or recording acceptance.
 
 Deliver the smallest operable private Beta, inviting 1–2 people first and expanding to at most 5,
 preserving single-user domain semantics. User-visible result: “我登录自己的地址，配置自己的 DeepSeek
@@ -89,7 +90,7 @@ against the target distribution's installed manuals. No external application cod
 | Reading Guide Writer / revision | Native DeepSeek | `deepseek-flash` |
 | KP generation | Native DeepSeek | `deepseek-flash` |
 | Inline Teaching / other existing System generation | Native DeepSeek | `deepseek-flash` |
-| Review: Guide, Inline, KP, Master, saved Assistant explanation | **Proposed, pending R-1 below:** native DeepSeek, same user's key | `deepseek-flash` |
+| Review: Guide, Inline, KP, Master, saved Assistant explanation | Native DeepSeek, same user's key (R-1 accepted) | `deepseek-flash` |
 | OpenRouter / Gemini / Zhipu / bake-off | Disabled in Beta | No calls |
 
 Beta defaults to DeepSeek and presents no provider/model selector, including Zhipu, OpenRouter or
@@ -114,7 +115,7 @@ supported models only in later explicitly scoped work; reuse the existing adapte
   technically access it. Do not claim encryption from the host operator. After restoring ordinary
   data backups, users re-enter keys; no hidden centrally funded key is restored.
 
-**Review assessment / R-1 — user decision required.** Recommend all Review calls use native
+**Review assessment / R-1 — accepted by user, 2026-09-16.** All Beta Review calls use native
 `deepseek-flash` and the same user's key. Product §§16 and 34 explicitly allow the same model in
 isolated clean contexts; §§30.2/33.2 require independent Review, not a different billable account.
 There is no inherent contract conflict if generator/reviewer prompts, context and authority stay
@@ -122,16 +123,16 @@ separate: reviewer sees candidate + evidence, not generator reasoning/history, c
 its own rewrite, cannot grant mastery, and failure never becomes publication PASS. This is weaker
 model diversity, especially for durable KP structure, and quality equivalence to Gemini is unproven.
 
-The user must decide whether that correlated-error tradeoff is acceptable for this Beta. Recommend
-accepting it subject to real-book KP/Guide/Inline review calibration and known-defect rejection tests.
+The user accepted that correlated-error tradeoff for this Beta, subject to real-book KP/Guide/Inline
+review calibration and known-defect rejection tests. Approval is not evidence that these tests passed.
 If quality fails, retain original reading and existing published assets; pause affected new generation
 and report. Do not bypass Review or silently enable owner-funded Gemini. Alternatives are to defer
 affected generation or separately authorize a stronger reviewer and explicit funding in a later slice.
-Until R-1 is resolved, this brief does not authorize changing Review to DeepSeek or deploying those
-review-dependent paths. Existing Fast/Standard/Deep and saved-note verification semantics remain.
+R-1 is resolved; its routing may be implemented after the personal stable baseline prerequisite.
+Existing Fast/Standard/Deep and saved-note verification semantics remain.
 
-Target Beta configuration below includes the **proposed R-1 Review rows**; it is not executable approval
-or a secret file. Values must be validated after profile and per-role overrides:
+Target Beta configuration below includes the accepted R-1 Review rows; it is not a secret file or
+evidence of deployment. Values must be validated after profile and per-role overrides:
 
 ```text
 GUIDED_READER_ASSISTANT_PROVIDER=deepseek
@@ -169,8 +170,8 @@ transferred during this documentation revision.
 
 - Per-instance finite daily token allowance and simultaneous provider-call ceiling, enforced at the
   common egress boundary across Assistant, Master, KP, Guide, Inline, Review and saved-note Review.
-  Proposed initial limits: **200,000 input+output tokens/day, 2 active calls/person**, date boundary
-  Asia/Shanghai. These are brief defaults for review, not observed usage or a currency price promise.
+  Initial configurable limits: **200,000 input+output tokens/day, 2 active calls/person**, date boundary
+  Asia/Shanghai. These are accepted starting defaults, not observed usage or a currency price promise.
   User-supplied keys do not remove these safeguards; all their generation and Review calls count.
 - Atomically reserve a conservative input bound + requested maximum output before each transport
   attempt, reconcile against validated usage, and retain the reservation when outcome/usage is
@@ -184,7 +185,7 @@ transferred during this documentation revision.
   user's provider account limit requires it. Separate keys may still share a provider account; do not
   assume account-level independence. No distributed limiter. Administrator can disable new AI.
   Quota/concurrency failures never change mastery, discard questions/notes or bypass Review.
-- Proposed storage defaults: **512 MiB/upload, 20 GiB total per instance, 2 GiB host free-space reserve**.
+- Initial storage defaults: **512 MiB/upload, 20 GiB total per instance, 2 GiB host free-space reserve**.
   Check upload length and reserved space before intake; account for simultaneous uploads, temp files,
   SQLite/WAL and generated state. Combine application admission with an OS/filesystem hard limit;
   retain room to complete transactions and reject new growth cleanly. No automatic deletion of
@@ -201,7 +202,7 @@ transferred during this documentation revision.
   A Python package alone currently lacks the required repository-relative `node_modules` resources.
 - Daily low-traffic stop-and-backup per instance: deny/drain writes, stop Core, snapshot the complete
   SQLite state and blobs together, then restart. Include nonsecret configuration, schema/release IDs
-  and checksums. Encrypt and copy off-host; proposed retention 7 daily + 4 weekly, RPO <=24h, restore
+  and checksums. Encrypt and copy off-host; initial retention 7 daily + 4 weekly, RPO <=24h, restore
   target <=1h for the validated Beta dataset. Alert on failed backup. Keys are managed separately.
 - Take a verified pre-update backup; update one instance at a time. No running-DB main-file-only copy,
   no reliance solely on same-disk migration backups. Restore into an empty isolated directory and
@@ -224,8 +225,8 @@ transferred during this documentation revision.
    multi-call Guide/KP, Review/retry, missing usage, interrupted calls, restart and rollover. No
    unapproved model request leaves. Upload concurrency, oversize, disk exhaustion and quota failure
    leave durable assets valid. AI exhaustion preserves original-only reading and saved assets.
-   Beta UI has no provider/model menu; crafted non-DeepSeek requests fail before egress. After R-1
-   acceptance, verify same-key clean-context Review, rejection of known bad candidates, and unchanged
+   Beta UI has no provider/model menu; crafted non-DeepSeek requests fail before egress. Verify R-1's
+   same-key clean-context Review, rejection of known bad candidates, and unchanged
    publication/mastery authority on representative real KP, Guide, Inline and saved-note material.
 3. **Linux real path:** real representative scanned textbook; upload → PDF → OCR selection →
    Assistant SSE → Master → reviewed Guide → save/collect → progress → close/reopen. Actual controls,
@@ -269,7 +270,7 @@ choices are delegated; use existing SQLite/runtime boundaries, not a generic bud
 Report before expanding architecture, changing ownership/learning/publication rules, degrading the
 Windows personal edition, weakening personal OpenRouter proxy
 policy, calling other models, adopting another major dependency, or accepting weaker isolation/hard
-limits. Resolve R-1 explicitly; if same-model Review fails its acceptance, report the evidence rather
+limits. R-1 is resolved; if same-model Review fails its acceptance tests, report the evidence rather
 than adding another provider. Server/domain/DNS, each user's DeepSeek key, participants, verified
 private GitHub destination, off-host backup destination and approved live-test
 spend are rollout inputs, not reasons to invent values or block fixture-based implementation. Their
@@ -278,8 +279,8 @@ infrastructure, transferring data or opening public access.
 
 ## Completion and handover
 
-After user acceptance of this brief, resolution of R-1 and completion of the personal stable baseline,
-a fresh Implementer conversation may implement the accepted scope. Finish with
+This brief and R-1 are accepted. After completion of the personal stable baseline, a fresh Implementer
+conversation may implement the accepted scope. Finish with
 `docs/development-reports/FRIENDS_PRIVATE_BETA.md`, runnable deployment/restore
 instructions and a scoped checkpoint. Use `IMPLEMENTATION_READY` for built/tested artifacts;
 `FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` if target Linux/HTTPS, real materials or 2–5-user acceptance
