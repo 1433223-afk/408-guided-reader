@@ -246,3 +246,67 @@ no executable product source or dependency changed, and this does not close the 
 Still pending: two-instance isolation, 2/5-instance mixed load, remaining Master/Guide/KP/Inline and
 Review quality paths, restart/update recovery, encrypted off-host backup/empty restore, and final
 owner rollout approval. No invitations or expansion were performed.
+
+## Owner Core backlog correction — 2026-09-17
+
+User-authorized narrow product fix, deployed as immutable release
+`7ba3f6cbb796b515dae0982a2a970a9191b1d298`. Only Beta `ReaderServer` now sets
+`request_queue_size = 64` before `TCPServer.__init__` activates its socket. Personal retains the
+inherited default. The 32-active-handler bound, thread model, HTTP version, socket timeout,
+dependencies, schema, Caddy and nftables are unchanged. Backlog is pending connections, not permission
+to execute 64 handlers. No live provider call was made.
+
+**Root cause/evidence:** the deployed Python 3.12 server inherited listen backlog 5. Browser-like
+parallel frontend h2 requests cause separate HTTP/1.0 upstream connections; admission bursts overflowed
+the small accept queue. Before the fix, three batches each of 8 and 16 authenticated local HTTPS
+health requests (72 total) raised host ListenOverflows/ListenDrops from 16 to 32. A prior Caddy error
+recorded a 3.002-second Core dial timeout; that individual event was not packet-traced, so it is not
+claimed conclusively caused by this queue. No universal per-request fixed delay was established.
+
+**Tests:** Beta targeted suite 26 PASS, including both profile variants and real socket activation
+with the backlog observed before listen. Full Python 354 PASS / 2 SKIPPED in 246.21 seconds; the
+inherited real-OCR corpus cases remain unavailable. Full JS 51 PASS. `git diff --check` passed.
+The new test and existing security boundary regression passed; no new independent audit is claimed.
+
+**Deployment/recovery:** new release built from the pushed commit with fresh venv and pinned wheels;
+unchanged lockfiles and copied previously sealed browser assets/models verified. New release is
+root-owned, non-writable by instance UID, sealed and verified (190 manifest files). Original release
+was preserved. Stopped-service backup verified schema 19, SQLite/FKs/blob integrity; restore into a
+fresh directory verified 15,367,952 bytes in 0.382 seconds, excluding credentials. This is local
+pre-update recovery evidence, not encrypted off-host backup acceptance. Artifacts:
+`/var/backups/guided-reader/owner-backlog-20260917T152635Z/{backup,restore}`.
+Service was stopped cleanly and its `current` symlink switched to the new release. Caddyfile and
+persistent nftables file checksums matched before/after. No existing data was deleted.
+
+**Same-probe after:** live `ss` reports loopback listener backlog 64. All 72 requests returned 200
+over h2. ListenOverflows/ListenDrops stayed 32 (zero increment), versus +16 before.
+
+| Local Caddy HTTPS burst | Before max TTFB / total | After max TTFB / total |
+|---|---:|---:|
+| 8 concurrent, 3 batches | 1.045 / 1.087 s | .078 / .084 s |
+| 16 concurrent, 3 batches | 1.245 / 1.284 s | .071 / .114 s |
+
+TTFB and total maxima are independent maxima across each group. No new Caddy error was found in
+the checked post-deployment window starting 15:27 UTC. This bounded check is not a never-again
+timeout guarantee. Reader running, NRestarts=0; Caddy/nftables active; release re-verification passed.
+Windows normal authenticated HTTPS homepage/Library returned 200 and existing PDF Range 206.
+
+**Browser Timing acceptance pending:** before screenshots supplied by the user showed homepage
+Waiting 247.87 ms / download 361.49 ms / total 611.50 ms; styles.css Waiting 3.76 s / download
+5.17 s / total 8.94 s. They had no displayed DNS/TCP/TLS phase and minimal queue/stall. After
+Chrome Timing has been requested but not received at this checkpoint. Windows computer-use had
+repeatedly stopped on inability to identify the browser URL; no automated Chrome PASS is claimed.
+
+**Independent remaining transport issue:** after the fix, local Caddy h2 warm CSS TTFB was
+5.29–5.44 ms, total 5.42–5.68 ms for all 50,087 bytes. Windows HTTP/1.1 curl (not Chrome) warm
+CSS via current proxy had TTFB .221 s / total 2.055 s (about 1.834 s after first byte); DIRECT
+.082 s / 1.114 s (about 1.032 s after first byte). Cold CSS totals were 1.575 s proxy and .558 s
+DIRECT. This is a small diagnostic sample, not sustained bandwidth or a controlled browser
+before/after comparison. It reproduces slow body reception without frontend code, while the
+local server completes promptly. Exact loss/congestion/proxy/firewall contribution remains
+unresolved; no proxy/security setting or compression/cache policy was changed. Do not claim this
+backlog fix resolves all perceived slowness. No server upgrade is indicated by these findings.
+
+Raw nonsecret before/after metrics remain in the operator GuidedReaderOps directory and on the
+server operator cache. Earlier performance-session temporary Basic Auth/cookie files were reused
+for this authorized check; their previously policy-blocked cleanup remains pending, not claimed done.
