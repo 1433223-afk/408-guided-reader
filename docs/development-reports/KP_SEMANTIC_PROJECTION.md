@@ -23,6 +23,11 @@ validator correctly rejected all three same-contract attempts.
 - The generator contract now says explicitly that one target may not list units on both sides of an
   omitted unit: it must include the incidental middle unit in the continuous source span or split
   into two individually continuous targets. Validation remains strict and no output is coerced.
+- A subsequent real Chapter 3 attempt reached Review but was correctly rejected because the
+  generator minted the pure transition `必须学习…把握规律…举一反三` as an `应用概述` KP. The static
+  generator contract now explicitly classifies requirement/advice/transition-only units as
+  `non_kp_units`. This is not Review-driven runtime repair: the failed attempt ended unchanged, and
+  the user-requested retry created a fresh attempt under the same one-pass pipeline.
 
 ## Acceptance evidence
 
@@ -38,6 +43,12 @@ validator correctly rejected all three same-contract attempts.
   `openrouter/google/gemini-3.8-flash`. The generated map contains no page-header/page-number KP.
 - Live user-requested retry after service restart: Chapter 1 published `READY`, 4/4 Sections,
   structure version 1, 10 KPs, with the same approved generator/reviewer routes and no failure code.
+- Live retry of the originally reported Chapter 3: the first post-geometry attempt reached 6/6
+  Sections but received a valid structural Review FAIL for the transition-only pseudo-KP and
+  published nothing. After the contract clarification, a fresh user-requested attempt published
+  `READY`, 6/6 Sections, structure version 1, with Review PASS and no failure code. Generator and
+  reviewer remained `deepseek/deepseek-flash` and
+  `openrouter/google/gemini-3.8-flash` respectively.
 - JavaScript suite: `INTENTIONALLY_NOT_RUN` for this correction because no JavaScript or UI contract
   changed; the real HTTP schedule/status path and live Reader data were exercised. The previously
   recorded unrelated `chapter-entry.test.js` fixture failure is unchanged.

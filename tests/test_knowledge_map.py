@@ -604,6 +604,8 @@ def test_prompts_freeze_one_pass_absorption_and_terminal_review_contract():
     assert "一组成套方法" in GENERATOR_SYSTEM_MESSAGE
     assert "例题、章节概览、后文预告" in GENERATOR_SYSTEM_MESSAGE
     assert "比较总结" in GENERATOR_SYSTEM_MESSAGE
+    assert "举一反三" in GENERATOR_SYSTEM_MESSAGE
+    assert "泛化 target" in GENERATOR_SYSTEM_MESSAGE
     assert "FORBIDDEN_REVIEW_MATERIAL" in GENERATOR_SYSTEM_MESSAGE
     assert "不得依据先前模型结果" in GENERATOR_SYSTEM_MESSAGE
     assert "只能定位问题，不能改写候选" in REVIEW_SYSTEM_MESSAGE
