@@ -84,6 +84,9 @@ class ReaderServer(ThreadingHTTPServer):
         self.profile = profile or InstanceProfile()
         if self.profile.beta:
             self.daemon_threads = False
+            # Queue browser resource bursts before accept; active handlers stay capped at 32.
+            # Set before TCPServer.__init__ activates the listening socket.
+            self.request_queue_size = 64
         self.stopping = threading.Event()
         self._requests = threading.BoundedSemaphore(32)
         super().__init__(*args, **kwargs)

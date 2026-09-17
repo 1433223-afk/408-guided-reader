@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from types import SimpleNamespace
 
@@ -21,6 +22,24 @@ from reader_service.library import LibraryService, IntakeError
 from reader_service.server import ReaderServer, handler_factory
 from reader_service.storage import ManagedPaths
 from conftest import make_pdf
+
+
+@pytest.mark.parametrize("mode", ["personal", "beta"])
+def test_listener_backlog_is_set_before_activation(mode, monkeypatch):
+    observed = []
+    activate = ThreadingHTTPServer.server_activate
+
+    def record_activation(server):
+        observed.append(server.request_queue_size)
+        activate(server)
+
+    monkeypatch.setattr(ThreadingHTTPServer, "server_activate", record_activation)
+    expected = 64 if mode == "beta" else ThreadingHTTPServer.request_queue_size
+    with ReaderServer(("127.0.0.1", 0), BaseHTTPRequestHandler,
+                      profile=InstanceProfile(mode)) as server:
+        assert observed == [expected]
+        assert server.request_queue_size == expected
+        assert server.socket.getsockname()[1] != 0
 
 
 class Adapter:
