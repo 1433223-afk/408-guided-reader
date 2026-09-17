@@ -488,6 +488,50 @@ def test_short_heading_and_cross_page_continuation_preserve_evidence_boundaries(
     assert "300" not in units[0]["text"]
 
 
+def test_repeated_page_top_furniture_is_excluded_from_semantic_units():
+    def source_line(text, page, ordinal, y_start, y_end):
+        return {
+            "text": text,
+            "pdf_page_index": page,
+            "line_ordinal": ordinal,
+            "line_ref": f"p{page}:l{ordinal}",
+            "y_start": y_start,
+            "y_end": y_end,
+        }
+
+    source = {
+        "chapter": {"book_source_revision_id": "revision"},
+        "source_sections": [
+            {
+                "section_id": "section",
+                "title": "1.1 基本概念",
+                "subsections": [],
+                "lines": [
+                    source_line("2. 数据元素。", 10, 40, 0.88, 0.91),
+                    source_line("2", 11, 0, 0.06, 0.078),
+                    source_line("2026年数据结构考研复习指导", 11, 1, 0.06, 0.079),
+                    source_line("3. 数据对象。", 11, 2, 0.10, 0.13),
+                    source_line("2026年数据结构考研复习指导", 12, 0, 0.06, 0.079),
+                    source_line("3", 12, 1, 0.06, 0.078),
+                    source_line("4. 数据类型。", 12, 2, 0.10, 0.13),
+                    source_line("1.2 唯一的顶部正文标题", 13, 0, 0.06, 0.079),
+                    source_line("标题后的正文。", 13, 1, 0.10, 0.13),
+                ],
+            }
+        ],
+    }
+
+    units = build_evidence_units(source)
+    texts = [unit["text"] for unit in units]
+
+    assert all("2026年数据结构考研复习指导" not in text for text in texts)
+    assert "2" not in texts
+    assert "3" not in texts
+    assert any("3. 数据对象" in text for text in texts)
+    assert any("4. 数据类型" in text for text in texts)
+    assert any("1.2 唯一的顶部正文标题" in text for text in texts)
+
+
 def semantic_window(*, section_title="1.1 正文", unit_count=3):
     return {
         "window_id": "w001",

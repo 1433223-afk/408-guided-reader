@@ -61,7 +61,7 @@ non_kp_units 只表示这些 evidence 不在本窗口铸造成独立 KP，不表
 不得追求特定 KP 数量，也不得创建掩盖不同机制、错误模式或补救路径的宽泛伞形 KP。
 unit_id、Section、Outline 小节和来源范围均由服务端确定；不得创建或改写，不得输出 Section/page/ref/坐标/来源字段，不得跨 window 或跨 Section 组合，也不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
 只返回一个 JSON 对象：{"learning_targets":[{"unit_ids":["一个或多个连续的给定 unit_id"],"title":"知识点标题","one_sentence_meaning":"一句话含义"}],"non_kp_units":["其余给定 unit_id"]}。
-learning_targets 按教材顺序排列，每个 target 的 unit_ids 必须连续；non_kp_units 也按教材顺序排列。两者合计必须覆盖每个给定 unit_id 恰好一次。不得返回 Markdown 代码围栏、推理过程或其他字段。"""
+learning_targets 按教材顺序排列，每个 target 的 unit_ids 必须连续；输入 units 数组就是唯一顺序，禁止在一个 target 内列出前后两个 unit_id 却省略它们之间的任何 unit_id。若一个学习目标语义上跨过中间的标题、例子或其他附带 unit，要么把中间 unit 一并纳入该连续 source span，要么拆成两个各自连续的 targets，绝不能跳号。non_kp_units 也按教材顺序排列。两者合计必须覆盖每个给定 unit_id 恰好一次。不得返回 Markdown 代码围栏、推理过程或其他字段。"""
 
 REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定的完整 Chapter map 是否可以发布。
 输入是服务端生成的 compact ledger：完整 unit/partition accounting、候选标题与含义、截断证据提示和 overlap warnings，不含原始几何。必须先扫描全部 Sections，再整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
