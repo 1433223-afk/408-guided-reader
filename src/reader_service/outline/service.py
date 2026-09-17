@@ -25,8 +25,13 @@ _WATERMARKS = (
     re.compile(r"(?i)CIWEIYUNYIN"),
     re.compile(r"刺猬云印(?:·在线打印)?"),
     re.compile(r"公众号\s*[:：]?\s*研池悟空"),
+    re.compile(r"公众号\s*[:：]?\s*小兔网盘免费分享无水印PDF"),
     re.compile(r"微信扫一扫.*$"),
 )
+_HEADING_TITLE_SIMILARITY = 0.70
+_HEADING_HINT_PAGE_TOLERANCE = 1
+_HEADING_ROW_OVERLAP = 0.65
+_HEADING_FRAGMENT_GAP = 0.08
 
 
 class ChapterResolutionError(RuntimeError):
@@ -323,18 +328,27 @@ class OutlineService:
         cls, node: dict, lines: list[dict], after: tuple[int, float]
     ) -> dict | None:
         target = cls._heading_parts(node["title"])
+        lines_by_page: dict[int, list[dict]] = {}
+        for value in lines:
+            lines_by_page.setdefault(int(value["pdf_page_index"]), []).append(value)
         candidates = []
         for line in lines:
             ys = [float(point[1]) for point in line["quad"]]
             position = (int(line["pdf_page_index"]), min(ys))
             if position < after:
                 continue
-            value = cls._heading_parts(cls.classification_text(line["text"]))
-            if not target[0] or target[0] != value[0]:
-                continue
-            similarity = SequenceMatcher(None, target[1], value[1]).ratio()
             hint = node.get("start_page")
             page_distance = abs(position[0] - int(hint)) if hint is not None else 0
+            if hint is not None and page_distance > _HEADING_HINT_PAGE_TOLERANCE:
+                continue
+            line_value = cls._heading_parts(cls.classification_text(line["text"]))
+            if target[0] is not None and target[0] != line_value[0]:
+                continue
+            similarity = cls._heading_similarity(
+                target, line, lines_by_page[position[0]]
+            )
+            if similarity is None:
+                continue
             candidates.append(
                 (
                     page_distance, -similarity, position, int(line["line_ordinal"]),
@@ -346,6 +360,70 @@ class OutlineService:
                 )
             )
         return min(candidates, key=lambda item: item[:-1])[-1] if candidates else None
+
+    @classmethod
+    def _heading_similarity(
+        cls, target: tuple[str | None, str], line: dict, lines: list[dict]
+    ) -> float | None:
+        similarities = []
+        for value in cls._heading_variants(line, lines):
+            if target[0] is None:
+                # An unnumbered bookmark/TOC title is safe only when the normalized
+                # heading text itself matches.  Page proximity and document order
+                # disambiguate repeated structural labels such as “归纳总结”.
+                if value[0] is None and target[1] and target[1] == value[1]:
+                    similarities.append(1.0)
+                continue
+            if target[0] != value[0]:
+                continue
+            similarity = (
+                1.0
+                if not target[1]
+                else SequenceMatcher(None, target[1], value[1]).ratio()
+            )
+            if similarity >= _HEADING_TITLE_SIMILARITY:
+                similarities.append(similarity)
+        return max(similarities, default=None)
+
+    @classmethod
+    def _heading_variants(
+        cls, line: dict, lines: list[dict]
+    ) -> list[tuple[str | None, str]]:
+        """Return the line plus conservative same-row OCR-fragment joins."""
+        text = cls.classification_text(line["text"])
+        variants = [cls._heading_parts(text)]
+        x0, y0, x1, y1 = cls._line_bounds(line)
+        height = y1 - y0
+        if height <= 0:
+            return variants
+        fragments = []
+        for other in lines:
+            if other is line or int(other["pdf_page_index"]) != int(line["pdf_page_index"]):
+                continue
+            ox0, oy0, ox1, oy1 = cls._line_bounds(other)
+            other_height = oy1 - oy0
+            overlap = max(0.0, min(y1, oy1) - max(y0, oy0))
+            if other_height <= 0 or overlap / min(height, other_height) < _HEADING_ROW_OVERLAP:
+                continue
+            if (ox0 + ox1) / 2 <= (x0 + x1) / 2:
+                continue
+            fragments.append((ox0, ox1, cls.classification_text(other["text"])))
+        right_edge = x1
+        combined = text
+        for fragment_x0, fragment_x1, fragment_text in sorted(fragments):
+            if fragment_x0 - right_edge > _HEADING_FRAGMENT_GAP:
+                break
+            if fragment_text:
+                combined = f"{combined} {fragment_text}"
+                variants.append(cls._heading_parts(combined))
+            right_edge = max(right_edge, fragment_x1)
+        return variants
+
+    @staticmethod
+    def _line_bounds(line: dict) -> tuple[float, float, float, float]:
+        xs = [float(point[0]) for point in line["quad"]]
+        ys = [float(point[1]) for point in line["quad"]]
+        return min(xs), min(ys), max(xs), max(ys)
 
     @staticmethod
     def _heading_parts(value: str) -> tuple[str | None, str]:

@@ -45,7 +45,9 @@ Two earlier real-material attempts did not reach READY and are not counted as PA
 computer-organization Chapter 4 stopped at DETERMINISTIC_VALIDATION /
 `deterministic_validation_failed`; data-structures Chapter 4 stopped at RANGE_RESOLUTION /
 `HEADING_NOT_RESOLVED`. The toolbar exposed these failures and allowed retry. Their exact
-backend cause remains unadjudicated; no validation gate was bypassed or backend fix included.
+backend cause was not adjudicated by this UI fix; no validation gate was bypassed here. The later
+data-structures heading-resolution investigation and correction is recorded in
+[`CHAPTER_HEADING_RESOLUTION.md`](./CHAPTER_HEADING_RESOLUTION.md).
 
 ## Reproduce / checkpoint
 

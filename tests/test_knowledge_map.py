@@ -41,14 +41,14 @@ from reader_service.outline import OutlineRepository, OutlineService
 from conftest import make_pdf
 
 
-def detected(text: str, y: float) -> DetectedLine:
-    width = min(0.8, max(0.12, len(text) * 0.025))
+def detected(text: str, y: float, *, x: float = 0.1, width: float | None = None) -> DetectedLine:
+    width = width if width is not None else min(0.8, max(0.12, len(text) * 0.025))
     cells = tuple(
-        (0.1 + width * index / len(text), 0.1 + width * (index + 1) / len(text), index, index + 1)
+        (x + width * index / len(text), x + width * (index + 1) / len(text), index, index + 1)
         for index in range(len(text))
     )
     return DetectedLine(
-        quad=((0.1, y), (0.1 + width, y), (0.1 + width, y + 0.035), (0.1, y + 0.035)),
+        quad=((x, y), (x + width, y), (x + width, y + 0.035), (x, y + 0.035)),
         text=text,
         confidence=0.99,
         cells=cells,
@@ -299,6 +299,69 @@ def semantic_inputs(fixture):
     )
     units = build_evidence_units(source)
     return source, units, build_semantic_windows(units), bounds
+
+
+def test_physical_resolution_matches_unnumbered_and_split_headings(service):
+    writer = PdfWriter()
+    for _ in range(5):
+        writer.add_blank_page(width=612, height=792)
+    chapter_one = writer.add_outline_item("第1章 基础", 0)
+    writer.add_outline_item("1.1 第一节", 0, parent=chapter_one)
+    writer.add_outline_item("归纳总结", 2, parent=chapter_one)
+    writer.add_outline_item("思维拓展", 3, parent=chapter_one)
+    chapter_two = writer.add_outline_item("第2章 后续", 4)
+    writer.add_outline_item("2.1 第二节", 4, parent=chapter_two)
+    output = BytesIO()
+    writer.write(output)
+    pdf = output.getvalue()
+
+    imported = service.intake(
+        BytesIO(pdf), content_length=len(pdf), filename="unnumbered-headings.pdf"
+    )
+    revision = imported["book"]["active_revision"]
+    repository = FoundationRepository(service.database)
+    foundation = FoundationService(service, repository, UnusedEngine)
+    foundation.ensure_revision(revision["id"])
+    pages = {
+        0: [
+            detected("第1章 基础", 0.08),
+            detected("1.1 完全无关", 0.13),
+            detected("1.1", 0.20, width=0.05),
+            detected("第一节", 0.20, x=0.17, width=0.12),
+            detected("正文", 0.32),
+            detected("归纳总结", 0.50),
+        ],
+        1: [detected("正文续页", 0.20)],
+        2: [detected("归纳总结", 0.28), detected("总结正文", 0.40)],
+        3: [detected("思维拓展", 0.24), detected("拓展正文", 0.36)],
+        4: [detected("第2章 后续", 0.09), detected("2.1 第二节", 0.20)],
+    }
+    for page_index, lines in pages.items():
+        assert repository.mark_preparing(revision["id"], page_index)
+        repository.publish_page(
+            revision["id"], page_index, route="OCR", foundation_version=1,
+            engine_profile="fixture:v1", lines=lines,
+        )
+
+    outline = OutlineService(
+        service,
+        OutlineRepository(service.database),
+        PageLabelService(service, PageLabelRepository(service.database)),
+    )
+    nodes = outline.bootstrap(revision["id"])["nodes"]
+    chapter = next(node for node in nodes if node["title"] == "第1章 基础")
+    resolved = outline.resolve_chapter_physical(
+        revision["id"], chapter["outline_node_id"]
+    )
+    by_title = {node["title"]: node for node in resolved["nodes"]}
+
+    assert by_title["1.1 第一节"]["start_page"] == 0
+    assert by_title["1.1 第一节"]["start_y"] == pytest.approx(0.20)
+    assert by_title["归纳总结"]["start_page"] == 2
+    assert by_title["归纳总结"]["start_y"] == pytest.approx(0.28)
+    assert by_title["思维拓展"]["start_page"] == 3
+    assert by_title["思维拓展"]["start_y"] == pytest.approx(0.24)
+    assert all(node["resolution_state"] == "RESOLVED" for node in resolved["nodes"])
 
 
 def logical_projection(nodes):
