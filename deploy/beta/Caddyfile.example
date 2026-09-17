@@ -5,7 +5,8 @@
         protocols h1 h2
         timeouts {
             read_header 10s
-            read_body 120s
+            # Total upload time, not an idle timeout: allow slower public links.
+            read_body 10m
             idle 60s
         }
         max_header_size 32KB

@@ -52,6 +52,20 @@ the adapted JSON. HTTPS, auth, exact upstream Host, no forwarded Authorization, 
 no shared cache, no inspection/debug routes and immediate SSE flushing apply to every route.
 The cookie is a separate per-process Secure/HttpOnly/SameSite launch credential, not Basic Auth.
 
+The request-body deadline is **10 minutes total**, with the same 512 MiB size limit. It is not an
+idle timeout and does not guarantee that the maximum file size can upload over every connection.
+The earlier 120-second template cut off a valid 12 MiB PDF at 80 KiB/s: Caddy returned 502 while
+Core logged 422 for an incomplete intake. Keep the deadline bounded; verify a representative slow
+upload, cancellation cleanup and normal reading before changing it for another deployment.
+
+After validating a changed Caddyfile, reload as the root operator:
+`sudo caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`.
+The stock service's `systemctl reload caddy` runs as the Caddy UID and cannot reach the root-only
+admin port under the required firewall below. Do not relax that rule to make reload work. Back up
+the configuration privately before editing, and verify the effective configuration after reload.
+Before stopping Core for maintenance, let uploads finish; its shutdown deadline is separate from
+the proxy upload deadline.
+
 **The UID firewall is required, not optional hardening.** A local process allowed to connect to Core
 can spoof proxy headers and bootstrap a launch cookie. Render `isolation.nft.example` with the real
 Caddy UID and every allocated Core port. Only root and Caddy may connect to these loopback ports;

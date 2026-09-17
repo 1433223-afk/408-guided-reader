@@ -166,3 +166,83 @@ shared filesystem's actual free capacity. The administrator remains trusted with
 Implementation checkpoint: the commit containing this report on `friends-private-beta`, descending
 from `f71f5bb`. Resolve with `git log --oneline -- docs/development-reports/FRIENDS_PRIVATE_BETA.md`.
 No push or deployment is part of this checkpoint.
+
+## Owner server operations recovery — 2026-09-17
+
+This section records a subsequent user-authorized server session; it does not retroactively turn
+the implementation fixtures above into live acceptance. Cold start re-read AGENTS, the Phase and
+its named blueprint sections, related reports, deployment templates and actual intake/security code.
+Local and GitHub `friends-private-beta` both began at
+`48165746d1347fc858d8774452353c08ee2ca9fa`, with a clean tree. The server's sealed release verified
+at that same commit. `main` remained `15bb7cd9a9d131479e76656e2350bfc63fc0b870`.
+
+**SSH:** TCP/KEX/known-host checks succeeded, but the interactive password attempt was rejected.
+Console logs showed failed password authentication and successful existing admin public-key sessions;
+they do not establish whether the password was mistyped or incorrect. The user appended the prepared
+dedicated operator public key through the cloud console. Repeated independent BatchMode key sessions
+and sudo succeeded. Existing authorized keys and sshd policy were preserved.
+
+**Root cause:** Caddy's `read_body 120s` is a total request-body deadline. Both reported failures
+matched Caddy 502 `i/o timeout` at 120 seconds and Core 422 from incomplete PDF intake. The exact
+12,582,672-byte, 29-page scanned PDF passed existing strict validation in 0.090 seconds, with SHA-256
+`327da74eef4c0ee7ad0fb3bf4752907f71dff9c2d9877faf49d1b3201c7e0aa1`.
+Disk had 31 GiB available. Upload through authenticated local HTTPS succeeded in 0.933 seconds.
+A controlled 80 KiB/s upload reproduced 502 after 120.819 seconds, with only 9,895,936 bytes sent.
+The client received an empty 502 response, not a usable 422 JSON body; Core's 422 was visible in the
+redacted service log. No claim is made to have captured the original browser response body.
+
+**Fix:** privately backed up `/etc/caddy/Caddyfile`, validated a bounded `read_body 10m`, and reloaded
+Caddy as root. Effective `read_timeout` was 600 seconds. The stock `systemctl reload caddy` first
+failed because it runs as the Caddy UID, which the required firewall denies access to port 2019;
+the old configuration remained running, and its file was restored before the root reload. The
+firewall was not relaxed. Repository changes only synchronize the deployment template/runbook and
+this report. No Python/JS product source, DB schema, sealed release, or release symlink changed;
+therefore no new product release was deployed. Let in-flight uploads finish before maintenance.
+
+**Live targeted evidence:**
+
+- Same 80 KiB/s upload after the fix: **200**, 153.631 seconds, all 12,582,672 bytes, duplicate=true
+  with the same Book identity. Windows-to-public-HTTPS upload also passed: **200**, 25.470 seconds.
+- Intentional upload cancellation after 3 seconds: temporary upload removed, Library remained 200;
+  existing PDF Range returned 206. Hostile Origin returned 403, inspection 404, explicit oversized
+  HTTP/1.1 body declaration 413 without sending a large body. A bodyless HTTP/2 probe returned 422;
+  the valid oversized-declaration probe is the 413 evidence.
+- Root and Caddy UID could connect to Core; gr-owner could not. Caddy UID could not connect to 2019.
+  Core remained `127.0.0.1:18761`, admin `127.0.0.1:2019`; HTTPS/Basic Auth/512 MiB cap preserved.
+  Credential directory/file remained gr-owner-owned 0700/0600. Original release seal still VERIFIED.
+  Anonymous static/API/PDF/Assistant requests returned 401. An authenticated mismatched HTTP Host
+  under the valid site's TLS SNI returned an empty Caddy 200 (zero bytes, no application content),
+  not an explicit 4xx. No application route/data was exposed; strict unknown-host rejection remains
+  a separate pre-invitation acceptance item rather than being reported PASS here.
+- One live Assistant request used an OCR selection on PDF page index 12 through HTTPS/Caddy.
+  Immediately beforehand, the service reported native DeepSeek, exact `deepseek-flash`, exact
+  `https://api.deepseek.com/chat/completions`, READY with the private credential loader. The actual
+  SSE emitted 244 answer deltas and one complete event: first answer at 1.113 seconds, complete at
+  2.630 seconds (2.641 seconds total). No provider body/key was logged by the test. Its temporary
+  Assistant session was closed afterwards. No second paid test or other provider was invoked.
+- **User real-use PASS:** user confirmed successful browser PDF opening (provided page-13 screenshot),
+  selecting OCR text, returning to Library and reopening. The screenshot showed 22/29 selectable
+  pages while preparation progressed. These are user observations, not agent pointer automation.
+  Agent in-app browser access failed with connection closed; no agent-browser PASS is claimed.
+- Performance sample from Windows: Library GET 0.105 seconds; a 256 KiB PDF Range took 11.489 seconds
+  (~22.3 KiB/s). Initial server OCR pages took roughly 12–32 seconds each. These separate transport
+  and preparation costs; they do not prove a particular cloud bandwidth cap or compare controlled
+  local/server benchmarks. The timeout fix does not make a slow link faster.
+- At the final service check Core was active/running, MainPID 96970, zero restarts and about 368 MiB
+  cgroup memory; Caddy and nftables were active. Swap remained unused at the sampled instant.
+- Temporary website credentials, cookie jar and test payload files were removed from the operator
+  workspace; the Windows DPAPI credential file and downloaded test-PDF copy were also removed.
+  The user's original PDF, imported book/data, permanent BYOK and dedicated SSH key were preserved.
+
+**Independent review:** `ops_timeout_review` independently inspected the template, intake and server
+resource boundaries. No blocking issue was found for the bounded deployment adjustment; it did not
+perform server tests. The 32-worker ceiling, 30-second socket idle timeout, disk reservations and
+size limit remain. Authenticated slow uploads can still occupy all workers, and 10 minutes is not
+a guarantee that 512 MiB uploads over every network. Mixed-load acceptance remains pending.
+
+Validation is deployed Caddy validation/effective-config checks plus the live targeted checks above
+and `git diff --check`. Python/JS suites are INTENTIONALLY_NOT_RUN for this operations-only change:
+no executable product source or dependency changed, and this does not close the broader Phase.
+Still pending: two-instance isolation, 2/5-instance mixed load, remaining Master/Guide/KP/Inline and
+Review quality paths, restart/update recovery, encrypted off-host backup/empty restore, and final
+owner rollout approval. No invitations or expansion were performed.
