@@ -56,7 +56,7 @@ KP 是最小的、值得独立教学、独立检查、独立诊断、独立补�
 标题本身、例子本身不成为 KP；definition/property/ordinary step/example 默认属于同一 learning target。只有既能独立教学、又具有不同错误模式或补救路径，且当前 source evidence 对两者都有充分展开时，才可以拆成不同 targets。
 同一学习对象的多种分类方式，默认合为一个分类框架；分类维度或分类项本身不单独成为 KP。同一学习目标下的一组成套方法、互补步骤或替代实现，默认整体理解并合为一个 target；只有其中某项有充分独立展开，并确实需要不同教学、检查和补救时才拆分。
 例题、章节概览、后文预告和对前文的比较总结，默认进入 non_kp_units 或吸收到其所说明的 learning target，不单独铸造 KP；它们包含的新且充分展开的独立机制除外。仅表达“应学习/掌握/把握规律/举一反三/下文将介绍”等要求、建议或过渡的 unit 必须进入 non_kp_units；不得把它命名为“应用概述”“学习要求”“学习建议”等泛化 target。
-window.kp_creation 为 FORBIDDEN_REVIEW_MATERIAL 时，该窗口属于本章/本节小结、常见问题、易混淆或 FAQ 复习材料：learning_targets 必须为空，全部 unit_id 必须进入 non_kp_units；这些内容只补充已有 KP，绝不在这里铸造新 KP。
+window.kp_creation 为 FORBIDDEN_REVIEW_MATERIAL 时，该窗口属于本章/本节小结、常见问题、易混淆、FAQ 或试题精选：learning_targets 必须为空，全部 unit_id 必须进入 non_kp_units；这些内容只补充已有 KP，绝不在这里铸造新 KP。不得把课后选择题及其重复考查的定义、性质包装成“试题辨析”等独立 KP。
 non_kp_units 只表示这些 evidence 不在本窗口铸造成独立 KP，不表示内容无价值。facet/property/step/example 可以被包含在某个 target 的连续 source evidence 中。
 不得追求特定 KP 数量，也不得创建掩盖不同机制、错误模式或补救路径的宽泛伞形 KP。
 unit_id、Section、Outline 小节和来源范围均由服务端确定；不得创建或改写，不得输出 Section/page/ref/坐标/来源字段，不得跨 window 或跨 Section 组合，也不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。

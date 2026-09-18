@@ -1,5 +1,11 @@
 # Phase / First Chapter Knowledge Map
 
+> **Same-Phase follow-up (2026-09-18): READY_FOR_USER_RETEST.** User authorized fixing non-body KP
+> entries and exercise-derived duplicate targets. Reuse auxiliary-root presentation filtering and
+> existing non-minting windows; reject preparation without a primary Section before enqueue.
+> Do not reclassify durable Outline nodes, rewrite published KPs or weaken Review. Evidence:
+> `docs/development-reports/KP_ENTRY_AND_EXERCISE_GUARD.md`. The closure below is the historical baseline.
+
 > **Status: CLOSED / COMPLETE (2026-09-09).** Machine acceptance PASS; agent real-use PASS; user
 > acceptance PASS; independent narrow review PASS (`P0=0`, `P1=0`, `P2=0`) with
 > `CLOSURE_RECOMMENDATION: CLOSE`. The user approved Phase closure on 2026-09-09. The accepted

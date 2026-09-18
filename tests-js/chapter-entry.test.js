@@ -7,7 +7,7 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
   const browser=await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',headless:true});
   try {
     const page=await browser.newPage();
-    await page.setContent('<button id="outline-toggle">目录</button>');
+    await page.setContent('<main id="reader"><button id="outline-toggle">目录</button></main>');
     await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
     await page.evaluate(()=>{
       window.posts=[];window.opened=[];window.jumps=[];window.published=0;window.closedPeers=0;
@@ -50,17 +50,26 @@ test('Reader identifies an unprepared chapter from page bookmarks without invent
   const {runInNewContext}=await import('node:vm');
   const source=fs.readFileSync(new URL('../src/reader_service/static/app.js',import.meta.url),'utf8');
   const fn=source.slice(source.indexOf('function renderReaderSectionHint()'),source.indexOf('function updateViewport()'));
-  const nodes=[{kind:'CHAPTER',outline_node_id:'a',resolution_state:'PARTIAL',start_page:10},
-    {kind:'CHAPTER',outline_node_id:'b',resolution_state:'PARTIAL',start_page:20}];
+  const nodes=[{kind:'CHAPTER',title:'第1章 绪论',outline_node_id:'a',resolution_state:'PARTIAL',start_page:10},
+    {kind:'CHAPTER',title:'第2章 线性表',outline_node_id:'b',resolution_state:'PARTIAL',start_page:20}];
   let target;
   const context={state:{outlineNodes:nodes},document:{getElementById:()=>({})},
     elements:{viewer:{getBoundingClientRect:()=>({top:68})}},
     captureZoomAnchor:()=>({pageIndex:19,normalizedY:0.5}),chapterEntry:{sync:id=>target=id},
     master:{viewportChanged:()=>{}}};
-  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'a');
+  const auxiliary=source.slice(source.indexOf('function isAuxiliaryOutlineRoot('),source.indexOf('function makeAuxiliaryOutlineGroup('));
+  runInNewContext(auxiliary+fn+'renderReaderSectionHint();',context);assert.equal(target,'a');
   context.captureZoomAnchor=()=>({pageIndex:20,normalizedY:0});
   runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'b');
   nodes.push({...nodes[1],outline_node_id:'ambiguous'});
   runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,null);
   assert.equal(nodes[0].start_y,undefined);assert.equal(nodes[0].end_page,undefined);
+  nodes.pop();
+  for (const title of ['目 录','版权页','扉页','前 言','参考文献']) {
+    nodes.push({kind:'CHAPTER',title,outline_node_id:'aux',resolution_state:'PARTIAL',start_page:25});
+    context.captureZoomAnchor=()=>({pageIndex:26,normalizedY:0.5});
+    runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,null,title);
+    // Keep the auxiliary bookmark as a boundary; do not fall back to the preceding chapter.
+    nodes.pop();
+  }
 });

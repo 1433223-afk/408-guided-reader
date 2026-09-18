@@ -30,6 +30,7 @@ _NON_MINTING_SECTION_MARKERS = (
     "常见问题",
     "易混淆",
     "faq",
+    "试题精选",
 )
 _PAGE_LABEL_TOKEN = re.compile(r"(?:\d{1,5}|[ivxlcdm]{1,8})", re.IGNORECASE)
 

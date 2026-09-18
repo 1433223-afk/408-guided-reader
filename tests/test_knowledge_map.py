@@ -301,6 +301,22 @@ def semantic_inputs(fixture):
     return source, units, build_semantic_windows(units), bounds
 
 
+def test_front_matter_without_sections_cannot_enqueue_preparation(service):
+    fixture = build_fixture(service)
+    revision = fixture["revision"]["id"]
+    chapter = fixture["sibling"]["outline_node_id"]
+    with service.database.connect() as connection:
+        connection.execute("DELETE FROM outline_nodes WHERE parent_id = ?", (chapter,))
+        connection.execute("UPDATE outline_nodes SET title = '目 录' WHERE outline_node_id = ?", (chapter,))
+        before = {table: connection.execute(f"SELECT * FROM {table}").fetchall()
+                  for table in ("outline_nodes", "chapter_preparations", "jobs", "knowledge_points")}
+    with pytest.raises(ValueError, match="没有正文小节"):
+        fixture["knowledge"].request_prepare(revision, chapter)
+    with service.database.connect() as connection:
+        for table, rows in before.items():
+            assert connection.execute(f"SELECT * FROM {table}").fetchall() == rows
+
+
 def test_physical_resolution_matches_unnumbered_and_split_headings(service):
     writer = PdfWriter()
     for _ in range(5):
@@ -582,7 +598,7 @@ def test_group_first_partition_is_strict_and_complete():
             validate_semantic_output(json.dumps(value, ensure_ascii=False), window)
 
 
-@pytest.mark.parametrize("title", ["2.4 本章小结", "2.5 常见问题和易混淆知识点", "FAQ"])
+@pytest.mark.parametrize("title", ["2.4 本章小结", "2.5 常见问题和易混淆知识点", "FAQ", "2.1.3 本节试题精选", "2.2.3 本节试题精选"])
 def test_summary_and_faq_windows_are_non_minting_review_material(title):
     window = semantic_window(section_title=title, unit_count=2)
     payload = semantic_window_payload({"chapter_outline_node_id": "chapter", "title": "第2章"}, window)

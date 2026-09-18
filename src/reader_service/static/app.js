@@ -515,7 +515,7 @@ function renderReaderSectionHint() {
     if (candidate?.resolution_state === "PARTIAL"
         && chapters.filter(n => n.start_page === candidate.start_page).length === 1) chapter = candidate;
   }
-  const learningChapterId = chapter?.outline_node_id || null;
+  const learningChapterId = chapter && !isAuxiliaryOutlineRoot(chapter) ? chapter.outline_node_id : null;
   const chapterChanged = state.learningChapterId !== learningChapterId;
   state.learningChapterId = learningChapterId;
   chapterEntry.sync(learningChapterId, section?.outline_node_id || null);

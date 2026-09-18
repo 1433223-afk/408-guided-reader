@@ -56,6 +56,14 @@ class KnowledgeRepository:
             if current is not None and current["status"] == "READY":
                 return self._snapshot_connection(connection, revision_id, chapter_id), False
 
+            # Every KP needs a real primary Section; front-matter bookmarks have none.
+            if not connection.execute(
+                """SELECT 1 FROM outline_nodes WHERE book_source_revision_id = ?
+                   AND parent_id = ? AND kind = 'SECTION' LIMIT 1""",
+                (revision_id, chapter_id),
+            ).fetchone():
+                raise ValueError("该目录节点没有正文小节，不能生成本章知识点。")
+
             created = current is None
             if current is None or current["status"] == "FAILED":
                 attempt_id = str(uuid4())
