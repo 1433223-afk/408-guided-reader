@@ -52,6 +52,11 @@ the adapted JSON. HTTPS, auth, exact upstream Host, no forwarded Authorization, 
 no shared cache, no inspection/debug routes and immediate SSE flushing apply to every route.
 The cookie is a separate per-process Secure/HttpOnly/SameSite launch credential, not Basic Auth.
 
+The template enables stock gzip only for root-level JS/CSS and `/vendor/` code assets, after
+Basic Auth. Keep `private, no-store`; this does not introduce browser or shared caching. PDF
+Range responses and all `/api/` responses (including SSE and credentials) are excluded. Verify
+compressed worker delivery and unchanged authenticated 206 PDF ranges after reloading Caddy.
+
 The request-body deadline is **10 minutes total**, with the same 512 MiB size limit. It is not an
 idle timeout and does not guarantee that the maximum file size can upload over every connection.
 The earlier 120-second template cut off a valid 12 MiB PDF at 80 KiB/s: Caddy returned 502 while

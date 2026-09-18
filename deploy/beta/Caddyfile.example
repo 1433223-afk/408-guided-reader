@@ -26,6 +26,9 @@ alice.example.invalid {
             max_size 536870912
         }
         header Cache-Control "private, no-store"
+        # Compress public code assets after authentication; PDF Range/API/SSE are excluded.
+        @code path_regexp code ^/(vendor/.*|[^/]+\.(m?js|css))$
+        encode @code gzip
         reverse_proxy 127.0.0.1:18761 {
             header_up Host alice.example.invalid
             header_up X-Forwarded-Proto https
@@ -47,6 +50,8 @@ bob.example.invalid {
             max_size 536870912
         }
         header Cache-Control "private, no-store"
+        @code path_regexp code ^/(vendor/.*|[^/]+\.(m?js|css))$
+        encode @code gzip
         reverse_proxy 127.0.0.1:18762 {
             header_up Host bob.example.invalid
             header_up X-Forwarded-Proto https

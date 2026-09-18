@@ -565,7 +565,18 @@ function updateViewport() {
   renderReaderSectionHint();
   const keepStart = Math.max(0, (first ?? 0) - 2);
   const keepEnd = Math.min(state.pdf.numPages - 1, last + 2);
-  for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
+  // On public links, offscreen pages must not compete with the visible PDF images.
+  // Keep the existing neighbours, but request them only after the viewport is ready.
+  let visibleReady = true;
+  if (isBeta) {
+    for (let index = first ?? 0; index <= last; index += 1) {
+      renderPage(index);
+      if (!state.rendered.has(index)) visibleReady = false;
+    }
+  }
+  if (visibleReady) {
+    for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
+  }
   for (const index of [...state.rendered]) {
     if (index < keepStart || index > keepEnd) clearPage(index);
   }
@@ -616,6 +627,7 @@ async function renderPage(index) {
       renderGuideEntries(index);
       syncPagePreparationUi(index);
       ensureOverlay(index);
+      if (isBeta) scheduleViewportUpdate();
     }
   } catch (error) {
     if (generation === state.generation && error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
