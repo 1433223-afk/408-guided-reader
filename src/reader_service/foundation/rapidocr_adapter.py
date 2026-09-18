@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib.metadata import version
+from math import isfinite
 
 from .contracts import DetectedLine
 from .geometry import clamp, normalize_quad
@@ -22,7 +23,11 @@ class RapidOcrEngine:
         self, page_image: object, page_size: tuple[int, int]
     ) -> list[DetectedLine]:
         width, height = page_size
-        output = self._engine(page_image, return_word_box=True)
+        # RapidOCR persists non-None call options on its instance. A preceding
+        # recognition-only retry (even a failed one) must not disable page detection.
+        output = self._engine(
+            page_image, use_det=True, use_cls=True, use_rec=True, return_word_box=True
+        )
         if output.boxes is None or output.txts is None or output.scores is None:
             return []
         provider_cells = output.word_results or ()
@@ -90,27 +95,29 @@ class RapidOcrEngine:
                 use_rec=True,
                 return_word_box=True,
             )
-        except Exception:  # noqa: BLE001 - optional provider retry must preserve baseline OCR.
-            # This is a quality retry. A failed retry must not discard the usable baseline line
-            # or turn an otherwise READY page into FAILED.
-            return None
-        if not retry.txts or not retry.scores:
-            return None
-        retry_text = str(retry.txts[0])
-        retry_confidence = clamp(float(retry.scores[0]))
-        retry_visible_length = len("".join(retry_text.split()))
-        if (
-            retry_confidence < max(0.8, confidence + 0.1)
-            or retry_visible_length < max(visible_length + 4, int(aspect * 0.3))
-            or retry_visible_length > max(12, int(aspect * 3))
-        ):
-            return None
+            if not retry.txts or not retry.scores:
+                return None
+            retry_text = str(retry.txts[0])
+            retry_score = float(retry.scores[0])
+            if not isfinite(retry_score) or not 0 <= retry_score <= 1:
+                return None
+            retry_confidence = retry_score
+            retry_visible_length = len("".join(retry_text.split()))
+            if (
+                retry_confidence < max(0.8, confidence + 0.1)
+                or retry_visible_length < max(visible_length + 4, int(aspect * 0.3))
+                or retry_visible_length > max(12, int(aspect * 3))
+            ):
+                return None
 
-        word_info = retry.word_results[0] if retry.word_results else None
-        cells = self._translate_retry_cells(
-            word_info, retry_text, min(xs), max(xs), page_width
-        )
-        return retry_text, retry_confidence, cells
+            word_info = retry.word_results[0] if retry.word_results else None
+            cells = self._translate_retry_cells(
+                word_info, retry_text, min(xs), max(xs), page_width
+            )
+            return retry_text, retry_confidence, cells
+        except Exception:  # noqa: BLE001 - optional provider retry must preserve baseline OCR.
+            # Includes malformed optional output, not just invocation failures.
+            return None
 
     @staticmethod
     def _translate_retry_cells(word_info, line_text: str, x0: float, x1: float, width: int):

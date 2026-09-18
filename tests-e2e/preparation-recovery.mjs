@@ -72,8 +72,11 @@ try {
     maximumAttempts: Math.max(...attempts),
   }));
 } finally {
-  if (service) service.kill();
-  await rm(dataDir, { recursive: true, force: true });
+  if (service) {
+    service.kill();
+    await exited(service);
+  }
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   if (serviceErrors.trim()) process.stderr.write(serviceErrors);
 }
 

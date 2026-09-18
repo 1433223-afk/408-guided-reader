@@ -3,8 +3,63 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from reader_service.foundation.rapidocr_adapter import RapidOcrEngine
+
+
+@pytest.mark.parametrize("retry_mode", ["accepted", "rejected", "exception", "malformed"])
+def test_reused_engine_restores_full_pipeline_after_optional_retry(retry_mode):
+    class StatefulProvider(SparseLineProvider):
+        def __init__(self):
+            super().__init__()
+            self.options = {"use_det": True, "use_cls": True, "use_rec": True}
+
+        def __call__(self, image, **options):
+            self.options.update(options)
+            if not self.options["use_det"]:
+                if retry_mode == "exception":
+                    raise RuntimeError("recognition failed after updating engine state")
+                if retry_mode == "malformed":
+                    return SimpleNamespace(txts=("replacement",), scores=("invalid",))
+                return SimpleNamespace(
+                    txts=("冯·诺依曼是在研究EDVAC机时提出了存储程序的概念",),
+                    scores=(0.99 if retry_mode == "accepted" else 0.1,),
+                    word_results=(None,),
+                )
+            assert all(self.options[key] for key in ("use_det", "use_cls", "use_rec"))
+            return super().__call__(image, **options)
+
+    provider = StatefulProvider()
+    engine = RapidOcrEngine.__new__(RapidOcrEngine)
+    engine._engine = provider
+    image = np.full((100, 1000, 3), 255, dtype=np.uint8)
+    for _ in range(3):
+        lines = engine.prepare_page(image, (1000, 100))
+        assert len(lines) == 1
+        assert lines[0].text != "无·" if retry_mode == "accepted" else lines[0].text == "无·"
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), -0.1, 1.1])
+def test_optional_retry_rejects_invalid_confidence(score):
+    class InvalidScoreProvider(SparseLineProvider):
+        def __call__(self, image, **options):
+            result = super().__call__(image, **options)
+            if options.get("use_det") is False:
+                result.scores = (score,)
+            return result
+
+    engine = RapidOcrEngine.__new__(RapidOcrEngine)
+    engine._engine = InvalidScoreProvider()
+    image = np.full((100, 1000, 3), 255, dtype=np.uint8)
+    assert engine.prepare_page(image, (1000, 100))[0].text == "无·"
+
+
+def test_broken_full_page_output_is_not_disguised_as_empty_success():
+    engine = RapidOcrEngine.__new__(RapidOcrEngine)
+    engine._engine = lambda *args, **kwargs: SimpleNamespace(txts=("text",))
+    with pytest.raises(AttributeError):
+        engine.prepare_page(np.zeros((100, 100, 3)), (100, 100))
 
 
 def output(*, text, score, box, word_results=((),)):

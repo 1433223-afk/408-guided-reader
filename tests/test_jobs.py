@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 from io import BytesIO
-
-from reader_service.foundation import DetectedLine, FoundationRepository, FoundationService
-from reader_service.jobs import JobRepository, PreparationCoordinator
 
 from conftest import make_pdf
 
+from reader_service.foundation import (
+    DetectedLine,
+    FoundationRepository,
+    FoundationService,
+)
+from reader_service.jobs import JobRepository, PreparationCoordinator
 
 LINE = DetectedLine(
     quad=((0.1, 0.1), (0.5, 0.1), (0.5, 0.2), (0.1, 0.2)),
@@ -43,6 +47,29 @@ def test_conditional_claim_has_one_winner(service):
     for thread in threads:
         thread.join()
     assert sum(claim is not None for claim in claims) == 1
+
+
+def test_priority_refresh_releases_read_snapshot_before_writing(service):
+    revision = import_revision(service, 3)
+    jobs = JobRepository(service.database)
+    jobs.enqueue_pages(revision["id"], 3, 1)
+
+    class ConcurrentDatabase:
+        @contextmanager
+        def connect(self):
+            with service.database.connect() as connection:
+                class Connection:
+                    def execute(self, sql, parameters=()):
+                        cursor = connection.execute(sql, parameters)
+                        if sql.startswith("SELECT id, page_start"):
+                            # A worker commits while the scheduling SELECT is still live.
+                            with service.database.connect() as writer:
+                                writer.execute("UPDATE jobs SET attempts = attempts + 1")
+                        return cursor
+                yield Connection()
+
+    JobRepository(ConcurrentDatabase()).prioritize(revision["id"], {2}, 2)
+    assert jobs.claim()["page_start"] == 2
 
 
 def test_recovery_skips_ready_page_and_reprocesses_only_inflight_page(service):
