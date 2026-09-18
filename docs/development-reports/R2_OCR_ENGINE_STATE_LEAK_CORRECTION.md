@@ -1,5 +1,9 @@
 # R2 OCR 引擎状态泄漏修复
 
+后续人工使用发现的方向误判、伪书签目录、篇章 ownership 和页码重启问题，及其实际数据
+修复，见 [OCR / Outline Evidence Reliability Correction](OCR_OUTLINE_EVIDENCE_CORRECTION.md)。
+本文的引擎状态泄漏修复结果保留，不代表识别完整率或后续 correction 已获用户验收。
+
 ## 问题与根因
 
 2026-09-18，新上传《保险学 (孙祁祥 (女)) (Z-Library)》364 页中，只有 4 页 READY，

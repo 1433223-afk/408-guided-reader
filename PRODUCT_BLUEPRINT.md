@@ -448,6 +448,13 @@ The Outline is based on **explicit textbook structure**, not an AI-invented repl
 
 Typical nodes:
 
+2026-09-18 correction authorized by the user's OCR/Outline reliability mandate: semantic
+Chapter/Section kinds do not mean absolute tree depths. A textbook may have `篇/部 → 章 → 节`;
+the part is an organizational container, while the chapter remains the learning/preparation owner.
+Page-number-only bookmark exports are not evidence of chapters. OCR processing completion is not
+a claim of complete or error-free recognition. Directory publication requires usable structural
+evidence, not merely a successful OCR job (and not all-book body OCR completion).
+
 - Chapter / 一级标题;
 - Section / 二级标题;
 - Subsection / 三级标题;

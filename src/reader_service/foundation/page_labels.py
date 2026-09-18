@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from reader_service.library import LibraryService
 from reader_service.library.database import Database
 
-
 _ARABIC = re.compile(r"^[·.\-—_ ]*(\d{1,4})[·.\-—_ ]*$")
 _ROMAN = re.compile(r"^[·.\-—_ ]*([IVXLCDM]{1,8})[·.\-—_ ]*$", re.IGNORECASE)
 
@@ -163,7 +162,7 @@ class PageLabelRepository:
                 raise LookupError("Page label row not found")
             return dict(row)
 
-    def resolve_labels(self, revision_id: str) -> dict[str, int]:
+    def resolve_labels(self, revision_id: str, *, after_page: int = -1) -> dict[str, int]:
         """Return only labels with one safe target; one MANUAL row disambiguates inference."""
         with self.database.connect() as connection:
             rows = [
@@ -173,9 +172,10 @@ class PageLabelRepository:
                     SELECT pdf_page_index, printed_label, method
                     FROM page_labels
                     WHERE book_source_revision_id = ? AND printed_label IS NOT NULL
+                      AND pdf_page_index > ?
                     ORDER BY pdf_page_index
                     """,
-                    (revision_id,),
+                    (revision_id, after_page),
                 )
             ]
         grouped: dict[str, list[dict]] = {}

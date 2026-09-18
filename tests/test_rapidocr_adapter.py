@@ -62,6 +62,52 @@ def test_broken_full_page_output_is_not_disguised_as_empty_success():
         engine.prepare_page(np.zeros((100, 100, 3)), (100, 100))
 
 
+def test_direction_retry_restores_text_and_next_page_pipeline():
+    class DirectionProvider:
+        def __init__(self):
+            self.options = {}
+            self.full_calls = 0
+
+        def __call__(self, image, **options):
+            self.options.update(options)
+            assert self.options['use_det'] and self.options['use_rec']
+            if self.options['use_cls']:
+                self.full_calls += 1
+                return output(text='()……………………半王第', score=.73,
+                              box=((0, 0), (90, 0), (90, 20), (0, 20)))
+            return output(text='第五章 保险市场引论……………………(77)', score=.81,
+                          box=((0, 0), (90, 0), (90, 20), (0, 20)))
+    engine = RapidOcrEngine.__new__(RapidOcrEngine)
+    engine._engine = DirectionProvider()
+    for _ in range(3):
+        assert engine.prepare_page(np.zeros((100, 100, 3)), (100, 100))[0].text.startswith('第五章')
+    assert engine._engine.full_calls == 3
+
+
+@pytest.mark.parametrize('mode', ['exception', 'malformed', 'bad_cells', 'lower', 'nan', 'different_box'])
+def test_optional_direction_retry_preserves_baseline_on_untrusted_alternative(mode):
+    box = ((0, 0), (90, 0), (90, 20), (0, 20))
+    baseline = output(text='标题……………………(3)', score=.73, box=box)
+    def provider(_image, **options):
+        if options['use_cls']:
+            return baseline
+        if mode == 'exception':
+            raise RuntimeError('optional comparison failed')
+        if mode == 'malformed':
+            return SimpleNamespace(boxes=(box,), scores=())
+        if mode == 'bad_cells':
+            return output(text='正确标题……………………(3)', score=.99, box=box,
+                          word_results=((('字', .99, 'not-geometry'),),))
+        return output(text='替代……………………(3)',
+                      score=float('nan') if mode == 'nan' else .7 if mode == 'lower' else .81,
+                      box=((1, 0), (91, 0), (91, 20), (1, 20)) if mode == 'different_box' else box)
+    engine = RapidOcrEngine.__new__(RapidOcrEngine)
+    engine._engine = provider
+    for _ in range(3):
+        lines = engine.prepare_page(np.zeros((100, 100, 3)), (100, 100))
+        assert len(lines) == 1 and lines[0].text == baseline.txts[0]
+
+
 def output(*, text, score, box, word_results=((),)):
     return SimpleNamespace(
         boxes=(box,),

@@ -1,5 +1,10 @@
 # Map the Book Development Report
 
+2026-09-18–19 reliability delta：原 Phase 的 CLOSED 为历史验收结论；新书暴露的页码书签、
+篇章层次及目录/正文同号定位问题已单独修复，见
+[OCR / Outline Evidence Reliability Correction](OCR_OUTLINE_EVIDENCE_CORRECTION.md)。
+本次 delta 的人工复核与独立 review 状态不继承本报告的历史 PASS。
+
 ## Result
 
 `CLOSED` — the Reader now exposes a collapsible Simplified-Chinese `目录` built only

@@ -968,8 +968,8 @@ function selectKnowledgeChapterForNode(node) {
 
 function chapterForCurrentPage() {
   const chapters = state.outlineNodes
-    .filter((node) => node.kind === "CHAPTER" && node.parent_id === null && node.start_page !== null)
-    .sort((a, b) => a.order_index - b.order_index);
+    .filter((node) => node.kind === "CHAPTER" && node.start_page !== null)
+    .sort((a, b) => a.start_page - b.start_page || (a.start_y ?? 0) - (b.start_y ?? 0));
   return chapters.filter((node) => node.start_page <= state.currentPage).at(-1) || chapters[0] || null;
 }
 
@@ -1309,7 +1309,8 @@ function updatePreparationLabel() {
     output.textContent = "正在准备文字…";
     output.className = "preparation-status";
   } else if (ready + failed === pages.length) {
-    output.textContent = failed ? `${ready} 页就绪 · ${failed} 页失败` : "文字已就绪";
+    output.textContent = failed ? `${ready} 页文字层 · ${failed} 页失败` : "文字层已生成";
+    output.title = "OCR 处理完成不代表全文识别无误；可能存在漏字、错字，请以原 PDF 为准。";
     output.className = `preparation-status ${failed ? "failed" : "ready"}`;
   } else {
     output.textContent = `${ready} / ${pages.length} 页可选择`;

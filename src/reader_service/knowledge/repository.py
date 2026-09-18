@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from reader_service.library.database import Database
 
-
 PIPELINE_ATTEMPT_RETENTION = 512
 
 
@@ -43,8 +42,8 @@ class KnowledgeRepository:
             ).fetchone()
             if chapter is None:
                 raise LookupError("Chapter not found")
-            if chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
-                raise ValueError("Knowledge Map preparation requires one top-level Chapter")
+            if chapter["kind"] != "CHAPTER":
+                raise ValueError("Knowledge Map preparation requires one Chapter")
 
             current = connection.execute(
                 """
@@ -138,8 +137,8 @@ class KnowledgeRepository:
             ).fetchone()
             if chapter is None:
                 raise LookupError("Chapter not found")
-            if chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
-                raise ValueError("Knowledge Map regeneration requires one top-level Chapter")
+            if chapter["kind"] != "CHAPTER":
+                raise ValueError("Knowledge Map regeneration requires one Chapter")
 
             current = connection.execute(
                 """
@@ -822,8 +821,8 @@ class KnowledgeRepository:
             ).fetchone()
             if chapter is None:
                 raise LookupError("Chapter not found")
-            if chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
-                raise ValueError("Knowledge Map requires one top-level Chapter")
+            if chapter["kind"] != "CHAPTER":
+                raise ValueError("Knowledge Map requires one Chapter")
             return self._snapshot_connection(connection, revision_id, chapter_id)
 
     @classmethod

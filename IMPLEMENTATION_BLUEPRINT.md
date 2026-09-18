@@ -893,6 +893,22 @@ staleness node-scoped rather than book-scoped (§19.2b) — an artifact that use
 
 ### 11.2 Construction — `RECOMMENDED_FOR_DRAFT`
 
+**2026-09-18 reliability clarification (user-authorized correction):** `kind` and `depth` are
+independent. Explicit 篇/部 containers use `OTHER`; nested `CHAPTER` nodes remain Chapter owners
+for navigation, source ranges and Knowledge preparation. A dense sequential page-label bookmark
+export is rejected as structural evidence and falls back to TOC evidence. TOC bootstrap must not
+publish a later block while earlier pages remain unseen, and known numbered hierarchy gaps must
+not silently assign sections to the wrong chapter. Existing committed identity remains guarded:
+parser upgrades never automatically remint an existing tree. A dependency-free source revision may
+be explicitly repaired offline using fingerprint checks, staged validation, a recoverable database
+backup and incremented identity revision; any durable dependent refuses this bounded repair path.
+OCR replacements use Foundation's existing change/version/event publication, never direct line edits.
+TOC navigation excludes the TOC/front prefix from body-label candidates (independent page-number
+sequences may restart). A chapter opener without a printed number can gain a page-only target from
+one unambiguous adjacent measured label **and** a matching actual body heading. This confirms only
+physical placement of an existing node, never a new identity or extrapolated PageLabel row. A
+confirmed chapter label can locate sections sharing that same printed page at page granularity.
+
 **Two staged evidence passes, not one undifferentiated list.**
 
 **Pass 1 — logical bootstrap.** Runs once, early, over the whole book, and is cheap (it does not wait

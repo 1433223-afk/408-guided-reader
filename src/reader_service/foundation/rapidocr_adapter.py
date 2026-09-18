@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from importlib.metadata import version
 from math import isfinite
 
@@ -17,7 +18,7 @@ class RapidOcrEngine:
 
     @property
     def profile(self) -> str:
-        return f"rapidocr-{version('rapidocr')}:ppocrv6-small:onnx-cpu:sparse-line-retry-v1"
+        return f"rapidocr-{version('rapidocr')}:ppocrv6-small:onnx-cpu:quality-retry-v2"
 
     def prepare_page(
         self, page_image: object, page_size: tuple[int, int]
@@ -30,11 +31,13 @@ class RapidOcrEngine:
         )
         if output.boxes is None or output.txts is None or output.scores is None:
             return []
+        output = self._orientation_alternatives(page_image, output, page_size)
         provider_cells = output.word_results or ()
         translated: list[DetectedLine] = []
         for index, (points, text, score) in enumerate(
             zip(output.boxes, output.txts, output.scores, strict=True)
         ):
+            units = provider_cells[index] if index < len(provider_cells) else ()
             line_text = str(text)
             confidence = clamp(float(score))
             repaired = self._retry_sparse_line(
@@ -42,7 +45,7 @@ class RapidOcrEngine:
             )
             if repaired is None:
                 cells = self._translate_cells(
-                    provider_cells[index] if index < len(provider_cells) else (),
+                    units,
                     line_text,
                     width,
                 )
@@ -60,6 +63,49 @@ class RapidOcrEngine:
                 )
             )
         return translated
+
+    def _orientation_alternatives(self, page_image, baseline, page_size):
+        """Long leaders can fool the 0/180 classifier; compare, never blindly replace."""
+        suspects = [i for i, (text, score) in enumerate(zip(baseline.txts, baseline.scores))
+                    if float(score) < .85 and re.search(r"[.·…⋯]{5,}", str(text))]
+        if not suspects:
+            return baseline
+        try:
+            alternative = self._engine(
+                page_image, use_det=True, use_cls=False, use_rec=True, return_word_box=True
+            )
+            if alternative.boxes is None:
+                return baseline
+            from types import SimpleNamespace
+            boxes, texts, scores = list(baseline.boxes), list(baseline.txts), list(baseline.scores)
+            units = list(baseline.word_results or [()] * len(boxes))
+            index_by_box = {tuple(map(tuple, box)): i for i, box in enumerate(boxes)}
+            for alt_index, box in enumerate(alternative.boxes):
+                # Exact detector geometry correspondence is required. No guessed alignment.
+                index = index_by_box.get(tuple(map(tuple, box)))
+                score = float(alternative.scores[alt_index])
+                text = str(alternative.txts[alt_index])
+                alt_units = alternative.word_results[alt_index] if alternative.word_results else ()
+                if not isfinite(score) or not .8 <= score <= 1:
+                    continue
+                normalize_quad(box, *page_size)
+                self._translate_cells(alt_units, text, page_size[0])
+                if index is None:
+                    # Detection survived but flipped recognition was filtered out by provider.
+                    if score >= .9 and len(text.strip()) >= 2:
+                        boxes.append(box)
+                        texts.append(text)
+                        scores.append(score)
+                        units.append(alt_units)
+                    continue
+                old = str(baseline.txts[index])
+                margin = .04 if index in suspects else .15
+                if (score >= float(baseline.scores[index]) + margin
+                        and sum(c.isalnum() for c in text) >= sum(c.isalnum() for c in old)):
+                    texts[index], scores[index], units[index] = text, score, alt_units
+            return SimpleNamespace(boxes=boxes, txts=texts, scores=scores, word_results=units)
+        except Exception:  # noqa: BLE001 - optional quality comparison preserves baseline.
+            return baseline
 
     def _retry_sparse_line(
         self, page_image, points, line_text: str, confidence: float, page_width: int

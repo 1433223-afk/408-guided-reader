@@ -65,6 +65,10 @@ test('Reader identifies an unprepared chapter from page bookmarks without invent
   runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,null);
   assert.equal(nodes[0].start_y,undefined);assert.equal(nodes[0].end_page,undefined);
   nodes.pop();
+  nodes[0].parent_id = 'part1'; nodes[1].parent_id = 'part2';
+  nodes[0].order_index = 0; nodes[1].order_index = 0;
+  context.captureZoomAnchor=()=>({pageIndex:20,normalizedY:0});
+  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'b');
   for (const title of ['目 录','版权页','扉页','前 言','参考文献']) {
     nodes.push({kind:'CHAPTER',title,outline_node_id:'aux',resolution_state:'PARTIAL',start_page:25});
     context.captureZoomAnchor=()=>({pageIndex:26,normalizedY:0.5});

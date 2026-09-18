@@ -317,12 +317,25 @@ export function createScreens({api, home, memory, read, remove, revision, announ
   }
   function renderRail() {
     rail.replaceChildren(node('p', '章节', 'muted'));
-    for(const n of nodes.filter(n => n.kind === 'CHAPTER' && !isAuxiliary(n))) {
+    const ordered = [];
+    function visit(parent) {
+      for(const n of nodes.filter(n => n.parent_id === parent).sort((a,b) => a.order_index-b.order_index)) {
+        ordered.push(n); visit(n.outline_node_id);
+      }
+    }
+    visit(null);
+    for(const n of ordered.filter(n => n.kind === 'CHAPTER' && !isAuxiliary(n))) {
+      const parent = nodes.find(p => p.outline_node_id === n.parent_id);
+      if(parent && !rail.querySelector(`[data-part-id="${parent.outline_node_id}"]`)) {
+        const heading = node('p', parent.title, 'muted');
+        heading.dataset.partId = parent.outline_node_id; rail.append(heading);
+      }
       const b = action('', async () => { selectedChapter = n.outline_node_id; chapters.set(selectedBook.id, selectedChapter); renderRail(); await loadMap(); }, 'chapter-row');
       b.append(node('span', n.title), node('small', n.start_page == null ? '位置待确认' : `PDF ${n.start_page + 1}`));
       b.setAttribute('aria-current', String(n.outline_node_id === selectedChapter)); rail.append(b);
     }
-    const other = nodes.filter(n => !n.parent_id && (n.kind !== 'CHAPTER' || isAuxiliary(n)));
+    const other = nodes.filter(n => !n.parent_id && (n.kind !== 'CHAPTER' || isAuxiliary(n))
+      && !nodes.some(c => c.parent_id === n.outline_node_id && c.kind === 'CHAPTER'));
     if(other.length) { const d = node('details'); d.append(node('summary', '其他内容')); for(const n of other) d.append(source(n, n.title)); rail.append(d); }
     if(!nodes.length) rail.append(node('p', '目录尚未就绪，仍可打开 PDF。', 'muted'), action('刷新目录', () => open(selectedBook)));
   }

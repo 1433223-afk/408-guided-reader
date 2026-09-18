@@ -2,6 +2,17 @@
 
 ## Goal
 
+### 2026-09-18 same-capability reliability correction
+
+The user explicitly authorized framework/contract adjustments needed to make OCR and directory
+construction work across books, with rollback protection. This delta rejects page-index pseudo
+bookmarks, supports explicit Chinese part/chapter/section hierarchy, guards incomplete evidence,
+and keeps nested chapters as learning owners. It permits a backed-up offline repair of an unowned
+source revision (identity revision advanced, OCR changes through existing Foundation publication).
+It does not authorize silent replacement of user assets. Original PDF reading stays independent.
+The original Phase closure below is historical; this delta's tests, real-use evidence and remaining
+review/user-retest gates are recorded in `docs/development-reports/OCR_OUTLINE_EVIDENCE_CORRECTION.md`.
+
 Give the book its own directory. Establish the textbook's logical Chapter/Section tree (Outline Pass 1)
 plus per-page printed-label mapping from evidence already captured, and let the user navigate the real
 PDF through it.
