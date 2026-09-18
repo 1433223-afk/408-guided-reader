@@ -70,6 +70,11 @@ P1-1 delta verification closed that finding with no new P0/P1.
   column resolves boundaries on Y and clips its selection quad to the chosen vertical range. This is
   a transient Reader/resolver interpretation of the same stored cells, not a new cell field, entity,
   provider semantic, schema, or foundation version.
+- RapidOCR now performs one conservative recognition-only quality retry for an unusually wide,
+  low-confidence line whose recognized text is implausibly sparse relative to its detected box. The
+  retry uses a padded crop, keeps the baseline line on any retry failure or implausible result, and
+  translates accepted provider alignment into the same anonymous line-nested cells. The profile
+  records this behavior as `sparse-line-retry-v1`; no provider field becomes product semantics.
 - The EMBEDDED route is now deliberately conservative: it accepts only unrotated, zero-origin
   effective page boxes whose dimensions match the page coordinate space. Rotation, non-zero origin,
   or an indeterminate box falls back to rendered-page OCR rather than publishing suspect geometry.
@@ -109,14 +114,31 @@ P1-1 delta verification closed that finding with no new P0/P1.
   Y boundaries from the line quad, and uses the same axis for pointer hit-testing, custom selection
   paint, copied text, and server-side resolved quads. Horizontal lines—including unusually tall,
   narrow fragments—remain X-based unless their cell centers also form one column.
+- The user then clarified that the remaining report concerned textbook printed page 3, not physical
+  PDF page 3. Printed page 3 maps to PDF page index 14 (physical page 15). Persisted line ordinal 5
+  had the correct full-width detection quad but only text `无·`, confidence `0.54085`, and two cells;
+  nearly the entire visible sentence was therefore absent from the selectable layer. Pointer
+  hit-testing could not select geometry that recognition had never published. Re-running recognition
+  alone on the same detected line with about `0.75 × line height` crop padding recovered
+  `冯·诺依曼在研究EDVAC机时提出了“存储程序”的概念，“存储程序”的思想奠定了现代`
+  at about `0.997` confidence with 42 anonymous cells.
+- The sparse-line rule was calibrated read-only against all 30 matching candidates in the existing
+  348-page OCR set. It recovered multiple collapsed prose lines while formula/table candidates were
+  generally rejected by the improvement and plausible-length gates. Calibration did not batch
+  reprocess those pages. Only the user-authorized printed-page-3 target was republished: revision
+  foundation version `1 → 2`, one page-scoped `REPROCESS` event, unchanged printed-page mapping,
+  byte-for-byte unchanged existing annotation `ae3162d7-c9f0-403d-a464-e2fb91c09809`, and unchanged
+  OCR page/line snapshots for the other 347 pages.
 
 ## Important implementation decisions
 
 - `PAGE_PREPARE` uses one page per durable job. This is the smallest measured batch and makes the
   recovery bound concrete: with the conservative default worker count, a crash can redo at most one
   page while still allowing page-level priority changes.
-- `foundation_version` is initialized and carried through pages/jobs, but no correction,
-  reprocessing, bump, remap, or migration-to-a-new-foundation path exists in R2.
+- `foundation_version` is initialized and carried through pages/jobs. For the explicitly authorized
+  printed-page-3 maintenance correction, the existing publication boundary bumped the revision once
+  and emitted a page-scoped `REPROCESS` event. This does not add a user-facing correction workflow,
+  bulk reprocessing, migration, or cross-version anchoring.
 - RapidOCR is initialized lazily inside each worker thread, so Core Service startup and original-PDF
   serving do not wait for model initialization. pypdfium2 is used only by preparation; PDF.js remains
   the Reader renderer.
@@ -135,8 +157,10 @@ P1-1 delta verification closed that finding with no new P0/P1.
 
 ## Deviations from Spec
 
-None in implemented scope. General corrections, reprocessing/version bumps, cross-version anchoring,
-highlights, notes, Outline, other job types, layout regions, printed labels, and AI remain absent.
+None in implemented scope. General correction UI, bulk reprocessing, cross-version anchoring,
+highlights, notes, Outline, other job types, layout regions, printed labels, and AI remain absent. The
+single authorized printed-page-3 maintenance correction used the repository's scoped version/event
+contract and did not widen R2 into a general workflow.
 Cross-page continuous selection is a required Reader capability but remains deferred because it is
 not a small extension of the current page-scoped pointer-capture and range model.
 
@@ -188,6 +212,16 @@ not a small extension of the current page-scoped pointer-capture and range model
   A real mouse drag selected only `配套资` from vertical line 41, the DOM selection and system
   clipboard both contained exactly `配套资`, and the custom quad covered only those three glyphs.
   This correction is `IMPLEMENTATION_READY`; follow-up user retest is pending.
+- Printed-page-3 OCR-collapse correction against that same 348-page revision: **PASS**. The corrected
+  target is PDF page index 14 / physical page 15, not the earlier physical-page-3 vertical-title case.
+  A real browser mouse drag selected and copied exactly `冯·诺依曼在研究EDVAC`; after a full reload
+  and reopen, a second drag selected and copied exactly `提出了“存储程序”的概念`. The custom selection
+  quad covered the intended glyph run in both cases. The page remained `READY`, its printed label
+  remained `3`, and the existing annotation remained unchanged.
+- Printed-page-3 correction closure tests (2026-09-18): adapter/Foundation target **15 passed**;
+  `npm test` **53/53 passed**; full `pytest` **335 passed, 2 skipped**. Adapter regressions cover the
+  padded recognition-only retry, no retry cost for normal lines, failure fallback to baseline,
+  provider-alignment translation into anonymous cells, and rejection of implausibly long retry text.
 - Current R1 browser regression invocation is **not a PASS**: two default-DPR runs stopped before
   selection at the pre-existing pixel-alignment assertion (`deviceLeft = 362.5` at DPR 2.5). A
   supported DPR-2 run reached teardown but exited on a Windows `EBUSY` while deleting its temporary
@@ -229,8 +263,9 @@ not a small extension of the current page-scoped pointer-capture and range model
 - `static/geometry.js` remains the tested normalized PDF/viewport conversion module but is not yet the
   live single authority for Foundation's server-side EMBEDDED conversion. This ZCode P2 is non-blocking;
   the P1 is contained by conservative OCR fallback rather than a broad geometry architecture change.
-- OCR correction/error-report workflow and foundation-version bumps remain deferred to their own
-  authorized slice.
+- A general OCR correction/error-report UI, bulk reprocessing policy, migration, and cross-version
+  anchoring remain deferred. The prospective sparse-line retry and one explicitly authorized
+  page-scoped maintenance correction do not create those workflows.
 
 ## Reproducible entry points
 
@@ -268,7 +303,8 @@ that leaves the original print legible. Repeat at ~700-page scale when that mate
 - `src/reader_service/jobs/repository.py` and `worker.py` — durable priority queue and recovery.
 - `src/reader_service/server.py` — preparation/status/overlay/retry API and SSE.
 - `src/reader_service/static/selection.js` and `app.js` — range resolution and Reader overlay.
-- `tests/test_real_ocr_acceptance.py`, `tests-e2e/selectable-reader.mjs`, and
+- `tests/test_rapidocr_adapter.py`, `tests/test_real_ocr_acceptance.py`,
+  `tests-e2e/selectable-reader.mjs`, and
   `tests-e2e/preparation-recovery.mjs` — real-material acceptance paths.
 
 ## Git checkpoint
