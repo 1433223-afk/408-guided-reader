@@ -187,8 +187,14 @@ class FoundationService:
             ys = [point[1] for point in line["quad"]]
             x0 = min(float(cell[0]) for cell in cells)
             x1 = max(float(cell[1]) for cell in cells)
+            y0 = min(ys)
+            y1 = max(ys)
+            if self._uses_vertical_selection_axis(line):
+                height = y1 - y0
+                y0 += height * cell_start / len(line["cells"])
+                y1 = min(ys) + height * cell_end / len(line["cells"])
             quads.append(
-                [[x0, min(ys)], [x1, min(ys)], [x1, max(ys)], [x0, max(ys)]]
+                [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
             )
             if global_start is None:
                 global_start = line_offsets[line_index] + char_start
@@ -204,6 +210,22 @@ class FoundationService:
             "context_after": page_text[global_end:global_end + context_length],
             "foundation_version": page["foundation_version"],
         }
+
+    @staticmethod
+    def _uses_vertical_selection_axis(line: dict) -> bool:
+        cells = line["cells"]
+        if len(cells) < 2:
+            return False
+        xs = [float(point[0]) for point in line["quad"]]
+        ys = [float(point[1]) for point in line["quad"]]
+        width = max(xs) - min(xs)
+        height = max(ys) - min(ys)
+        if height <= width * 1.5:
+            return False
+        # Anonymous cells intentionally persist x extents only. Require their centers to
+        # collapse onto one column before deriving transient vertical selection geometry.
+        centers = [(float(cell[0]) + float(cell[1])) / 2 for cell in cells]
+        return max(centers) - min(centers) <= max(width * 0.25, 0.004)
 
     @staticmethod
     def _selection_point(point: dict, lines: list[dict]) -> tuple[int, int]:

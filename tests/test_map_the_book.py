@@ -130,6 +130,9 @@ def test_toc_classification_copy_mints_complete_tree_without_mutating_ocr(servic
     repository, foundation, labels, outline = services(service)
     foundation.ensure_revision(revision_id)
     contaminated = "1.1 第一节 刺猬云印·在线打印"
+    assert OutlineService.classification_text(
+        "7.3.3 DMA 方式公众号：小兔网盘免费分享无水印PDF"
+    ) == "7.3.3 DMA 方式"
     toc_lines = [
         line("目录", x=0.43, y=0.05),
         line("第1章 基础", x=0.10, y=0.20), line("10", x=0.84, y=0.20),

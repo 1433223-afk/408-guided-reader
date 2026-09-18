@@ -311,7 +311,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
       if(stamp !== epoch) return;
       if(context?.chapter) position.textContent = `当前阅读：${context.chapter.title} · PDF ${p.pdf_page_index + 1}`;
       currentSection = context?.section?.outline_node_id;
-      selectedChapter ||= context?.chapter?.outline_node_id || nodes.find(n => n.kind === 'CHAPTER')?.outline_node_id;
+      selectedChapter ||= context?.chapter?.outline_node_id || nodes.find(n => n.kind === 'CHAPTER' && !isAuxiliary(n))?.outline_node_id;
       renderRail(); await loadMap();
     } catch(error) { if(stamp === epoch) localError(rail, error, () => open(book)); }
   }

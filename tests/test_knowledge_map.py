@@ -41,14 +41,14 @@ from reader_service.outline import OutlineRepository, OutlineService
 from conftest import make_pdf
 
 
-def detected(text: str, y: float) -> DetectedLine:
-    width = min(0.8, max(0.12, len(text) * 0.025))
+def detected(text: str, y: float, *, x: float = 0.1, width: float | None = None) -> DetectedLine:
+    width = width if width is not None else min(0.8, max(0.12, len(text) * 0.025))
     cells = tuple(
-        (0.1 + width * index / len(text), 0.1 + width * (index + 1) / len(text), index, index + 1)
+        (x + width * index / len(text), x + width * (index + 1) / len(text), index, index + 1)
         for index in range(len(text))
     )
     return DetectedLine(
-        quad=((0.1, y), (0.1 + width, y), (0.1 + width, y + 0.035), (0.1, y + 0.035)),
+        quad=((x, y), (x + width, y), (x + width, y + 0.035), (x, y + 0.035)),
         text=text,
         confidence=0.99,
         cells=cells,
@@ -301,6 +301,85 @@ def semantic_inputs(fixture):
     return source, units, build_semantic_windows(units), bounds
 
 
+def test_front_matter_without_sections_cannot_enqueue_preparation(service):
+    fixture = build_fixture(service)
+    revision = fixture["revision"]["id"]
+    chapter = fixture["sibling"]["outline_node_id"]
+    with service.database.connect() as connection:
+        connection.execute("DELETE FROM outline_nodes WHERE parent_id = ?", (chapter,))
+        connection.execute("UPDATE outline_nodes SET title = '目 录' WHERE outline_node_id = ?", (chapter,))
+        before = {table: connection.execute(f"SELECT * FROM {table}").fetchall()
+                  for table in ("outline_nodes", "chapter_preparations", "jobs", "knowledge_points")}
+    with pytest.raises(ValueError, match="没有正文小节"):
+        fixture["knowledge"].request_prepare(revision, chapter)
+    with service.database.connect() as connection:
+        for table, rows in before.items():
+            assert connection.execute(f"SELECT * FROM {table}").fetchall() == rows
+
+
+def test_physical_resolution_matches_unnumbered_and_split_headings(service):
+    writer = PdfWriter()
+    for _ in range(5):
+        writer.add_blank_page(width=612, height=792)
+    chapter_one = writer.add_outline_item("第1章 基础", 0)
+    writer.add_outline_item("1.1 第一节", 0, parent=chapter_one)
+    writer.add_outline_item("归纳总结", 2, parent=chapter_one)
+    writer.add_outline_item("思维拓展", 3, parent=chapter_one)
+    chapter_two = writer.add_outline_item("第2章 后续", 4)
+    writer.add_outline_item("2.1 第二节", 4, parent=chapter_two)
+    output = BytesIO()
+    writer.write(output)
+    pdf = output.getvalue()
+
+    imported = service.intake(
+        BytesIO(pdf), content_length=len(pdf), filename="unnumbered-headings.pdf"
+    )
+    revision = imported["book"]["active_revision"]
+    repository = FoundationRepository(service.database)
+    foundation = FoundationService(service, repository, UnusedEngine)
+    foundation.ensure_revision(revision["id"])
+    pages = {
+        0: [
+            detected("第1章 基础", 0.08),
+            detected("1.1 完全无关", 0.13),
+            detected("1.1", 0.20, width=0.05),
+            detected("第一节", 0.20, x=0.17, width=0.12),
+            detected("正文", 0.32),
+            detected("归纳总结", 0.50),
+        ],
+        1: [detected("正文续页", 0.20)],
+        2: [detected("归纳总结", 0.28), detected("总结正文", 0.40)],
+        3: [detected("思维拓展", 0.24), detected("拓展正文", 0.36)],
+        4: [detected("第2章 后续", 0.09), detected("2.1 第二节", 0.20)],
+    }
+    for page_index, lines in pages.items():
+        assert repository.mark_preparing(revision["id"], page_index)
+        repository.publish_page(
+            revision["id"], page_index, route="OCR", foundation_version=1,
+            engine_profile="fixture:v1", lines=lines,
+        )
+
+    outline = OutlineService(
+        service,
+        OutlineRepository(service.database),
+        PageLabelService(service, PageLabelRepository(service.database)),
+    )
+    nodes = outline.bootstrap(revision["id"])["nodes"]
+    chapter = next(node for node in nodes if node["title"] == "第1章 基础")
+    resolved = outline.resolve_chapter_physical(
+        revision["id"], chapter["outline_node_id"]
+    )
+    by_title = {node["title"]: node for node in resolved["nodes"]}
+
+    assert by_title["1.1 第一节"]["start_page"] == 0
+    assert by_title["1.1 第一节"]["start_y"] == pytest.approx(0.20)
+    assert by_title["归纳总结"]["start_page"] == 2
+    assert by_title["归纳总结"]["start_y"] == pytest.approx(0.28)
+    assert by_title["思维拓展"]["start_page"] == 3
+    assert by_title["思维拓展"]["start_y"] == pytest.approx(0.24)
+    assert all(node["resolution_state"] == "RESOLVED" for node in resolved["nodes"])
+
+
 def logical_projection(nodes):
     return [
         (
@@ -425,6 +504,50 @@ def test_short_heading_and_cross_page_continuation_preserve_evidence_boundaries(
     assert "300" not in units[0]["text"]
 
 
+def test_repeated_page_top_furniture_is_excluded_from_semantic_units():
+    def source_line(text, page, ordinal, y_start, y_end):
+        return {
+            "text": text,
+            "pdf_page_index": page,
+            "line_ordinal": ordinal,
+            "line_ref": f"p{page}:l{ordinal}",
+            "y_start": y_start,
+            "y_end": y_end,
+        }
+
+    source = {
+        "chapter": {"book_source_revision_id": "revision"},
+        "source_sections": [
+            {
+                "section_id": "section",
+                "title": "1.1 基本概念",
+                "subsections": [],
+                "lines": [
+                    source_line("2. 数据元素。", 10, 40, 0.88, 0.91),
+                    source_line("2", 11, 0, 0.06, 0.078),
+                    source_line("2026年数据结构考研复习指导", 11, 1, 0.06, 0.079),
+                    source_line("3. 数据对象。", 11, 2, 0.10, 0.13),
+                    source_line("2026年数据结构考研复习指导", 12, 0, 0.06, 0.079),
+                    source_line("3", 12, 1, 0.06, 0.078),
+                    source_line("4. 数据类型。", 12, 2, 0.10, 0.13),
+                    source_line("1.2 唯一的顶部正文标题", 13, 0, 0.06, 0.079),
+                    source_line("标题后的正文。", 13, 1, 0.10, 0.13),
+                ],
+            }
+        ],
+    }
+
+    units = build_evidence_units(source)
+    texts = [unit["text"] for unit in units]
+
+    assert all("2026年数据结构考研复习指导" not in text for text in texts)
+    assert "2" not in texts
+    assert "3" not in texts
+    assert any("3. 数据对象" in text for text in texts)
+    assert any("4. 数据类型" in text for text in texts)
+    assert any("1.2 唯一的顶部正文标题" in text for text in texts)
+
+
 def semantic_window(*, section_title="1.1 正文", unit_count=3):
     return {
         "window_id": "w001",
@@ -475,7 +598,7 @@ def test_group_first_partition_is_strict_and_complete():
             validate_semantic_output(json.dumps(value, ensure_ascii=False), window)
 
 
-@pytest.mark.parametrize("title", ["2.4 本章小结", "2.5 常见问题和易混淆知识点", "FAQ"])
+@pytest.mark.parametrize("title", ["2.4 本章小结", "2.5 常见问题和易混淆知识点", "FAQ", "2.1.3 本节试题精选", "2.2.3 本节试题精选"])
 def test_summary_and_faq_windows_are_non_minting_review_material(title):
     window = semantic_window(section_title=title, unit_count=2)
     payload = semantic_window_payload({"chapter_outline_node_id": "chapter", "title": "第2章"}, window)
@@ -497,6 +620,8 @@ def test_prompts_freeze_one_pass_absorption_and_terminal_review_contract():
     assert "一组成套方法" in GENERATOR_SYSTEM_MESSAGE
     assert "例题、章节概览、后文预告" in GENERATOR_SYSTEM_MESSAGE
     assert "比较总结" in GENERATOR_SYSTEM_MESSAGE
+    assert "举一反三" in GENERATOR_SYSTEM_MESSAGE
+    assert "泛化 target" in GENERATOR_SYSTEM_MESSAGE
     assert "FORBIDDEN_REVIEW_MATERIAL" in GENERATOR_SYSTEM_MESSAGE
     assert "不得依据先前模型结果" in GENERATOR_SYSTEM_MESSAGE
     assert "只能定位问题，不能改写候选" in REVIEW_SYSTEM_MESSAGE

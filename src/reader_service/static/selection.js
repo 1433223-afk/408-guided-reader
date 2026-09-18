@@ -20,6 +20,36 @@ export function selectableBounds(line) {
   };
 }
 
+function usesVerticalSelectionAxis(line) {
+  if (line.cells.length < 2) return false;
+  const bounds = lineBounds(line);
+  const width = bounds.x1 - bounds.x0;
+  const height = bounds.y1 - bounds.y0;
+  if (height <= width * 1.5) return false;
+  // Persisted cells deliberately carry x extents only. A tall line is treated as vertical only
+  // when its cell centers also collapse onto one column, keeping narrow horizontal text on X.
+  const centers = line.cells.map((cell) => (cell[0] + cell[1]) / 2);
+  const centerSpread = Math.max(...centers) - Math.min(...centers);
+  return centerSpread <= Math.max(width * 0.25, 0.004);
+}
+
+function cellBoundaryPositions(line) {
+  if (usesVerticalSelectionAxis(line)) {
+    const bounds = lineBounds(line);
+    const height = bounds.y1 - bounds.y0;
+    return Array.from(
+      { length: line.cells.length + 1 },
+      (_value, index) => bounds.y0 + (height * index / line.cells.length),
+    );
+  }
+  const boundaries = [line.cells[0][0]];
+  for (let index = 1; index < line.cells.length; index += 1) {
+    boundaries.push((line.cells[index - 1][1] + line.cells[index][0]) / 2);
+  }
+  boundaries.push(line.cells.at(-1)[1]);
+  return boundaries;
+}
+
 export function nearestLine(lines, normalizedX, normalizedY) {
   let best = null;
   let distance = Infinity;
@@ -33,16 +63,14 @@ export function nearestLine(lines, normalizedX, normalizedY) {
   return best;
 }
 
-export function nearestCellBoundary(line, normalizedX) {
+export function nearestCellBoundary(line, normalizedX, normalizedY) {
   if (!line.cells.length) return 0;
-  const boundaries = [line.cells[0][0]];
-  for (let index = 1; index < line.cells.length; index += 1) {
-    boundaries.push((line.cells[index - 1][1] + line.cells[index][0]) / 2);
-  }
-  boundaries.push(line.cells.at(-1)[1]);
+  const vertical = usesVerticalSelectionAxis(line);
+  const coordinate = vertical && Number.isFinite(normalizedY) ? normalizedY : normalizedX;
+  const boundaries = cellBoundaryPositions(line);
   let best = 0;
   for (let index = 1; index < boundaries.length; index += 1) {
-    if (Math.abs(boundaries[index] - normalizedX) < Math.abs(boundaries[best] - normalizedX)) best = index;
+    if (Math.abs(boundaries[index] - coordinate) < Math.abs(boundaries[best] - coordinate)) best = index;
   }
   return best;
 }
@@ -72,6 +100,13 @@ export function resolveSelection(lines, anchor, focus) {
     const bounds = lineBounds(line);
     const x0 = Math.min(...selected.map((cell) => cell[0]));
     const x1 = Math.max(...selected.map((cell) => cell[1]));
+    let y0 = bounds.y0;
+    let y1 = bounds.y1;
+    if (usesVerticalSelectionAxis(line)) {
+      const boundaries = cellBoundaryPositions(line);
+      y0 = boundaries[cellStart];
+      y1 = boundaries[cellEnd];
+    }
     return {
       line_ordinal: line.line_ordinal,
       cell_start: cellStart,
@@ -79,7 +114,7 @@ export function resolveSelection(lines, anchor, focus) {
       char_start: start,
       char_end: end,
       text: line.text.slice(start, end),
-      quads: [[[x0, bounds.y0], [x1, bounds.y0], [x1, bounds.y1], [x0, bounds.y1]]],
+      quads: [[[x0, y0], [x1, y0], [x1, y1], [x0, y1]]],
     };
   });
 }

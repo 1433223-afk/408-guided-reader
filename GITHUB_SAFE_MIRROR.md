@@ -70,3 +70,16 @@ For subsequent development, clone GitHub into a fresh workspace after configurin
 Do not force-push the local export branch or merge unrelated histories to synchronize it.
 The original personal repository remains unchanged in its product files, branch and tag, and clean.
 No FRIENDS_PRIVATE_BETA implementation or deployment has started.
+
+## Bug-fix snapshot update — 2026-09-18
+
+Updated 24 source/test/report files from personal source commit `7ee750f99e6e32ed42c8e01be1809b8c91a7dc45`.
+This transfers reviewed file contents only, not the original Git history or personal data.
+Includes unnumbered chapter resolution, KP evidence/auxiliary/exercise guards, vertical text
+selection and sparse OCR-line recovery. The mirror ignore rules and four-image exclusion remain.
+The reports retain their explicit pending real-material acceptance and browser-regression failures;
+this synchronization does not claim those limitations are resolved and starts no Beta deployment.
+
+Mirror verification for this update: 53 targeted Python tests passed (Foundation, RapidOCR,
+Knowledge Map and Outline); all 53 JavaScript tests passed. No live provider call or personal
+Library mutation was required. Real-material results remain those reported by the source work.

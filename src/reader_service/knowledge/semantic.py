@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 
 
 MAX_EVIDENCE_UNIT_CHARACTERS = 900
@@ -29,7 +30,9 @@ _NON_MINTING_SECTION_MARKERS = (
     "常见问题",
     "易混淆",
     "faq",
+    "试题精选",
 )
+_PAGE_LABEL_TOKEN = re.compile(r"(?:\d{1,5}|[ivxlcdm]{1,8})", re.IGNORECASE)
 
 
 class SemanticOutputError(ValueError):
@@ -58,6 +61,7 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
     """Build small deterministic evidence units from one resolved Chapter projection."""
     units: list[dict] = []
     global_order = 0
+    page_top_furniture = _repeated_page_top_furniture_refs(source_payload)
     for section_order, section in enumerate(source_payload["source_sections"]):
         section_units: list[list[dict]] = []
         current: list[dict] = []
@@ -65,6 +69,8 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
         for line in section["lines"]:
             text = _normalize_text(line.get("text"))
             if not text:
+                continue
+            if line.get("line_ref") in page_top_furniture:
                 continue
             subsection = _source_subsection(section.get("subsections", []), line)
             line = {
@@ -589,6 +595,47 @@ def _validate_window_coverage(units: list[dict], windows: list[dict]) -> None:
 
 def _normalize_text(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _repeated_page_top_furniture_refs(source_payload: dict) -> set[str]:
+    """Identify repeated running headers and their adjacent printed page labels.
+
+    OCR remains untouched.  This is only the bounded semantic projection, where repeated
+    top-band furniture would otherwise split one continuous learning target.  A unique top-band
+    line is retained because it may be a real heading.
+    """
+    by_page: dict[int, list[tuple[str, str, str]]] = {}
+    pages_by_signature: dict[str, set[int]] = {}
+    for section in source_payload["source_sections"]:
+        for line in section["lines"]:
+            text = _normalize_text(line.get("text"))
+            line_ref = line.get("line_ref")
+            if (
+                not text
+                or not isinstance(line_ref, str)
+                or int(line.get("line_ordinal", 99)) > 2
+                or float(line.get("y_end", 1.0)) > MAX_PAGE_TOP_FURNITURE_Y
+            ):
+                continue
+            page = int(line["pdf_page_index"])
+            signature = re.sub(
+                r"\s+", "", unicodedata.normalize("NFKC", text)
+            ).casefold()
+            by_page.setdefault(page, []).append((line_ref, text, signature))
+            pages_by_signature.setdefault(signature, set()).add(page)
+
+    repeated = {
+        signature for signature, pages in pages_by_signature.items() if len(pages) >= 2
+    }
+    furniture: set[str] = set()
+    for candidates in by_page.values():
+        if not any(signature in repeated for _, _, signature in candidates):
+            continue
+        for line_ref, text, signature in candidates:
+            compact = re.sub(r"\s+", "", text)
+            if signature in repeated or _PAGE_LABEL_TOKEN.fullmatch(compact):
+                furniture.add(line_ref)
+    return furniture
 
 
 def _is_short_heading(text: str) -> bool:
