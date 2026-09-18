@@ -33,7 +33,7 @@ if (launchToken) {
 }
 
 const state = {
-  books: [], book: null, revision: null, pdf: null, zoom: 1,
+  books: [], book: null, revision: null, pdf: null, pdfLoadingTask: null, zoom: 1,
   currentPage: 0, generation: 0, renderTasks: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
@@ -288,11 +288,20 @@ async function removeBook(book) {
   }
 }
 
+function releasePdf() {
+  const loading = state.pdfLoadingTask;
+  state.pdfLoadingTask = null;
+  state.pdf = null;
+  // PDF.js owns both the worker and outstanding range/stream requests.
+  loading?.destroy().catch(() => console.warn("PDF resource cleanup failed"));
+}
+
 async function openBook(book) {
   if (state.book?.id === book.id && state.pdf) return;
   state.generation += 1;
   const generation = state.generation;
   cancelRenders();
+  releasePdf();
   closePreparationStream();
   state.book = book;
   state.revision = book.active_revision;
@@ -331,7 +340,10 @@ async function openBook(book) {
       url: `/api/revisions/${state.revision.id}/pdf`,
       httpHeaders: { "X-Reader-Token": launchToken },
       withCredentials: true,
+      // Remote Beta reading should fetch needed ranges, not prefetch the whole book.
+      ...(isBeta ? { disableStream: true, disableAutoFetch: true } : {}),
     });
+    state.pdfLoadingTask = loading;
     const pdf = await loading.promise;
     if (generation !== state.generation) return;
     if (pdf.numPages !== state.revision.page_count) throw new Error("保存的 PDF 元数据与来源文件不再一致");
@@ -343,6 +355,8 @@ async function openBook(book) {
     startPreparation().catch(error => { elements['preparation-status'].textContent = '文字准备暂时不可用'; announce(error.message, true); });
     loadBookMap();
   } catch (_error) {
+    if (generation !== state.generation) return;
+    releasePdf();
     announce("无法打开这份 PDF，请重试。", true);
   }
 }
@@ -354,6 +368,7 @@ function closeReader() {
   guide.close();
   state.generation += 1;
   cancelRenders();
+  releasePdf();
   closePreparationStream();
   clearSelection();
   clearSearchMatch();
@@ -603,9 +618,9 @@ async function renderPage(index) {
       ensureOverlay(index);
     }
   } catch (error) {
-    if (error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
+    if (generation === state.generation && error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
   } finally {
-    state.renderTasks.delete(index);
+    if (generation === state.generation) state.renderTasks.delete(index);
     wrapper?.classList.remove("loading");
   }
 }
