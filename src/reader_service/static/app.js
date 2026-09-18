@@ -2,6 +2,7 @@ import {createScreens, createChapterEntry, createAssistantModelMenu, createMessa
 import {isBeta, betaUnavailable, installBetaSettings} from "/beta-ui.js";
 import { streamAssistantResponse } from "/assistant-stream.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
+import { pdfFetchWithoutCache } from "/pdf-network.js";
 import {
   lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
   selectionPresentationQuads,
@@ -14,6 +15,7 @@ import { createInlineUI } from "/inline-ui.js";
 import { createAssistantNavigator } from "/assistant-navigator.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
+if (isBeta) window.fetch = pdfFetchWithoutCache(window.fetch.bind(window), location.origin);
 
 const elements = Object.fromEntries(
   ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "reader-more", "reader-more-toggle", "reader-more-menu", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
