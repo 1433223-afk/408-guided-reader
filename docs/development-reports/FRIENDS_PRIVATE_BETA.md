@@ -310,3 +310,65 @@ backlog fix resolves all perceived slowness. No server upgrade is indicated by t
 Raw nonsecret before/after metrics remain in the operator GuidedReaderOps directory and on the
 server operator cache. Earlier performance-session temporary Basic Auth/cookie files were reused
 for this authorized check; their previously policy-blocked cleanup remains pending, not claimed done.
+
+## PDF opening/reopening optimization — 2026-09-18
+
+The user authorized continued optimization and selected opening/reopening PDF as the priority.
+Deployed product commit: `c6aa2f8b00467b742570e788bb0d75ca0c8a1ab0`.
+
+**Reproduced:** in an isolated copy of the existing real-book fixture, three open/close cycles left
+1, then 2, then 3 PDF workers alive. `closeReader` discarded its reference without destroying the
+PDF.js loading task. Default PDF.js streaming also received the full 152,550,990-byte source plus
+overlapping Range data while only reading a small part of the book. This is evidence of resource
+leak/unnecessary transfer, not proof that it explains all public-network slowness.
+
+**Change:** retain the PDFDocumentLoadingTask and destroy it on close, replacement or current-load
+failure. Stale load/render completion must neither display an error for the new book nor remove
+its render-task entry. Beta uses native `disableStream:true` plus `disableAutoFetch:true`, leaving
+Range loading enabled. Personal retains its default fetching strategy and gains task cleanup.
+No PDF rewriting, cache/persistence change, dependency, provider call, Caddy/firewall change, or
+thread/architecture change. Prior art/API contract checked in the installed PDF.js 6.3.289 types:
+`destroy()` aborts network/worker; disabling prefetch requires disabling streaming too.
+
+**Validation:**
+
+- Four new targeted JS cases: personal/Beta options and cleanup, pending-load replacement,
+  current-load failure and retry. Full JS **55 PASS**. Full Python **354 PASS, 2 SKIPPED** in
+  252.79 seconds (same missing real-OCR corpus cases). `git diff --check` passed.
+- Personal local real-book cycles: each close returned worker count to zero instead of accumulating.
+- Actual local HTTPS Beta fixture, same isolated real book: three cycles; far jump to PDF page 200;
+  rendered canvas, OCR overlay and actual pointer-selected text; return/reopen; close during a delayed
+  PDF response without stale failure notification. Zero page errors, zero workers after each close.
+  First attempts incorrectly expected the old selection toolbar behavior; the test was corrected
+  to assert actual selection quads and native selected text. No selection product code changed.
+- Same-book strategy A/B, three runs each: native default stream/prefetch received
+  176,520,348–176,913,564 PDF bytes by two seconds after first rendered canvas; Beta demand mode
+  received 27,901,518 bytes (about **84% less**). Measured using CDP Network.dataReceived on the
+  isolated test browser, including full-stream bytes, not just Range response headers. The test-only
+  baseline removes the two loading options from the served local script; cleanup remains enabled
+  in both sides so the comparison isolates fetching strategy. No interception on the public service.
+- LAN first-render timing did **not** demonstrate a consistent speedup: default 1.383–1.949 seconds,
+  demand 1.377–4.500 seconds. The confirmed benefits are transfer reduction and resource release;
+  do not claim 84% faster opening. Sparse PDF access still required 410 requests / ~28 MB for this
+  source and viewport. Public-network perceived opening speed remains a user retest item.
+- Reproducible real-use runner: `READER_BETA_FIXTURE=<isolated restored real book with at least 200
+  prepared pages> node tests-e2e/pdf-loading.mjs`. It requires local port 443 and the existing
+  cryptography fixture dependency; it never uses live AI. `PDF_PREFETCH_BASELINE=1` selects the local
+  A/B baseline. Results land in ignored test-results. Raw textbook/credentials are not committed.
+
+**Deployment:** built a fresh venv from pinned wheels and unchanged locked browser assets/models;
+sealed/verified 190 files, root-owned release. Verified stopped-service backup of prior `7ba3f6c`,
+empty restore (15,367,952 bytes, 0.648 seconds, schema 19, keys excluded), then switched `current`.
+Artifacts: `/var/backups/guided-reader/owner-pdf-20260918T052555Z/{backup,restore}`. This is local
+recovery validation, not encrypted off-host acceptance. Prior data/releases preserved.
+
+Live authenticated HTTPS checks: homepage/app.js/Library 200; app.js contains the new loading options
+and cleanup; existing PDF Range 206; anonymous static remains 401. Caddyfile/nftables configuration
+checksums unchanged. 8/16 concurrent h2 health requests, three batches each, all 200 and zero added
+listen overflow (32 stayed 32). Reader/Caddy/nftables active; Reader NRestarts=0. The prior backlog
+fix remains in the release. No public UI automation or user performance PASS is claimed.
+
+The user's earlier post-backlog screenshots showed two requests around 190 ms (Waiting ~170 ms,
+download ~4 ms), but omitted request names; they cannot be mapped conclusively to homepage/CSS.
+User reported some improvement but still slower than local. This new PDF release requires a page
+refresh and open/close/reopen retest. Remaining network/body-transfer variability is separate.
