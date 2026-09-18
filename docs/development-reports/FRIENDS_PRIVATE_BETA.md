@@ -372,3 +372,95 @@ The user's earlier post-backlog screenshots showed two requests around 190 ms (W
 download ~4 ms), but omitted request names; they cannot be mapped conclusively to homepage/CSS.
 User reported some improvement but still slower than local. This new PDF release requires a page
 refresh and open/close/reopen retest. Remaining network/body-transfer variability is separate.
+
+## PDF public-network latency investigation and correction — 2026-09-18
+
+User requested online research before another optimization. Deployed product commit:
+`416a7c70711e18da0e91a2aca54c0908bcab5bc1` (includes `7fc835b` visible-page/gzip change).
+
+**Research and root cause:**
+
+- [PDF.js FAQ](https://github.com/mozilla/pdf.js/wiki/Frequently-Asked-Questions) recommends
+  limiting rendering to visible pages. Its [maintainer explanation](https://github.com/mozilla/pdf.js/issues/14570#issuecomment-1041318623)
+  warns that disabling streaming can hurt opening: flat PDF page trees require many scattered
+  page dictionaries. The owner's 12,582,672-byte, 29-page book has 29 direct page-tree children in
+  29 separate 64 KiB chunks; both large local scanned fixtures are also flat/interleaved. No source
+  PDF was rewritten, no page-tree validation bypassed, and no dependency added.
+- The existing viewport starts offscreen neighbours in ascending page order alongside visible
+  pages. Under constrained transfer they compete with the page the reader is waiting to see.
+- Caddy did not compress code. The worker was 2,228,489 bytes; deployed stock gzip serves 507,162
+  bytes, CSS 11,658 bytes. This preserves authentication and no-store, and excludes API/PDF/SSE.
+- **Actual user Chrome evidence:** all sampled PDF/API requests reused one h2 connection, without
+  repeated DNS/TCP/TLS. Normal PDF reopen to current-page render took 5.333 and 5.172 seconds.
+  Range request sendStart queued up to 3,288 ms while sendEnd-to-response-header was at most 274 ms
+  in that sample. Temporarily disabling the HTTP cache through CDP reduced opening to 2.408 seconds
+  and sendStart maximum to 8.9 ms. Restoring normal cache restored the slower result. This isolates
+  browser cache coordination as a significant cause, rather than Core processing or h2 reconnection.
+  [Chromium cache transaction source](https://github.com/chromium/chromium/blob/main/net/http/http_cache_transaction.cc)
+  explicitly documents partial-request reader/writer cache locking. Installed PDF.js 6.3.289 calls
+  global fetch without a cache mode; response no-store arrives too late to avoid request admission
+  coordination. No claim is made that every Chrome release exhibits the same delay.
+
+**Minimal fixes:** Beta renders visible pages first, then retains the same two neighbours on either
+side after visible rendering completes. Personal rendering order is unchanged. A 20-line fetch
+adapter, installed only in Beta, adds `cache:'no-store'` only to same-origin PDF GETs. It retains the
+original Request/URL, headers, cookie behavior, abort signal, response and error; all other requests
+are delegated unchanged. PDF.js has no public fetch-cache option, so this scoped adapter avoids
+forking/vendor-patching the engine or introducing a custom Range transport. Static allowlist adds
+only the adapter file. Server response no-store, auth and durable semantics are unchanged.
+
+Stock Caddy gzip applies after Basic Auth only to code asset paths. Adapted live configuration was
+compared structurally against the original, normalizing Caddy's adjacent-route grouping: the only
+semantic addition was the code encode handler. Initial raw structural comparison rejected the
+candidate because inserting a handler split an existing route; this was resolved before activation,
+not ignored. `caddy validate` passed; root reload succeeded. API/PDF compression remains absent.
+
+**Controlled fixture evidence (not public network measurements):** restored the owner's real book
+into isolated test storage and used the real Beta Core through an h2 TLS/auth fixture, 100 ms latency,
+1 MiB/s. Click to current-page render: previous code 7.525/7.409 s; streaming restored 7.750/7.843 s;
+visible-only prototype 6.089/6.063 s; gzip-only 5.803/5.720 s. Final visible-first plus gzip was
+4.335/4.372 s, receiving 2,752,272 PDF bytes by readiness versus 3,931,920 before. Background
+neighbours still rendered afterwards. Thus no evidence justified reverting demand loading for this
+book. The later no-routing Edge cache A/B was essentially unchanged (~4.3 s); the Chrome cache
+problem and its correction are supported by the live Chrome evidence, not invented fixture gains.
+Worker/CDP byte counts unavailable on the page target were not treated as zero transfer.
+
+**Validation and deployment:**
+
+- Targeted JS covers visible-before-neighbour scheduling, all-visible readiness, scroll eviction,
+  personal order, string/URL/Request fetch inputs, preserved auth/cancellation, and unchanged unrelated
+  requests. Final full JS **60 PASS**; Python **354 PASS / 2 SKIPPED**, 206.67 seconds (the same
+  unavailable historical OCR corpus). A first new-module golden-path run caught a missing static
+  allowlist entry; it was fixed before commit/deploy and the actual path rerun successfully.
+- Real local Beta HTTPS fixture: three cycles, page-200 jump, native pointer OCR selection, close/
+  reopen and close-during-load; zero page errors and zero leaked workers. No live AI request.
+- Immutable release sealed/verified (191 files), fresh pinned offline venv, unchanged locked assets/
+  OCR models. Stopped pre-update backup and empty restore verified 15,367,952 bytes, schema 19,
+  0.589 s, keys excluded. Artifacts:
+  `/var/backups/guided-reader/owner-pdf-20260918T060903Z/{backup,restore}`. Previous data/releases
+  retained, including built-but-never-activated intermediate `7fc835b`. This remains local recovery
+  evidence, not encrypted off-host acceptance. Caddy/nftables checksums matched across code activation
+  (the deliberate earlier gzip addition was already in that baseline).
+- Live authenticated homepage/app.js/Library 200, PDF Range 206, anonymous static 401. 72 local h2
+  requests in 8/16-concurrency groups all returned 200; ListenOverflows/Drops remained 32 (increment0).
+- **Actual existing user Chrome after refresh**, unchanged proxy rules and normal cache settings:
+  page-14 opening **2.318 s**, closing/reopening **2.610 s**; Range sendStart maxima **9.95/10.89 ms**,
+  all h2 on one connection. Actual pointer drag selected 13 OCR characters with one selection quad.
+  Timing uses a temporary DOM MutationObserver from click to target canvas losing its loading class,
+  not wall-clock delay between tool calls. Temporary CDP cache disable was restored. An exploratory
+  injected fetch wrapper did not reach the app fetch context (zero hits), so that trial is not used
+  as acceptance; the deployed adapter and network timings are the evidence.
+- Public network variability remains: gzip-only intermediate sample was 9.701 s. Two final good
+  samples establish correction of the observed queue, not a latency SLA or proof of all proxy/body
+  transport issues solved. Large, differently structured textbooks remain a separate public retest.
+
+No main modification, architecture change, credentials change, firewall change, PDF rewriting,
+cache persistence, new dependency, server upgrade or paid provider call. No independent security
+review is claimed for this performance-only change; existing security boundaries were retained.
+Remaining Phase-wide multi-instance/load/quality/off-host recovery acceptance is unchanged.
+
+At the post-deployment check, Reader/Caddy/nftables were active, Reader NRestarts=0; cgroup memory
+52,408,320 bytes, peak 54,861,824; host swap 0 used. Sanitized Caddy journal since activation showed
+zero error entries and zero Core connect timeout entries. These bounded samples are not a full-load
+capacity test. Public Chrome next-page/previous-page controls also returned to rendered page 14.
+Temporary DOM probes were removed and CDP Network capture disabled after the check.
