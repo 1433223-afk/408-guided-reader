@@ -464,3 +464,144 @@ At the post-deployment check, Reader/Caddy/nftables were active, Reader NRestart
 zero error entries and zero Core connect timeout entries. These bounded samples are not a full-load
 capacity test. Public Chrome next-page/previous-page controls also returned to rendered page 14.
 Temporary DOM probes were removed and CDP Network capture disabled after the check.
+
+## Large-PDF intake and Range burst correction — 2026-09-18
+
+User supplied the original 130,025,212-byte (124 MiB), 312-page network textbook,
+SHA256 `f23951433b2ca1475ecb8ba30c969e39690d3dc3636f5decfcfbaf2ef8e5bc5e`.
+Raw textbook and operator credentials remain outside Git.
+
+**UPLOAD root cause and authorized exception:** a real Windows curl upload through public HTTPS,
+Basic Auth and the normal Origin/session boundary sent all 130,025,212 bytes, then received **422**
+with `Encrypted or password-protected PDFs are not supported` (244.180 s). The original has an
+encryption flag but opens with an empty password. This was the intake policy rejection, not an
+incomplete stream, 512 MiB limit, disk guard or timeout. Temporary file growth was observed and the
+failed intake cleaned it. Caddy retains 600 s request-body timeout and 536,870,912-byte limit; Core
+retains its 30 s socket timeout. Header/EOF/strict validation remains enabled.
+
+The user explicitly approved the narrow empty-password exception. Implementation §6.3 and the Phase
+brief record it. Commit `748ca1b4436284edb54b8731f8ef1d4c6f4e966a` permits only successful empty-password
+unlocking, rejects nonempty-password sources, and stores the untouched original/hash. No password
+storage, PDF rewriting or new crypto dependency. Targeted library 8 PASS; intake/foundation/Beta
+boundary group 43 PASS; full Python **355 PASS / 2 SKIPPED** (294.25 s, same missing historical OCR
+corpus); JS 60 PASS. Actual immutable release deployment and empty restore passed (15,367,952 bytes,
+schema 19, .683 s, keys excluded).
+
+**Real post-fix upload:** the identical original through authenticated public HTTPS returned **201**,
+130,025,212 bytes sent in **247.433 s**, 525,496 B/s. Book `2eb5b32f-5abd-46b7-86f5-b1ff0281fda9`,
+revision `5116647c-5784-4dc1-b47d-3e0b9e5b8bc5`; server blob SHA256 was independently checked against
+the original. These are curl HTTPS results. Actual Chrome file chooser automation was rejected by
+extension file-access permission; browser upload PASS is not inferred from curl.
+
+**Separate opening failure:** actual Chrome opening this new source produced 59 captured PDF 502s;
+Caddy recorded 59 additional Core connect timeouts. ListenOverflows/Drops increased from the earlier
+32 baseline to 1086. The network event buffer for this attempt was truncated, so 222 retained PDF
+responses (163 x 206, 59 x 502) are not a complete request count. The existing PDF.js last-page/page-tree
+validation requests hundreds of scattered 64 KiB ranges for the flat page tree. The no-store cache
+coordination correction is retained; removing it would hide the burst behind the previously observed
+Chrome cache serialization. Initial OCR was active during this attempt; do not call it an OCR-free
+latency baseline or attribute all server CPU to PDF transfer.
+
+Commit `ec742028bf12ae193496ff50a0ec2af9e59ca9b4` extends the existing Beta-only same-origin PDF GET
+adapter to admit at most eight Range requests awaiting response headers. It passes the original
+Response/body and fetch inputs through, removes cancelled queued requests, and releases admission
+on success/failure. Full-stream header probes and other endpoints remain independent. It does not
+claim to cap body transfers, multi-tab concurrency or server resources; Core's 32-handler limit,
+backlog 64, timeouts and isolation remain unchanged. No PDF.js fork or extra dependency.
+
+Targeted adapter tests **4 PASS**, including a 312-request burst and queued cancellation/error
+recovery. Full JS **62 PASS**. Actual isolated local Beta HTTPS real-book golden path passed three
+open/close cycles (1.902–2.059 s, about 410 Range requests), page-200 jump, native OCR text selection,
+close/reopen and close during pending load, zero leaked workers. This is a local fixture, not public
+network speed evidence. Independent reviewer `ops_timeout_review` found no blocking issue; separately
+verified synchronous failure release, active cancellation, Request credentials and original native
+Response/body identity. Explicit review limits: only per-wrapper response-header admission is bounded;
+queue length/deadline relies on caller cancellation and network timeouts. Python closure above covers
+the unchanged Python source; the subsequent change is JS-only.
+
+**Public browser acceptance on ec74202:** after the user enabled the extension's file URL permission,
+normal Chrome file chooser upload of the exact 124 MiB source completed in **119.167 s**, HTTP **200**
+(h2), with the UI reporting the existing file and no duplicate import. The network response body was
+evicted by subsequent PDF traffic; no body is reconstructed or invented. The earlier full 201 curl
+response is retained separately. The browser automatically opened the 312-page PDF, rendered pages
+1–3, and returned to Library. A subsequent real re-open rendered page 1 in **13.340 s**. Range event
+buffers for these large attempts were truncated; only the actual DOM readiness and retained responses
+are reported, not fabricated complete waterfalls.
+
+No added ListenOverflows/Drops (1086 remained 1086), and no new Core connect timeout. Two Caddy **502
+EOF** entries occurred around 08:13:33 UTC during the post-upload attempt; these are explicitly not
+zero errors and their cause remains unresolved. No matching Core request_failed/4xx/5xx entry was
+found in the checked minute. The subsequent large reopen produced no additional Caddy error. This
+bounded result corrects the observed connect-timeout burst but does not prove every transport failure
+has been eliminated. Authenticated root/app/Library 200 and Range 206; anonymous static 401. An initial
+operator smoke used a root-owned stale cookie jar as admin and got Core 401; root bootstrap refreshed
+it and the full smoke passed. The operator jar was restricted to 0600.
+
+The ec74202 deployment was sealed/verified (191 files), with stopped-service backup and empty restore
+including the new textbook: **147,973,644 bytes, 5.534 s, schema 19**, keys excluded. Artifacts:
+`/var/backups/guided-reader/owner-pdf-20260918T080805Z/{backup,restore}`. Caddy/nftables checksums
+unchanged. 72 local authenticated h2 health requests at 8/16 concurrency all returned 200, maximum
+.867 s while upload/OCR were active, zero added listen overflow. No sustained capacity claim.
+
+**REOPEN critical path (old 29-page book, saved PDF 15, all 29 OCR pages READY):** actual Chrome
+before admission correction rendered the current page in 3.314 s; ec74202 rendered it in **2.624 s**.
+These are small observational samples, not a controlled speedup claim: the new book's background OCR
+was still active, network/worker startup varied, and prior healthy measurements were 2.318–2.610 s.
+No OCR execution, AI or Guide result for the target page was required for visible PDF rendering.
+The after trace was captured without buffer truncation; all sampled network responses used one h2
+connection. Relative to first request:
+
+| Stage | Start | Response/visible completion | Dependency |
+|---|---:|---:|---|
+| Worker startup → first PDF probe | 8 ms | first PDF request 713 ms | Worker/network initialization |
+| Full-stream header probe | 713 ms | headers 855 ms | Cancelled normally for demand mode |
+| Header and EOF ranges | 857 / 1130 ms | 1129 / 1301 ms | Native parser metadata |
+| Flat page-tree ranges | 1303–2040 ms | last body ~2245 ms | Native last-page/page-count validation |
+| Current-page image ranges | 2264 ms | ~2514 ms | Last network blocker before render |
+| Current page visible | — | 2624 ms from click | Does not await outline/preparation |
+| Outline | 2252 ms | ~3556 ms | Background, not first-paint blocker |
+| Initial preparation POST | 2252 ms | ~4236 ms | Previously blocked status subscription |
+| Preparation SSE | 4236 ms | headers ~4521 ms | Publishes authoritative READY |
+| Current page overlay (index 14) | 4641 ms | ~5012 ms | Unnecessarily delayed by scheduling |
+
+Learning/assistant/status started at 7 ms and returned by ~270 ms; they were not awaited by PDF open.
+Library data was already loaded, so this reopen did not GET /api/books. Native Range reads commonly
+end with ERR_ABORTED when PDF.js cancels its consumed stream; do not label these successful 206 reads
+failed uploads. Page-tree requests were distinct ranges, not repeated file downloads. Viewport changes
+also issued multiple preparation-priority POSTs (background); no scope-expanding scheduler rewrite.
+The hidden Library render issued an unnecessary reading-context query for the last book, but did not
+block first paint, so this change does not restructure Library.
+
+**Minimal overlay correction:** `3f17321bcd662e7d36e7a3023354e39d2cfa93ec` subscribes to existing server
+OCR statuses concurrently with the scheduling POST in Beta. A READY page still requires authoritative
+status and its actual overlay; no correctness check is skipped. Old-generation events/failures cannot
+modify a closed/reopened reader. Personal retains subscribe-after-scheduling behavior. Targeted loading,
+network and preparation tests **14 PASS**; full JS **65 PASS**; local real Beta HTTPS golden path PASS
+(three open/close cycles 1.387–2.004 s, page-200 jump, native OCR selection, recovery, zero worker leaks).
+Python source is unchanged since the 355-PASS closure above.
+
+**Final live verification (3f17321):** same READY old-book page 15 rendered in **2.706 / 2.554 s**;
+its selectable overlay appeared in **4.506 / 3.901 s** from click. Before this overlay change, its
+response completed around 5.012 s, followed by annotations/DOM work. These before/after endpoints
+are distinguished rather than claiming an exact percentage improvement. New trace proves SSE began
+at 2.254 s concurrently with scheduling (previously 4.236 s after it); current-page overlay GET began
+at 2.825 s (previously 4.641 s). Native pointer drag selected 13 OCR characters and produced one
+selection quad; return/reopen succeeded. No live provider request. Normal cache remained enabled,
+proxy rules unchanged, and temporary DOM probes/CDP capture were removed afterwards.
+
+**Remaining bottlenecks:** old-book visible PDF still takes approximately 2–3 seconds, substantially
+from worker startup, native metadata checks and network Range round trips. The 312-page source still
+took 13.340 s in the measured reopen. Overlay/annotation response latency and some duplicate
+neighbour overlay requests remain visible in the final trace; the current patch removes the
+scheduling prerequisite, not every source of latency. Do not call user-perceived performance fully
+accepted or the residual EOF issue resolved. No architecture/caching/source rewrite was introduced
+to erase those costs, and no server upgrade is justified by these observations alone.
+
+Final immutable release: `3f17321bcd662e7d36e7a3023354e39d2cfa93ec`, sealed/verified 191 files;
+stopped backup and empty restore **149,829,132 bytes / 5.506 s**, schema 19, keys excluded, at
+`/var/backups/guided-reader/owner-pdf-20260918T082417Z/{backup,restore}`. Prior releases/data retained.
+Authenticated HTML/JS/Library 200, PDF Range 206, anonymous static 401. Caddy/nftables config checksums
+unchanged. Post-final browser-check journal from 08:26 UTC had zero Caddy errors/connect timeouts/EOF
+in the sampled window; the earlier two EOFs remain part of this report. This is bounded evidence,
+not whole-Phase multi-instance/load/off-host acceptance. Main remains
+`15bb7cd9a9d131479e76656e2350bfc63fc0b870`; product commits pushed to `friends-private-beta`.
