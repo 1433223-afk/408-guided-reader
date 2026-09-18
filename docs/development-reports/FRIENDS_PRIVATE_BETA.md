@@ -605,3 +605,12 @@ unchanged. Post-final browser-check journal from 08:26 UTC had zero Caddy errors
 in the sampled window; the earlier two EOFs remain part of this report. This is bounded evidence,
 not whole-Phase multi-instance/load/off-host acceptance. Main remains
 `15bb7cd9a9d131479e76656e2350bfc63fc0b870`; product commits pushed to `friends-private-beta`.
+
+**Final remote-state correction:** an earlier `ls-remote` showed main at `15bb7cd9a9d131479e76656e2350bfc63fc0b870`,
+but the final check showed `5e5a879cc659419cf4b201cecd19ede0796cf749`. All pushes in this work explicitly
+targeted `friends-private-beta`; no main checkout/edit/merge/push was performed. The external change's
+author/cause was not established, so main must not be reported as unchanged. Beta report checkpoint
+`7af46dc` was verified remotely; this clarification is a subsequent docs-only checkpoint.
+At final service check Reader/Caddy/nftables were active, Reader running with NRestarts=0;
+ListenOverflows/Drops stayed 1086, current cgroup memory 663,248,896 bytes, peak 1,078,652,928 bytes,
+host swap 0 used (background OCR active).
