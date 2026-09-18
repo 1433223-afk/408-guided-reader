@@ -388,8 +388,14 @@ range.
 ### 6.3 Intake
 
 Streamed write to a temporary path with running hash and size cap → structural validation (header,
-trailer, page count, encryption check; reject encrypted PDFs with a clear message) → atomic move
+trailer, page count, encryption check; allow PDFs unlockable with an empty password, reject PDFs
+requiring a nonempty password with a clear message) → atomic move
 into the content-addressed blob store → revision row committed.
+
+**User-approved narrow amendment, 2026-09-18:** an encryption flag alone does not reject a PDF
+that opens with an empty password. Validation unlocks only in memory; stored source bytes and
+their hash remain unchanged. No password input/storage, source rewriting or relaxation of the
+other structural/size checks is introduced. Nonempty-password PDFs remain unsupported.
 
 **The Reader becomes usable at commit.** No preparation job is awaited (§4.1). Page-preparation jobs
 are enqueued after commit, and their absence changes nothing about readability.

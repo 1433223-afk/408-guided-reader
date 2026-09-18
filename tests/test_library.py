@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from io import BytesIO
+import hashlib
 
 import pytest
+from pypdf import PdfWriter
 
 from reader_service.library import IntakeError
 
@@ -82,10 +84,27 @@ def test_corrupt_input_commits_nothing(service, data, reason):
 
 def test_encrypted_input_has_clear_failure_and_commits_nothing(service):
     data = make_pdf(encrypted=True)
-    with pytest.raises(IntakeError, match="Encrypted or password-protected"):
+    with pytest.raises(IntakeError, match="需要输入密码"):
         import_bytes(service, data)
     assert service.list_books() == []
     assert list(service.paths.blob_root().rglob("*.pdf")) == []
+
+
+def test_empty_password_pdf_preserves_original_bytes_hash_and_deduplicates(service):
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt(user_password="", owner_password="fixture-owner")
+    output = BytesIO()
+    writer.write(output)
+    data = output.getvalue()
+    first = import_bytes(service, data)
+    revision = first["book"]["active_revision"]
+    assert revision["page_count"] == 1
+    assert revision["blob_sha256"] == hashlib.sha256(data).hexdigest()
+    assert service.pdf_path(revision["id"]).read_bytes() == data
+    duplicate = import_bytes(service, data)
+    assert duplicate["duplicate"] is True
+    assert duplicate["book"]["id"] == first["book"]["id"]
 
 
 def test_position_rejects_pages_outside_revision(service):

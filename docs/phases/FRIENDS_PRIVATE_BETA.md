@@ -29,6 +29,10 @@ Key，教材、对话和学习记录只属于我，更新后仍能继续学习�
 
 ## Authority to read
 
+**User-approved intake amendment, 2026-09-18:** Implementation §6.3 now allows PDFs unlockable
+with an empty password, retaining their original bytes/hash. Reject nonempty-password PDFs;
+do not add password storage, rewrite the source, or weaken structural/size checks.
+
 - `AGENTS.md`; this brief. No development report for this Phase exists yet.
 - Product Blueprint §§2–4, 15–16, 18–19, 23.1, 24.3, 26, 28–30, 33.2, 34.
 - Implementation Blueprint §§3.2–3.7, 5–6, 12.5–12.6, 13.3–13.8, 14.2, 15.4–15.7,
