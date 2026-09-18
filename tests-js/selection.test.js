@@ -53,6 +53,39 @@ test("hit testing distinguishes OCR fragments on the same visual row", () => {
   assert.equal(resolveSelection(toc, { lineOrdinal: 1, boundary: 0 }, { lineOrdinal: 1, boundary: 1 })[0].text, "6.2.1");
 });
 
+test("vertical OCR lines use pointer Y for precise anonymous-cell boundaries", () => {
+  const vertical = {
+    line_ordinal: 41,
+    quad: [[0.825, 0.09], [0.933, 0.09], [0.933, 0.546], [0.825, 0.546]],
+    text: "本书配套资源介绍",
+    cells: Array.from({ length: 8 }, (_value, index) => [0.824, 0.932, index, index + 1]),
+  };
+
+  assert.equal(nearestCellBoundary(vertical, 0.87, 0.09), 0);
+  assert.equal(nearestCellBoundary(vertical, 0.87, 0.318), 4);
+  assert.equal(nearestCellBoundary(vertical, 0.87, 0.546), 8);
+
+  const selected = resolveSelection(
+    [vertical],
+    { lineOrdinal: 41, boundary: 2 },
+    { lineOrdinal: 41, boundary: 5 },
+  );
+  assert.equal(selected[0].text, "配套资");
+  assert.deepEqual(selected[0].quads[0].map(([x, y]) => [x, Number(y.toFixed(6))]), [
+    [0.824, 0.204], [0.932, 0.204], [0.932, 0.375], [0.824, 0.375],
+  ]);
+});
+
+test("tall horizontal fragments keep X-based hit testing", () => {
+  const narrowHorizontal = {
+    line_ordinal: 0,
+    quad: [[0.1, 0.1], [0.2, 0.1], [0.2, 0.3], [0.1, 0.3]],
+    text: "AB",
+    cells: [[0.1, 0.15, 0, 1], [0.15, 0.2, 1, 2]],
+  };
+  assert.equal(nearestCellBoundary(narrowHorizontal, 0.2, 0.1), 2);
+});
+
 test("cross-line selection is represented as per-line ranges", () => {
   const anchor = { lineOrdinal: 0, boundary: 1 };
   const focus = { lineOrdinal: 1, boundary: 2 };

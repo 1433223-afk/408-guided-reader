@@ -264,6 +264,37 @@ def test_prepare_persist_reload_keeps_line_quad_and_cell_range_geometry(service)
     assert reloaded["foundation_version"] == 1
 
 
+def test_vertical_selection_resolves_partial_text_and_y_geometry(service):
+    revision = import_pdf(service)
+    repository = FoundationRepository(service.database)
+    vertical = DetectedLine(
+        quad=((0.825, 0.09), (0.933, 0.09), (0.933, 0.546), (0.825, 0.546)),
+        text="本书配套资源介绍",
+        confidence=0.99,
+        cells=tuple((0.824, 0.932, index, index + 1) for index in range(8)),
+    )
+
+    class VerticalEngine:
+        profile = "vertical-fixture:v1"
+
+        def prepare_page(self, page_image, page_size):
+            return [vertical]
+
+    foundation = FoundationService(service, repository, VerticalEngine)
+    assert foundation.prepare_page(revision["id"], 0) == "READY"
+    resolved = foundation.resolve_text_selection(
+        revision["id"], 0,
+        start={"line_ordinal": 0, "boundary": 2},
+        end={"line_ordinal": 0, "boundary": 5},
+    )
+
+    assert resolved["quote"] == "配套资"
+    assert [
+        [[x, round(y, 6)] for x, y in quad]
+        for quad in resolved["quads"]
+    ] == [[[0.824, 0.204], [0.932, 0.204], [0.932, 0.375], [0.824, 0.375]]]
+
+
 def test_trustworthy_positioned_text_uses_embedded_route_without_ocr(service):
     revision = import_embedded_text_pdf(service)
 

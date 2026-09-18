@@ -3157,7 +3157,11 @@ function selectionPoint(event, overlay) {
   const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
   const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
   const line = nearestLine(data.lines, x, y);
-  return { pageIndex: index, lineOrdinal: line.line_ordinal, boundary: nearestCellBoundary(line, x) };
+  return {
+    pageIndex: index,
+    lineOrdinal: line.line_ordinal,
+    boundary: nearestCellBoundary(line, x, y),
+  };
 }
 
 function beginSelection(event) {

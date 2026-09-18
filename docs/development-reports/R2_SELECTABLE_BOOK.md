@@ -19,10 +19,11 @@ selection, cross-line selection, normal right-click copy, and the polished selec
 original P1-1 and found no new P0/P1 issues. R2 closure status is
 `READY_FOR_R2_CLOSURE: YES`.
 
-`FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` — the available 29-page real scan completed successfully,
-including a real process-kill/restart run. The frozen ~700-page criterion is still untestable because
-that material has not been supplied; sustained preparation and recovery at full-book scale remain
-pending.
+`FULL_REAL_MATERIAL_ACCEPTANCE_PENDING` — the 29-page real scan completed successfully, including a
+real process-kill/restart run. A later 348-page revision supplied the focused page-3 selection
+regression below, not a full sustained preparation/recovery acceptance. The frozen ~700-page
+criterion is still untestable because that material has not been supplied; sustained preparation and
+recovery at full-book scale remain pending.
 
 The narrow independent ZCode review was completed. Its P1 finding about unsafe EMBEDDED geometry on
 rotated or non-zero-origin effective page boxes was independently reproduced and corrected. Its P2
@@ -64,6 +65,11 @@ P1-1 delta verification closed that finding with no new P0/P1.
   overlapping OCR fragments on one visual row are ordered left-to-right before the next row. This
   keeps separately detected TOC numbers and titles independently selectable without changing cell
   persistence or identity.
+- A later real-material correction makes the selection axis line-sensitive. Ordinary lines still
+  resolve anonymous cell boundaries on X. A tall line whose cell centers collapse onto one visual
+  column resolves boundaries on Y and clips its selection quad to the chosen vertical range. This is
+  a transient Reader/resolver interpretation of the same stored cells, not a new cell field, entity,
+  provider semantic, schema, or foundation version.
 - The EMBEDDED route is now deliberately conservative: it accepts only unrotated, zero-origin
   effective page boxes whose dimensions match the page coordinate space. Rotation, non-zero origin,
   or an indeterminate box falls back to rendered-page OCR rather than publishing suspect geometry.
@@ -94,6 +100,15 @@ P1-1 delta verification closed that finding with no new P0/P1.
   could look plausible enough to pass the probe while their overlay was wrong. The smallest reliable
   fix is conservative fallback OCR for those coordinate spaces, covered by real PDFium synthetic
   regressions rather than mocks.
+- A post-closure real-material regression on physical PDF page 3 of `2026计算机组成原理` found that
+  parts of the vertical title `本书配套资源介绍` could not be selected. The persisted OCR was complete:
+  one eight-cell line covered the title, with one anonymous cell per character. However, all eight
+  x extents were effectively identical because the text runs top-to-bottom. The Reader therefore
+  mapped every pointer position to the same X boundary and could select only an edge or the whole
+  line. The correction detects this provider-neutral geometry shape, derives transient evenly spaced
+  Y boundaries from the line quad, and uses the same axis for pointer hit-testing, custom selection
+  paint, copied text, and server-side resolved quads. Horizontal lines—including unusually tall,
+  narrow fragments—remain X-based unless their cell centers also form one column.
 
 ## Important implementation decisions
 
@@ -162,6 +177,22 @@ not a small extension of the current page-scoped pointer-capture and range model
 - `npm run test:e2e:recovery`: **PASS** against the same real scan. The service was killed with two
   pages committed and one page in flight; after restart the ready count stayed **2 → 2**, preparation
   reached **29/29**, exactly one batch was redone, and maximum job attempts was **2**.
+- Post-closure vertical-selection correction (2026-09-18): `npm test` **53/53 passed** and full
+  `pytest` **330 passed, 2 skipped**. The targeted JS regression covers first/middle/last vertical
+  boundaries, partial vertical text and quad clipping, plus a tall horizontal negative control. The
+  Python regression resolves the same anonymous boundary range through `FoundationService` and
+  verifies quote plus Y-clipped geometry.
+- Agent real-use golden path against the existing 348-page revision
+  `8ed51463-78da-448f-883a-cf26684d902b` (PDF SHA-256
+  `6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd`) **PASS** on physical page 3.
+  A real mouse drag selected only `配套资` from vertical line 41, the DOM selection and system
+  clipboard both contained exactly `配套资`, and the custom quad covered only those three glyphs.
+  This correction is `IMPLEMENTATION_READY`; follow-up user retest is pending.
+- Current R1 browser regression invocation is **not a PASS**: two default-DPR runs stopped before
+  selection at the pre-existing pixel-alignment assertion (`deviceLeft = 362.5` at DPR 2.5). A
+  supported DPR-2 run reached teardown but exited on a Windows `EBUSY` while deleting its temporary
+  SQLite database, so it also cannot be recorded as PASS. The full Python/JS suites and the live
+  Reader golden path above passed; no R1 layout code changed in this correction.
 - A deliberately failing page-preparation path produced `READY / FAILED / READY` across three pages;
   the original PDF bytes remained servable. The browser failure state adds a retry button rather than
   replacing the canvas.
@@ -185,6 +216,9 @@ not a small extension of the current page-scoped pointer-capture and range model
 - Full-book scale requires the missing ~700-page real scan.
 - Cell x extents remain recognition-alignment estimates and their y extent is line-inherited, matching
   the measured Foundation contract. Selection intentionally snaps to that ceiling.
+- Because the frozen cell payload has no per-cell Y extents, confirmed vertical lines divide the line
+  quad evenly by anonymous cell count. This avoids the previous unselectable state and matched the real
+  page-3 glyphs, but it remains an inferred selectable boundary rather than provider geometry.
 - The measured render-DPI curve below 200 DPI, cross-engine-version geometry stability, watermark
   contamination, and rotated in-figure OCR errors remain the Frozen Core's recorded residual unknowns.
   None is silently redesigned in R2.
