@@ -799,6 +799,24 @@ function currentNormalizedOffset(page) {
 async function startPreparation() {
   if (!state.revision) return;
   const revisionId = state.revision.id;
+  const generation = state.generation;
+  const current = () => state.generation === generation && state.revision?.id === revisionId;
+  const subscribe = () => {
+    const stream = new EventSource(`/api/revisions/${revisionId}/preparation/events`, { withCredentials: true });
+    state.eventSource = stream;
+    stream.addEventListener("pages", (event) => {
+      if (!current() || state.eventSource !== stream) return;
+      const payload = JSON.parse(event.data);
+      applyPreparationStatuses(payload.pages);
+    });
+    stream.onerror = () => {
+      // The bounded stream reconnects; already-prepared overlays remain usable.
+      if (current() && state.eventSource === stream) updatePreparationLabel();
+    };
+  };
+  // A remote reopen should read existing READY pages without waiting for the
+  // scheduling POST's outline refresh. Both still use authoritative server state.
+  if (isBeta) subscribe();
   try {
     await api(`/api/revisions/${revisionId}/preparation`, {
       method: "POST",
@@ -806,23 +824,14 @@ async function startPreparation() {
       body: JSON.stringify({ current_page: state.currentPage, visible_pages: [state.currentPage] }),
     });
   } catch (error) {
+    if (!current()) return;
+    if (isBeta && state.preparation.size) { updatePreparationLabel(); return; }
     elements["preparation-status"].textContent = "文字不可用";
     elements["preparation-status"].className = "preparation-status failed";
     return;
   }
-  if (state.revision?.id !== revisionId) return;
-  const stream = new EventSource(`/api/revisions/${revisionId}/preparation/events`, { withCredentials: true });
-  state.eventSource = stream;
-  stream.addEventListener("pages", (event) => {
-    if (state.revision?.id !== revisionId) return;
-    const payload = JSON.parse(event.data);
-    applyPreparationStatuses(payload.pages);
-  });
-  stream.onerror = () => {
-    // EventSource reconnects after the bounded server stream closes. Reading and
-    // already-prepared overlays remain independent of stream availability.
-    if (state.eventSource === stream) updatePreparationLabel();
-  };
+  if (!current()) return;
+  if (!isBeta) subscribe();
 }
 
 function closePreparationStream() {
