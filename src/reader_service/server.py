@@ -256,7 +256,9 @@ def handler_factory(
                     self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Outline is unavailable"})
                     return
                 try:
-                    result = outline.bootstrap(match.group(1))
+                    result = (outline.stored_snapshot(match.group(1))
+                              if _first(parse_qs(parsed.query), "stored") == "1"
+                              else outline.bootstrap(match.group(1)))
                 except LookupError as exc:
                     self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                     return

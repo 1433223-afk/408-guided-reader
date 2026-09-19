@@ -305,7 +305,8 @@ export function createScreens({api, home, memory, read, remove, revision, announ
     learning = null;
     api(`/api/revisions/${book.active_revision.id}/learning`).then(value => { if(stamp === epoch) learning = value; }).catch(() => {});
     try {
-      const value = await api(`/api/revisions/${book.active_revision.id}/outline`);
+      let value = await api(`/api/revisions/${book.active_revision.id}/outline?stored=1`);
+      if (!value.evidence_source) value = await api(`/api/revisions/${book.active_revision.id}/outline`);
       if (stamp !== epoch) return; nodes = value.nodes;
       const context = await api(`/api/revisions/${book.active_revision.id}/reading-context?page=${p.pdf_page_index}&y=${p.normalized_offset}`).catch(() => null);
       if(stamp !== epoch) return;
@@ -446,7 +447,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
 }
 
 // Current-chapter preparation only; the full map remains owned by Book Overview.
-export function createChapterEntry({api, revision, openOverview, published, goToPage, closePeers = () => {}}) {
+export function createChapterEntry({api, revision, openOverview, published, goToPage, closePeers = () => {}, outlineSnapshot = () => []}) {
   const entry = document.createElement('button');
   entry.id = 'reader-kp-action'; entry.type = 'button'; entry.hidden = true;
   document.getElementById('outline-toggle').after(entry);
@@ -469,11 +470,9 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     const body = node('div', '', 'reader-kp-body'); body.append(node('p', '读取知识点状态…', 'muted'));
     panel.append(heading, body, action('查看完整学习结构 ↗', () => { closeList(); return openOverview(targetChapter); }, 'reader-kp-footer'));
     panel.focus();
-    const [outline, learning] = await Promise.allSettled([api(`/api/revisions/${owner}/outline`), api(`/api/revisions/${owner}/learning`)]);
-    if(stamp !== epoch || request !== listEpoch) return;
+    const nodes = outlineSnapshot();
     body.replaceChildren();
-    const nodes = outline.status === 'fulfilled' ? outline.value.nodes : [];
-    const states = learning.status === 'fulfilled' ? learning.value.points : [];
+    const statusLabels = new Map();
     const ids = [...new Set([...nodes.filter(n => n.kind === 'SECTION' && n.parent_id === targetChapter).map(n => n.outline_node_id), ...points.map(p => p.primary_section_id)])];
     for(const id of ids) {
       const group = points.filter(p => p.primary_section_id === id); if(!group.length) continue;
@@ -481,9 +480,9 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
       region.append(node('h3', nodes.find(n => n.outline_node_id === id)?.title || '小节标题暂不可用'));
       for(const kp of group) {
         const row = node('div', '', 'reader-kp-row'); row.dataset.kpId = kp.knowledge_point_id;
-        const status = states?.find(p => p.knowledge_point_id === kp.knowledge_point_id)?.status;
-        const stateText = {UNDERSTOOD:'已理解',NOT_FULLY_CLEAR:'仍不清楚',UNCONFIRMED:'待确认'}[status] || '状态暂不可用';
-        const info = node('div'); info.append(node('span', kp.title), node('small', stateText, 'kp-state'));
+        const statusLabel = node('small', '状态读取中', 'kp-state');
+        statusLabels.set(kp.knowledge_point_id, statusLabel);
+        const info = node('div'); info.append(node('span', kp.title), statusLabel);
         row.append(info);
         if(Number.isInteger(kp.start_page) && kp.start_page >= 0 && Number.isFinite(kp.start_y)) {
           row.append(action(`PDF ${kp.start_page + 1} ↗`, () => { closeList(); goToPage(kp.start_page, kp.start_y); }, 'source-action'));
@@ -494,6 +493,17 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     }
     if(!points.length) body.append(node('p', '本章暂无已发布知识点', 'muted'));
     body.scrollTop = listPositions.get(targetChapter) || 0;
+    try {
+      const learning = await api(`/api/revisions/${owner}/learning`);
+      if(stamp !== epoch || request !== listEpoch) return;
+      for (const [id, label] of statusLabels) {
+        const status = learning.points?.find(p => p.knowledge_point_id === id)?.status;
+        label.textContent = {UNDERSTOOD:'已理解',NOT_FULLY_CLEAR:'仍不清楚',UNCONFIRMED:'待确认'}[status] || '状态暂不可用';
+      }
+    } catch (_error) {
+      if(stamp !== epoch || request !== listEpoch) return;
+      for (const label of statusLabels.values()) label.textContent = '状态暂不可用';
+    }
   }
   let owner = null, chapter = null, section = null, snapshot = null, epoch = 0, timer, pending = false, error = null, loading = false;
   const stages = {QUEUED:'等待开始',RESOLVING_SOURCE:'来源准备中',GENERATING:'生成中',REVIEWING:'审查中',VALIDATING:'校验中',PUBLISHING:'发布中'};
@@ -514,9 +524,9 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     entry.textContent = pending ? 'KP · 准备中' : error ? 'KP · 重试'
       : busy ? `KP · ${stages[snapshot.prepare_stage] || '准备中'}${count}`
       : snapshot?.status === 'READY' ? `${snapshot.knowledge_points.length} 个知识点`
-      : snapshot?.status === 'FAILED' ? (snapshot.failure_code === 'semantic_window_source_limit' ? '小节内容超出处理容量' : '生成失败 · 重试') : snapshot ? '＋ 生成本章知识点' : 'KP · 读取中';
+      : snapshot?.status === 'FAILED' ? (snapshot.failure_code === 'semantic_window_source_limit' ? '上次小节容量受限 · 重试' : '生成失败 · 重试') : snapshot ? '＋ 生成本章知识点' : 'KP · 读取中';
     const failureReason = snapshot?.failure_code === 'semantic_window_source_limit'
-      ? '当前小节原文超过单次处理容量；重复重试无法解决，需调整处理容量。' : null;
+      ? '上次准备因小节容量限制失败；调整容量后可点击重试本章，不会生成全书知识点。' : null;
     entry.title = error || failureReason || (snapshot?.status === 'READY' ? '查看本章知识点与学习状态'
       : `${snapshot?.chapter_title || '当前章'}：${entry.textContent}，PDF 阅读不受影响`);
   }

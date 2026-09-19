@@ -76,6 +76,25 @@ class OutlineService:
         return {'chapter': unique('CHAPTER'), 'section': unique('SECTION'),
                 'subsection': unique('SUBSECTION')}
 
+    def stored_snapshot(self, revision_id: str) -> dict:
+        """Read the published directory; evidence refresh is a separate operation."""
+        self.library.revision(revision_id)
+        record = self.repository.bootstrap_record(revision_id)
+        labels = self.page_labels.repository.list(revision_id)
+        return {
+            "nodes": self.repository.list(revision_id),
+            "evidence_source": record["evidence_source"] if record else None,
+            "waiting_for_toc_completion": record is None,
+            "identity_conflict": bool(record and record.get("last_conflict_digest")),
+            "page_labels": {
+                "labels": labels,
+                "inferred_count": sum(r["method"] == "INFERRED" for r in labels),
+                "manual_count": sum(r["method"] == "MANUAL" for r in labels),
+                "unknown_count": sum(r["method"] == "NONE" for r in labels),
+                "conflicts": [],
+            },
+        }
+
     def bootstrap(self, revision_id: str) -> dict:
         with self._lock:
             self.library.revision(revision_id)

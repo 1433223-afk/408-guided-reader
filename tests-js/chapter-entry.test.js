@@ -14,8 +14,8 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
       window.snapshot={status:'NOT_PREPARED',knowledge_points:[]};
       window.ui=createChapterEntry({revision:()=> 'revision',published:()=>window.published++,closePeers:()=>window.closedPeers++,openOverview:id=>window.opened.push(id),goToPage:(...args)=>window.jumps.push(args),
         api:async(url,options={})=>{
-          if(url.endsWith('/outline')) return {nodes:[{kind:'SECTION',parent_id:'current',outline_node_id:'s',title:'第一节'}]};
-          if(url.endsWith('/learning')) return {points:[{knowledge_point_id:'kp',status:'UNDERSTOOD'}]};
+          if(url.includes('/outline')) throw Error('KP list must not request Outline rebuild');
+          if(url.endsWith('/learning')) return window.delayLearning ? new Promise(resolve=>window.resolveLearning=resolve) : {points:[{knowledge_point_id:'kp',status:'UNDERSTOOD'}]};
           if(url.includes('/chapters/old/'))return new Promise(r=>window.finishOld=r);
           if(options.method){window.posts.push(url);return {chapter_map:window.snapshot={status:'PREPARING',prepare_stage:'QUEUED',knowledge_points:[]}};}
           return window.snapshot;
@@ -34,6 +34,12 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
     assert.deepEqual(await page.evaluate(()=>window.opened),[]);
     assert.equal(await page.evaluate(()=>window.closedPeers),1);
     await page.getByText('已理解',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'关闭',exact:true}).click();
+    await page.evaluate(()=>{window.delayLearning=true;});
+    await page.locator('#reader-kp-action').click();
+    await page.getByText('真实来源',{exact:true}).last().waitFor();
+    await page.getByText('状态读取中',{exact:true}).first().waitFor();
+    await page.evaluate(()=>{window.delayLearning=false;window.resolveLearning({points:[{knowledge_point_id:'kp',status:'UNDERSTOOD'}]});});
     await page.getByRole('button',{name:'PDF 8 ↗',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.jumps),[[7,0.25]]);
     assert.equal(await page.locator('#reader-kp-list').isVisible(),false);

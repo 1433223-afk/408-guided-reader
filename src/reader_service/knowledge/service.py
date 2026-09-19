@@ -632,6 +632,11 @@ class KnowledgeService:
             )
         return results, next(iter(identities))
 
+    def _window_output_budget(self, window: dict) -> int:
+        # Every unit ID must be accounted for even when absorbed/non-KP. This
+        # reserves transport capacity, never forces a number of semantic targets.
+        return min(16_384, max(self.generator_max_tokens, 1024 + 64 * len(window["units"])))
+
     def _classify_window(
         self,
         window: dict,
@@ -669,7 +674,7 @@ class KnowledgeService:
                         f"kp-semantic:{attempt_id}:{window['window_id']}:"
                         f"structured-{structured_attempt}"
                     ),
-                    max_tokens=self.generator_max_tokens,
+                    max_tokens=self._window_output_budget(window),
                     attempt_observer=observer,
                     retain_request_body=False,
                     thinking_mode=(

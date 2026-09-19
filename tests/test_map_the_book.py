@@ -63,6 +63,21 @@ def bookmarked_pdf():
     return output.getvalue()
 
 
+def test_stored_directory_read_never_rebuilds_evidence(service, monkeypatch):
+    pdf = bookmarked_pdf()
+    revision = service.intake(BytesIO(pdf), content_length=len(pdf), filename='stored.pdf')['book']['active_revision']['id']
+    _, _, _, outline = services(service)
+    expected = outline.bootstrap(revision)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Reading a published directory must not scan evidence')
+    monkeypatch.setattr(outline, 'bootstrap', forbidden)
+    monkeypatch.setattr(outline, '_safe_targets', forbidden)
+    monkeypatch.setattr(outline.page_labels, 'infer', forbidden)
+    actual = outline.stored_snapshot(revision)
+    assert actual['nodes'] == expected['nodes']
+    assert actual['page_labels']['labels'] == expected['page_labels']['labels']
+
+
 def test_bookmarks_mint_stable_tree_and_book_delete_cascades(service):
     pdf = bookmarked_pdf()
     imported = service.intake(BytesIO(pdf), content_length=len(pdf), filename="bookmarks.pdf")

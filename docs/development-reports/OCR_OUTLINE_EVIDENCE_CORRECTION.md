@@ -2,6 +2,26 @@
 
 ## Current result — 2026-09-19 populated-book correction
 
+### Follow-up: long Section capacity and immediate KP list
+
+用户要求直接修复第三章容量失败与“读取知识点状态”变慢，只跑必要检验，由用户人工验收。
+根因：无子小节的Section完整fallback窗口被9,600字实现常量拦住；KP列表等待的目录GET又做了
+两次全书safe-target扫描。本机诊断KP/learning约16/9ms，而两次只读目标计算约5.03秒。
+
+修正：本地窗口安全上限调为48,000字（不是provider上下文大小声明），不改变窗口身份/语义，
+不截断、不按字符拆分；输出预算按完整unit-ID记账需求扩展，保持配置下限和runtime16,384上限。
+仍保留超限、完整覆盖、连续来源校验与Chapter Review，不保证超长任意输入或模型输出必然成功。
+Reader KP列表同步显示已保存条目，学习状态异步补齐，使用已加载Outline分组，不再请求目录。
+Reader/Overview已有目录走`?stored=1`只读快照，无证据时仍走原bootstrap；证据刷新仍由现有
+准备worker/显式bootstrap负责，无全书结果缓存、身份迁移或自动KP生成。
+
+TARGETED：容量/超限/只读目录Python4 passed；章节入口JS2 passed（含状态悬挂时列表可用，
+禁止列表请求Outline）。未跑全量。真实《保险学》第三章只读projection预检：2,524字/14units、
+13,631字/98units，两个完整窗口，输出预算4096/7296，所有units保留。未发起远程模型调用，
+不声称第三章生成或Review已PASS；旧FAILED记录保留，需用户刷新后点击“上次小节容量受限·重试”。
+重启8767后实际stored目录205节点约12.7ms（本机单次观测，非SLA），不重算证据。
+用户复核pending；既有KP和学习记录未改写。
+
 ### Follow-up: reopen / selection / KP loading UAT fix
 
 用户随后报告重开又准备文字、PDF9后不可选、KP一直读取。本次检查时364页均READY，

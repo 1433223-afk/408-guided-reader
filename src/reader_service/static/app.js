@@ -205,6 +205,7 @@ async function showHome() {
 const screens = createScreens({api, home: showHome, memory: () => memory.open(), read: enterReader,
   remove: removeBook, revision: chooseRevision, announce, isAuxiliary:isAuxiliaryOutlineRoot});
 const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.revision?.id,
+  outlineSnapshot: () => state.outlineNodes,
   published: () => master.refreshEntries().catch(() => {}),
   closePeers: () => {
     claimRightDock("knowledge");
@@ -847,7 +848,8 @@ async function loadBookMap() {
   const request = ++state.outlineRequest;
   elements["outline-status"].textContent = "正在读取教材目录…";
   try {
-    const outline = await api(`/api/revisions/${revisionId}/outline`);
+    let outline = await api(`/api/revisions/${revisionId}/outline?stored=1`);
+    if (!outline.evidence_source) outline = await api(`/api/revisions/${revisionId}/outline`);
     const labels = outline.page_labels;
     if (request !== state.outlineRequest || state.revision?.id !== revisionId) return;
     state.outlineNodes = outline.nodes;

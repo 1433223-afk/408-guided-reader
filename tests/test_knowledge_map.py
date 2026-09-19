@@ -1383,6 +1383,22 @@ def test_large_subsection_keeps_one_complete_bounded_semantic_judgment():
         build_semantic_windows(units)
     assert error.value.code == 'semantic_window_source_limit'
 
+
+def test_long_section_fallback_is_whole_and_has_output_capacity():
+    units = [{
+        'unit_id': f'u{i:04d}', 'text': '字' * size,
+        'primary_section_id': 'section', 'primary_section_title': 'Long Section',
+        'outline_subsection_id': None, 'outline_subsection_title': None,
+    } for i, size in enumerate([139] * 97 + [148])]
+    windows = build_semantic_windows(units)
+    assert len(windows) == 1
+    assert windows[0]['character_count'] == 13631
+    assert windows[0]['units'] == units
+    knowledge = KnowledgeService.__new__(KnowledgeService)
+    knowledge.generator_max_tokens = 4096
+    assert knowledge._window_output_budget(windows[0]) == 7296
+    assert knowledge._window_output_budget({'units': units * 10}) == 16384
+
 def test_source_capacity_failure_has_specific_code_and_never_calls_provider(service, monkeypatch):
     from reader_service.knowledge.semantic import SemanticOutputError
     fixture = build_fixture(service)
