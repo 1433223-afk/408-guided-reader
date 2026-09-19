@@ -14,8 +14,8 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
       window.snapshot={status:'NOT_PREPARED',knowledge_points:[]};
       window.ui=createChapterEntry({revision:()=> 'revision',published:()=>window.published++,closePeers:()=>window.closedPeers++,openOverview:id=>window.opened.push(id),goToPage:(...args)=>window.jumps.push(args),
         api:async(url,options={})=>{
-          if(url.endsWith('/outline')) return {nodes:[{kind:'SECTION',parent_id:'current',outline_node_id:'s',title:'第一节'}]};
-          if(url.endsWith('/learning')) return {points:[{knowledge_point_id:'kp',status:'UNDERSTOOD'}]};
+          if(url.includes('/outline')) throw Error('KP list must not request Outline rebuild');
+          if(url.endsWith('/learning')) return window.delayLearning ? new Promise(resolve=>window.resolveLearning=resolve) : {points:[{knowledge_point_id:'kp',status:'UNDERSTOOD'}]};
           if(url.includes('/chapters/old/'))return new Promise(r=>window.finishOld=r);
           if(options.method){window.posts.push(url);return {chapter_map:window.snapshot={status:'PREPARING',prepare_stage:'QUEUED',knowledge_points:[]}};}
           return window.snapshot;
@@ -34,6 +34,12 @@ test('chapter entry ignores departed context and coalesces preparation clicks', 
     assert.deepEqual(await page.evaluate(()=>window.opened),[]);
     assert.equal(await page.evaluate(()=>window.closedPeers),1);
     await page.getByText('已理解',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'关闭',exact:true}).click();
+    await page.evaluate(()=>{window.delayLearning=true;});
+    await page.locator('#reader-kp-action').click();
+    await page.getByText('真实来源',{exact:true}).last().waitFor();
+    await page.getByText('状态读取中',{exact:true}).first().waitFor();
+    await page.evaluate(()=>{window.delayLearning=false;window.resolveLearning({points:[{knowledge_point_id:'kp',status:'UNDERSTOOD'}]});});
     await page.getByRole('button',{name:'PDF 8 ↗',exact:true}).click();
     assert.deepEqual(await page.evaluate(()=>window.jumps),[[7,0.25]]);
     assert.equal(await page.locator('#reader-kp-list').isVisible(),false);
@@ -65,6 +71,10 @@ test('Reader identifies an unprepared chapter from page bookmarks without invent
   runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,null);
   assert.equal(nodes[0].start_y,undefined);assert.equal(nodes[0].end_page,undefined);
   nodes.pop();
+  nodes[0].parent_id = 'part1'; nodes[1].parent_id = 'part2';
+  nodes[0].order_index = 0; nodes[1].order_index = 0;
+  context.captureZoomAnchor=()=>({pageIndex:20,normalizedY:0});
+  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,'b');
   for (const title of ['目 录','版权页','扉页','前 言','参考文献']) {
     nodes.push({kind:'CHAPTER',title,outline_node_id:'aux',resolution_state:'PARTIAL',start_page:25});
     context.captureZoomAnchor=()=>({pageIndex:26,normalizedY:0.5});
@@ -72,4 +82,7 @@ test('Reader identifies an unprepared chapter from page bookmarks without invent
     // Keep the auxiliary bookmark as a boundary; do not fall back to the preceding chapter.
     nodes.pop();
   }
+  nodes.push({kind:'OTHER',title:'附录1 术语',outline_node_id:'appendix',resolution_state:'PARTIAL',start_page:25});
+  context.captureZoomAnchor=()=>({pageIndex:26,normalizedY:0.5});
+  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,null,'back matter is not the last chapter');
 });

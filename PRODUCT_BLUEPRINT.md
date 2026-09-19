@@ -241,7 +241,9 @@ Printed labels may also be absent or non-numeric. The system must not guess.
 Rules:
 
 - machine geometry uses `pdf_page_index`;
-- user-facing citations prefer `printed_page_label` when confidently known;
+- user-facing navigation, page indicators and citations use one-based **PDF page numbers**
+  (user-approved correction, 2026-09-19); printed labels remain optional internal matching evidence,
+  not a competing user-facing numbering system;
 - figures/tables also preserve visible caption identifiers when available, e.g. `图4.1`, `表3.2`.
 
 ---
@@ -448,6 +450,13 @@ The Outline is based on **explicit textbook structure**, not an AI-invented repl
 
 Typical nodes:
 
+2026-09-18 correction authorized by the user's OCR/Outline reliability mandate: semantic
+Chapter/Section kinds do not mean absolute tree depths. A textbook may have `篇/部 → 章 → 节`;
+the part is an organizational container, while the chapter remains the learning/preparation owner.
+Page-number-only bookmark exports are not evidence of chapters. OCR processing completion is not
+a claim of complete or error-free recognition. Directory publication requires usable structural
+evidence, not merely a successful OCR job (and not all-book body OCR completion).
+
 - Chapter / 一级标题;
 - Section / 二级标题;
 - Subsection / 三级标题;
@@ -547,6 +556,17 @@ Not every Outline correction carries the same risk. Three tiers:
 
 Correction is never globally frozen by the mere existence of *any* Book asset — protection is scoped
 to the specific node whose boundary or identity would actually change.
+
+**2026-09-19 user-approved directory correction:** preserve explicit TOC introductions, summaries,
+exercises and back matter as well as numbered chapters/sections. Front/back matter is displayed under
+“其他内容”; per-chapter extras retain their textbook parent and never become learning owners. Page-only
+navigation uses confirmed PDF destinations; printed OCR labels are hints and may be contradicted by
+actual body-heading evidence. A grouping-only part may expand without a page destination.
+
+The user explicitly approved a backed-up, additive correction of the populated Insurance book:
+retain every existing Outline ID, owner and all learning records; add evidenced missing entries,
+correct titles/targets in place, and mark affected published learning content as requiring review.
+Old content remains readable. No automatic deletion, generation, mastery change or guessed re-ID.
 
 ---
 

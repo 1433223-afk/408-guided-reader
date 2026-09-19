@@ -105,7 +105,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 }
 .viewer:focus-visible { box-shadow: inset 0 0 0 2px rgb(105 91 68 / 25%); }
 .pages { min-width: 100%; padding: 8px 32px 60px; }
-.page { position: relative; margin: 20px auto; margin-inline: auto !important; overflow: hidden; background: #fdfcf9; box-shadow: 0 3px 18px rgb(48 44 35 / 19%); }
+.page { position: relative; margin: 20px auto; overflow: hidden; background: #fdfcf9; box-shadow: 0 3px 18px rgb(48 44 35 / 19%); }
 .page::after { content: attr(data-page); position: absolute; right: 8px; bottom: 6px; color: #9b978d; font: 10px ui-monospace, monospace; opacity: .55; }
 .page canvas { display: block; width: 100%; height: 100%; background: white; image-rendering: auto; }
 .text-overlay { position: absolute; z-index: 2; inset: 0; cursor: text; touch-action: none; }

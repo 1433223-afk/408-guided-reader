@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
+
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from reader_service.library.database import Database
-
 
 PIPELINE_ATTEMPT_RETENTION = 512
 
@@ -43,8 +44,8 @@ class KnowledgeRepository:
             ).fetchone()
             if chapter is None:
                 raise LookupError("Chapter not found")
-            if chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
-                raise ValueError("Knowledge Map preparation requires one top-level Chapter")
+            if chapter["kind"] != "CHAPTER":
+                raise ValueError("Knowledge Map preparation requires one Chapter")
 
             current = connection.execute(
                 """
@@ -138,8 +139,8 @@ class KnowledgeRepository:
             ).fetchone()
             if chapter is None:
                 raise LookupError("Chapter not found")
-            if chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
-                raise ValueError("Knowledge Map regeneration requires one top-level Chapter")
+            if chapter["kind"] != "CHAPTER":
+                raise ValueError("Knowledge Map regeneration requires one Chapter")
 
             current = connection.execute(
                 """
@@ -822,8 +823,8 @@ class KnowledgeRepository:
             ).fetchone()
             if chapter is None:
                 raise LookupError("Chapter not found")
-            if chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
-                raise ValueError("Knowledge Map requires one top-level Chapter")
+            if chapter["kind"] != "CHAPTER":
+                raise ValueError("Knowledge Map requires one Chapter")
             return self._snapshot_connection(connection, revision_id, chapter_id)
 
     @classmethod
@@ -862,6 +863,15 @@ class KnowledgeRepository:
                 "knowledge_points": [],
             }
         result = dict(state)
+        # An explicit, asset-preserving Outline correction may require review of
+        # the published map. Keep it readable; never turn READY into data loss.
+        chapter_evidence = connection.execute(
+            'SELECT evidence_json FROM outline_nodes WHERE outline_node_id=? AND book_source_revision_id=?',
+            (chapter_id, revision_id),
+        ).fetchone()
+        review = json.loads(chapter_evidence[0]).get('asset_review', {}) if chapter_evidence else {}
+        result['needs_review'] = bool(review and review.get('structure_version') == result['structure_version'])
+        result['review_reason'] = review.get('reason') if result['needs_review'] else None
         points = []
         if result["status"] == "READY":
             for row in connection.execute(

@@ -128,7 +128,8 @@ try {
   await page.locator("#library-home").waitFor({ state: "visible" });
   assert.equal(await page.locator("#reader").isVisible(), false);
   await page.screenshot({ path: path.join(artifacts, "r1-library-home.png"), fullPage: false });
-  await page.locator(".book-card").click();
+  await page.getByRole("button", { name: /^打开教材 / }).click();
+  await page.getByRole("button", { name: /^继续 PDF/ }).click();
   await page.locator("#reader").waitFor({ state: "visible" });
   assert.equal(await page.locator("#page-number").inputValue(), "12");
 
@@ -136,7 +137,8 @@ try {
   page = await context.newPage();
   await page.goto(url);
   assert.ok(await page.locator("#library-home").isVisible(), "startup should land on Library/Home");
-  await page.locator(".book-card").click();
+  await page.getByRole("button", { name: /^打开教材 / }).click();
+  await page.getByRole("button", { name: /^继续 PDF/ }).click();
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
   assert.equal(await page.locator("#page-number").inputValue(), "12", "reopen did not restore the PDF page");
   assert.equal(await page.locator("#zoom-value").textContent(), "125%", "reopen did not restore zoom");
@@ -164,7 +166,8 @@ try {
 
   // UI deletion remains functional after the surface split.
   page.once("dialog", (dialog) => dialog.accept());
-  await page.locator(".book-action.danger").click();
+  await page.locator(".book-more summary").click();
+  await page.getByRole("button", { name: "删除教材", exact: true }).click();
   await page.getByText("还没有教材。").waitFor();
   assert.equal(await page.locator(".book-card").count(), 0);
   assert.deepEqual(apiFailures, [], `normal-browser API requests failed: ${JSON.stringify(apiFailures)}`);

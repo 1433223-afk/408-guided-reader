@@ -256,7 +256,9 @@ def handler_factory(
                     self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Outline is unavailable"})
                     return
                 try:
-                    result = outline.bootstrap(match.group(1))
+                    result = (outline.stored_snapshot(match.group(1))
+                              if _first(parse_qs(parsed.query), "stored") == "1"
+                              else outline.bootstrap(match.group(1)))
                 except LookupError as exc:
                     self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                     return
@@ -1398,10 +1400,7 @@ def handler_factory(
             self, coordinator: PreparationCoordinator, revision_id: str
         ) -> None:
             try:
-                revision = coordinator.foundation.ensure_revision(revision_id)
-                coordinator.jobs.enqueue_pages(
-                    revision_id, revision["page_count"], revision["foundation_version"]
-                )
+                coordinator.foundation.ensure_revision(revision_id)
             except LookupError as exc:
                 self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                 return

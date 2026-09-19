@@ -61,7 +61,9 @@ class JobRepository:
                 "SELECT id, page_start FROM jobs WHERE book_source_revision_id = ? "
                 "AND job_type = 'PAGE_PREPARE' AND status = 'QUEUED'",
                 (revision_id,),
-            )
+            ).fetchall()
+            # Close the read cursor before upgrading to a write. A worker may
+            # commit meanwhile; a live WAL snapshot cannot then become a writer.
             for row in rows:
                 index = row["page_start"]
                 if index in visible_pages:

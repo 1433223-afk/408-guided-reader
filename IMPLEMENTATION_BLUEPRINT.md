@@ -803,6 +803,9 @@ just another `VisualRegion.kind` — the seam already exists and costs nothing n
 
 ### 10.1 Model — `FROZEN_FROM_PRODUCT` (§5)
 
+2026-09-19 user amendment: PageLabel is internal evidence. Reader/navigation/citation UI displays
+one-based PDF pages only. An absent printed label does not make a known PDF destination unknown.
+
 ```
 PageLabel
   book_source_revision_id, pdf_page_index
@@ -893,6 +896,22 @@ staleness node-scoped rather than book-scoped (§19.2b) — an artifact that use
 
 ### 11.2 Construction — `RECOMMENDED_FOR_DRAFT`
 
+**2026-09-18 reliability clarification (user-authorized correction):** `kind` and `depth` are
+independent. Explicit 篇/部 containers use `OTHER`; nested `CHAPTER` nodes remain Chapter owners
+for navigation, source ranges and Knowledge preparation. A dense sequential page-label bookmark
+export is rejected as structural evidence and falls back to TOC evidence. TOC bootstrap must not
+publish a later block while earlier pages remain unseen, and known numbered hierarchy gaps must
+not silently assign sections to the wrong chapter. Existing committed identity remains guarded:
+parser upgrades never automatically remint an existing tree. A dependency-free source revision may
+be explicitly repaired offline using fingerprint checks, staged validation, a recoverable database
+backup and incremented identity revision; any durable dependent refuses this bounded repair path.
+OCR replacements use Foundation's existing change/version/event publication, never direct line edits.
+TOC navigation excludes the TOC/front prefix from body-label candidates (independent page-number
+sequences may restart). A chapter opener without a printed number can gain a page-only target from
+one unambiguous adjacent measured label **and** a matching actual body heading. This confirms only
+physical placement of an existing node, never a new identity or extrapolated PageLabel row. A
+confirmed chapter label can locate sections sharing that same printed page at page granularity.
+
 **Two staged evidence passes, not one undifferentiated list.**
 
 **Pass 1 — logical bootstrap.** Runs once, early, over the whole book, and is cheap (it does not wait
@@ -961,6 +980,17 @@ System and Assistant without a node of its own.
 knowledge-bearing — §12.2 excludes them from KP generation by default.
 
 ### 11.4 Correction granularity — `FROZEN_FROM_PRODUCT` (§9.5) **[revised, closes ZCode P1-2, sharpened by the Outline conceptual correction]**
+
+2026-09-19 explicitly authorized populated-book repair: a separate offline `--preserve-assets`
+operation stages against a verified database backup, preserves every existing node ID/owner/kind,
+and refuses missing nodes or reparenting. Additive auxiliary rows may shift sibling order slots
+without changing existing identity. Existing ranges are recomputed only where previously resolved;
+changed ranges advance their own physical revision. No dependent rows are deleted or rewritten.
+Affected published chapter maps carry an `asset_review` evidence marker for their current structure
+version; APIs/UI expose `needs_review` while retaining READY content. A later explicitly authorized
+new structure version supersedes that marker. Existing Teaching dependency checks remain node/page
+scoped. Ordinary bootstrap still refuses structural-digest conflicts; this is not silent migration.
+The earlier unowned replacement mode keeps its original refusal rules.
 
 Three tiers, each scoped to the node(s) actually affected — never to the book as a whole:
 

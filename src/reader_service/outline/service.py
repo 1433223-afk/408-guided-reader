@@ -14,10 +14,19 @@ from pypdf import PdfReader
 from reader_service.foundation import PageLabelService
 from reader_service.library import LibraryService
 
+from .evidence import (
+    AUXILIARY,
+    NAMED,
+    ORDINAL,
+    named_hierarchy,
+    ordinal,
+    parse_named_toc,
+    usable_bookmarks,
+)
+from .evidence import chapter_boundary as next_chapter_boundary
 from .repository import OutlineRepository
 
-
-PARSER_VERSION = "bookmark-depth-v2+toc-geometry-v1"
+PARSER_VERSION = "bookmark-evidence-v4+toc-named-hierarchy-v3"
 _NODE_NAMESPACE = UUID("496c8afc-233d-4ccd-a2ce-c86ca4d060ac")
 _CHAPTER = re.compile(r"^第\s*(\d+)\s*章\s*(.+)$")
 _NUMBERED = re.compile(r"^[*＊]?\s*(\d+(?:\.\d+){1,2})\s+(.+)$")
@@ -67,6 +76,25 @@ class OutlineService:
         return {'chapter': unique('CHAPTER'), 'section': unique('SECTION'),
                 'subsection': unique('SUBSECTION')}
 
+    def stored_snapshot(self, revision_id: str) -> dict:
+        """Read the published directory; evidence refresh is a separate operation."""
+        self.library.revision(revision_id)
+        record = self.repository.bootstrap_record(revision_id)
+        labels = self.page_labels.repository.list(revision_id)
+        return {
+            "nodes": self.repository.list(revision_id),
+            "evidence_source": record["evidence_source"] if record else None,
+            "waiting_for_toc_completion": record is None,
+            "identity_conflict": bool(record and record.get("last_conflict_digest")),
+            "page_labels": {
+                "labels": labels,
+                "inferred_count": sum(r["method"] == "INFERRED" for r in labels),
+                "manual_count": sum(r["method"] == "MANUAL" for r in labels),
+                "unknown_count": sum(r["method"] == "NONE" for r in labels),
+                "conflicts": [],
+            },
+        }
+
     def bootstrap(self, revision_id: str) -> dict:
         with self._lock:
             self.library.revision(revision_id)
@@ -75,9 +103,14 @@ class OutlineService:
                 revision_id, self.library.pdf_path(revision_id)
             )
             waiting = False
-            if not raw:
+            if not usable_bookmarks(raw):
+                auxiliary = [dict(n, depth=0, kind='OTHER') for n in raw
+                             if AUXILIARY.fullmatch(n['title']) and n.get('start_page') is not None]
                 statuses, pages = self.repository.ready_snapshot(revision_id)
                 raw, waiting = self._toc_candidates(statuses, pages)
+                if raw:
+                    titles = {n['title'] for n in raw}
+                    raw = [n for n in auxiliary if n['title'] not in titles] + raw
                 source = "TOC"
             if not raw:
                 return {
@@ -145,7 +178,7 @@ class OutlineService:
         nodes = self.repository.list(revision_id)
         by_id = {node["outline_node_id"]: node for node in nodes}
         chapter = by_id.get(chapter_id)
-        if chapter is None or chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
+        if chapter is None or chapter["kind"] != "CHAPTER":
             raise ChapterResolutionError("INVALID_CHAPTER", "Knowledge Map requires one Chapter")
 
         ordered = self._topological(nodes)
@@ -170,14 +203,9 @@ class OutlineService:
             raise ChapterResolutionError(
                 "CHAPTER_START_UNRESOLVED", "Chapter has no safe physical start"
             )
-        roots = [node for node in ordered if node["parent_id"] is None]
-        later_roots = [
-            node for node in roots
-            if node["order_index"] > chapter["order_index"]
-            and node.get("start_page") is not None
-            and node["start_page"] >= start_page
-        ]
-        next_root = min(later_roots, key=lambda node: node["order_index"], default=None)
+        next_root = next_chapter_boundary(ordered, chapter)
+        if next_root is not None and next_root.get('start_page') is None:
+            raise ChapterResolutionError('CHAPTER_END_UNRESOLVED', 'Next boundary has no safe page')
         end_page_exclusive = (
             int(next_root["start_page"]) if next_root is not None else revision["page_count"]
         )
@@ -411,7 +439,7 @@ class OutlineService:
         right_edge = x1
         combined = text
         for fragment_x0, fragment_x1, fragment_text in sorted(fragments):
-            if fragment_x0 - right_edge > _HEADING_FRAGMENT_GAP:
+            if fragment_x0 - right_edge > max(_HEADING_FRAGMENT_GAP, height * 3):
                 break
             if fragment_text:
                 combined = f"{combined} {fragment_text}"
@@ -429,7 +457,11 @@ class OutlineService:
     def _heading_parts(value: str) -> tuple[str | None, str]:
         normalized = unicodedata.normalize("NFKC", value)
         compact = re.sub(r"[\s·•:：—_\-]", "", normalized)
+        compact = compact.strip('《》<>【】')
         compact = compact.lstrip("*＊")
+        named = re.fullmatch(rf'第({ORDINAL})([篇部章节])(.*)', compact)
+        if named:
+            return f'第{ordinal(named[1])}{named[2]}', named[3]
         chapter = re.match(r"^(第\d+章)(.*)$", compact)
         numbered = re.match(r"^(\d+(?:\.\d+)+)(.*)$", compact)
         match = chapter or numbered
@@ -458,7 +490,7 @@ class OutlineService:
                         continue
                     try:
                         start_page = reader.get_destination_page_number(item)
-                    except Exception:
+                    except Exception:  # noqa: BLE001 - malformed PDF destination remains unresolved.
                         start_page = None
                     candidates.append(
                         {
@@ -502,16 +534,22 @@ class OutlineService:
             blocks[-1].append(page_index)
         block = max(blocks, key=lambda value: (len(value), -value[0]))
         after = block[-1] + 1
-        complete = after >= len(statuses) or ready.get(after, False) and after not in toc_pages
+        complete = (all(ready.get(page, False) for page in range(block[0]))
+                    and (after >= len(statuses) or ready.get(after, False) and after not in toc_pages))
         if not complete:
             return [], True
         candidates: list[dict] = []
         for page_index in block:
             candidates.extend(toc_pages[page_index])
-        return candidates, False
+        return named_hierarchy(candidates), False
 
     @classmethod
     def _parse_toc_page(cls, page_index: int, lines: list[dict]) -> list[dict]:
+        named = parse_named_toc(page_index, lines, cls.classification_text)
+        if (any(item['named_unit'] in ('篇', '部', '节') or
+                item['named_unit'] == '章' and not re.match(r'^第\d+章', item['title']) for item in named)
+                or named and not any(_NUMBERED.match(cls.classification_text(line['text'])) for line in lines)):
+            return named
         prepared = []
         numeric_right = 0
         for line in lines:
@@ -594,6 +632,11 @@ class OutlineService:
 
     @staticmethod
     def _kind(title: str, depth: int) -> str:
+        if AUXILIARY.fullmatch(title):
+            return 'OTHER'
+        named = NAMED.fullmatch(title)
+        if named:
+            return {'篇': 'OTHER', '部': 'OTHER', '章': 'CHAPTER', '节': 'SECTION'}[named[2]]
         if "习题" in title:
             return "EXERCISES"
         if "答案" in title or "解析" in title:
@@ -627,7 +670,7 @@ class OutlineService:
                 "parent_id": parent_id,
                 "depth": depth,
                 "order_index": order_index,
-                "kind": cls._kind(item["title"], depth),
+                "kind": item.get('kind', cls._kind(item["title"], depth)),
             }
             nodes.append(node)
             stack[depth] = node_id
@@ -636,30 +679,89 @@ class OutlineService:
         return nodes
 
     def _apply_safe_targets(self, revision_id: str, nodes: list[dict]) -> None:
-        label_targets = self.page_labels.repository.resolve_labels(revision_id)
-        for node in nodes:
-            if node["evidence"]["source"] == "TOC":
-                node["start_page"] = label_targets.get(node["printed_label_hint"])
         targets = self._safe_targets(nodes)
         for node in nodes:
             node["start_page"] = targets[node["outline_node_id"]]
 
     def _safe_targets(self, nodes: list[dict]) -> dict[str, int | None]:
+        toc_end = max((n.get('evidence', {}).get('pdf_page_index', -1)
+                       for n in nodes if n.get('evidence', {}).get('source') == 'TOC'), default=-1)
         label_targets = self.page_labels.repository.resolve_labels(
-            self._revision_id_from_nodes(nodes)
+            self._revision_id_from_nodes(nodes), after_page=toc_end
         ) if nodes and "book_source_revision_id" in nodes[0] else None
+        ready_pages = None
         targets: dict[str, int | None] = {}
         previous: dict[str | None, int] = {}
         for node in self._topological(nodes):
             page = node.get("start_page")
             if label_targets is not None and node.get("evidence", {}).get("source") == "TOC":
                 page = label_targets.get(node.get("printed_label_hint"))
+                # Some chapter openers suppress their printed page number. One adjacent
+                # measured label plus the actual heading confirms that physical target;
+                # never persist an extrapolated PageLabel or invent logical nodes.
+                hint = node.get('printed_label_hint') or ''
+                if page is None and node['kind'] == 'CHAPTER' and hint.isdecimal():
+                    candidates = set()
+                    for delta in (-1, 1):
+                        neighbour = label_targets.get(str(int(hint) + delta))
+                        if neighbour is not None and neighbour - delta > toc_end:
+                            candidates.add(neighbour - delta)
+                    if len(candidates) == 1:
+                        candidate = candidates.pop()
+                        if ready_pages is None:
+                            _, ready_pages = self.repository.ready_snapshot(self._revision_id_from_nodes(nodes))
+                        lines = [line for line in ready_pages.get(candidate, [])
+                                 if .08 <= min(point[1] for point in line['quad']) < .5]
+                        match = self._match_heading({**node, 'start_page': candidate}, lines, (candidate, 0.))
+                        if match is not None:
+                            page = candidate
+                            label_targets[hint] = candidate
+                if page is None and (node['kind'] == 'CHAPTER' or node['kind'] == 'OTHER'
+                                     and node.get('parent_id') is None and not NAMED.match(node['title'])):
+                    if ready_pages is None:
+                        _, ready_pages = self.repository.ready_snapshot(self._revision_id_from_nodes(nodes))
+                    target = self._heading_parts(node['title'])
+                    exact_pages = []
+                    for candidate, page_lines in ready_pages.items():
+                        if candidate <= toc_end:
+                            continue
+                        if any(.08 < min(p[1] for p in line['quad']) < .5
+                               and target in self._heading_variants(line, page_lines) for line in page_lines):
+                            exact_pages.append(candidate)
+                    if len(exact_pages) == 1:
+                        page = exact_pages[0]
             parent = node.get("parent_id")
             if page is not None and parent in previous and page < previous[parent]:
                 page = None
             if page is not None:
                 previous[parent] = page
             targets[node["outline_node_id"]] = page
+        # TOC labels are OCR hints, not authority over actual body headings. Search
+        # only within the evidenced owner chapter, never a whole-book fuzzy match.
+        ordered = self._topological(nodes)
+        chapters = [n for n in ordered if n['kind'] == 'CHAPTER']
+        if chapters and toc_end >= 0:
+            if ready_pages is None:
+                _, ready_pages = self.repository.ready_snapshot(self._revision_id_from_nodes(nodes))
+            for chapter in chapters:
+                start = targets[chapter['outline_node_id']]
+                boundary = next_chapter_boundary(ordered, chapter)
+                end = targets.get(boundary['outline_node_id']) if boundary else max(ready_pages, default=-1) + 1
+                if start is None or end is None or end <= start:
+                    continue
+                lines = [line for p in range(start, end) for line in ready_pages.get(p, [])
+                         if .08 < min(pt[1] for pt in line['quad']) < .93]
+                after = (start, 0.)
+                for node in ordered:
+                    if node.get('parent_id') != chapter['outline_node_id'] or node.get('evidence', {}).get('source') != 'TOC':
+                        continue
+                    hint = targets[node['outline_node_id']]
+                    match = self._match_heading({**node, 'start_page': hint}, lines, after)
+                    if match is None:
+                        match = self._match_heading({**node, 'start_page': None}, lines, after)
+                    if match is not None:
+                        targets[node['outline_node_id']] = match['page']
+                        after = (match['page'], match['start_y'])
         return targets
 
     @staticmethod

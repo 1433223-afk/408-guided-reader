@@ -1,5 +1,10 @@
 # R2 印刷第 3 页 OCR 文字不可选问题报告
 
+> 后续回归说明（2026-09-18）：本报告的单页修正有效，但最初 sparse-line retry 实现
+> 遗漏了 RapidOCR 跨调用状态，导致新书后续页 OCR 失败。原因、补丁与恢复结果见
+> [OCR 引擎状态泄漏修复](R2_OCR_ENGINE_STATE_LEAK_CORRECTION.md)。下述历史单页测试
+> 不代表当时已验证同引擎连续多页安全。
+
 ## 结论
 
 问题已修复并完成真实页面验证。
@@ -170,4 +175,3 @@ RapidOCR 字段仍只存在于 adapter 内部。持久化 contract、cell 匿名
 - 主 Development Report：`docs/development-reports/R2_SELECTABLE_BOOK.md`
 - 纵排文字选择修复：commit `f14c51971728fbe6fecba41372786ccd38e25deb`
 - 本次 OCR 稀疏行修复：commit `8fe1c6d729bd4d2a4772546e675066cd7a40cf8a`
-

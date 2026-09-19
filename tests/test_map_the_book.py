@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
 from io import BytesIO
 
+from conftest import make_pdf
 from pypdf import PdfWriter
 
 from reader_service.foundation import (
@@ -13,8 +13,6 @@ from reader_service.foundation import (
     PageLabelService,
 )
 from reader_service.outline import OutlineRepository, OutlineService
-
-from conftest import make_pdf
 
 
 class UnusedEngine:
@@ -63,6 +61,21 @@ def bookmarked_pdf():
     output = BytesIO()
     writer.write(output)
     return output.getvalue()
+
+
+def test_stored_directory_read_never_rebuilds_evidence(service, monkeypatch):
+    pdf = bookmarked_pdf()
+    revision = service.intake(BytesIO(pdf), content_length=len(pdf), filename='stored.pdf')['book']['active_revision']['id']
+    _, _, _, outline = services(service)
+    expected = outline.bootstrap(revision)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Reading a published directory must not scan evidence')
+    monkeypatch.setattr(outline, 'bootstrap', forbidden)
+    monkeypatch.setattr(outline, '_safe_targets', forbidden)
+    monkeypatch.setattr(outline.page_labels, 'infer', forbidden)
+    actual = outline.stored_snapshot(revision)
+    assert actual['nodes'] == expected['nodes']
+    assert actual['page_labels']['labels'] == expected['page_labels']['labels']
 
 
 def test_bookmarks_mint_stable_tree_and_book_delete_cascades(service):
@@ -234,3 +247,79 @@ def test_schema_has_exact_outline_and_page_label_contract_fields(service):
         "book_source_revision_id", "pdf_page_index", "printed_label", "confidence",
         "method", "evidence_ref",
     } == label_fields
+
+
+def test_nested_chapter_is_learning_owner_not_its_part(service):
+    from types import SimpleNamespace
+
+    from reader_service.knowledge import KnowledgeRepository, KnowledgeService
+
+    writer = PdfWriter()
+    for _ in range(6):
+        writer.add_blank_page(width=612, height=792)
+    part = writer.add_outline_item('第一篇 基础', 0)
+    chapter = writer.add_outline_item('第一章 概述', 1, parent=part)
+    writer.add_outline_item('第一节 定义', 1, parent=chapter)
+    writer.add_outline_item('第二章 后续', 4, parent=part)
+    stream = BytesIO(); writer.write(stream); payload = stream.getvalue()
+    revision = service.intake(BytesIO(payload), content_length=len(payload), filename='parts.pdf')['book']['active_revision']
+    _repository, foundation, _labels, outline = services(service)
+    nodes = outline.bootstrap(revision['id'])['nodes']
+    chapter = next(n for n in nodes if n['title'] == '第一章 概述')
+    assert chapter['kind'] == 'CHAPTER' and chapter['parent_id'] is not None
+    assert nodes[0]['kind'] == 'OTHER'
+    repository = KnowledgeRepository(service.database)
+    assert repository.snapshot(revision['id'], chapter['outline_node_id'])['status'] == 'NOT_PREPARED'
+    knowledge = KnowledgeService(service, foundation, outline, repository, SimpleNamespace(active_provider='deepseek'))
+    assert knowledge.required_page_range(revision['id'], chapter['outline_node_id']) == (1, 4)
+    foundation.ensure_revision(revision['id'])
+    for page in range(6):
+        publish(_repository, revision['id'], page, [
+            line('第一章 概述' if page == 1 else '第二章 后续', y=.1),
+            line('第一节 定义', y=.2), line('正文', y=.3),
+        ])
+    resolved = outline.resolve_chapter_physical(revision['id'], chapter['outline_node_id'])
+    assert resolved['page_end_exclusive'] == 4
+    assert resolved['chapter']['end_page'] == 4
+    assert all(n['parent_id'] == chapter['outline_node_id'] for n in resolved['nodes'][1:])
+
+
+def test_directory_waits_for_unseen_prefix_even_if_later_toc_block_is_ready(service):
+    pdf = make_pdf(((612, 792),) * 4)
+    revision = service.intake(BytesIO(pdf), content_length=len(pdf), filename='prefix.pdf')['book']['active_revision']
+    repository, foundation, _labels, outline = services(service)
+    foundation.ensure_revision(revision['id'])
+    publish(repository, revision['id'], 1, [
+        line('第一章 基础……(1)', y=.2), line('第一节 定义……(1)', y=.3),
+        line('第二节 应用……(2)', y=.4),
+    ])
+    publish(repository, revision['id'], 2, [line('正文')])
+    pending = outline.bootstrap(revision['id'])
+    assert pending['waiting_for_toc_completion'] and not pending['nodes']
+    publish(repository, revision['id'], 0, [line('封面')])
+    ready = outline.bootstrap(revision['id'])
+    assert len(ready['nodes']) == 3
+    assert not ready['waiting_for_toc_completion']
+
+
+def test_toc_targets_exclude_restarted_front_labels_and_require_opener_heading(service):
+    pdf = make_pdf(((612, 792),) * 7)
+    revision = service.intake(BytesIO(pdf), content_length=len(pdf), filename='restarted-labels.pdf')['book']['active_revision']
+    repository, foundation, labels, outline = services(service)
+    foundation.ensure_revision(revision['id'])
+    for page in range(7):
+        publish(repository, revision['id'], page, [
+            DetectedLine(text='第一章', confidence=.99, cells=(),
+                         quad=((.1,.12),(.222,.12),(.222,.15),(.1,.15))),
+            line('概述', x=.303, y=.12),
+        ] if page == 4 else [])
+    labels.set_manual(revision['id'], 1, '3')  # TOC's own page 3 is not body page 3.
+    labels.set_manual(revision['id'], 5, '4')
+    nodes = outline._build_nodes(revision['id'], 'TOC', [{
+        'key': 'chapter:1', 'title': '第一章 概述', 'kind': 'CHAPTER', 'depth': 0,
+        'printed_label_hint': '3', 'start_page': None, 'confidence': .99,
+        'evidence': {'source': 'TOC', 'pdf_page_index': 2, 'line_ordinals': [0]},
+    }])
+    assert outline._safe_targets(nodes)[nodes[0]['outline_node_id']] == 4
+    nodes[0]['title'] = '第一章 完全不同'
+    assert outline._safe_targets(nodes)[nodes[0]['outline_node_id']] is None

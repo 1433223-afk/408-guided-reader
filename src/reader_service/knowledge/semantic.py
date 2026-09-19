@@ -9,9 +9,10 @@ import unicodedata
 MAX_EVIDENCE_UNIT_CHARACTERS = 900
 SOFT_EVIDENCE_UNIT_CHARACTERS = 160
 MAX_SHORT_HEADING_CHARACTERS = 48
-# Invocation capacity, not a semantic splitting threshold. Real Chapter 4 subsection
-# 4.3.1 contains 6,485 characters; retain one complete judgment for that subsection.
-MAX_SEMANTIC_WINDOW_CHARACTERS = 9_600
+# Local invocation safety bound, not a semantic splitting threshold or a claim
+# about provider context size. Keep long real Sections whole (including the
+# 13,631-character Insurance Section); transport/provider limits still fail closed.
+MAX_SEMANTIC_WINDOW_CHARACTERS = 48_000
 MAX_REVIEW_EXCERPT_CHARACTERS = 60
 MAX_PAGE_TOP_FURNITURE_Y = 0.10
 MIN_PAGE_BOTTOM_CONTINUATION_Y = 0.84

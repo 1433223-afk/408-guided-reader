@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
+import { once } from "node:events";
 import path from "node:path";
 import { chromium } from "playwright-core";
 
@@ -28,6 +29,7 @@ let serviceErrors = "";
 service.stderr.on("data", (chunk) => { serviceErrors += chunk.toString(); });
 
 let browser;
+let testPage;
 try {
   const url = await readyUrl(service);
   browser = await chromium.launch({ executablePath, headless: process.env.READER_HEADLESS !== "0" });
@@ -36,6 +38,9 @@ try {
     permissions: ["clipboard-read", "clipboard-write"],
   });
   const page = await context.newPage();
+  testPage = page;
+  page.on('pageerror', error => console.error('Reader page error:', error.message));
+  page.setDefaultTimeout(30_000);
   await page.goto(url);
   await page.locator("#import-input").setInputFiles(pdfPath);
   await page.locator("#reader").waitFor({ state: "visible" });
@@ -86,7 +91,8 @@ try {
   // Reload proves persisted geometry, not an in-memory OCR response, rebuilds the overlay.
   const beforeReload = JSON.stringify(line.quad);
   await page.reload();
-  await page.locator(".book-card").click();
+  await page.getByRole("button", { name: /^打开教材 / }).click();
+  await page.getByRole("button", { name: /^继续 PDF/ }).click();
   await page.locator('.page[data-index="28"] canvas').waitFor({ state: "visible", timeout: 30_000 });
   await page.locator('.page[data-index="28"] .text-overlay').waitFor({ state: "attached", timeout: 15_000 });
   const reloaded = await page.evaluate(async ({ revisionId }) => (
@@ -119,7 +125,8 @@ try {
   // left-to-right reading order, and expose a native DOM range for the normal
   // browser context-menu copy path.
   await page.reload();
-  await page.locator(".book-card").click();
+  await page.getByRole("button", { name: /^打开教材 / }).click();
+  await page.getByRole("button", { name: /^继续 PDF/ }).click();
   await page.locator("#page-number").fill("12");
   await page.locator("#page-number").press("Enter");
   await page.locator('.page[data-index="11"] canvas').waitFor({ state: "visible", timeout: 30_000 });
@@ -229,10 +236,20 @@ try {
       path.join(artifacts, "r2-polished-body-selection.png"),
     ],
   }));
+} catch (error) {
+  if (testPage) {
+    await testPage.screenshot({path:path.join(artifacts,'r2-failure.png')}).catch(()=>{});
+    console.error((await testPage.locator('body').innerText().catch(()=>'' )).slice(0,2000));
+  }
+  throw error;
 } finally {
   if (browser) await browser.close();
-  service.kill();
-  await rm(dataDir, { recursive: true, force: true });
+  if (service.exitCode === null && service.signalCode === null) {
+    const stopped = once(service, "exit");
+    service.kill();
+    await stopped;
+  }
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   if (serviceErrors.trim()) process.stderr.write(serviceErrors);
 }
 

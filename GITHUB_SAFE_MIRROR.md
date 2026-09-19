@@ -83,3 +83,20 @@ this synchronization does not claim those limitations are resolved and starts no
 Mirror verification for this update: 53 targeted Python tests passed (Foundation, RapidOCR,
 Knowledge Map and Outline); all 53 JavaScript tests passed. No live provider call or personal
 Library mutation was required. Real-material results remain those reported by the source work.
+
+## Bug-fix snapshot update — 2026-09-19
+
+Updated 39 source, test, authority and development-evidence files from personal source commit
+`9e25aa8df8f6eb15ab21cb020e4a28d66c5dcbe8`. This transfers reviewed file contents only; the
+personal repository history and `personal-v0.1` tag remain local. The update isolates mutable OCR
+engine state, validates and repairs directory evidence across textbook hierarchies, preserves
+saved directory/KP assets when reopening books, and supports long KP sections without rebuilding
+completed preparation.
+
+Mirror verification for this update: the portable Python suite passed **378 tests** with **2
+external-fixture skips**, and the JavaScript suite passed **58/58 tests**. `git diff --check`
+passed. The changed-path audit found no PDF, database, backup, secret, credential, runtime output,
+cache, screenshot or excluded UI master. The added directory fixture is a bounded, hash-referenced
+test fixture; no PDF, OCR blob or personal learning state is included. Real-material and browser
+results remain those recorded in the transferred development reports; this synchronization made
+no provider call and starts no deployment.

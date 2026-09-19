@@ -2,6 +2,29 @@
 
 ## Goal
 
+### 2026-09-19 accepted user-use correction (supersedes conflicting historical UI details below)
+
+The user requested PDF-only page display, complete TOC entries and a front/back “其他内容” group,
+then explicitly approved preservation-grade migration after existing learning assets were discovered.
+Use bounded local OCR quality passes for leader-rich layouts, parse chapter extras/back matter,
+verify physical targets against body headings, and preserve all IDs/owners/dependent records during
+an explicit backed-up additive repair. Mark affected published maps for review without removing them.
+Read Product §9.5 and Implementation §11.4 in addition to the existing authority list for this delta.
+Acceptance includes the six real Insurance TOC pages, all 199 navigable entries, asset equality,
+other-book isolation, normal Reader/selection/reload and crash-recovery regression. No remote AI
+generation, destructive KP regeneration or new dependency is part of this correction.
+
+### 2026-09-18 same-capability reliability correction
+
+The user explicitly authorized framework/contract adjustments needed to make OCR and directory
+construction work across books, with rollback protection. This delta rejects page-index pseudo
+bookmarks, supports explicit Chinese part/chapter/section hierarchy, guards incomplete evidence,
+and keeps nested chapters as learning owners. It permits a backed-up offline repair of an unowned
+source revision (identity revision advanced, OCR changes through existing Foundation publication).
+It does not authorize silent replacement of user assets. Original PDF reading stays independent.
+The original Phase closure below is historical; this delta's tests, real-use evidence and remaining
+review/user-retest gates are recorded in `docs/development-reports/OCR_OUTLINE_EVIDENCE_CORRECTION.md`.
+
 Give the book its own directory. Establish the textbook's logical Chapter/Section tree (Outline Pass 1)
 plus per-page printed-label mapping from evidence already captured, and let the user navigate the real
 PDF through it.

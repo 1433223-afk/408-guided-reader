@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import threading
 import time
+from contextlib import contextmanager
 from io import BytesIO
-
-from reader_service.foundation import DetectedLine, FoundationRepository, FoundationService
-from reader_service.jobs import JobRepository, PreparationCoordinator
 
 from conftest import make_pdf
 
+from reader_service.foundation import (
+    DetectedLine,
+    FoundationRepository,
+    FoundationService,
+)
+from reader_service.jobs import JobRepository, PreparationCoordinator
 
 LINE = DetectedLine(
     quad=((0.1, 0.1), (0.5, 0.1), (0.5, 0.2), (0.1, 0.2)),
@@ -43,6 +47,29 @@ def test_conditional_claim_has_one_winner(service):
     for thread in threads:
         thread.join()
     assert sum(claim is not None for claim in claims) == 1
+
+
+def test_priority_refresh_releases_read_snapshot_before_writing(service):
+    revision = import_revision(service, 3)
+    jobs = JobRepository(service.database)
+    jobs.enqueue_pages(revision["id"], 3, 1)
+
+    class ConcurrentDatabase:
+        @contextmanager
+        def connect(self):
+            with service.database.connect() as connection:
+                class Connection:
+                    def execute(self, sql, parameters=()):
+                        cursor = connection.execute(sql, parameters)
+                        if sql.startswith("SELECT id, page_start"):
+                            # A worker commits while the scheduling SELECT is still live.
+                            with service.database.connect() as writer:
+                                writer.execute("UPDATE jobs SET attempts = attempts + 1")
+                        return cursor
+                yield Connection()
+
+    JobRepository(ConcurrentDatabase()).prioritize(revision["id"], {2}, 2)
+    assert jobs.claim()["page_start"] == 2
 
 
 def test_recovery_skips_ready_page_and_reprocesses_only_inflight_page(service):
@@ -114,3 +141,25 @@ def test_failed_page_retry_is_explicit_and_requeues_only_that_page(service):
     assert repository.page_status(revision["id"], 0) == "FAILED"
     assert jobs.claim()["page_start"] == 0
     assert coordinator.retry_page(revision["id"], 0) is False
+
+
+def test_ready_book_reopen_never_scans_outline_or_enqueues_new_version(service):
+    from types import SimpleNamespace
+
+    revision = import_revision(service, 2)
+    repository = FoundationRepository(service.database)
+    repository.ensure_pages(revision['id'], 2, 1)
+    for page in range(2):
+        repository.mark_preparing(revision['id'], page)
+        repository.publish_page(revision['id'], page, route='OCR', foundation_version=1,
+                                engine_profile='fixture:v1', lines=[LINE])
+    foundation = FoundationService(service, repository, lambda: None)
+    jobs = JobRepository(service.database)
+    def forbidden(*args):
+        raise AssertionError('Viewport scheduling must not scan Outline')
+    coordinator = PreparationCoordinator(service, foundation, jobs,
+                                         outline=SimpleNamespace(bootstrap=forbidden))
+    for page in [0, 1, 0]:
+        coordinator.schedule_revision(revision['id'], {page}, page)
+    assert jobs.claim() is None
+    assert all(p['status'] == 'READY' for p in foundation.statuses(revision['id']))

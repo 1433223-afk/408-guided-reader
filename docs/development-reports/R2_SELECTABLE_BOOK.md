@@ -1,5 +1,9 @@
 # R2 — Selectable Book Development Report
 
+后续 UAT correction（2026-09-18）：新上传教材暴露的 OCR 引擎状态泄漏及准备调度并发
+问题，详见 [R2 OCR 引擎状态泄漏修复](R2_OCR_ENGINE_STATE_LEAK_CORRECTION.md)。
+历史人工验收/ZCode 关闭事实保留，不自动等同于此后补丁的独立验收。
+
 ## Result
 
 `READY_FOR_R2_CLOSURE: YES` — scanned textbook pages prepare progressively in the background. A prepared

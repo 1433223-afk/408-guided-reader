@@ -13,12 +13,12 @@ from dataclasses import dataclass
 from reader_service.agent_runtime import (
     ProviderCompletion,
     ProviderFailure,
-    ProviderFailureKind,
     ProviderRuntimeSet,
 )
 from reader_service.foundation import FoundationService
 from reader_service.library import LibraryService
 from reader_service.outline import ChapterResolutionError, OutlineService
+from reader_service.outline.evidence import chapter_boundary
 
 from .repository import ChapterRegenerationBlocked, KnowledgeRepository
 from .semantic import (
@@ -31,7 +31,6 @@ from .semantic import (
     semantic_window_payload,
     validate_semantic_output,
 )
-
 
 MAX_STRUCTURED_ATTEMPTS = 3
 MAX_SAFE_REVIEW_DETAIL_CHARACTERS = 240
@@ -180,19 +179,13 @@ class KnowledgeService:
         chapter = next(
             (node for node in ordered if node["outline_node_id"] == chapter_id), None
         )
-        if chapter is None or chapter["kind"] != "CHAPTER" or chapter["parent_id"] is not None:
-            raise ValueError("Knowledge Map preparation requires one top-level Chapter")
+        if chapter is None or chapter["kind"] != "CHAPTER":
+            raise ValueError("Knowledge Map preparation requires one Chapter")
         if chapter["start_page"] is None:
             raise ValueError("Chapter has no safe start page")
-        next_root = next(
-            (
-                node for node in ordered
-                if node["parent_id"] is None
-                and node["order_index"] > chapter["order_index"]
-                and node["start_page"] is not None
-            ),
-            None,
-        )
+        next_root = chapter_boundary(ordered, chapter)
+        if next_root is not None and next_root.get('start_page') is None:
+            raise ValueError('Next chapter boundary has no safe start page')
         revision = self.library.revision(revision_id)
         end = int(next_root["start_page"]) if next_root else int(revision["page_count"])
         return int(chapter["start_page"]), end
@@ -639,6 +632,11 @@ class KnowledgeService:
             )
         return results, next(iter(identities))
 
+    def _window_output_budget(self, window: dict) -> int:
+        # Every unit ID must be accounted for even when absorbed/non-KP. This
+        # reserves transport capacity, never forces a number of semantic targets.
+        return min(16_384, max(self.generator_max_tokens, 1024 + 64 * len(window["units"])))
+
     def _classify_window(
         self,
         window: dict,
@@ -676,7 +674,7 @@ class KnowledgeService:
                         f"kp-semantic:{attempt_id}:{window['window_id']}:"
                         f"structured-{structured_attempt}"
                     ),
-                    max_tokens=self.generator_max_tokens,
+                    max_tokens=self._window_output_budget(window),
                     attempt_observer=observer,
                     retain_request_body=False,
                     thinking_mode=(
