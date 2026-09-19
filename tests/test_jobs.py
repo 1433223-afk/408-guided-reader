@@ -141,3 +141,25 @@ def test_failed_page_retry_is_explicit_and_requeues_only_that_page(service):
     assert repository.page_status(revision["id"], 0) == "FAILED"
     assert jobs.claim()["page_start"] == 0
     assert coordinator.retry_page(revision["id"], 0) is False
+
+
+def test_ready_book_reopen_never_scans_outline_or_enqueues_new_version(service):
+    from types import SimpleNamespace
+
+    revision = import_revision(service, 2)
+    repository = FoundationRepository(service.database)
+    repository.ensure_pages(revision['id'], 2, 1)
+    for page in range(2):
+        repository.mark_preparing(revision['id'], page)
+        repository.publish_page(revision['id'], page, route='OCR', foundation_version=1,
+                                engine_profile='fixture:v1', lines=[LINE])
+    foundation = FoundationService(service, repository, lambda: None)
+    jobs = JobRepository(service.database)
+    def forbidden(*args):
+        raise AssertionError('Viewport scheduling must not scan Outline')
+    coordinator = PreparationCoordinator(service, foundation, jobs,
+                                         outline=SimpleNamespace(bootstrap=forbidden))
+    for page in [0, 1, 0]:
+        coordinator.schedule_revision(revision['id'], {page}, page)
+    assert jobs.claim() is None
+    assert all(p['status'] == 'READY' for p in foundation.statuses(revision['id']))

@@ -2,6 +2,27 @@
 
 ## Current result — 2026-09-19 populated-book correction
 
+### Follow-up: reopen / selection / KP loading UAT fix
+
+用户随后报告重开又准备文字、PDF9后不可选、KP一直读取。本次检查时364页均READY，
+只有1个已完成Chapter job和25个已有KP，没有全书KP生成。PDF10 overlay可返回74行。
+确认 viewport POST 同步触发 Outline bootstrap（单次safe-target实测2.6秒，一次bootstrap两次），
+前端重开先清状态并等待该POST才订阅READY；overlay还等待批注，读取失败静默退出，GET无超时。
+这些为真实代码缺陷，但浏览器工具不可用，未声称捕获用户现场所有卡住原因。
+
+修正：viewport scheduling不再刷新目录；已READY全书不新排任务；worker不因READY短路重算目录；
+状态SSE不负责排任务。前端先GET已存状态，全READY不POST/不开SSE，翻页不调准备；
+页面文字可独立读取，不等待批注。GET限时15秒，文字读取失败提供页内重试，KP失败显示重试，
+同章读取去重，KP生成仍只在显式点击时POST。保留失败OCR的显式重试观察路径。
+UI/UX技能用于区分“读取”和“生成”、失败反馈；无数据迁移/重OCR/模型调用。
+
+必要验证：jobs定向6 passed；读取/章节入口JS合计5 passed；真实29页R2选择/复制/reload PASS。
+新增批注阻塞单测初次缺事件handler桩，补齐后通过。用户要求不跑全量后立即中止Python全量，
+不计PASS；此前已结束的JS全量57 passed，未再启动全量。交付后由用户人工验收。
+重启8767后实际API：PDF10/16 overlay READY（74/29行），已有KP READY25；
+viewport schedule约11ms且job增量0（单次本机观测，不是性能SLA）。用户材料和KP未重生成。
+当前源码checkpoint不代表本轮UAT已PASS；请完整刷新后测试重开、PDF10/16选择、KP读取。
+
 已修复并部署至 `http://127.0.0.1:8767/`：目录/阅读器显示 PDF 页数；补齐教材自己的
 引言、总结、练习和前后附属内容；前后内容归入“其他内容”。当前《保险学》为 **205 节点、
 199 个可导航页目标**，而不是下方上一 checkpoint 的 137 节点。

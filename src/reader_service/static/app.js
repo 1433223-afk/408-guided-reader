@@ -153,6 +153,7 @@ const inline = createInlineUI(teachingUiOptions);
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
+    signal: options.signal || ((!options.method || options.method === "GET") ? AbortSignal.timeout(15000) : undefined),
     credentials: "same-origin",
     headers: { "X-Reader-Token": launchToken, "X-Assistant-View": "current", ...(options.headers || {}) },
   });
@@ -766,24 +767,38 @@ function currentNormalizedOffset(page) {
 async function startPreparation() {
   if (!state.revision) return;
   const revisionId = state.revision.id;
+  const generation = state.generation;
+  const current = () => state.revision?.id === revisionId && state.generation === generation;
   try {
-    await api(`/api/revisions/${revisionId}/preparation`, {
+    const saved = await api(`/api/revisions/${revisionId}/preparation`);
+    if (!current()) return;
+    applyPreparationStatuses(saved.pages);
+    if (saved.pages.length && saved.pages.every(p => p.status === "READY")) return;
+    if (saved.pages.some(p => !["READY", "FAILED"].includes(p.status))) await api(`/api/revisions/${revisionId}/preparation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ current_page: state.currentPage, visible_pages: [state.currentPage] }),
+      signal: AbortSignal.timeout(15000),
     });
   } catch (error) {
-    elements["preparation-status"].textContent = "文字不可用";
+    if (!current()) return;
+    elements["preparation-status"].textContent = "文字状态读取失败，点击重试";
+    elements["preparation-status"].onclick = () => startPreparation();
     elements["preparation-status"].className = "preparation-status failed";
     return;
   }
-  if (state.revision?.id !== revisionId) return;
+  if (!current()) return;
+  state.eventSource?.close();
   const stream = new EventSource(`/api/revisions/${revisionId}/preparation/events`, { withCredentials: true });
   state.eventSource = stream;
   stream.addEventListener("pages", (event) => {
-    if (state.revision?.id !== revisionId) return;
+    if (!current()) return;
     const payload = JSON.parse(event.data);
     applyPreparationStatuses(payload.pages);
+    if (payload.pages.length && payload.pages.every(p => p.status === "READY")) {
+      stream.close();
+      if (state.eventSource === stream) state.eventSource = null;
+    }
   });
   stream.onerror = () => {
     // EventSource reconnects after the bounded server stream closes. Reading and
@@ -799,11 +814,13 @@ function closePreparationStream() {
   state.overlayData.clear();
   state.annotationData.clear();
   clearTimeout(state.priorityTimer);
-  elements["preparation-status"].textContent = "正在准备文字…";
+  elements["preparation-status"].textContent = "正在读取已保存文字层…";
+  elements["preparation-status"].onclick = null;
   elements["preparation-status"].className = "preparation-status";
 }
 
 function applyPreparationStatuses(pages) {
+  elements["preparation-status"].onclick = null;
   for (const page of pages) {
     const previous = state.preparation.get(page.pdf_page_index);
     state.preparation.set(page.pdf_page_index, page);
@@ -1273,7 +1290,7 @@ function renderSearchMatch(index, overlay = elements.pages.children[index]?.quer
 function syncPagePreparationUi(index) {
   const wrapper = elements.pages.children[index];
   if (!wrapper) return;
-  wrapper.querySelector(".preparation-retry")?.remove();
+  wrapper.querySelector(".preparation-retry:not(.overlay-retry)")?.remove();
   if (state.preparation.get(index)?.status !== "FAILED" || !wrapper.querySelector("canvas")) return;
   const retry = document.createElement("button");
   retry.type = "button";
@@ -1304,7 +1321,7 @@ function updatePreparationLabel() {
   const failed = pages.filter((page) => page.status === "FAILED").length;
   const output = elements["preparation-status"];
   if (!pages.length) {
-    output.textContent = "正在准备文字…";
+    output.textContent = "正在读取已保存文字层…";
     output.className = "preparation-status";
   } else if (ready + failed === pages.length) {
     output.textContent = failed ? `${ready} 页文字层 · ${failed} 页失败` : "文字层已生成";
@@ -1319,6 +1336,8 @@ function updatePreparationLabel() {
 function schedulePreparationPriority(first, last) {
   if (!state.revision) return;
   clearTimeout(state.priorityTimer);
+  if (state.preparation.size === state.revision.page_count
+      && [...state.preparation.values()].every(p => ["READY", "FAILED"].includes(p.status))) return;
   const revisionId = state.revision.id;
   state.priorityTimer = setTimeout(() => {
     if (state.revision?.id !== revisionId) return;
@@ -1328,6 +1347,7 @@ function schedulePreparationPriority(first, last) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ current_page: state.currentPage, visible_pages: visiblePages }),
+      signal: AbortSignal.timeout(10000),
     }).catch(() => {});
   }, 180);
 }
@@ -2933,33 +2953,43 @@ async function retrySavedExplanationReview(annotation, button) {
   }
 }
 
+const overlayRequests = new WeakSet();
 async function ensureOverlay(index) {
-  if (state.preparation.get(index)?.status !== "READY") return;
+  const wrapper = elements.pages.children[index];
+  if (!wrapper?.querySelector("canvas") || wrapper.querySelector(".text-overlay") || overlayRequests.has(wrapper)) return;
+  const generation = state.generation;
+  overlayRequests.add(wrapper);
+  try {
+    await loadOverlay(index, generation);
+  } catch (_error) {
+    if (generation !== state.generation || !wrapper.isConnected) return;
+    if (!wrapper.querySelector(".overlay-retry")) {
+      const retry = document.createElement("button");
+      retry.className = "preparation-retry overlay-retry";
+      retry.textContent = "文字层读取失败 · 重试";
+      retry.onclick = () => { retry.remove(); ensureOverlay(index); };
+      wrapper.append(retry);
+    }
+  } finally {
+    overlayRequests.delete(wrapper);
+  }
+}
+
+async function loadOverlay(index, generation) {
+  const status = state.preparation.get(index)?.status;
+  if (status && status !== "READY") return;
   const revisionId = state.revision?.id;
   if (!revisionId) return;
   const wrapper = elements.pages.children[index];
   if (!wrapper?.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
   let data = state.overlayData.get(index);
   if (!data) {
-    try {
       const payload = await api(`/api/revisions/${revisionId}/overlay?page=${index}`);
-      if (payload.page.status !== "READY" || state.revision?.id !== revisionId) return;
+      if (payload.page.status !== "READY" || state.revision?.id !== revisionId || state.generation !== generation) return;
       data = payload.page;
       state.overlayData.set(index, data);
-    } catch (_error) {
-      return;
-    }
   }
-  let annotations = state.annotationData.get(index);
-  if (!annotations) {
-    try {
-      annotations = await refreshAnnotationPage(index);
-      if (state.revision?.id !== revisionId) return;
-    } catch (_error) {
-      // A marks-list failure must not take away R2's selectable text overlay.
-      annotations = [];
-    }
-  }
+  // Mount selectable text before fetching optional annotations.
   if (!wrapper.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
   const overlay = document.createElement("div");
   overlay.className = "text-overlay";
@@ -2981,10 +3011,14 @@ async function ensureOverlay(index) {
   overlay.addEventListener("pointercancel", finishSelection);
   overlay.addEventListener("contextmenu", openSelectionContextMenu);
   wrapper.append(overlay);
+  wrapper.querySelector(".overlay-retry")?.remove();
   inline.renderPage(index);
   renderAnnotations(index, overlay);
   renderSearchMatch(index, overlay);
   if (index === state.currentPage) updateMarksPanel();
+  if (!state.annotationData.has(index)) refreshAnnotationPage(index).then(() => {
+    if (state.generation === generation && overlay.isConnected) renderAnnotations(index, overlay);
+  }).catch(() => {});
 }
 
 function renderAnnotations(index, overlay = elements.pages.children[index]?.querySelector(".text-overlay")) {

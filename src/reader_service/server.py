@@ -1398,10 +1398,7 @@ def handler_factory(
             self, coordinator: PreparationCoordinator, revision_id: str
         ) -> None:
             try:
-                revision = coordinator.foundation.ensure_revision(revision_id)
-                coordinator.jobs.enqueue_pages(
-                    revision_id, revision["page_count"], revision["foundation_version"]
-                )
+                coordinator.foundation.ensure_revision(revision_id)
             except LookupError as exc:
                 self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                 return

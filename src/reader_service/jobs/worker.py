@@ -70,11 +70,13 @@ class PreparationCoordinator:
         # a second persistence authority.
         with self._dispatch_lock:
             self.jobs.cancel_other_revisions(revision_id)
-            self.jobs.enqueue_pages(
-                revision_id, revision["page_count"], revision["foundation_version"]
-            )
+            if any(p["status"] != "READY" for p in self.foundation.statuses(revision_id)):
+                self.jobs.enqueue_pages(
+                    revision_id, revision["page_count"], revision["foundation_version"]
+                )
+                self.jobs.complete_already_ready_pages(revision_id, 0, revision["page_count"])
             self.jobs.prioritize(revision_id, visible_pages or {current_page}, current_page)
-        self._refresh_map(revision_id)
+        # Viewport scheduling must never wait for Outline evidence scanning.
         self._wake.set()
 
     def cancel_revision(self, revision_id: str) -> None:
@@ -155,8 +157,9 @@ class PreparationCoordinator:
                 if self._stop.is_set() or self.jobs.cancellation_requested(job["id"]):
                     cancelled = True
                     break
+                was_ready = self.foundation.repository.page_status(job["book_source_revision_id"], page_index) == "READY"
                 status = self.foundation.prepare_page(job["book_source_revision_id"], page_index)
-                if status == "READY" and (
+                if not was_ready and status == "READY" and (
                     page_index < 20 or page_index % 16 == 15
                 ):
                     self._refresh_map(job["book_source_revision_id"])

@@ -495,10 +495,10 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     if(!points.length) body.append(node('p', '本章暂无已发布知识点', 'muted'));
     body.scrollTop = listPositions.get(targetChapter) || 0;
   }
-  let owner = null, chapter = null, section = null, snapshot = null, epoch = 0, timer, pending = false, error = null;
+  let owner = null, chapter = null, section = null, snapshot = null, epoch = 0, timer, pending = false, error = null, loading = false;
   const stages = {QUEUED:'等待开始',RESOLVING_SOURCE:'来源准备中',GENERATING:'生成中',REVIEWING:'审查中',VALIDATING:'校验中',PUBLISHING:'发布中'};
   const base = () => `/api/revisions/${owner}/chapters/${chapter}/knowledge-map`;
-  function reset() { ++epoch; closeList(); clearTimeout(timer); owner = chapter = snapshot = null; pending = false; error = null; entry.hidden = true; }
+  function reset() { ++epoch; closeList(); clearTimeout(timer); owner = chapter = snapshot = null; pending = loading = false; error = null; entry.hidden = true; }
   function sync(id, sectionId) {
     if (owner === revision() && chapter === id) { if(section !== sectionId) {section = sectionId; render();} return; }
     reset(); owner = revision(); chapter = id; section = sectionId;
@@ -521,6 +521,8 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
       : `${snapshot?.chapter_title || '当前章'}：${entry.textContent}，PDF 阅读不受影响`);
   }
   async function load() {
+    if (loading) return;
+    loading = true;
     clearTimeout(timer); const stamp = epoch;
     try {
       const value = await api(base());
@@ -529,7 +531,8 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
       snapshot = value; error = null; render();
       if (newlyReady) published();
       timer = setTimeout(load, value.status === 'PREPARING' || value.regeneration_state === 'RUNNING' ? 700 : 5000);
-    } catch(e) { if (stamp === epoch) {error = e.message; render();} }
+    } catch(e) { if (stamp === epoch) {error = '知识点状态读取失败，请重试（不会生成内容）'; render();} }
+    finally { if (stamp === epoch) loading = false; }
   }
   entry.onclick = async () => {
     if (pending || !chapter || !owner || entry.disabled) return;
