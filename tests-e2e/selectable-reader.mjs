@@ -29,6 +29,7 @@ let serviceErrors = "";
 service.stderr.on("data", (chunk) => { serviceErrors += chunk.toString(); });
 
 let browser;
+let testPage;
 try {
   const url = await readyUrl(service);
   browser = await chromium.launch({ executablePath, headless: process.env.READER_HEADLESS !== "0" });
@@ -37,6 +38,8 @@ try {
     permissions: ["clipboard-read", "clipboard-write"],
   });
   const page = await context.newPage();
+  testPage = page;
+  page.on('pageerror', error => console.error('Reader page error:', error.message));
   page.setDefaultTimeout(30_000);
   await page.goto(url);
   await page.locator("#import-input").setInputFiles(pdfPath);
@@ -233,6 +236,12 @@ try {
       path.join(artifacts, "r2-polished-body-selection.png"),
     ],
   }));
+} catch (error) {
+  if (testPage) {
+    await testPage.screenshot({path:path.join(artifacts,'r2-failure.png')}).catch(()=>{});
+    console.error((await testPage.locator('body').innerText().catch(()=>'' )).slice(0,2000));
+  }
+  throw error;
 } finally {
   if (browser) await browser.close();
   if (service.exitCode === null && service.signalCode === null) {

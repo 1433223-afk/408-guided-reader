@@ -803,6 +803,9 @@ just another `VisualRegion.kind` — the seam already exists and costs nothing n
 
 ### 10.1 Model — `FROZEN_FROM_PRODUCT` (§5)
 
+2026-09-19 user amendment: PageLabel is internal evidence. Reader/navigation/citation UI displays
+one-based PDF pages only. An absent printed label does not make a known PDF destination unknown.
+
 ```
 PageLabel
   book_source_revision_id, pdf_page_index
@@ -977,6 +980,17 @@ System and Assistant without a node of its own.
 knowledge-bearing — §12.2 excludes them from KP generation by default.
 
 ### 11.4 Correction granularity — `FROZEN_FROM_PRODUCT` (§9.5) **[revised, closes ZCode P1-2, sharpened by the Outline conceptual correction]**
+
+2026-09-19 explicitly authorized populated-book repair: a separate offline `--preserve-assets`
+operation stages against a verified database backup, preserves every existing node ID/owner/kind,
+and refuses missing nodes or reparenting. Additive auxiliary rows may shift sibling order slots
+without changing existing identity. Existing ranges are recomputed only where previously resolved;
+changed ranges advance their own physical revision. No dependent rows are deleted or rewritten.
+Affected published chapter maps carry an `asset_review` evidence marker for their current structure
+version; APIs/UI expose `needs_review` while retaining READY content. A later explicitly authorized
+new structure version supersedes that marker. Existing Teaching dependency checks remain node/page
+scoped. Ordinary bootstrap still refuses structural-digest conflicts; this is not silent migration.
+The earlier unowned replacement mode keeps its original refusal rules.
 
 Three tiers, each scoped to the node(s) actually affected — never to the book as a whole:
 

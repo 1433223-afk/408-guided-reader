@@ -512,8 +512,10 @@ function renderReaderSectionHint() {
       .sort((a,b) => a.start_page - b.start_page);
     const preceding = chapters.filter(n => n.start_page <= point.pageIndex);
     const candidate = preceding.at(-1);
+    const beyondBody = candidate && state.outlineNodes.some(n => !n.parent_id && isAuxiliaryOutlineRoot(n)
+      && Number.isInteger(n.start_page) && n.start_page > candidate.start_page && n.start_page <= point.pageIndex);
     if (candidate?.resolution_state === "PARTIAL"
-        && chapters.filter(n => n.start_page === candidate.start_page).length === 1) chapter = candidate;
+        && !beyondBody && chapters.filter(n => n.start_page === candidate.start_page).length === 1) chapter = candidate;
   }
   const learningChapterId = chapter && !isAuxiliaryOutlineRoot(chapter) ? chapter.outline_node_id : null;
   const chapterChanged = state.learningChapterId !== learningChapterId;
@@ -905,8 +907,8 @@ function renderOutline(payload) {
       title.textContent = node.title;
       const meta = document.createElement("small");
       meta.textContent = node.start_page === null
-        ? (node.printed_label_hint ? `印刷页 ${node.printed_label_hint} · 位置未知` : "位置未知")
-        : (node.printed_label_hint ? `印刷页 ${node.printed_label_hint}` : `PDF 第 ${node.start_page + 1} 页`);
+        ? (descendants.length ? "展开目录" : "页码待核实")
+        : `PDF 第 ${node.start_page + 1} 页`;
       target.append(title, meta);
       let toggleDescendants = null;
       if (node.start_page !== null || descendants.length) {
@@ -1076,6 +1078,7 @@ function renderKnowledgeMap(payload) {
     elements["knowledge-prepare"].textContent = "当前不能重新生成";
   }
   elements["knowledge-status"].textContent = `结构版本 ${payload.structure_version} · ${payload.knowledge_points.length} 个知识点 · ${route}${replacementStatus}`;
+  if (payload.needs_review) elements["knowledge-status"].textContent += " · 目录已校正，原学习内容已保留，需重新核验。";
   const groups = new Map();
   for (const point of payload.knowledge_points) {
     if (!groups.has(point.primary_section_id)) groups.set(point.primary_section_id, []);
@@ -1131,7 +1134,7 @@ async function prepareKnowledgeMap() {
 
 function isAuxiliaryOutlineRoot(node) {
   const title = node.title.normalize("NFKC").replace(/[\s·•:：—_\-]/g, "");
-  return /^(?:封面|扉页|版权页|版权信息|本书配套资源介绍|配套资源介绍|前言|序言|序|致读者|王道训练营|目录|目次|参考文献|参考资料|索引|后记|附录.*)$/.test(title);
+  return /^(?:封面|书名|扉页|版权(?:页|信息)?|本书配套资源介绍|配套资源介绍|前言|序言|序|致读者|王道训练营|目录|目次|(?:主要)?参考(?:文献|资料)|索引|(?:再版|第[一二三四五六七八九十0-9]+版)?后记|附录.*)$/.test(title);
 }
 
 function makeAuxiliaryOutlineGroup(nodes, branch) {
@@ -1156,13 +1159,8 @@ function makeAuxiliaryOutlineGroup(nodes, branch) {
 }
 
 function updatePrintedPageLabel() {
-  const row = state.pageLabels.get(state.currentPage);
-  elements["printed-page-label"].textContent = row?.printed_label
-    ? `印刷页 ${row.printed_label}`
-    : "印刷页未知";
-  elements["printed-page-edit"].title = row?.method === "MANUAL"
-    ? "本页使用手工印刷页码；点击修改"
-    : "设置本页印刷页码";
+  // Page labels remain internal evidence; the toolbar's page input is PDF-based.
+  elements["printed-page-edit"].hidden = true;
 }
 
 async function editPrintedPageLabel() {
@@ -3469,7 +3467,6 @@ elements["reader-more"].addEventListener("keydown", (event) => {
   elements["reader-more-toggle"].focus();
 });
 elements["back-to-library"].addEventListener("click", returnToLibrary);
-elements["printed-page-edit"].addEventListener("click", editPrintedPageLabel);
 elements["outline-toggle"].addEventListener("click", async () => {
   const opening = elements["outline-panel"].hidden;
   elements["outline-panel"].hidden = !opening;

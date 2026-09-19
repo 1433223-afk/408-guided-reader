@@ -9,6 +9,19 @@ ORDINAL = r"[0-9一二三四五六七八九十百千零〇两]+"
 NAMED = re.compile(rf"^第\s*({ORDINAL})\s*([篇部章节])\s*(.+)$")
 LEADER = re.compile(r"[.．·…⋯。_—-]{2,}")
 PAGE_LABEL = re.compile(r"^[\s·.\-—…]*(?:\(?\s*(\d{1,4})\s*\)?)[\s·.\-—…]*$")
+AUXILIARY = re.compile(
+    r"^(?:封面|书名|扉页|版权(?:页|信息)?|前言|序言|序|致读者|目录|目次|(?:主要)?参考(?:文献|资料)|索引|(?:再版|第[一二三四五六七八九十0-9]+版)?后记|附录.*)$"
+)
+CHAPTER_EXTRAS = {
+    "引言": "OTHER",
+    "本章总结": "OTHER",
+    "本章小结": "OTHER",
+    "小结": "OTHER",
+    "思考与练习": "EXERCISES",
+    "习题": "EXERCISES",
+    "复习思考题": "EXERCISES",
+    "本章练习": "EXERCISES",
+}
 
 
 def ordinal(value: str) -> int:
@@ -50,35 +63,55 @@ def parse_named_toc(page_index: int, lines: list[dict], normalize) -> list[dict]
     page_evidence = 0
     for group in groups:
         ordered = sorted(group, key=lambda x: x["x"])
-        text = " ".join(x["text"] for x in ordered).strip()
         label = None
-        label_match = re.search(r"\(\s*(\d{1,4})\s*\)\s*$", text)
-        if label_match:
-            label = label_match[1]
-            text = text[: label_match.start()]
-        elif ordered[-1]["x"] > 0.72:
-            match = PAGE_LABEL.fullmatch(ordered[-1]["text"])
-            if match:
+        fragments = []
+        for fragment in ordered:
+            value = fragment["text"]
+            matches = list(re.finditer(r"\(\s*(\d{1,4})\s*\)", value))
+            if matches:
+                label = matches[-1][1]
+                value = re.sub(r"\(\s*\d{1,4}\s*\)", "", value)
+            elif fragment["x"] > 0.72 and (match := PAGE_LABEL.fullmatch(value)):
                 label = match[1]
-                text = " ".join(x["text"] for x in ordered[:-1])
+                value = ""
+            value = LEADER.split(value)[0].strip(" …·.")
+            if not value or not any(c.isalnum() for c in value):
+                continue
+            if (
+                re.fullmatch(r"[()\d]+",value) or re.fullmatch(r"([A-Za-z])\1{2,}", value)
+            ) and fragment["confidence"] < 0.8:
+                continue  # Low-confidence leader residue, not title text.
+            # Alternate detector crops can overlap a title. Deduplicate only
+            # textual containment within the SAME visual row, never across rows.
+            if any(value == v or value in v for v in fragments):
+                continue
+            fragments = [v for v in fragments if v not in value]
+            fragments.append(value)
+        text = " ".join(fragments)
         if label is not None:
             page_evidence += 1
-        text = LEADER.split(text)[0].strip()
+        # Detached leader noise is not part of a title. Keep adjacent text
+        # fragments, including separate ordinal/title detections; stop at a gap
+        # larger than ordinary inter-word space before the right-hand page label.
+        text = LEADER.split(text)[0].strip().rstrip("…·.")
+        if text in ("目录", "目次"):
+            continue  # Page heading/running header, not a directory entry.
         named = NAMED.fullmatch(text)
         if not named:
-            if (
-                text not in ("思考与练习", "习题", "复习思考题", "本章练习")
-                or label is None
-            ):
+            if text not in CHAPTER_EXTRAS and not AUXILIARY.fullmatch(text):
                 continue
-            number, unit, title = "0", "练习", text
+            number, unit, title = (
+                "0",
+                ("附属" if text in CHAPTER_EXTRAS else "其他"),
+                text,
+            )
         else:
             number, unit, title = named.groups()
         results.append(
             {
-                "key": f"named:{unit}:{ordinal(number)}",
+                "key": f"named:{unit}:{title if unit in ('附属', '其他') else ordinal(number)}",
                 "title": title
-                if unit == "练习"
+                if unit in ("附属", "其他")
                 else f"第{number}{unit} {title.strip()}",
                 "depth": 0,
                 "named_unit": unit,
@@ -136,15 +169,19 @@ def named_hierarchy(rows: list[dict]) -> list[dict]:
                 "depth": int(has_parts) + 1,
                 "kind": "SECTION",
             }
-        elif unit == "练习":
+        elif unit == "附属":
             if chapter is None:
                 continue  # Continuation page: never assign it to an invented chapter.
             row = {
                 **row,
-                "key": f"{chapter}/exercises",
+                "key": f"{chapter}/exercises"
+                if CHAPTER_EXTRAS[row["title"]] == "EXERCISES"
+                else f"{chapter}/{row['key']}",
                 "depth": int(has_parts) + 1,
-                "kind": "EXERCISES",
+                "kind": CHAPTER_EXTRAS[row["title"]],
             }
+        elif unit == "其他":
+            row = {**row, "depth": 0, "kind": "OTHER"}
         else:
             return []
         result.append(row)

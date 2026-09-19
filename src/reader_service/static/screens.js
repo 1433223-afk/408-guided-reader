@@ -336,12 +336,12 @@ export function createScreens({api, home, memory, read, remove, revision, announ
     }
     const other = nodes.filter(n => !n.parent_id && (n.kind !== 'CHAPTER' || isAuxiliary(n))
       && !nodes.some(c => c.parent_id === n.outline_node_id && c.kind === 'CHAPTER'));
-    if(other.length) { const d = node('details'); d.append(node('summary', '其他内容')); for(const n of other) d.append(source(n, n.title)); rail.append(d); }
+    if(other.length) { const d = node('details'); d.append(node('summary', '其他内容')); for(const n of other) d.append(source(n, `${n.title}${n.start_page == null ? '' : ` · PDF ${n.start_page + 1}`}`)); rail.append(d); }
     if(!nodes.length) rail.append(node('p', '目录尚未就绪，仍可打开 PDF。', 'muted'), action('刷新目录', () => open(selectedBook)));
   }
   function source(n, label = '进入教材 ↗') {
     const b = action(label, () => read(selectedBook, {page: n.start_page, y: n.start_y ?? 0}), 'source-action');
-    b.disabled = n.start_page == null || ('resolution_state' in n && n.resolution_state !== 'RESOLVED'); if(b.disabled) b.textContent = '暂无法定位教材位置'; return b;
+    b.disabled = n.start_page == null; if(b.disabled) b.textContent = `${label} · 页码待核实`; return b;
   }
   async function loadMap(refresh = false) {
     clearTimeout(timer); const stamp = ++epoch, chapterId = selectedChapter;
@@ -360,6 +360,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
   }
   function renderMap(p, chapter) {
     map.replaceChildren(); const h = node('div', '', 'chapter-heading'); h.append(node('h2', chapter.title));
+    if(p.needs_review) h.append(node('p', '目录已校正：原知识点和学习内容已保留，来源范围需重新核验。', 'muted'));
     if(p.status === 'READY') { const meta=node('div'); meta.append(node('p', `${p.knowledge_points.length} 个知识点`, 'muted')); const counts=learning?.chapter_counts?.[selectedChapter]; if(counts) meta.append(node('p', `${counts.UNDERSTOOD} 已理解 · ${counts.NOT_FULLY_CLEAR} 仍不清楚 · ${counts.UNCONFIRMED} 待确认`, 'muted')); h.append(meta); } map.append(h);
     map.append(createStructureLifecycle(p, async () => {
       try { await api(`/api/revisions/${selectedBook.active_revision.id}/chapters/${selectedChapter}/knowledge-map/${p.status === 'READY' ? 'regenerate' : 'prepare'}`, {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); await loadMap(); }

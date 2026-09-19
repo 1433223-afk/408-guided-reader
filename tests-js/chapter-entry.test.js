@@ -76,4 +76,7 @@ test('Reader identifies an unprepared chapter from page bookmarks without invent
     // Keep the auxiliary bookmark as a boundary; do not fall back to the preceding chapter.
     nodes.pop();
   }
+  nodes.push({kind:'OTHER',title:'附录1 术语',outline_node_id:'appendix',resolution_state:'PARTIAL',start_page:25});
+  context.captureZoomAnchor=()=>({pageIndex:26,normalizedY:0.5});
+  runInNewContext(fn+'renderReaderSectionHint();',context);assert.equal(target,null,'back matter is not the last chapter');
 });
