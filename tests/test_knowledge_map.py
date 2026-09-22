@@ -29,12 +29,18 @@ from reader_service.knowledge.semantic import (
     MAX_SEMANTIC_WINDOW_CHARACTERS,
     build_compact_review_ledger,
     build_evidence_units,
+    build_fragmentation_warnings,
     build_semantic_windows,
     materialize_candidates,
     semantic_window_payload,
     validate_semantic_output,
 )
-from reader_service.knowledge.service import GENERATOR_SYSTEM_MESSAGE, REVIEW_RUBRIC, REVIEW_SYSTEM_MESSAGE
+from reader_service.knowledge.service import (
+    GENERATOR_SYSTEM_MESSAGE,
+    REVIEW_FINDING_TYPES,
+    REVIEW_RUBRIC,
+    REVIEW_SYSTEM_MESSAGE,
+)
 from reader_service.library.database import Database, MIGRATIONS
 from reader_service.outline import OutlineRepository, OutlineService
 
@@ -77,37 +83,66 @@ class UnusedEngine:
 
 
 def semantic_answer(payload: dict) -> str:
+    """Theme-first generator fixture.
+
+    Consecutive units merge into a few multi-unit learning targets (an
+    enumeration family becomes framework targets, not one KP per item), and
+    trailing connective evidence is demoted to non-KP. This is the absorbed
+    contract shape the pipeline must exercise by default — not 1 unit = 1 KP.
+    """
+    unit_ids = [unit["unit_id"] for unit in payload["units"]]
+    non_kp_units: list[str] = []
+    if len(unit_ids) >= 4:
+        non_kp_units = unit_ids[-1:]
+        unit_ids = unit_ids[:-1]
+    learning_targets = [
+        {
+            "unit_ids": unit_ids[index : index + 3],
+            "title": f"学习主题 {number + 1}",
+            "one_sentence_meaning": "这是教材中可独立理解和检查的学科内容。",
+        }
+        for number, index in enumerate(range(0, len(unit_ids), 3))
+        if unit_ids[index : index + 3]
+    ]
+    return json.dumps(
+        {"learning_targets": learning_targets, "non_kp_units": non_kp_units},
+        ensure_ascii=False,
+    )
+
+
+def review_answer(verdict: str = "PASS", summary: str = "结构审查通过。", findings=None, groups=None):
     return json.dumps(
         {
-            "learning_targets": [
-                {
-                    "unit_ids": [unit["unit_id"]],
-                    "title": f"学习单元 {unit['unit_id']}",
-                    "one_sentence_meaning": "这是教材中可独立理解和检查的学科内容。",
-                }
-                for unit in payload["units"]
-            ],
-            "non_kp_units": [],
+            "verdict": verdict,
+            "summary": summary,
+            "duplicate_mastery_groups": groups if groups is not None else [],
+            "findings": findings or [],
         },
         ensure_ascii=False,
     )
 
 
-def review_answer(verdict: str = "PASS", summary: str = "结构审查通过。", findings=None):
-    return json.dumps(
-        {"verdict": verdict, "summary": summary, "findings": findings or []},
-        ensure_ascii=False,
-    )
+def review_finding(section_id: str, unit_ids: list[str], *, finding_type, dimension=None):
+    return {
+        "dimension": dimension or {
+            "DUPLICATE_MASTERY_BOUNDARY": "duplicate_or_near_duplicate_semantics",
+            "SYSTEMATIC_OVER_FRAGMENTATION": "split_merge_quality",
+            "FACET_OR_EXAMPLE_PROMOTED_TO_KP": "instructional_specificity",
+            "MINOR_NAMING_OVERLAP": "duplicate_or_near_duplicate_semantics",
+            "MINOR_GRANULARITY_IMBALANCE": "chapter_map_balance",
+        }[finding_type],
+        "type": finding_type,
+        "section_id": section_id,
+        "unit_ids": unit_ids,
+        "detail": "结构化类型的审查问题说明。",
+    }
 
 
 def blocking_finding(section_id: str, unit_ids: list[str], *, dimension="split_merge_quality"):
-    return {
-        "dimension": dimension,
-        "severity": "BLOCKING",
-        "section_id": section_id,
-        "unit_ids": unit_ids,
-        "detail": "这些单元的拆分或合并不能形成独立且清晰的学习状态。",
-    }
+    return review_finding(
+        section_id, unit_ids,
+        finding_type="SYSTEMATIC_OVER_FRAGMENTATION", dimension=dimension,
+    )
 
 
 class ScriptedRuntime:
@@ -214,14 +249,14 @@ class ScriptedRuntime:
         )
 
 
-def build_fixture(service, *, runtime=None, post_review_validator=None):
-    pdf = chapter_pdf()
+def build_fixture(service, *, runtime=None, post_review_validator=None, pages=None, pdf=None):
+    pdf = pdf or chapter_pdf()
     result = service.intake(BytesIO(pdf), content_length=len(pdf), filename="chapters.pdf", title="章节测试")
     revision = result["book"]["active_revision"]
     foundation_repository = FoundationRepository(service.database)
     foundation = FoundationService(service, foundation_repository, UnusedEngine)
     foundation.ensure_revision(revision["id"])
-    pages = {
+    pages = pages or {
         0: [detected("第1章 基础", 0.08), detected("1.1 第一节", 0.18), detected("概念 A 的起点", 0.30)],
         1: [detected("概念 A 的终点。", 0.30)],
         2: [detected("1.2 第二节", 0.16), detected("概念 B 的起点", 0.28)],
@@ -421,34 +456,102 @@ def test_deterministic_units_and_outline_bounded_windows(service):
         )
 
 
-def test_section_lead_in_joins_first_subsection_only():
-    def unit(unit_id, section_id, subsection_id=None, subsection_title=None):
-        return {
-            "unit_id": unit_id,
-            "text": unit_id,
-            "primary_section_id": section_id,
-            "primary_section_title": section_id,
-            "outline_subsection_id": subsection_id,
-            "outline_subsection_title": subsection_title,
-        }
+def subsection_unit(unit_id, section_id, subsection_id=None, subsection_title=None, chars=None):
+    text = unit_id if chars is None else "字" * chars
+    return {
+        "unit_id": unit_id,
+        "text": text,
+        "primary_section_id": section_id,
+        "primary_section_title": section_id,
+        "outline_subsection_id": subsection_id,
+        "outline_subsection_title": subsection_title,
+    }
 
-    windows = build_semantic_windows(
-        [
-            unit("u0001", "section-a"),
-            unit("u0002", "section-a", "subsection-a1", "A.1"),
-            unit("u0003", "section-a", "subsection-a2", "A.2"),
-            unit("u0004", "section-b"),
+
+def test_section_within_limits_forms_one_whole_section_window():
+    # 1.2-shaped and 4.2-shaped Sections: several real subsections, whole
+    # Section inside every bounded operational limit.
+    for subsection_count in (5, 2):
+        units = [subsection_unit("u0001", "section-a")]
+        for index in range(1, subsection_count + 1):
+            units.append(
+                subsection_unit(
+                    f"u{index + 1:04d}",
+                    "section-a",
+                    f"subsection-a{index}",
+                    f"A.{index}",
+                )
+            )
+        units.append(subsection_unit(f"u{subsection_count + 2:04d}", "section-b"))
+        windows = build_semantic_windows(units)
+        assert [window["window_kind"] for window in windows] == ["SECTION", "SECTION"]
+        assert [unit["unit_id"] for unit in windows[0]["units"]] == [
+            unit["unit_id"] for unit in units[:-1]
         ]
-    )
+        assert windows[0]["outline_subsection_id"] is None
+        assert windows[0]["primary_section_id"] == "section-a"
+        assert [unit["unit_id"] for unit in windows[1]["units"]] == [
+            f"u{subsection_count + 2:04d}"
+        ]
 
-    assert [window["window_kind"] for window in windows] == [
-        "SUBSECTION", "SUBSECTION", "SECTION"
+
+def test_oversized_section_falls_back_to_real_subsection_boundaries():
+    # Character-bound fallback: the whole Section exceeds the invocation
+    # safety bound, both real subsections fit it.
+    lead = subsection_unit("u0001", "section-a", chars=10)
+    first_sub = [
+        subsection_unit("u0002", "section-a", "subsection-a1", "A.1", chars=25_000),
     ]
+    second_sub = [
+        subsection_unit("u0003", "section-a", "subsection-a2", "A.2", chars=25_000),
+    ]
+    windows = build_semantic_windows([lead, *first_sub, *second_sub])
+    assert [window["window_kind"] for window in windows] == ["SUBSECTION", "SUBSECTION"]
     assert [unit["unit_id"] for unit in windows[0]["units"]] == ["u0001", "u0002"]
     assert windows[0]["outline_subsection_id"] == "subsection-a1"
     assert windows[0]["outline_subsection_title"] == "A.1"
     assert [unit["unit_id"] for unit in windows[1]["units"]] == ["u0003"]
-    assert [unit["unit_id"] for unit in windows[2]["units"]] == ["u0004"]
+
+    # Unit-count fallback: the structured-output accounting budget would
+    # saturate (1024 + 64 × units > 16384), so the Section falls back even
+    # though its character count is tiny. Never a KP-count quota.
+    from reader_service.knowledge.semantic import MAX_WHOLE_SECTION_UNITS
+
+    units = [subsection_unit("u0001", "section-a", "subsection-a1", "A.1", chars=4)]
+    units += [
+        subsection_unit(f"u{index + 2:04d}", "section-a", "subsection-a1", "A.1", chars=4)
+        for index in range(MAX_WHOLE_SECTION_UNITS)
+    ]
+    units += [
+        subsection_unit("u9999", "section-a", "subsection-a2", "A.2", chars=4)
+    ]
+    windows = build_semantic_windows(units)
+    assert [window["window_kind"] for window in windows] == ["SUBSECTION", "SUBSECTION"]
+    assert len(windows[0]["units"]) == MAX_WHOLE_SECTION_UNITS + 1
+    assert len(windows[1]["units"]) == 1
+
+
+def test_semantic_window_never_crosses_a_section_boundary():
+    units = [
+        subsection_unit("u0001", "section-a", "subsection-a1", "A.1", chars=25_000),
+        subsection_unit("u0002", "section-a", "subsection-a2", "A.2", chars=25_000),
+        subsection_unit("u0003", "section-b", chars=30_000),
+        subsection_unit("u0004", "section-b", "subsection-b1", "B.1", chars=15_000),
+        subsection_unit("u0005", "section-b", "subsection-b2", "B.2", chars=15_000),
+        subsection_unit("u0006", "section-c", chars=10),
+    ]
+    windows = build_semantic_windows(units)
+    assert len(windows) == 5
+    for window in windows:
+        section_ids = {unit["primary_section_id"] for unit in window["units"]}
+        assert section_ids == {window["primary_section_id"]}
+    assert [window["primary_section_id"] for window in windows] == [
+        "section-a",
+        "section-a",
+        "section-b",
+        "section-b",
+        "section-c",
+    ]
 
 
 def test_short_heading_and_cross_page_continuation_preserve_evidence_boundaries():
@@ -624,6 +727,47 @@ def test_prompts_freeze_one_pass_absorption_and_terminal_review_contract():
     assert "泛化 target" in GENERATOR_SYSTEM_MESSAGE
     assert "FORBIDDEN_REVIEW_MATERIAL" in GENERATOR_SYSTEM_MESSAGE
     assert "不得依据先前模型结果" in GENERATOR_SYSTEM_MESSAGE
+    # Theme-first granularity correction: the generator must decide learnable
+    # themes before assigning units, never mirror textbook numbering.
+    assert "主题优先" in GENERATOR_SYSTEM_MESSAGE
+    assert "不是 quota" in GENERATOR_SYSTEM_MESSAGE
+    assert "多种寻址方式" in GENERATOR_SYSTEM_MESSAGE
+    assert "性能评价框架" in GENERATOR_SYSTEM_MESSAGE
+    assert "整机结构主题" in GENERATOR_SYSTEM_MESSAGE
+    # Same-section duplicate absorption and facet/derived-metric defaults.
+    assert "不得因为出现位置不同而铸造多个 KP" in GENERATOR_SYSTEM_MESSAGE
+    assert "重复 mastery state" in GENERATOR_SYSTEM_MESSAGE
+    assert "计算机系统的组成与软/硬件逻辑等价" in GENERATOR_SYSTEM_MESSAGE
+    assert "worked example" in GENERATOR_SYSTEM_MESSAGE
+    assert "不要因为每个名称可以单独出一道题就逐项铸造" in GENERATOR_SYSTEM_MESSAGE
+    # The reviewer must apply the Product KP definition and classify findings
+    # with structured types; severity is a fixed server-side policy per type.
+    assert "值得独立记录理解状态" in REVIEW_SYSTEM_MESSAGE
+    assert "不足以构成独立 KP" in REVIEW_SYSTEM_MESSAGE
+    assert "逐成员" in REVIEW_SYSTEM_MESSAGE
+    assert "家族总称 KP + 每个成员 KP + 汇总表 KP" in REVIEW_SYSTEM_MESSAGE
+    assert "碎片 KP" in REVIEW_SYSTEM_MESSAGE
+    assert "DUPLICATE_MASTERY_BOUNDARY" in REVIEW_SYSTEM_MESSAGE
+    assert "SYSTEMATIC_OVER_FRAGMENTATION" in REVIEW_SYSTEM_MESSAGE
+    assert "FACET_OR_EXAMPLE_PROMOTED_TO_KP" in REVIEW_SYSTEM_MESSAGE
+    assert "MINOR_NAMING_OVERLAP" in REVIEW_SYSTEM_MESSAGE
+    assert "MINOR_GRANULARITY_IMBALANCE" in REVIEW_SYSTEM_MESSAGE
+    assert "你不再输出 severity" in REVIEW_SYSTEM_MESSAGE
+    # Mandatory explicit duplicate mastery audit before findings/verdict.
+    assert "duplicate mastery audit" in REVIEW_SYSTEM_MESSAGE
+    assert "duplicate_mastery_groups" in REVIEW_SYSTEM_MESSAGE
+    assert "独立掌握状态、独立诊断路径和独立补救路径" in REVIEW_SYSTEM_MESSAGE
+    assert "不能成为保留两个 KP 的理由" in REVIEW_SYSTEM_MESSAGE
+    assert set(REVIEW_FINDING_TYPES) == {
+        "DUPLICATE_MASTERY_BOUNDARY",
+        "SYSTEMATIC_OVER_FRAGMENTATION",
+        "FACET_OR_EXAMPLE_PROMOTED_TO_KP",
+        "MINOR_NAMING_OVERLAP",
+        "MINOR_GRANULARITY_IMBALANCE",
+    }
+    assert {
+        severity for severity in REVIEW_FINDING_TYPES.values()
+    } == {"BLOCKING", "WARNING"}
     assert "只能定位问题，不能改写候选" in REVIEW_SYSTEM_MESSAGE
     assert "不得因为还能改进就阻断发布" in REVIEW_SYSTEM_MESSAGE
     assert set(REVIEW_RUBRIC) == {
@@ -719,7 +863,9 @@ def test_one_chapter_publishes_atomically_without_outline_mutation_or_payload_re
         "semantic_provenance",
         "review_rubric",
         "overlap_warnings",
+        "fragmentation_warnings",
     }
+    assert review_calls[0]["payload"]["fragmentation_warnings"] == []
     no_op, created = fixture["knowledge"].request_prepare(revision_id, chapter_id)
     assert not created and no_op["status"] == "READY"
     assert [point["knowledge_point_id"] for point in no_op["knowledge_points"]] == [
@@ -1003,6 +1149,733 @@ def test_overlap_is_warning_signal_not_deterministic_failure():
             "signal": "SHARED_SOURCE_EVIDENCE_REVIEW_REQUIRED",
         }
     ]
+
+
+def test_fragmentation_signals_flag_enumeration_split_but_never_fail_deterministically():
+    window = semantic_window(unit_count=12)
+    per_item = {
+        "learning_targets": [
+            {
+                "unit_ids": [f"u{index:04d}"],
+                "title": f"第 {index} 种寻址方式",
+                "one_sentence_meaning": "同一机制家族的一个成员被逐项铸造。",
+            }
+            for index in range(1, 13)
+        ],
+        "non_kp_units": [],
+    }
+    signals = {
+        warning["signal"]
+        for warning in build_fragmentation_warnings([window], {"w001": per_item})
+    }
+    assert signals == {
+        "EXTENDED_SMALL_TARGET_RUN_REVIEW_REQUIRED",
+        "MAJORITY_SINGLE_UNIT_TARGETS_REVIEW_REQUIRED",
+        "HIGH_TARGET_UNIT_DENSITY_REVIEW_REQUIRED",
+        "CHAPTER_WIDE_SINGLE_UNIT_TARGET_SHARE_REVIEW_REQUIRED",
+    }
+    # The signals are advisory only: the same one-pass partition contract still
+    # accepts the split, so over-fragmentation is judged by Review rather than
+    # failing closed as a deterministic quota.
+    assert len(
+        validate_semantic_output(json.dumps(per_item, ensure_ascii=False), window)
+        ["learning_targets"]
+    ) == 12
+
+    unit_ids = [f"u{index:04d}" for index in range(1, 13)]
+    absorbed = {
+        "learning_targets": [
+            {
+                "unit_ids": unit_ids[:6],
+                "title": "简单寻址方式家族",
+                "one_sentence_meaning": "一组成套方法整体理解，成员不单独成 KP。",
+            },
+            {
+                "unit_ids": unit_ids[6:],
+                "title": "偏移寻址家族",
+                "one_sentence_meaning": "同一公式形态的机制家族整体理解。",
+            },
+        ],
+        "non_kp_units": [],
+    }
+    assert build_fragmentation_warnings([window], {"w001": absorbed}) == []
+    assert len(
+        validate_semantic_output(json.dumps(absorbed, ensure_ascii=False), window)
+        ["learning_targets"]
+    ) == 2
+
+
+def enumeration_pages():
+    items = [
+        detected(
+            f"（{index}）第 {index} 种寻址方式的定义、有效地址与访存特点。",
+            0.22 + index * 0.07,
+        )
+        for index in range(1, 11)
+    ]
+    return {
+        0: [
+            detected("第1章 基础", 0.08),
+            detected("1.1 第一节", 0.14),
+            detected("常见寻址方式总览：", 0.19),
+            *items,
+        ],
+        # Page 1 stays inside Section 1.1 but carries no body text; publishing
+        # it keeps the Chapter's OCR evidence fully ready.
+        1: [],
+        2: [detected("1.2 第二节", 0.16), detected("概念 B 的起点", 0.28)],
+        3: [detected("概念 B 的终点。", 0.30)],
+        4: [
+            detected("第2章 后续", 0.09),
+            detected("2.1 第三节", 0.2),
+            detected("不得外泄 CANARY_OTHER_CHAPTER", 0.3),
+        ],
+        5: [detected("第二章内容", 0.3)],
+    }
+
+
+def test_enumeration_family_split_reaches_review_and_blocks_publication(service):
+    def per_item_generation(payload, _count):
+        if payload["window"]["window_id"] == "w001":
+            return json.dumps(
+                {
+                    "learning_targets": [
+                        {
+                            "unit_ids": [unit["unit_id"]],
+                            "title": f"第 {index} 种寻址方式",
+                            "one_sentence_meaning": "同一机制家族成员被逐项铸造成独立 KP。",
+                        }
+                        for index, unit in enumerate(payload["units"], 1)
+                    ],
+                    "non_kp_units": [],
+                },
+                ensure_ascii=False,
+            )
+        return semantic_answer(payload)
+
+    observed = {}
+
+    def reviewer(payload, _count):
+        observed["fragmentation_warnings"] = payload["fragmentation_warnings"]
+        window = next(w for w in payload["windows"] if w["window_id"] == "w001")
+        return review_answer(
+            "FAIL",
+            "系统性枚举拆分不能形成独立学习状态。",
+            [
+                blocking_finding(
+                    window["section_id"], window["learning_targets"][0]["unit_ids"]
+                )
+            ],
+        )
+
+    runtime = ScriptedRuntime(generation=per_item_generation, review=reviewer)
+    fixture = build_fixture(service, runtime=runtime, pages=enumeration_pages())
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+
+    window_warnings = [
+        warning
+        for warning in observed["fragmentation_warnings"]
+        if warning.get("window_id") == "w001"
+    ]
+    assert {
+        warning["signal"] for warning in window_warnings
+    } == {
+        "EXTENDED_SMALL_TARGET_RUN_REVIEW_REQUIRED",
+        "MAJORITY_SINGLE_UNIT_TARGETS_REVIEW_REQUIRED",
+        "HIGH_TARGET_UNIT_DENSITY_REVIEW_REQUIRED",
+    }
+    assert window_warnings[0]["single_unit_target_count"] == window_warnings[0]["target_count"]
+    assert failed["status"] == "FAILED"
+    assert failed["failure_stage"] == "REVIEW"
+    assert failed["failure_code"] == "review_rejected"
+    assert failed["knowledge_points"] == []
+
+
+def test_absorbed_framework_targets_publish_without_fragmentation_signal(service):
+    def framework_generation(payload, _count):
+        if payload["window"]["window_id"] == "w001":
+            unit_ids = [unit["unit_id"] for unit in payload["units"]]
+            return json.dumps(
+                {
+                    "learning_targets": [
+                        {
+                            "unit_ids": unit_ids[:6],
+                            "title": "简单寻址方式家族",
+                            "one_sentence_meaning": "一组成套方法整体理解，成员不单独成 KP。",
+                        },
+                        {
+                            "unit_ids": unit_ids[6:],
+                            "title": "偏移寻址家族",
+                            "one_sentence_meaning": "同一公式形态的机制家族整体理解。",
+                        },
+                    ],
+                    "non_kp_units": [],
+                },
+                ensure_ascii=False,
+            )
+        return semantic_answer(payload)
+
+    observed = {}
+
+    def reviewer(payload, _count):
+        observed["fragmentation_warnings"] = payload["fragmentation_warnings"]
+        observed["window_targets"] = {
+            window["window_id"]: [
+                target["unit_ids"] for target in window["learning_targets"]
+            ]
+            for window in payload["windows"]
+        }
+        return review_answer()
+
+    runtime = ScriptedRuntime(generation=framework_generation, review=reviewer)
+    fixture = build_fixture(service, runtime=runtime, pages=enumeration_pages())
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+
+    # Regression: the absorbed framework partition keeps complete one-pass
+    # accounting — every window unit is consumed exactly once by the two
+    # contiguous multi-unit targets — and publishes atomically.
+    assert observed["fragmentation_warnings"] == []
+    w001_units = observed["window_targets"]["w001"]
+    assert [len(units) for units in w001_units] == [6, 5]
+    assert ready["status"] == "READY"
+    assert [point["title"] for point in ready["knowledge_points"]] == [
+        "简单寻址方式家族",
+        "偏移寻址家族",
+        "学习主题 1",
+    ]
+
+
+def test_same_section_duplicate_theme_mints_once_with_continuous_span(service):
+    """Same-Section duplicate theme: one mint at the fullest location only.
+
+    The duplicate-location evidence goes to non_kp_units, and no
+    non-contiguous target is ever created to "merge" the two locations.
+    """
+
+    def absorbed_once(payload, _count):
+        if payload["window"]["window_id"] == "w001":
+            unit_ids = [unit["unit_id"] for unit in payload["units"]]
+            # u0001 = lead-in brief mention of the theme (duplicate location),
+            # u0002.. = the full exposition.
+            return json.dumps(
+                {
+                    "learning_targets": [
+                        {
+                            "unit_ids": unit_ids[1:6],
+                            "title": "软/硬件逻辑功能等价性",
+                            "one_sentence_meaning": "同一理解状态只在完整展开处铸造一次。",
+                        }
+                    ],
+                    "non_kp_units": [unit_ids[0], *unit_ids[6:]],
+                },
+                ensure_ascii=False,
+            )
+        return semantic_answer(payload)
+
+    observed = {}
+
+    def reviewer(payload, _count):
+        observed["windows"] = payload["windows"]
+        return review_answer()
+
+    runtime = ScriptedRuntime(generation=absorbed_once, review=reviewer)
+    fixture = build_fixture(service, runtime=runtime, pages=enumeration_pages())
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+
+    w001 = next(w for w in observed["windows"] if w["window_id"] == "w001")
+    assert len(w001["learning_targets"]) == 1
+    consumed = [
+        unit_id
+        for target in w001["learning_targets"]
+        for unit_id in target["unit_ids"]
+    ] + list(w001["non_kp_units"])
+    assert sorted(consumed) == sorted(fixture_units(fixture, "w001"))
+    assert ready["status"] == "READY"
+    w001_titles = [
+        point["title"]
+        for point in ready["knowledge_points"]
+        if point["title"] == "软/硬件逻辑功能等价性"
+    ]
+    assert w001_titles == ["软/硬件逻辑功能等价性"]
+
+
+def fixture_units(fixture, window_id):
+    _source, units, windows, _bounds = semantic_inputs(fixture)
+    window = next(w for w in windows if w["window_id"] == window_id)
+    return [unit["unit_id"] for unit in window["units"]]
+
+
+def test_duplicate_mastery_boundary_type_forces_blocking_even_on_claimed_pass(service):
+    """The observed real failure: reviewer files the duplicate as a finding but
+    words its verdict PASS. The structured type forces BLOCKING and a
+    deterministic FAIL — no publication from natural-language severity."""
+
+    def reviewer(payload, _count):
+        window = next(w for w in payload["windows"] if w["learning_targets"])
+        return review_answer(
+            "PASS",
+            "整体可用，存在一处语义重叠。",
+            [
+                review_finding(
+                    window["section_id"],
+                    window["learning_targets"][0]["unit_ids"][:1],
+                    finding_type="DUPLICATE_MASTERY_BOUNDARY",
+                )
+            ],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+
+    assert failed["status"] == "FAILED"
+    assert failed["failure_stage"] == "REVIEW"
+    assert failed["failure_code"] == "review_rejected"
+    assert failed["knowledge_points"] == []
+    inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
+    finding = inspection["attempts"][0]["review"]["findings"][0]
+    assert finding["type"] == "DUPLICATE_MASTERY_BOUNDARY"
+    assert finding["severity"] == "BLOCKING"
+
+
+def test_facet_example_promoted_to_kp_is_blocking(service):
+    def reviewer(payload, _count):
+        window = next(w for w in payload["windows"] if w["learning_targets"])
+        return review_answer(
+            "FAIL",
+            "worked example 被单独铸造成 KP。",
+            [
+                review_finding(
+                    window["section_id"],
+                    window["learning_targets"][0]["unit_ids"][:1],
+                    finding_type="FACET_OR_EXAMPLE_PROMOTED_TO_KP",
+                )
+            ],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+
+    assert failed["status"] == "FAILED"
+    assert failed["failure_code"] == "review_rejected"
+    inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
+    finding = inspection["attempts"][0]["review"]["findings"][0]
+    assert finding["type"] == "FACET_OR_EXAMPLE_PROMOTED_TO_KP"
+    assert finding["severity"] == "BLOCKING"
+
+
+def test_minor_naming_overlap_stays_warning_and_publishes(service):
+    def reviewer(payload, _count):
+        window = next(w for w in payload["windows"] if w["learning_targets"])
+        return review_answer(
+            "PASS",
+            "命名相近但掌握状态不同，可发布。",
+            [
+                review_finding(
+                    window["section_id"],
+                    window["learning_targets"][0]["unit_ids"][:1],
+                    finding_type="MINOR_NAMING_OVERLAP",
+                ),
+                review_finding(
+                    window["section_id"],
+                    window["learning_targets"][0]["unit_ids"][:1],
+                    finding_type="MINOR_GRANULARITY_IMBALANCE",
+                ),
+            ],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+
+    # Similar names with genuinely different mastery states never block
+    # deterministically: MINOR types stay WARNING and the map publishes.
+    assert ready["status"] == "READY"
+    assert ready["knowledge_points"]
+    inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
+    severities = {
+        finding["severity"]
+        for finding in inspection["attempts"][0]["review"]["findings"]
+    }
+    assert severities == {"WARNING"}
+
+    # A reviewer FAIL supported only by MINOR-typed findings is an invalid
+    # review output, not a silent downgrade or upgrade.
+    with pytest.raises(ValueError, match="FAIL lacks a blocking finding"):
+        KnowledgeService._validate_review(
+            json.dumps(
+                {
+                    "verdict": "FAIL",
+                    "summary": "不成立。",
+                    "duplicate_mastery_groups": [],
+                    "findings": [
+                        {
+                            "dimension": "duplicate_or_near_duplicate_semantics",
+                            "type": "MINOR_NAMING_OVERLAP",
+                            "section_id": "s",
+                            "unit_ids": ["u0001"],
+                            "detail": "仅命名相近。",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            {
+                "sections": [{"section_id": "s", "units": [{"unit_id": "u0001"}]}],
+                "candidates": [
+                    {
+                        "candidate_index": 0,
+                        "candidate_id": "c0001",
+                        "primary_section_id": "s",
+                        "unit_ids": ["u0001"],
+                        "title": "候选",
+                        "one_sentence_meaning": "含义",
+                    }
+                ],
+                "review_rubric": list(REVIEW_RUBRIC),
+            },
+        )
+
+
+def test_duplicate_mastery_group_always_blocks_and_publishes_nothing(service):
+    """Two different source spans, same mastery state: the reviewer's explicit
+    duplicate_mastery_groups output forces BLOCKING + FAIL + zero publication
+    even when the reviewer itself claims PASS."""
+
+    def reviewer(payload, _count):
+        candidates = payload["candidates"]
+        return review_answer(
+            "PASS",
+            "整体可用。",
+            groups=[[candidates[0]["candidate_id"], candidates[1]["candidate_id"]]],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+
+    assert failed["status"] == "FAILED"
+    assert failed["failure_stage"] == "REVIEW"
+    assert failed["failure_code"] == "review_rejected"
+    assert failed["knowledge_points"] == []
+    inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
+    findings = inspection["attempts"][0]["review"]["findings"]
+    assert len(findings) == 1
+    assert findings[0]["type"] == "DUPLICATE_MASTERY_BOUNDARY"
+    assert findings[0]["severity"] == "BLOCKING"
+
+
+def test_empty_duplicate_groups_never_blocks_on_similar_titles(service):
+    """Similar titles with genuinely independent mastery states: the reviewer
+    audits and returns []; the server must not block on title similarity."""
+
+    def reviewer(payload, _count):
+        window = next(w for w in payload["windows"] if w["learning_targets"])
+        return review_answer(
+            "PASS",
+            "命名相近但掌握状态独立。",
+            findings=[
+                review_finding(
+                    window["section_id"],
+                    window["learning_targets"][0]["unit_ids"][:1],
+                    finding_type="MINOR_NAMING_OVERLAP",
+                )
+            ],
+            groups=[],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+    assert ready["status"] == "READY"
+    assert ready["knowledge_points"]
+
+
+def test_malformed_duplicate_group_is_invalid_review_output(service):
+    def reviewer(payload, _count):
+        candidates = payload["candidates"]
+        return review_answer("PASS", "输出损坏。", groups=[[candidates[0]["candidate_id"]]])
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+
+    # Malformed groups exhaust the bounded identical-contract retries.
+    assert failed["status"] == "FAILED"
+    assert failed["failure_stage"] == "REVIEW"
+    assert failed["failure_code"] == "invalid_review_output"
+    assert runtime.counts[("zhipu", "review")] == 3
+
+    direct_payload = {
+        "sections": [{"section_id": "s", "units": [{"unit_id": "u0001"}]}],
+        "candidates": [
+            {
+                "candidate_index": 0,
+                "candidate_id": "c0001",
+                "primary_section_id": "s",
+                "unit_ids": ["u0001"],
+                "title": "候选",
+                "one_sentence_meaning": "含义",
+            }
+        ],
+        "review_rubric": list(REVIEW_RUBRIC),
+    }
+    for malformed in (
+        [["c9999", "c0001"]],          # unknown candidate ID
+        [["c0001"]],                   # fewer than two candidates
+        [["c0001", "c0001"]],          # repeated candidate within one group
+        "not-a-list",
+    ):
+        with pytest.raises(ValueError):
+            KnowledgeService._validate_review(
+                review_answer("PASS", "损坏。", groups=malformed), direct_payload
+            )
+
+
+def test_duplicate_group_and_finding_dedupe_into_one_blocking(service):
+    def reviewer(payload, _count):
+        candidates = payload["candidates"]
+        first = candidates[0]
+        return review_answer(
+            "PASS",
+            "审查说明。",
+            findings=[
+                review_finding(
+                    first["primary_section_id"],
+                    list(first["unit_ids"]),
+                    finding_type="DUPLICATE_MASTERY_BOUNDARY",
+                )
+            ],
+            groups=[[first["candidate_id"], candidates[1]["candidate_id"]]],
+        )
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(service, runtime=runtime)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+
+    assert failed["status"] == "FAILED"
+    assert failed["failure_code"] == "review_rejected"
+    inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
+    findings = inspection["attempts"][0]["review"]["findings"]
+    duplicate_findings = [
+        finding
+        for finding in findings
+        if finding["type"] == "DUPLICATE_MASTERY_BOUNDARY"
+    ]
+    assert len(duplicate_findings) == 1
+    assert duplicate_findings[0]["severity"] == "BLOCKING"
+
+
+def chapter_pdf_with_summary():
+    writer = PdfWriter()
+    for _ in range(6):
+        writer.add_blank_page(width=612, height=792)
+    chapter_one = writer.add_outline_item("第1章 基础", 0)
+    writer.add_outline_item("1.1 第一节", 0, parent=chapter_one)
+    writer.add_outline_item("1.2 本章小结", 2, parent=chapter_one)
+    chapter_two = writer.add_outline_item("第2章 后续", 4)
+    writer.add_outline_item("2.1 第三节", 4, parent=chapter_two)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+def non_cast_pages():
+    return {
+        0: [
+            detected("第1章 基础", 0.08),
+            detected("1.1 第一节", 0.14),
+            detected("概念 A 的起点。", 0.30),
+        ],
+        1: [detected("概念 A 的终点。", 0.30)],
+        2: [
+            detected("1.2 本章小结", 0.12),
+            detected("本章性能指标要点回顾一。", 0.30),
+            detected("本章层次结构要点回顾二。", 0.50),
+        ],
+        3: [detected("本章小结的收尾句。", 0.30)],
+        4: [detected("第2章 后续", 0.09), detected("2.1 第三节", 0.2)],
+        5: [detected("第二章内容", 0.3)],
+    }
+
+
+def test_non_cast_sections_short_circuit_with_zero_provider_calls(service):
+    observed = {}
+
+    def reviewer(payload, _count):
+        observed["windows"] = payload["windows"]
+        observed["sections"] = payload["sections"]
+        return review_answer()
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(
+        service,
+        runtime=runtime,
+        pages=non_cast_pages(),
+        pdf=chapter_pdf_with_summary(),
+    )
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+
+    generation_calls = [call for call in runtime.calls if call["provider"] == "deepseek"]
+    assert len(generation_calls) == 1
+    assert "本章小结" not in generation_calls[0]["payload"]["window"]["title"]
+
+    summary_window = next(
+        window for window in observed["windows"] if "本章小结" in (window["title"] or "")
+    )
+    summary_section = next(
+        section
+        for section in observed["sections"]
+        if section["section_id"] == summary_window["section_id"]
+    )
+    assert summary_window["learning_targets"] == []
+    assert summary_window["non_kp_units"] == [
+        unit["unit_id"] for unit in summary_section["units"]
+    ]
+    assert ready["status"] == "READY"
+    assert [point["title"] for point in ready["knowledge_points"]] == ["学习主题 1"]
+
+    attempts = fixture["repository"].pipeline_attempts(revision_id, chapter_id)
+    assert all(
+        row["primary_section_id"] != summary_window["section_id"]
+        or row["pipeline_stage"] != "SEMANTIC_CLASSIFICATION"
+        for row in attempts
+    )
+
+
+def chapter_pdf_with_subsections():
+    writer = PdfWriter()
+    for _ in range(6):
+        writer.add_blank_page(width=612, height=792)
+    chapter_one = writer.add_outline_item("第1章 基础", 0)
+    big_section = writer.add_outline_item("1.1 大节", 0, parent=chapter_one)
+    writer.add_outline_item("1.1.1 第一个子节", 0, parent=big_section)
+    writer.add_outline_item("1.1.2 第二个子节", 1, parent=big_section)
+    writer.add_outline_item("1.2 第二节", 2, parent=chapter_one)
+    chapter_two = writer.add_outline_item("第2章 后续", 4)
+    writer.add_outline_item("2.1 第三节", 4, parent=chapter_two)
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+def oversized_section_pages():
+    first_items = [
+        detected(f"（{index}）第一子节要点内容。", 0.25 + index * 0.006)
+        for index in range(1, 121)
+    ]
+    second_items = [
+        detected(f"（{index}）第二子节要点内容。", 0.2 + index * 0.006)
+        for index in range(1, 122)
+    ]
+    return {
+        0: [
+            detected("第1章 基础", 0.08),
+            detected("1.1 大节", 0.12),
+            detected("1.1.1 第一个子节", 0.18),
+            *first_items,
+        ],
+        1: [detected("1.1.2 第二个子节", 0.12), *second_items],
+        2: [detected("1.2 第二节", 0.16), detected("概念 B 的起点", 0.30)],
+        3: [detected("概念 B 的终点。", 0.30)],
+        4: [detected("第2章 后续", 0.09), detected("2.1 第三节", 0.2)],
+        5: [detected("第二章内容", 0.3)],
+    }
+
+
+def test_oversized_section_fallback_keeps_partition_and_publication_contracts(service):
+    observed = {}
+
+    def reviewer(payload, _count):
+        observed["windows"] = payload["windows"]
+        return review_answer()
+
+    runtime = ScriptedRuntime(review=reviewer)
+    fixture = build_fixture(
+        service,
+        runtime=runtime,
+        pages=oversized_section_pages(),
+        pdf=chapter_pdf_with_subsections(),
+    )
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+
+    generation_payloads = [
+        call["payload"]
+        for call in runtime.calls
+        if call["provider"] == "deepseek"
+    ]
+    # The 241-unit Section exceeds the structured-output accounting budget
+    # and falls back to its two real subsection windows; the small Section
+    # stays one window.
+    assert len(generation_payloads) == 3
+    kinds = [payload["window"]["kind"] for payload in generation_payloads]
+    assert kinds.count("SUBSECTION") == 2
+    assert kinds.count("SECTION") == 1
+    subsection_titles = {
+        payload["window"]["title"]
+        for payload in generation_payloads
+        if payload["window"]["kind"] == "SUBSECTION"
+    }
+    assert subsection_titles == {"1.1.1 第一个子节", "1.1.2 第二个子节"}
+
+    fallback_windows = [
+        window
+        for window in observed["windows"]
+        if window["window_kind"] == "SUBSECTION"
+    ]
+    assert len(fallback_windows) == 2
+    partition_unit_ids = [
+        unit_id
+        for window in fallback_windows
+        for target in window["learning_targets"]
+        for unit_id in target["unit_ids"]
+    ] + [
+        unit_id
+        for window in fallback_windows
+        for unit_id in window["non_kp_units"]
+    ]
+    assert len(partition_unit_ids) == len(set(partition_unit_ids))
+
+    assert ready["status"] == "READY"
+    assert ready["structure_version"] == 1
+    assert ready["knowledge_points"]
 
 
 def test_generation_and_review_failures_are_diagnosable_and_never_publish(service):
@@ -1372,10 +2245,13 @@ def test_large_subsection_keeps_one_complete_bounded_semantic_judgment():
         'outline_subsection_id': 'subsection', 'outline_subsection_title': 'Subsection',
     } for i, size in enumerate([900] * 7 + [185])]
     windows = build_semantic_windows(units)
+    # The Section fits every bounded operational limit, so the one real
+    # subsection never splits and the whole Section is one window.
     assert len(windows) == 1
+    assert windows[0]['window_kind'] == 'SECTION'
     assert windows[0]['character_count'] == 6485
     assert windows[0]['units'] == units
-    assert windows[0]['outline_subsection_id'] == 'subsection'
+    assert windows[0]['outline_subsection_id'] is None
     units[-1]['text'] += '字' * (MAX_SEMANTIC_WINDOW_CHARACTERS - 6485)
     assert build_semantic_windows(units)[0]['character_count'] == MAX_SEMANTIC_WINDOW_CHARACTERS
     units[-1]['text'] += '字'

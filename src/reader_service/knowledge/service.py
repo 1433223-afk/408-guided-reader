@@ -25,7 +25,9 @@ from .semantic import (
     SemanticOutputError,
     build_compact_review_ledger,
     build_evidence_units,
+    build_fragmentation_warnings,
     build_semantic_windows,
+    is_non_minting_review_window,
     materialize_candidates,
     publication_points,
     semantic_window_payload,
@@ -49,11 +51,30 @@ REVIEW_RUBRIC = (
     "chapter_map_balance",
 )
 
+# Bounded structured finding types. The reviewer owns the semantic judgment
+# (choosing the type); the server owns severity — it is fixed per type and
+# never parsed from natural language. Verdict consistency is likewise derived
+# from the normalized severities, so a reviewer that files a
+# DUPLICATE_MASTERY_BOUNDARY finding cannot publish that map by wording its
+# verdict as PASS.
+REVIEW_FINDING_TYPES = {
+    "DUPLICATE_MASTERY_BOUNDARY": "BLOCKING",
+    "SYSTEMATIC_OVER_FRAGMENTATION": "BLOCKING",
+    "FACET_OR_EXAMPLE_PROMOTED_TO_KP": "BLOCKING",
+    "MINOR_NAMING_OVERLAP": "WARNING",
+    "MINOR_GRANULARITY_IMBALANCE": "WARNING",
+}
+
 GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义归并器，不是用户对话助手。
 输入是一个真实 Outline 小节（或没有子小节时的 Section fallback）内按教材顺序排列的 deterministic evidence units。你只做这一次最终 learning-identity partition；不得依据先前模型结果做第二轮合并、拆分、清理或修复。
+必须按主题优先判断，而不是按 unit 或标题逐条判断：先确定本窗口的教材内容真正包含哪几个值得独立记录理解状态的学习主题，再把这些 units 分配给各主题。教材的编号、小标题、黑体词条和枚举成员只是证据的组织形式，本身不构成 KP 划分；绝不能因为某条证据自带编号或标题就单独铸造一个 KP。
 KP 是最小的、值得独立教学、独立检查、独立诊断、独立补救并长期记录掌握状态的学习单元。必须预设吸收：只有当前教材证据能正面证明某个内容需要独立 teaching + assessment + diagnosis + remediation，才建立一个 learning target。对相邻条目必须先问：未来是否确实需要分别教学，并在学习者失败时采用不同的诊断或补救路径？只要不需要分别教学，或补救路径没有实质区别，就必须合为同一个 target。若不确定是否值得维护两个独立 mastery 状态，也必须合并。能单独出一道事实题、拥有不同标题、术语、段落、方向、变体或编号，都不足以形成 mastery boundary。
 标题本身、例子本身不成为 KP；definition/property/ordinary step/example 默认属于同一 learning target。只有既能独立教学、又具有不同错误模式或补救路径，且当前 source evidence 对两者都有充分展开时，才可以拆成不同 targets。
 同一学习对象的多种分类方式，默认合为一个分类框架；分类维度或分类项本身不单独成为 KP。同一学习目标下的一组成套方法、互补步骤或替代实现，默认整体理解并合为一个 target；只有其中某项有充分独立展开，并确实需要不同教学、检查和补救时才拆分。
+框架、机制或分类家族的成员默认吸收进共同的框架型 target。典型正例：多种寻址方式应优先形成少数框架型 KP（如把隐含/立即/直接/间接/寄存器类简单寻址合为一个家族 target、把相对/基址/变址合为偏移寻址家族 target），而不是每种寻址方式一个 KP，更不是“家族统称一个 KP + 每个成员各一个 KP + 汇总表一个 KP”；多项性能指标应优先按性能评价框架或公式体系组织成一个 KP（如速度类指标与 CPU 执行时间模型），而不是每个指标一个 KP；运算器、控制器、存储器、输入/输出设备等部件应优先作为整机结构主题的一部分理解，而不是每个部件一个 KP。
+同一 Section 内，同一个 mastery theme 在不同位置多次出现（先简述后展开、前文机制在后文复述、预告或回顾）时：不得因为出现位置不同而铸造多个 KP。只在内容最完整、最主要、最适合作为独立教学主题的位置铸造一次；其它位置的预告、简述、复述、重复解释一律进入 non_kp_units，作为该主题的重复证据被吸收。不得为了“保留所有出现位置”而创建重复 mastery state。典型情形：本节开头“计算机系统的组成与软/硬件逻辑等价”的简述与后文再次展开的“软/硬件逻辑功能等价性”，若维护的是同一个理解状态，只允许一个 KP，较弱或重复的一处进入 non_kp_units。
+当一个完整机制已作为框架 target 存在时，例题、演算示例、复习性总结和派生指标默认属于该框架内部，纳入其连续 source span 或进入 non_kp_units，除非确有独立的教学、诊断与补救路径。典型情形：主频、CPI、IPS、CPU 执行时间、MIPS、FLOPS 等性能指标应优先按共同的性能评价框架 / CPU 执行时间模型组织，不要因为每个名称可以单独出一道题就逐项铸造独立 KP；同一公式的 worked example（如 CPU 执行时间计算例题）默认属于公式框架本身。
+软尺度参考（不是 quota，禁止为凑数量机械合并或拆分）：篇幅短的窗口通常 1–3 个 learning targets，普通窗口通常 2–5 个，机制复杂、篇幅长的窗口通常 4–8 个。明显超出参考范围时，必须能为每个 target 说出独立的诊断与补救理由。
 例题、章节概览、后文预告和对前文的比较总结，默认进入 non_kp_units 或吸收到其所说明的 learning target，不单独铸造 KP；它们包含的新且充分展开的独立机制除外。仅表达“应学习/掌握/把握规律/举一反三/下文将介绍”等要求、建议或过渡的 unit 必须进入 non_kp_units；不得把它命名为“应用概述”“学习要求”“学习建议”等泛化 target。
 window.kp_creation 为 FORBIDDEN_REVIEW_MATERIAL 时，该窗口属于本章/本节小结、常见问题、易混淆、FAQ 或试题精选：learning_targets 必须为空，全部 unit_id 必须进入 non_kp_units；这些内容只补充已有 KP，绝不在这里铸造新 KP。不得把课后选择题及其重复考查的定义、性质包装成“试题辨析”等独立 KP。
 non_kp_units 只表示这些 evidence 不在本窗口铸造成独立 KP，不表示内容无价值。facet/property/step/example 可以被包含在某个 target 的连续 source evidence 中。
@@ -63,12 +84,16 @@ unit_id、Section、Outline 小节和来源范围均由服务端确定；不得�
 learning_targets 按教材顺序排列，每个 target 的 unit_ids 必须连续；输入 units 数组就是唯一顺序，禁止在一个 target 内列出前后两个 unit_id 却省略它们之间的任何 unit_id。若一个学习目标语义上跨过中间的标题、例子或其他附带 unit，要么把中间 unit 一并纳入该连续 source span，要么拆成两个各自连续的 targets，绝不能跳号。non_kp_units 也按教材顺序排列。两者合计必须覆盖每个给定 unit_id 恰好一次。不得返回 Markdown 代码围栏、推理过程或其他字段。"""
 
 REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定的完整 Chapter map 是否可以发布。
-输入是服务端生成的 compact ledger：完整 unit/partition accounting、候选标题与含义、截断证据提示和 overlap warnings，不含原始几何。必须先扫描全部 Sections，再整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
-overlap_warnings 只是审查信号，不是自动失败；来源空隙正常，不要求 no-gaps。你只能定位问题，不能改写候选，不能生成来源字段，也不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
-BLOCKING 仅用于依据 ledger 可高置信判断、若不修复就会让整张图不可发布的缺陷，例如同一学习状态被重复保留、伪造或泛化认知 KP、重大独立学习内容缺失、明显错误的 Section/来源归属，或会形成无意义 mastery 状态的严重拆分/合并。存在优化空间、可选的命名/合并方案、轻微不均衡、例示/回顾是否另列、或因截断证据无法高置信判断的问题只能是 WARNING；不得因为还能改进就阻断发布。
+KP 是值得独立记录理解状态、并具有独立诊断与补救价值的学习主题。能单独出一道事实题、拥有独立标题或术语、或只是同一框架/机制/分类家族的成员，都不足以构成独立 KP。
+输入是服务端生成的 compact ledger：完整 unit/partition accounting、候选标题与含义、截断证据提示、overlap warnings 和 fragmentation warnings，不含原始几何。必须先扫描全部 Sections，再整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
+在给出 findings 和 verdict 之前，必须先对候选执行一次显式 duplicate mastery audit：逐组询问“如果学习者已经真正理解 Candidate A，Candidate B 是否仍值得维护一个独立掌握状态、独立诊断路径和独立补救路径？”若否，则两者属于同一个 mastery boundary，必须写入 duplicate_mastery_groups。以下情况不能成为保留两个 KP 的理由：source span 不同；一处是前文简述、一处是后文展开；标题用词不同；两处都可以单独出题；两处来自不同教材小标题。不要输出完整 N×N 配对矩阵，只输出实际判断为 duplicate 的分组；没有任何重复时必须显式返回空数组。
+必须专门检查三类会让整张图不可发布的缺陷。每个 KP 未来都会独立承载 mastery 状态、Master Topic 与学习记忆：(1) 同一 Section 内两个候选维护同一个理解状态（duplicate mastery boundary），例如一处简述与后文展开的同一主题被分别铸造；(2) 把同一 framework/mechanism/taxonomy 家族逐成员拆成无独立诊断与补救价值的碎片 KP（系统性过拆），同时出现“家族总称 KP + 每个成员 KP + 汇总表 KP”是明确的过拆信号；(3) 把例题、演算示例、复习性总结或框架内派生指标提升为独立 KP，而它没有独立的教学、诊断与补救价值（facet/example 被错误提升）。
+每个 finding 必须给出结构化 type，服务端按 type 固定执行 severity，你不再输出 severity 字段：DUPLICATE_MASTERY_BOUNDARY、SYSTEMATIC_OVER_FRAGMENTATION、FACET_OR_EXAMPLE_PROMOTED_TO_KP 固定为 BLOCKING（其中 FACET_OR_EXAMPLE_PROMOTED_TO_KP 仅当你判断该候选确实没有独立掌握与诊断价值时使用；若例题本身展开了新机制或确有独立补救路径，不得用该类型）；MINOR_NAMING_OVERLAP、MINOR_GRANULARITY_IMBALANCE 固定为 WARNING。命名相近但 mastery state 确实不同的候选属于 MINOR_NAMING_OVERLAP，不得按重复处理；轻微不均衡、可选命名方案归 MINOR_GRANULARITY_IMBALANCE。
+overlap_warnings 和 fragmentation_warnings 只是审查信号，不是自动失败；来源空隙正常，不要求 no-gaps。你只能定位问题，不能改写候选，不能生成来源字段，也不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
+存在优化空间、可选的命名/合并方案、轻微不均衡、例示/回顾是否另列、或因截断证据无法高置信判断的问题必须使用 MINOR_* 类型；不得因为还能改进就阻断发布。
 每个 finding 必须定位到一个现有 section_id，并引用该 Section 中一个或多个给定 unit_id；只定位真正需要改变的最小 units。跨 Section 重复应为需要修复的一侧给出定位明确的 finding，不要把正确对照一并列为修复目标。
-只返回一个 JSON 对象，且只能含三个字段：{"verdict":"PASS 或 FAIL","summary":"不超过 1000 字的简体中文理由","findings":[{"dimension":"review_rubric 中的一个值","severity":"BLOCKING 或 WARNING","section_id":"现有 Section ID","unit_ids":["该 Section 的给定 unit_id"],"detail":"具体、可操作的简体中文问题说明"}]}。
-FAIL 必须至少有一个 BLOCKING finding；PASS 不得含 BLOCKING finding。不得返回 Markdown 代码围栏、修订后的 KP 或其他文字。"""
+只返回一个 JSON 对象，且只能含四个字段：{"verdict":"PASS 或 FAIL","summary":"不超过 1000 字的简体中文理由","duplicate_mastery_groups":[["重复组的 candidate_id","…"],…]（无重复时为 []）,"findings":[{"dimension":"review_rubric 中的一个值","type":"DUPLICATE_MASTERY_BOUNDARY 或 SYSTEMATIC_OVER_FRAGMENTATION 或 FACET_OR_EXAMPLE_PROMOTED_TO_KP 或 MINOR_NAMING_OVERLAP 或 MINOR_GRANULARITY_IMBALANCE","section_id":"现有 Section ID","unit_ids":["该 Section 的给定 unit_id"],"detail":"具体、可操作的简体中文问题说明"}]}。
+FAIL 必须至少有一个 BLOCKING 类型的 finding；PASS 不得含 BLOCKING 类型的 finding。不得返回 Markdown 代码围栏、修订后的 KP 或其他文字。"""
 
 
 class KnowledgePipelineError(RuntimeError):
@@ -290,6 +315,9 @@ class KnowledgeService:
                 )[1],
                 review_rubric=REVIEW_RUBRIC,
                 overlap_warnings=self._overlap_warnings(points),
+                fragmentation_warnings=build_fragmentation_warnings(
+                    windows, partitions_by_window
+                ),
             )
             review_hash = self._digest(review_payload)
             self.repository.update_progress(
@@ -429,6 +457,7 @@ class KnowledgeService:
             "findings": [
                 {
                     "dimension": finding["dimension"],
+                    "type": finding["type"],
                     "severity": finding["severity"],
                     "section_id": finding["section_id"],
                     "unit_ids": list(finding["unit_ids"]),
@@ -575,11 +604,20 @@ class KnowledgeService:
             local_results = {}
             local_identities = set()
             for window in local_windows:
-                partition, identity = self._classify_window(
-                    window, chapter, revision_id, chapter_id, attempt_id
-                )
+                if is_non_minting_review_window(window):
+                    # Zero generator provider calls: the deterministic
+                    # non-cast rule already forces an empty learning-target
+                    # partition, so the server synthesizes it and runs it
+                    # through the identical validator and accounting.
+                    partition = self._synthesized_non_minting_partition(window)
+                    identity = None
+                else:
+                    partition, identity = self._classify_window(
+                        window, chapter, revision_id, chapter_id, attempt_id
+                    )
                 local_results[window["window_id"]] = partition
-                local_identities.add(identity)
+                if identity is not None:
+                    local_identities.add(identity)
             return local_results, local_identities
 
         first_failure: Exception | None = None
@@ -624,6 +662,13 @@ class KnowledgeService:
                 "incomplete_window_classification",
                 "Not every required semantic window produced a private partition",
             )
+        if not identities:
+            raise KnowledgePipelineError(
+                "GENERATION", "DETERMINISTIC",
+                "chapter_has_no_castable_window",
+                "Every semantic window is deterministic non-cast material; "
+                "the Chapter cannot publish KnowledgePoints",
+            )
         if len(identities) != 1:
             raise KnowledgePipelineError(
                 "GENERATION", "TECHNICAL_FAILURE",
@@ -631,6 +676,23 @@ class KnowledgeService:
                 "Semantic windows did not retain one actual provider/model route",
             )
         return results, next(iter(identities))
+
+    @staticmethod
+    def _synthesized_non_minting_partition(window: dict) -> dict:
+        """Synthesize the forced all-non-KP partition without a provider call.
+
+        The output uses the same semantic schema and passes the same
+        deterministic validator as a provider answer; nothing bypasses
+        downstream accounting or publication gates.
+        """
+        answer = json.dumps(
+            {
+                "learning_targets": [],
+                "non_kp_units": [unit["unit_id"] for unit in window["units"]],
+            },
+            ensure_ascii=False,
+        )
+        return validate_semantic_output(answer, window)
 
     def _window_output_budget(self, window: dict) -> int:
         # Every unit ID must be accounted for even when absorbed/non-KP. This
@@ -831,7 +893,7 @@ class KnowledgeService:
         except (TypeError, ValueError):
             raise ValueError("Review output is not JSON") from None
         if not isinstance(value, dict) or set(value) != {
-            "verdict", "summary", "findings"
+            "verdict", "summary", "findings", "duplicate_mastery_groups"
         }:
             raise ValueError("Review output fields are invalid")
         if value["verdict"] not in {"PASS", "FAIL"}:
@@ -849,9 +911,12 @@ class KnowledgeService:
             }
             for section in payload["sections"]
         }
+        candidates = {
+            candidate["candidate_id"]: candidate for candidate in payload["candidates"]
+        }
         rubric = set(payload["review_rubric"])
         expected = {
-            "dimension", "severity", "section_id", "unit_ids", "detail",
+            "dimension", "type", "section_id", "unit_ids", "detail",
         }
         normalized = []
         for finding in findings:
@@ -859,9 +924,12 @@ class KnowledgeService:
                 raise ValueError("Review finding fields are invalid")
             if finding["dimension"] not in rubric:
                 raise ValueError("Review finding dimension is invalid")
-            severity = finding["severity"]
-            if severity not in {"BLOCKING", "WARNING"}:
-                raise ValueError("Review finding severity is invalid")
+            finding_type = finding["type"]
+            if finding_type not in REVIEW_FINDING_TYPES:
+                raise ValueError("Review finding type is invalid")
+            # Severity is a fixed server-side policy per structured type —
+            # never parsed from natural language and never reviewer-chosen.
+            severity = REVIEW_FINDING_TYPES[finding_type]
             section_id = finding["section_id"]
             if not isinstance(section_id, str) or section_id not in section_units:
                 raise ValueError("Review finding Section is invalid")
@@ -878,10 +946,54 @@ class KnowledgeService:
                 raise ValueError("Review finding detail is invalid")
             normalized.append({
                 "dimension": finding["dimension"],
+                "type": finding_type,
                 "severity": severity,
                 "section_id": section_id,
                 "unit_ids": list(unit_ids),
                 "detail": detail.strip(),
+            })
+
+        # Mandatory duplicate mastery audit: each group must reference at
+        # least two distinct existing candidate IDs. Any valid non-empty group
+        # is normalized into exactly one BLOCKING DUPLICATE_MASTERY_BOUNDARY
+        # finding — unless the reviewer's own findings already cover that
+        # group's candidates, in which case no duplicate finding is minted.
+        groups = value["duplicate_mastery_groups"]
+        if not isinstance(groups, list):
+            raise ValueError("Review duplicate mastery groups are invalid")
+        for group in groups:
+            if (
+                not isinstance(group, list)
+                or len(group) < 2
+                or any(
+                    not isinstance(candidate_id, str)
+                    or candidate_id not in candidates
+                    for candidate_id in group
+                )
+                or len(group) != len(set(group))
+            ):
+                raise ValueError("Review duplicate mastery group is invalid")
+        for group in groups:
+            group_units = {
+                unit_id
+                for candidate_id in group
+                for unit_id in candidates[candidate_id]["unit_ids"]
+            }
+            already_reported = any(
+                finding["type"] == "DUPLICATE_MASTERY_BOUNDARY"
+                and set(finding["unit_ids"]) & group_units
+                for finding in normalized
+            )
+            if already_reported:
+                continue
+            representative = candidates[group[0]]
+            normalized.insert(0, {
+                "dimension": "duplicate_or_near_duplicate_semantics",
+                "type": "DUPLICATE_MASTERY_BOUNDARY",
+                "severity": "BLOCKING",
+                "section_id": representative["primary_section_id"],
+                "unit_ids": list(representative["unit_ids"]),
+                "detail": "duplicate_mastery_groups 声明这些候选维护同一 mastery boundary。",
             })
 
         blocking = [
@@ -890,9 +1002,10 @@ class KnowledgeService:
         ]
         if value["verdict"] == "FAIL" and not blocking:
             raise ValueError("Review FAIL lacks a blocking finding")
-        if value["verdict"] == "PASS" and blocking:
-            raise ValueError("Review PASS contains a blocking finding")
-        return ReviewVerdict(value["verdict"], summary.strip(), tuple(normalized))
+        # The publishability verdict is derived from the typed findings: a
+        # claimed PASS that files a BLOCKING-typed defect cannot publish.
+        verdict = "FAIL" if blocking else "PASS"
+        return ReviewVerdict(verdict, summary.strip(), tuple(normalized))
 
     def _configured_identity(self, provider: str, stage: str) -> tuple[str, str | None]:
         try:

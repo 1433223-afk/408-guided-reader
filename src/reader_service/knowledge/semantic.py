@@ -13,7 +13,12 @@ MAX_SHORT_HEADING_CHARACTERS = 48
 # about provider context size. Keep long real Sections whole (including the
 # 13,631-character Insurance Section); transport/provider limits still fail closed.
 MAX_SEMANTIC_WINDOW_CHARACTERS = 48_000
-MAX_REVIEW_EXCERPT_CHARACTERS = 60
+# A whole-Section window must keep every unit accountable inside the
+# structured-output budget formula (1024 + 64 × units, hard-capped at 16384)
+# without saturation. Exceeding this unit count falls back to real Outline
+# subsection windows; it is never a KP-count quota.
+MAX_WHOLE_SECTION_UNITS = (16_384 - 1024) // 64
+MAX_REVIEW_EXCERPT_CHARACTERS = 200
 MAX_PAGE_TOP_FURNITURE_Y = 0.10
 MIN_PAGE_BOTTOM_CONTINUATION_Y = 0.84
 MAX_PAGE_TOP_CONTINUATION_Y = 0.20
@@ -111,9 +116,10 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
                 or starts_new_item
                 or exceeds_hard_limit
             ):
-                section_units.append(current)
-                current = []
-                current_characters = 0
+                if not _is_bare_heading_carry(current):
+                    section_units.append(current)
+                    current = []
+                    current_characters = 0
             current.append({**line, "text": text})
             current_characters += len(text)
             if (is_heading_or_item and not is_short_heading) or (
@@ -174,65 +180,54 @@ def build_evidence_units(source_payload: dict) -> list[dict]:
 
 
 def build_semantic_windows(units: list[dict]) -> list[dict]:
-    first_subsection_by_section: dict[str, str] = {}
-    for unit in units:
-        subsection_id = unit.get("outline_subsection_id")
-        if subsection_id is not None:
-            first_subsection_by_section.setdefault(
-                unit["primary_section_id"], subsection_id
-            )
+    """Section-first bounded windowing (Implementation §12.2, amended 2026-09-21).
 
-    grouped: list[tuple[tuple[str, str], list[dict]]] = []
-    current_key: tuple[str, str] | None = None
-    current_units: list[dict] = []
-    seen_keys: set[tuple[str, str]] = set()
-
-    def flush() -> None:
-        nonlocal current_key, current_units
-        if current_key is None:
-            return
-        if current_key in seen_keys:
-            raise ValueError("Semantic window boundary is non-contiguous")
-        grouped.append((current_key, current_units))
-        seen_keys.add(current_key)
-        current_key = None
-        current_units = []
-
+    One real Section defaults to one semantic window while it fits both
+    bounded operational limits: the invocation-safety character bound and the
+    structured-output accounting budget without saturation. Oversized
+    Sections fall back to their real Outline subsection boundaries —
+    operational splitting only; a window never crosses a Section and never
+    splits one real subsection.
+    """
+    section_groups: list[tuple[str, list[dict]]] = []
     for unit in units:
         section_id = unit["primary_section_id"]
-        subsection_id = unit.get("outline_subsection_id")
-        if subsection_id is not None:
-            key = ("SUBSECTION", subsection_id)
-        elif section_id in first_subsection_by_section:
-            key = ("SUBSECTION", first_subsection_by_section[section_id])
+        if not section_groups or section_groups[-1][0] != section_id:
+            section_groups.append((section_id, [unit]))
         else:
-            key = ("SECTION", section_id)
-        if current_key is not None and key != current_key:
-            flush()
-        if current_key is None:
-            current_key = key
-        current_units.append(unit)
-    flush()
+            section_groups[-1][1].append(unit)
+    if len(section_groups) != len({section_id for section_id, _ in section_groups}):
+        raise ValueError("Section evidence is non-contiguous")
+
+    grouped: list[tuple[str, str | None, list[dict]]] = []
+    for section_id, section_units in section_groups:
+        character_count = sum(len(unit["text"]) for unit in section_units)
+        whole_section = (
+            character_count <= MAX_SEMANTIC_WINDOW_CHARACTERS
+            and len(section_units) <= MAX_WHOLE_SECTION_UNITS
+        )
+        if whole_section:
+            grouped.append(("SECTION", section_id, section_units))
+            continue
+        grouped.extend(_subsection_fallback_groups(section_id, section_units))
 
     windows = []
-    for window_order, (key, window_units) in enumerate(grouped):
+    for window_order, (kind, key, window_units) in enumerate(grouped):
         character_count = sum(len(unit["text"]) for unit in window_units)
-        if character_count > MAX_SEMANTIC_WINDOW_CHARACTERS:
-            raise SemanticOutputError("semantic_window_source_limit", "Semantic window exceeds configured source bound")
         first = window_units[0]
         subsection = next(
             (
                 unit
                 for unit in window_units
-                if unit.get("outline_subsection_id") == key[1]
+                if unit.get("outline_subsection_id") == key
             ),
             None,
-        ) if key[0] == "SUBSECTION" else None
+        ) if kind == "SUBSECTION" else None
         windows.append(
             {
                 "window_id": f"w{window_order + 1:03d}",
                 "window_order": window_order,
-                "window_kind": key[0],
+                "window_kind": kind,
                 "primary_section_id": first["primary_section_id"],
                 "primary_section_title": first["primary_section_title"],
                 "outline_subsection_id": (
@@ -251,6 +246,45 @@ def build_semantic_windows(units: list[dict]) -> list[dict]:
         )
     _validate_window_coverage(units, windows)
     return windows
+
+
+def _subsection_fallback_groups(
+    section_id: str, section_units: list[dict]
+) -> list[tuple[str, str | None, list[dict]]]:
+    """Operational fallback grouping for one oversized Section.
+
+    Splits only along the Section's real Outline subsection boundaries. The
+    Section lead-in joins the first subsection group; a Section without any
+    resolved subsection stays one window (the character bound still fails
+    closed in coverage validation; there is no real boundary to split at).
+    """
+    first_subsection_id = next(
+        (
+            unit["outline_subsection_id"]
+            for unit in section_units
+            if unit.get("outline_subsection_id") is not None
+        ),
+        None,
+    )
+    groups: list[tuple[str, str | None, list[dict]]] = []
+    seen: set[str] = set()
+    for unit in section_units:
+        subsection_id = unit.get("outline_subsection_id")
+        if subsection_id is not None:
+            key = ("SUBSECTION", subsection_id)
+        elif first_subsection_id is not None:
+            key = ("SUBSECTION", first_subsection_id)
+        else:
+            key = ("SECTION", section_id)
+        if groups and (groups[-1][0], groups[-1][1]) != key:
+            if key in seen:
+                raise ValueError("Semantic window boundary is non-contiguous")
+            seen.add((groups[-1][0], groups[-1][1]))
+        if not groups or (groups[-1][0], groups[-1][1]) != key:
+            groups.append((key[0], key[1], [unit]))
+        else:
+            groups[-1][2].append(unit)
+    return groups
 
 
 def semantic_window_payload(chapter: dict, window: dict) -> dict:
@@ -273,7 +307,7 @@ def semantic_window_payload(chapter: dict, window: dict) -> dict:
             ),
             "kp_creation": (
                 "FORBIDDEN_REVIEW_MATERIAL"
-                if _is_non_minting_review_window(window)
+                if is_non_minting_review_window(window)
                 else "ALLOWED"
             ),
         },
@@ -367,7 +401,7 @@ def validate_semantic_output(answer: str, window: dict) -> dict:
             "incomplete_accounting",
             "Semantic partition does not account for every supplied unit exactly once",
         )
-    if _is_non_minting_review_window(window) and normalized_targets:
+    if is_non_minting_review_window(window) and normalized_targets:
         raise _semantic_error(
             "non_minting_review_material",
             "Summary, FAQ, and misconception windows cannot mint KnowledgePoints",
@@ -378,7 +412,7 @@ def validate_semantic_output(answer: str, window: dict) -> dict:
     }
 
 
-def _is_non_minting_review_window(window: dict) -> bool:
+def is_non_minting_review_window(window: dict) -> bool:
     titles = (
         window.get("primary_section_title"),
         window.get("outline_subsection_title"),
@@ -441,6 +475,65 @@ def publication_points(candidates: list[dict]) -> list[dict]:
     ]
 
 
+def build_fragmentation_warnings(
+    windows: list[dict], partitions_by_window: dict[str, dict]
+) -> list[dict]:
+    """Advisory over-fragmentation signals for the compact Review ledger.
+
+    These mirror overlap warnings: deterministic observations that help the
+    reviewer recognize systematic enumeration splitting. They are review
+    signals only and never fail deterministic validation — granularity is not
+    a correctness quota.
+    """
+    warnings: list[dict] = []
+    total_targets = 0
+    total_single_unit = 0
+    for window in windows:
+        targets = partitions_by_window[window["window_id"]]["learning_targets"]
+        unit_count = len(window["units"])
+        target_count = len(targets)
+        single_unit = sum(1 for target in targets if len(target["unit_ids"]) == 1)
+        total_targets += target_count
+        total_single_unit += single_unit
+        base = {
+            "window_id": window["window_id"],
+            "section_id": window["primary_section_id"],
+            "target_count": target_count,
+            "single_unit_target_count": single_unit,
+            "unit_count": unit_count,
+        }
+        longest_small_target_run = 0
+        current_run = 0
+        for target in targets:
+            current_run = current_run + 1 if len(target["unit_ids"]) <= 2 else 0
+            longest_small_target_run = max(longest_small_target_run, current_run)
+        if longest_small_target_run >= 4:
+            warnings.append(
+                {
+                    **base,
+                    "signal": "EXTENDED_SMALL_TARGET_RUN_REVIEW_REQUIRED",
+                    "longest_small_target_run": longest_small_target_run,
+                }
+            )
+        if target_count >= 4 and single_unit * 2 >= target_count:
+            warnings.append(
+                {**base, "signal": "MAJORITY_SINGLE_UNIT_TARGETS_REVIEW_REQUIRED"}
+            )
+        if unit_count >= 8 and target_count * 2 > unit_count:
+            warnings.append(
+                {**base, "signal": "HIGH_TARGET_UNIT_DENSITY_REVIEW_REQUIRED"}
+            )
+    if total_targets >= 8 and total_single_unit * 2 >= total_targets:
+        warnings.append(
+            {
+                "signal": "CHAPTER_WIDE_SINGLE_UNIT_TARGET_SHARE_REVIEW_REQUIRED",
+                "target_count": total_targets,
+                "single_unit_target_count": total_single_unit,
+            }
+        )
+    return warnings
+
+
 def build_compact_review_ledger(
     chapter: dict,
     units: list[dict],
@@ -452,6 +545,7 @@ def build_compact_review_ledger(
     semantic_model: str,
     review_rubric: tuple[str, ...],
     overlap_warnings: list[dict],
+    fragmentation_warnings: list[dict] = (),
 ) -> dict:
     candidate_by_membership = {
         (candidate["window_id"], tuple(candidate["unit_ids"])): candidate["candidate_id"]
@@ -532,6 +626,7 @@ def build_compact_review_ledger(
         },
         "review_rubric": list(review_rubric),
         "overlap_warnings": overlap_warnings,
+        "fragmentation_warnings": list(fragmentation_warnings),
     }
     validate_compact_review_ledger(ledger)
     return ledger
@@ -645,6 +740,17 @@ def _is_short_heading(text: str) -> bool:
         and _HEADING_OR_ITEM.match(text)
         and not _TERMINAL_PUNCTUATION.search(text)
     )
+
+
+def _is_bare_heading_carry(current: list[dict]) -> bool:
+    """A pending unit that is exactly one bare short heading line.
+
+    It never becomes a standalone evidence unit: the heading carries into the
+    next unit (evidence stays inside the window either way), so the semantic
+    partition contract never asks the model to account for a heading-only
+    unit — real generators reliably drop those.
+    """
+    return len(current) == 1 and _is_short_heading(current[0]["text"])
 
 
 def _is_page_top_furniture_during_continuation(

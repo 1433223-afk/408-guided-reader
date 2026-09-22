@@ -1112,11 +1112,30 @@ one existing primary Section, source revision, order and continuous source evide
 infer or replace document hierarchy and is not a generic document framework. Unit IDs are model-
 visible references; their Section/page/line/geometry/range mapping remains server authority.
 
-Each real existing Outline subsection is exactly one semantic window and receives one logical AI
-judgment. A Section lead-in outside its child subsections, or a Section with no child subsection, may
-form one separate deterministic fallback window. A size check may fail closed before invocation, but
-must not split one real subsection across multiple semantic judgments. The invocation receives only
-that window's ordered deterministic evidence units and declared context.
+> **User-approved amendment, 2026-09-21 — Section-first bounded windowing.** Repeated real use
+> showed that subsection-scoped windows make each judgment blind to sibling subsections of the same
+> Section, so theme-first absorption could not deduplicate or level abstraction across a Section
+> (1.2's duplicated 软/硬件等价 and 存储程序 mastery boundaries), while every window paid a separate
+> invocation. The accepted correction changes only the window's operational boundary: a real
+> Section defaults to one semantic window while it fits the bounded operational limits, with
+> operational fallback along real subsection boundaries. Product / KP semantics, prompts, identity,
+> publication and the one-pass no-feedback-loop rules are unchanged.
+
+Each real Section defaults to exactly one semantic window and receives one logical AI judgment while
+it satisfies the bounded operational limits: the existing invocation-safety window character bound
+and the structured-output accounting budget for its units without saturation. A semantic window
+never crosses a Section boundary. When a whole Section exceeds those limits, the window falls back
+to splitting along that Section's real existing Outline subsection boundaries only — operational
+splitting that never treats a subsection as an independent mastery boundary, never splits one real
+subsection across multiple semantic judgments, and never cuts at character positions. A Section
+lead-in outside its child subsections joins the first fallback window of its Section. No previous
+semantic result or Review finding is injected into any later window, and there is no second-pass
+merge or consolidation stage. The invocation receives only that window's ordered deterministic
+evidence units and declared context. Windows whose source authority already forbids minting KPs
+(本章小结 / 本节小结 / 章节小结 / 常见问题 / 易混淆 / FAQ / 试题精选 and other deterministic non-cast
+types) are short-circuited with zero generator provider calls: the server synthesizes the empty
+learning-target partition and passes it through the same schema, deterministic validator and
+downstream accounting — never a publication bypass.
 
 The result is one group-first final partition:
 
