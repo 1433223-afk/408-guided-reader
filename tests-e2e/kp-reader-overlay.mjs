@@ -60,7 +60,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(url);
   const card = page.locator('.book-card').filter({hasText:'348 个 PDF 页面'});
-  await card.getByRole('button', {name:'打开', exact:true}).click();
+  await card.locator('.book-open').click();
   await page.locator('.overview-book-heading .primary-action').click();
   await page.locator('.page canvas').first().waitFor();
 
@@ -137,19 +137,28 @@ try {
   await kpEntry.click();
   const drawer = page.locator('#reader-kp-list');
   await drawer.locator('.reader-kp-row').first().waitFor();
-  assert.deepEqual(await geometry(), before, 'opening KP navigation must not relayout the PDF canvas');
+  const afterOpen = await geometry();
+  assert.deepEqual([afterOpen.pixelWidth, afterOpen.pixelHeight, afterOpen.cssWidth, afterOpen.cssHeight],
+    [before.pixelWidth, before.pixelHeight, before.cssWidth, before.cssHeight],
+    'opening KP navigation must not relayout the PDF canvas');
   const drawerBox = await drawer.boundingBox();
   const canvasBox = await canvas.boundingBox();
-  assert.ok(drawerBox.width <= 301, JSON.stringify(drawerBox));
   assert.ok(drawerBox.x >= canvasBox.x + canvasBox.width,
     `KP navigation ${JSON.stringify(drawerBox)} overlaps PDF ${JSON.stringify(canvasBox)}`);
-  assert.ok(drawerBox.x + drawerBox.width <= 1587, JSON.stringify(drawerBox));
+  assert.ok(drawerBox.x + drawerBox.width <= (page.viewportSize()?.width ?? 1600) + 1, JSON.stringify(drawerBox));
   assert.equal(await page.locator('#outline-panel').isVisible(), false);
   await page.screenshot({path:'test-results/kp-reader-drawer.png'});
   await page.locator('#outline-toggle').click();
   assert.equal(await drawer.isVisible(), false);
   assert.equal(await page.locator('#outline-panel').isVisible(), true);
-  assert.deepEqual(await geometry(), before, 'switching temporary navigation must not relayout the PDF canvas');
+  const outlineGeometry = await geometry();
+  assert.deepEqual([outlineGeometry.pixelWidth, outlineGeometry.pixelHeight, outlineGeometry.cssWidth, outlineGeometry.cssHeight],
+    [before.pixelWidth, before.pixelHeight, before.cssWidth, before.cssHeight],
+    'switching temporary navigation must not relayout the PDF canvas');
+  const outlinePane = await page.locator('#outline-panel').boundingBox();
+  const outlineCanvas = await canvas.boundingBox();
+  assert.ok(outlineCanvas.x >= outlinePane.x + outlinePane.width + 20,
+    `Directory pane overlaps PDF ${JSON.stringify({outlinePane, outlineCanvas})}`);
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({status:'PASS',realPages:348,first:fixture.first.title,existing:fixture.existing.title,

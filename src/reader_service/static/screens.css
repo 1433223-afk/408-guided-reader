@@ -50,9 +50,9 @@
 #reader { color:#26332b; }
 #reader .viewer { background:#d6d5ce; }
 #reader .toolbar { background:#f6f5ee;border-color:#ccccc2;box-shadow:none; }
-#reader :is(.outline-panel,.search-panel,.knowledge-panel,.marks-panel,.assistant-panel,.guide-panel) { background:#f6f5ee;border-color:#ccccc2;border-radius:2px;box-shadow:0 2px 8px #26332b14; }
+#reader :is(.search-panel,.knowledge-panel,.marks-panel,.assistant-panel,.guide-panel) { background:#f6f5ee;border-color:#ccccc2;border-radius:2px;box-shadow:0 2px 8px #26332b14; }
 #reader :is(button,input,textarea,select,.assistant-question-bubble,.assistant-answer-bubble,.mark-card,.learning-batch-card) { border-radius:2px; }
-#reader :is(.toolbar button,.dock-tabs button,.outline-map-action,.outline-target,.outline-disclosure,.guide-tools button) { color:#3b5848;background-color:#f0f1e9;border-color:#c7cec3; }
+#reader :is(.toolbar button,.dock-tabs button,.outline-map-action,.guide-tools button) { color:#3b5848;background-color:#f0f1e9;border-color:#c7cec3; }
 #reader :is(button,summary):hover { background-color:#dfe6dd; }
 #reader :is(button,input,textarea,select,summary,[tabindex]):focus-visible { outline-color:#426b56; }
 #reader :is(.assistant-heading,.guide-heading,.marks-panel-heading,.dock-tabs,.control-divider) { border-color:#ccccc2; }
@@ -154,7 +154,6 @@
 #reader :is(.dock-tabs button,.learning-marker button,.mark-review-retry,.assistant-child-list button,.assistant-context-bar button,.assistant-heading #assistant-expand),#reader #master-workspace button { color:var(--reader-green);background-color:var(--reader-soft);border-color:var(--reader-line); }
 #reader :is(.dock-tabs button,.learning-marker button,.mark-review-retry,.assistant-child-list button,.assistant-context-bar button,.assistant-heading #assistant-expand):hover,#reader #master-workspace button:hover { background-color:var(--reader-active);border-color:#8ba995; }
 #reader .dock-tabs button[aria-pressed="true"] { background-color:var(--reader-active);color:var(--reader-green);border-color:#8ba995; }
-#reader :is(.outline-target,.outline-other-toggle):hover { color:var(--reader-green);background-color:var(--reader-active); }
 #reader :is(.marks-panel-heading,.mark-quote,.mark-provenance,.assistant-heading strong,.assistant-answer-bubble,.assistant-answer-bubble h1,.assistant-answer-bubble h2,.assistant-answer-bubble h3,#inline-content) { color:var(--reader-ink); }
 #reader :is(.outline-status,.outline-target small,.outline-other-toggle,.outline-other-toggle small,.search-coverage,.marks-empty,.mark-note,.mark-provenance-question,.mark-reviewer,.mark-verification,.mark-ai-section>strong,.assistant-model,.assistant-model-lock,.assistant-context-bar label,.assistant-context-bar output,.assistant-breadcrumb,.assistant-children,.assistant-scope,.assistant-first-turn p,.assistant-first-turn p span,.assistant-empty,.assistant-lifetime,.master-lifetime,.master-message-status,.learning-batch-hint,#master-status,#guide-status,#guide-more,#inline-content>strong,#inline-close) { color:var(--reader-muted); }
 #reader :is(.inline-actions,.guide-meta,.assistant-scope,.assistant-first-turn,.assistant-follow-up,.mark-ai-section,.reader-kp-heading,.reader-kp-footer,.reader-kp-row,.outline-level .outline-level,.outline-level-0>li+li) { border-color:var(--reader-line); }

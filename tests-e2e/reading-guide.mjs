@@ -212,7 +212,7 @@ async function openBook(page) {
 async function openGuide(page, section) {
   if (!(await page.locator('#outline-panel').isVisible())) await page.locator('#outline-toggle').click();
   const row = page.locator(`li[data-node-id="${section.outline_node_id}"] > .outline-row`);
-  if (!(await row.isVisible())) await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-disclosure`).click();
+  if (!(await row.isVisible())) await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-fold`).click();
   await row.locator('.outline-target').click();
   await page.locator('#outline-toggle').click();
   await page.locator(`.section-guide-entry[data-section-id="${section.outline_node_id}"]`).click();

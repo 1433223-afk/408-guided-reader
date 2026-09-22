@@ -518,7 +518,7 @@ async function openOutlineSection(page, section) {
   if (!await page.locator('#outline-panel').isVisible()) await page.locator('#outline-toggle').click();
   const row = page.locator(`li[data-node-id="${section.outline_node_id}"] > .outline-row`);
   if (!await row.isVisible()) {
-    await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-disclosure`).click();
+    await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-fold`).click();
   }
   await row.locator('.outline-target').click();
   if (await page.locator('#outline-panel').isVisible()) await page.locator('#outline-toggle').click();

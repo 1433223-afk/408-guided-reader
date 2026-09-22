@@ -52,11 +52,14 @@ try {
     page.on('pageerror',e=>errors.push(e.message));
     if(legacy) for(const file of ['index.html','app.js','memory-ui.js','guide-ui.js']) {
       const r=spawnSync('git',['show',`92febf6:src/reader_service/static/${file}`],{encoding:'utf8',windowsHide:true});assert.equal(r.status,0);
-      await page.route(file==='index.html'?running.url:`**/${file}`,async route=>route.fulfill({response:await route.fetch(),body:r.stdout,contentType:file.endsWith('html')?'text/html':'text/javascript'}));
+      // The legacy page predates screens.css, which now defines --font-ui; serve the
+      // baseline with the same stylesheets as the restored app so only app history differs.
+      const body=file==='index.html'?r.stdout.replace('</head>','  <link rel="stylesheet" href="/screens.css">\n  </head>'):r.stdout;
+      await page.route(file==='index.html'?running.url:`**/${file}`,async route=>route.fulfill({response:await route.fetch(),body,contentType:file.endsWith('html')?'text/html':'text/javascript'}));
     }
     await page.goto(running.url);
     const card=page.locator('.book-card').filter({hasText:'348 个 PDF 页面'});
-    if(legacy) await card.click(); else {await card.getByRole('button',{name:'打开',exact:true}).click();await page.locator('.overview-book-heading .primary-action').click();}
+    if(legacy) await card.click(); else {await card.locator('.book-open').click();await page.locator('.overview-book-heading .primary-action').click();}
     await page.locator('.page canvas').first().waitFor();
     await page.locator('#page-number').fill('53');await page.locator('#page-number').press('Enter');
     await page.locator('.page[data-index="52"] canvas').waitFor();await page.waitForTimeout(1200);
@@ -67,7 +70,7 @@ try {
   const baseline=await open(true), restored=await open(false);
   assert.equal(await restored.locator('#knowledge-toggle,.outline-map-action').count(),0);
   assert.equal(await restored.locator('#assistant-toggle').isVisible(),false);
-  assert.ok((await restored.locator('#reader-section-hint').textContent()).includes('2.2'));
+  assert.equal(await restored.locator('#reader-section-hint').count(),0,'the reading label stays removed');
   const metrics=p=>p.evaluate(()=>{
     const c=document.querySelector('.page[data-index="52"] canvas'),v=document.querySelector('#viewer'),t=document.querySelector('.toolbar');
     const r=c.getBoundingClientRect();return {canvasWidth:c.width,canvasHeight:c.height,cssWidth:r.width,cssHeight:r.height,left:r.left,top:r.top,viewerWidth:v.clientWidth,toolbarHeight:t.getBoundingClientRect().height};
@@ -86,8 +89,20 @@ try {
     assert.equal(await restored.locator('#marks-toggle svg').count(),1);
     const navigation=await restored.locator('.reader-page-controls').boundingBox();
     assert.ok(Math.abs(navigation.x+navigation.width/2-width/2)<1,'Page navigation must be visually centered');
-    for(const [toggle,panel,close] of [['outline-toggle','outline-panel','outline-close'],['search-toggle','search-panel','search-close'],['marks-toggle','marks-panel','marks-close']]) {
+    // The Directory pane was redesigned (adaptive margin/split/navigation) and no
+    // longer matches the legacy baseline card, so its geometry is covered by
+    // tests-e2e/directory-pane.mjs instead of this baseline comparison.
+    for(const [toggle,panel,close] of [['search-toggle','search-panel','search-close'],['marks-toggle','marks-panel','marks-close']]) {
       await baseline.locator('#'+toggle).click();await restored.locator('#'+toggle).click();
+      // Panel height depends on async content (coverage text, marks list); let both
+      // sides settle before comparing geometry, otherwise the first-opened page wins.
+      if(toggle==='search-toggle') {
+        for(const p of [baseline,restored]) await p.locator('#search-coverage').waitFor({state:'visible'});
+        await Promise.all([baseline,restored].map(p=>p.waitForFunction(()=>{
+          const text=document.querySelector('#search-coverage')?.textContent||'';
+          return text!=='正在读取搜索范围…';
+        })));
+      }
       assert.deepEqual(await restored.locator('#'+panel).boundingBox(),await baseline.locator('#'+panel).boundingBox());
       await baseline.locator('#'+close).click();await restored.locator('#'+close).click();
     }
@@ -100,8 +115,7 @@ try {
   await restored.locator('#master-form').waitFor();
   assert.ok(await restored.locator('#master-title').textContent());
   await restored.locator('.dock-tabs').getByRole('button',{name:'收起',exact:true}).click();
-  const dialog = new Promise(resolve=>restored.once('dialog',async d=>{assert.equal(d.type(),'prompt');await d.dismiss();resolve();}));
-  await restored.locator('#printed-page-edit').click(); await dialog;
+  // The printed-page prompt is internal evidence now and stays hidden in the toolbar.
   await restored.locator('#search-toggle').click();
   await restored.locator('#search-query').fill('中断向量');
   await restored.locator('#search-form button').click();

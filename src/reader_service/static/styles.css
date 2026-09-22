@@ -54,7 +54,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .local-note::before { content: "●"; margin-right: 7px; color: #4c9a70; }
 
 .reader {
-  display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 68px minmax(0, 1fr);
+  position: relative; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 68px minmax(0, 1fr);
   width: 100%; height: 100%;
 }
 .toolbar {
@@ -175,37 +175,88 @@ button, label { -webkit-tap-highlight-color: transparent; }
   max-height: calc(100% - 94px); overflow: auto; padding: 13px; background: rgb(250 248 242 / 98%);
   border: 1px solid #cdc5b4; border-radius: 10px; box-shadow: 0 10px 32px rgb(52 46 34 / 22%);
 }
+/* Directory: a native navigator pane synced with the reading position. It never
+   overlays the PDF — margin mode borrows the idle left canvas, split mode narrows
+   the stage without resizing pages, navigation mode temporarily replaces the view. */
 .outline-panel {
-  z-index: 6; position: fixed; top: 78px; left: 14px; width: min(370px, calc(100% - 28px));
-  max-height: calc(100% - 94px); overflow: auto; padding: 13px;
-  background: rgb(250 248 242 / 98%); border: 1px solid #cdc5b4; border-radius: 10px;
-  box-shadow: 0 10px 32px rgb(52 46 34 / 22%);
+  z-index: 5; position: absolute; top: 68px; left: 0; bottom: 0;
+  width: 304px; display: flex; flex-direction: column; min-height: 0;
+  background: #faf8f1; border-right: 1px solid #d6cfbf;
 }
-.outline-status { margin: 8px 2px 10px; color: #7b7365; font-size: 10px; line-height: 1.4; }
+.reader.directory-split { grid-template-columns: 328px minmax(0, 1fr); }
+.reader.directory-split .outline-panel {
+  position: relative; z-index: auto; top: auto; bottom: auto;
+  grid-column: 1; grid-row: 2; margin-right: 24px;
+}
+.reader.directory-split .viewer { grid-column: 2; }
+.reader.directory-split .page { margin-left: auto !important; margin-right: auto !important; }
+.reader.directory-split.assistant-dock-open:not(.assistant-expanded) {
+  grid-template-columns: 328px minmax(0, 1fr) var(--assistant-dock-width, 410px);
+}
+.reader.directory-split.assistant-dock-open:not(.assistant-expanded) .assistant-panel:not(.assistant-overlay-open) { grid-column: 3; }
+.reader.directory-split.guide-open { grid-template-columns: 328px minmax(0, 1fr) var(--guide-width, 410px); }
+.reader.directory-split.guide-open .guide-panel { grid-column: 3; }
+.reader.directory-nav .viewer { visibility: hidden; }
+.outline-heading {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 15px 12px 11px 18px; border-bottom: 1px solid #e5dfd0;
+}
+.outline-heading strong { color: #2f2b23; font: 700 13px/1.2 var(--font-ui); letter-spacing: .08em; }
+.outline-heading button { cursor: pointer; color: #7d766a; background: none; border: 0; border-radius: 5px; font-size: 19px; line-height: 1; }
+.outline-heading button:hover { color: #37322a; background: #efe9dc; }
+.outline-status { margin: 10px 16px 4px; color: #7b7365; font-size: 10px; line-height: 1.5; }
+.outline-tree { flex: 1; min-height: 0; overflow: auto; padding: 6px 8px 26px 10px; scrollbar-color: #b7b0a1 transparent; }
 .outline-tree ul { margin: 0; padding: 0; list-style: none; }
-.outline-level .outline-level { margin-left: 14px; border-left: 1px solid #ded7ca; }
-.outline-row { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: stretch; }
-.outline-disclosure {
-  padding: 0; cursor: pointer; color: #8a7c66; background: transparent; border: 0; font-size: 10px;
-}
-.outline-disclosure:disabled { cursor: default; }
+/* Indents must outrank the reset above (class+type specificity) so the three
+   tiers never read as one level. */
+.outline-tree ul.outline-level-1 { margin-left: 14px; }
+.outline-tree ul.outline-level-2 { margin-left: 16px; }
+.outline-tree .outline-level-2 ul { margin-left: 14px; }
+.outline-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
 .outline-target {
-  display: grid; gap: 2px; width: 100%; padding: 7px 6px; cursor: pointer; text-align: left;
-  color: #423d34; background: transparent; border: 0; border-radius: 5px;
+  display: block; width: 100%; padding: 5px 8px; cursor: pointer; text-align: left;
+  color: var(--muted); background: transparent; border: 0; border-radius: 3px;
+  transition: background-color .12s ease, color .12s ease;
 }
-.outline-target:hover { color: #5b411c; background: #f0e8d9; }
-.outline-target:disabled { cursor: default; color: #8a847a; }
+.outline-target span { display: block; overflow: hidden; font: 12.5px/1.5 var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
+.outline-target small { display: block; margin-top: 1px; color: #a09785; font-size: 9px; }
+/* Whisper-level feedback only — normal rows carry no block, hover/focus barely tint. */
+#reader .outline-target:hover { color: #39413a; background-color: rgb(74 92 76 / 6%); }
+#reader .outline-target:focus-visible { outline: 2px solid #426b56; outline-offset: 1px; }
+.outline-target:disabled { cursor: default; color: #8d887d; }
 .outline-target:disabled:hover { background: transparent; }
-.outline-target span { overflow: hidden; font: 12px/1.3 var(--font-ui); text-overflow: ellipsis; white-space: nowrap; }
-.outline-target small { color: #9a8f7e; font-size: 9px; }
-.outline-level-0 > li + li { margin-top: 3px; border-top: 1px solid #eee8dc; }
-.outline-other-group { margin-top: 8px !important; padding-top: 6px; }
+/* Editorial tiers from the project's own ink/gray-green tokens: Chapter deepest
+   (--ink), Section one step lighter (--green), Subsection muted (--muted). */
+.outline-level-0 > li > .outline-row > .outline-target { margin: 14px 0 5px; padding-block: 8px; }
+.outline-level-0 > li > .outline-row > .outline-target span { font-size: 14px; font-weight: 700; color: var(--ink); letter-spacing: .015em; }
+.outline-level-0 > li + li { margin-top: 16px; padding-top: 8px; border-top: 1px solid #ece6d8; }
+.outline-level-1 > li > .outline-row > .outline-target span { font-size: 13px; font-weight: 600; color: var(--green); }
+/* "Current" and "tier" stay independent signals: the pale-green block + left rule
+   mark current; weight/color depth keep following the row's own tier. */
+.outline-target.is-active { color: #263529; background: #e5ece3; box-shadow: inset 2px 0 0 #4b7a60; }
+.outline-target.is-active span { font-weight: 600; color: #4a5a4e; }
+.outline-level-2 > li > .outline-row > .outline-target.is-active span { font-weight: 600; color: #4a5a4e; }
+.outline-level-1 > li > .outline-row > .outline-target.is-active span { font-weight: 600; color: #2d4436; }
+.outline-level-0 > li > .outline-row > .outline-target.is-active span { font-weight: 700; color: #1c261c; }
+/* Text-only fold affordance: nothing shows at the row end until hover or keyboard
+   focus; folding changes child visibility only, never the PDF position. */
+.outline-fold {
+  justify-self: end; align-self: center; margin-left: 4px; padding: 4px 6px;
+  cursor: pointer; color: var(--muted); background: none; border: 0; border-radius: 4px;
+  font: 400 11.5px/1.2 var(--font-ui); white-space: nowrap;
+  opacity: 0; transition: opacity .12s ease;
+}
+.outline-row:hover .outline-fold, .outline-fold:focus { opacity: 1; }
+#reader .outline-fold:hover { color: #4f6051; background: transparent; }
+.outline-fold:focus-visible { outline: 2px solid #426b56; outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .outline-target, .outline-fold { transition: none; } }
+.outline-other-group { margin-top: 10px !important; padding-top: 4px; }
 .outline-other-toggle {
   display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center;
-  width: 100%; padding: 7px 6px 7px 0; cursor: pointer; text-align: left;
-  color: #756d60; background: transparent; border: 0; border-radius: 5px;
+  width: 100%; padding: 7px 9px; cursor: pointer; text-align: left;
+  color: #7b7365; background: transparent; border: 0; border-radius: 5px;
 }
-.outline-other-toggle:hover { color: #5b411c; background: #f0e8d9; }
+.outline-other-toggle:hover { color: #5b411c; background: #f0ebdf; }
 .outline-other-toggle span { text-align: center; font-size: 10px; }
 .outline-other-toggle strong { font: 600 12px/1.3 var(--font-ui); }
 .outline-other-toggle small { color: #9a8f7e; font-size: 9px; }
@@ -589,6 +640,11 @@ button, label { -webkit-tap-highlight-color: transparent; }
   .selection-action-row button { padding-inline: 7px; }
   .note-editor input { width: min(230px, 55vw); }
   .reader.assistant-dock-open:not(.assistant-expanded), .reader.guide-open { grid-template-columns: minmax(0, 1fr); }
+  /* Narrow screens resolve to navigation mode; keep a lingering split class from
+     squeezing the stage while the re-evaluation settles. */
+  .reader.directory-split { grid-template-columns: minmax(0, 1fr); }
+  .reader.directory-split .outline-panel { position: fixed; z-index: 8; top: 68px; left: 0; bottom: 0; width: min(304px, 100vw); }
+  .reader.directory-split .viewer { grid-column: 1; }
   .reader.assistant-dock-open:not(.assistant-expanded) .assistant-panel:not(.assistant-overlay-open),
   .reader.guide-open .guide-panel {
     position: fixed; z-index: 24; top: 68px; right: 0; bottom: 0; left: auto;

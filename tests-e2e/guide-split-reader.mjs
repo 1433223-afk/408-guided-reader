@@ -14,7 +14,7 @@ try {
  const outline=await page.evaluate(async()=>{const books=await (await fetch('/api/books')).json();const rev=books.books.find(b=>b.active_revision.page_count===348).active_revision.id;return (await fetch(`/api/revisions/${rev}/outline`)).json();});
  const section=outline.nodes.find(n=>n.kind==='SECTION'&&n.title.startsWith('2.1 '));
  const row=page.locator(`li[data-node-id="${section.outline_node_id}"] > .outline-row`);
- if(!await row.isVisible())await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-disclosure`).click();
+ if(!await row.isVisible())await page.locator(`li[data-node-id="${section.parent_id}"] > .outline-row .outline-fold`).click();
  assert.equal(await page.locator('.outline-guide-action').count(), 0);
  await row.locator('.outline-target').click();
  await page.locator('#outline-toggle').click();

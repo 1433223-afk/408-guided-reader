@@ -60,7 +60,7 @@ test('Reader identifies an unprepared chapter from page bookmarks without invent
     {kind:'CHAPTER',title:'第2章 线性表',outline_node_id:'b',resolution_state:'PARTIAL',start_page:20}];
   let target;
   const context={state:{outlineNodes:nodes},document:{getElementById:()=>({})},
-    elements:{viewer:{getBoundingClientRect:()=>({top:68})}},
+    elements:{viewer:{getBoundingClientRect:()=>({top:68})},"outline-panel":{hidden:true}},
     captureZoomAnchor:()=>({pageIndex:19,normalizedY:0.5}),chapterEntry:{sync:id=>target=id},
     master:{viewportChanged:()=>{}}};
   const auxiliary=source.slice(source.indexOf('function isAuxiliaryOutlineRoot('),source.indexOf('function makeAuxiliaryOutlineGroup('));

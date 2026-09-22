@@ -55,6 +55,9 @@ const state = {
   assistantDockWidth: 410, assistantDockWidthBeforeExpanded: 410,
   assistantExpanded: false,
   learningChapterId: null,
+  directoryMode: null, currentSectionId: null, currentOutlineId: null, outlineKinship: null,
+  pinnedLanding: null, navigationAnchorId: null,
+  directoryCollapsed: null, directoryExpandedFor: null,
 };
 
 const MASTER_WORKSPACE_MOTION = Object.freeze({
@@ -126,6 +129,8 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
 } });
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
+const DIRECTORY_PANE_WIDTH = 304;
+const DIRECTORY_GAP = 24;
 const ASSISTANT_PROVIDER_LABELS = {
   deepseek: "DeepSeek", zhipu: "Zhipu", openrouter: "OpenRouter",
 };
@@ -142,7 +147,7 @@ const teachingUiOptions = { state, api, goToPage,
   readingAnchor: () => captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1),
   hideContextMenu: hideSelectionActions,
   contextMenu: openVisibleSelectionActions,
-  layout: change => change(),
+  layout: change => { change(); evaluateDirectoryMode(); },
   closeDock: () => claimRightDock("guide"),
   setDockWidth: applyAssistantDockWidth,
   dockWidth: () => state.assistantDockWidth,
@@ -209,11 +214,10 @@ const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.re
   published: () => master.refreshEntries().catch(() => {}),
   closePeers: () => {
     claimRightDock("knowledge");
-    elements["outline-panel"].hidden = true;
+    closeDirectory();
     elements["search-panel"].hidden = true;
     elements["marks-panel"].hidden = true;
     elements["knowledge-panel"].hidden = true;
-    elements["outline-toggle"].setAttribute("aria-expanded", "false");
     elements["search-toggle"].setAttribute("aria-expanded", "false");
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
     state.searchRequest += 1;
@@ -294,6 +298,10 @@ async function openBook(book) {
   state.revision = book.active_revision;
   state.readerSessionId = crypto.randomUUID();
   state.assistantState = emptyAssistantState();
+  state.navigationAnchorId = null;
+  state.pinnedLanding = null;
+  state.directoryCollapsed = null;
+  state.directoryExpandedFor = null;
   state.assistantDraft = null;
   state.assistantAnswerSelection = null;
   state.assistantSaveIntents.clear();
@@ -374,16 +382,16 @@ function closeReader() {
   elements.reader.hidden = true;
   elements["marks-panel"].hidden = true;
   elements["search-panel"].hidden = true;
-  elements["outline-panel"].hidden = true;
+  closeDirectory();
   elements["knowledge-panel"].hidden = true;
   setAssistantPanelOpen(false);
-  elements["outline-toggle"].setAttribute("aria-expanded", "false");
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-toggle"].setAttribute("aria-expanded", "false");
   elements["library-home"].hidden = false;
   elements.pages.replaceChildren();
   state.outlineRequest += 1;
   state.outlineNodes = [];
+  state.outlineKinship = null;
   state.knowledgeRequest += 1;
   state.pageLabels.clear();
   clearTimeout(state.mapTimer);
@@ -488,16 +496,147 @@ function scheduleViewportUpdate() {
   });
 }
 
+// Navigation destinations and the current-identity projection share one coordinate
+// authority. A page-granular PARTIAL node (trailing 习题/答案 blocks) effectively
+// starts where its previous sibling's stored range ends — the outline partition
+// boundary — and runs until the next sibling's known start or the parent's end.
+// This projects stored authority onto nodes whose own y is not yet resolved; it
+// never mints new ranges or guesses from text.
+function buildOutlineKinship(nodes) {
+  const byId = new Map();
+  const siblings = new Map();
+  for (const node of [...nodes].sort((a, b) => a.order_index - b.order_index)) {
+    byId.set(node.outline_node_id, node);
+    const key = node.parent_id || "ROOT";
+    if (!siblings.has(key)) siblings.set(key, []);
+    siblings.get(key).push(node);
+  }
+  const spans = new Map();
+  for (const group of siblings.values()) {
+    for (let i = 0; i < group.length; i += 1) {
+      const node = group[i];
+      if (!Number.isInteger(node.start_page)) continue;
+      if (node.resolution_state === "RESOLVED" && Number.isFinite(node.start_y)
+        && Number.isInteger(node.end_page) && Number.isFinite(node.end_y)) continue;
+      const previous = group[i - 1];
+      const startY = Number.isFinite(node.start_y) ? node.start_y
+        : previous && previous.end_page === node.start_page && Number.isFinite(previous.end_y)
+          ? previous.end_y : 0;
+      let endPage = null, endY = null;
+      for (let j = i + 1; j < group.length; j += 1) {
+        if (Number.isInteger(group[j].start_page)) {
+          endPage = group[j].start_page;
+          endY = Number.isFinite(group[j].start_y) ? group[j].start_y : 0;
+          break;
+        }
+      }
+      if (endPage === null) {
+        // The last child of a page-only parent: walk up until some ancestor has a
+        // next sibling with a known start (typically the next chapter), else the
+        // book end. Every node must own a span or clicks on it lose their identity.
+        let ancestor = node.parent_id ? byId.get(node.parent_id) : null;
+        while (ancestor && endPage === null) {
+          const ancestorGroup = siblings.get(ancestor.parent_id || "ROOT") || [];
+          const at = ancestorGroup.findIndex(s => s.outline_node_id === ancestor.outline_node_id);
+          for (let j = at + 1; j < ancestorGroup.length && endPage === null; j += 1) {
+            if (Number.isInteger(ancestorGroup[j].start_page)) {
+              endPage = ancestorGroup[j].start_page;
+              endY = Number.isFinite(ancestorGroup[j].start_y) ? ancestorGroup[j].start_y : 0;
+            }
+          }
+          ancestor = ancestor.parent_id ? byId.get(ancestor.parent_id) : null;
+        }
+      }
+      if (endPage === null && node.parent_id) {
+        const parent = byId.get(node.parent_id);
+        if (parent && Number.isInteger(parent.end_page)) {
+          endPage = parent.end_page;
+          endY = Number.isFinite(parent.end_y) ? parent.end_y : 1;
+        }
+      }
+      if (endPage === null) { endPage = Number.POSITIVE_INFINITY; endY = 0; }
+      // The next known sibling starts on the same page with no y of its own — the
+      // two are indistinguishable within that page. The node claims the whole page
+      // instead of an empty span; passive derivation stays ambiguous (falls to the
+      // shallower level) until a navigation anchor names one of them. The refined
+      // boundary y is kept for the landing target even though containment ignores it.
+      const wholePage = endPage === node.start_page && endY !== null && endY <= startY + 1e-9;
+      spans.set(node.outline_node_id,
+        wholePage ? { wholePage: true, startPage: node.start_page, startY } : { startPage: node.start_page, startY, endPage, endY });
+    }
+  }
+  return { byId, spans };
+}
+
+function outlineNavigationTarget(node, kinship) {
+  if (!Number.isInteger(node.start_page)) return null;
+  const span = kinship?.spans.get(node.outline_node_id);
+  const y = Number.isFinite(node.start_y) ? node.start_y : span?.startY ?? 0;
+  return { page: node.start_page, y };
+}
+
 function renderReaderSectionHint() {
-  const output = document.getElementById("reader-section-hint");
   const point = captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1);
-  const sections = state.outlineNodes.filter(n => n.kind === "SECTION" && n.resolution_state === "RESOLVED"
-    && point && [n.start_page,n.start_y,n.end_page,n.end_y].every(v => v !== null && v !== undefined)
-    && (n.start_page < point.pageIndex || n.start_page === point.pageIndex && n.start_y <= point.normalizedY)
-    && (n.end_page > point.pageIndex || n.end_page === point.pageIndex && n.end_y > point.normalizedY));
-  const section = sections.length === 1 ? sections[0] : null;
-  output.textContent = section ? `正在阅读 · ${section.title}` : "正在阅读";
-  output.title = section?.title || "当前位置暂无已确定范围的节";
+  const inRange = (startPage, startY, endPage, endY) =>
+    (startPage < point.pageIndex || startPage === point.pageIndex && startY <= point.normalizedY)
+    && (endPage > point.pageIndex || endPage === point.pageIndex && endY > point.normalizedY);
+  // Implementation §7.5: the current item is the deepest OutlineNode whose physical
+  // range contains the reading anchor — subsection when the authority is that fine,
+  // Section otherwise. Uniqueness is checked per depth; an ambiguous deepest level
+  // falls back to its unambiguous ancestor, never to text guessing.
+  const resolvedContaining = point ? state.outlineNodes.filter(n => n.resolution_state === "RESOLVED"
+    && [n.start_page,n.start_y,n.end_page,n.end_y].every(v => v !== null && v !== undefined)
+    && inRange(n.start_page, n.start_y, n.end_page, n.end_y)) : [];
+  // A page-granular PARTIAL node is a valid current identity over its projected
+  // coarse span (previous sibling's end → next known start): the destination the
+  // Directory navigates to is the very same coordinate, so click and tracking agree.
+  // Siblings that share a start page with no y are indistinguishable — each claims
+  // the whole page, so passively the level is ambiguous and falls to the shallower
+  // ancestor; the most recent navigation anchor names the one the reader entered,
+  // until the anchor leaves its span or a deeper RESOLVED range takes over.
+  const spanContains = span => span.wholePage
+    ? point.pageIndex === span.startPage
+    : Number.isInteger(span.endPage) && inRange(span.startPage, span.startY, span.endPage, span.endY);
+  const coarseContaining = point && state.outlineKinship
+    ? [...state.outlineKinship.spans.entries()
+        .filter(([id, span]) => spanContains(span))
+        .map(([id]) => state.outlineKinship.byId.get(id))]
+    : [];
+  const deepestOf = list => {
+    const byDepth = new Map();
+    for (const node of list) {
+      if (!byDepth.has(node.depth)) byDepth.set(node.depth, []);
+      byDepth.get(node.depth).push(node);
+    }
+    for (const depth of [...byDepth.keys()].sort((a, b) => b - a)) {
+      const group = byDepth.get(depth);
+      if (group.length === 1) return group[0];
+    }
+    return null;
+  };
+  const deepestResolved = deepestOf(resolvedContaining);
+  let deepest = deepestOf([...resolvedContaining, ...coarseContaining]) || deepestResolved;
+  const anchored = state.navigationAnchorId && state.outlineKinship
+    ? state.outlineKinship.byId.get(state.navigationAnchorId) : null;
+  if (anchored && [...resolvedContaining, ...coarseContaining].some(n => n.outline_node_id === anchored.outline_node_id)
+    && (!deepestResolved || deepestResolved.depth <= anchored.depth)) {
+    deepest = anchored;
+  }
+  let section = deepestResolved?.kind === "SECTION" ? deepestResolved : null;
+  if (!section && deepestResolved && deepestResolved.kind !== "CHAPTER") {
+    let parent = state.outlineNodes.find(n => n.outline_node_id === deepestResolved.parent_id);
+    while (parent && parent.kind !== "SECTION") parent = state.outlineNodes.find(n => n.outline_node_id === parent.parent_id);
+    section = parent || null;
+  }
+  if (!section) {
+    const sections = resolvedContaining.filter(n => n.kind === "SECTION");
+    section = sections.length === 1 ? sections[0] : null;
+  }
+  // The derived outline identity (Implementation §7.5) drives the Directory's active
+  // item; the Directory never re-derives it on its own. Section/chapter identity
+  // for Knowledge Points keeps its resolved-range-only semantics.
+  state.currentSectionId = section?.outline_node_id ?? null;
+  state.currentOutlineId = deepest?.outline_node_id ?? null;
   let chapter = section;
   while (chapter && chapter.kind !== "CHAPTER") chapter = state.outlineNodes.find(n => n.outline_node_id === chapter.parent_id);
   if (!chapter && point) {
@@ -524,10 +663,29 @@ function renderReaderSectionHint() {
   state.learningChapterId = learningChapterId;
   chapterEntry.sync(learningChapterId, section?.outline_node_id || null);
   if (chapterChanged) master.viewportChanged();
+  if (!elements["outline-panel"].hidden) {
+    if (state.currentOutlineId && state.currentOutlineId !== state.directoryExpandedFor) {
+      // Reading moved into a possibly folded branch: expand only that path and
+      // leave every other branch's user fold state untouched.
+      state.directoryExpandedFor = state.currentOutlineId;
+      expandDirectoryPath(state.currentOutlineId);
+    }
+    syncDirectoryActive();
+  }
 }
 
 function updateViewport() {
   if (!state.pdf) return;
+  if (state.pinnedLanding) {
+    const page = elements.pages.children[state.pinnedLanding.pageIndex];
+    if (page) {
+      const desired = snapScroll(page.offsetTop + page.offsetHeight * state.pinnedLanding.normalizedY);
+      if (Math.abs(elements.viewer.scrollTop - desired) > 0.5) {
+        elements.viewer.scrollTop = desired;
+        return; // The resulting scroll event re-runs the viewport update.
+      }
+    }
+  }
   const top = elements.viewer.scrollTop;
   const bottom = top + elements.viewer.clientHeight;
   let first = null;
@@ -636,6 +794,9 @@ function setCurrentPage(index) {
 function goToPage(index, offset = 0) {
   const bounded = Math.max(0, Math.min(index, state.revision.page_count - 1));
   const page = elements.pages.children[bounded];
+  // Learning footers and other async in-flow reservations shift pages after the
+  // landing; the pin keeps the destination honest until the reader takes over.
+  state.pinnedLanding = { pageIndex: bounded, normalizedY: offset };
   elements.viewer.scrollTop = snapScroll(page.offsetTop + page.offsetHeight * offset);
   setCurrentPage(bounded);
   scheduleViewportUpdate();
@@ -659,6 +820,7 @@ function adjacentZoom(direction) {
 function relayoutPages(anchor = captureZoomAnchor()) {
   if (!state.revision) return;
   cancelRenders();
+  state.pinnedLanding = null;
   [...elements.pages.children].forEach((wrapper, index) => {
     const size = snappedPageSize(displayedRatio(state.revision.page_geometry[index]));
     wrapper.replaceChildren();
@@ -668,6 +830,7 @@ function relayoutPages(anchor = captureZoomAnchor()) {
   if (state.pdf) restoreZoomAnchor(anchor);
   scheduleViewportUpdate();
   scheduleSave();
+  evaluateDirectoryMode();
 }
 
 function captureZoomAnchor(clientX, clientY) {
@@ -846,6 +1009,7 @@ async function loadBookMap() {
   const revisionId = state.revision?.id;
   if (!revisionId) return;
   const request = ++state.outlineRequest;
+  elements["outline-status"].hidden = false;
   elements["outline-status"].textContent = "正在读取教材目录…";
   try {
     let outline = await api(`/api/revisions/${revisionId}/outline?stored=1`);
@@ -853,6 +1017,7 @@ async function loadBookMap() {
     const labels = outline.page_labels;
     if (request !== state.outlineRequest || state.revision?.id !== revisionId) return;
     state.outlineNodes = outline.nodes;
+    state.outlineKinship = buildOutlineKinship(outline.nodes);
     inline.sync();
     for (const index of state.rendered) renderGuideEntries(index);
     state.pageLabels = new Map(labels.labels.map((row) => [row.pdf_page_index, row]));
@@ -860,6 +1025,7 @@ async function loadBookMap() {
     updatePrintedPageLabel();
   } catch (_error) {
     if (request !== state.outlineRequest) return;
+    elements["outline-status"].hidden = false;
     elements["outline-status"].textContent = "目录暂时不可用，可以稍后重试。";
     elements["outline-empty"].hidden = false;
     updatePrintedPageLabel();
@@ -886,10 +1052,129 @@ function renderGuideEntries(index) {
   inline.renderPage(index);
 }
 
+function computeDirectoryMode({ viewerWidth, pageCssWidth, inlineReserve = 0, splitActive = false,
+    paneWidth = DIRECTORY_PANE_WIDTH, gap = DIRECTORY_GAP }) {
+  // All geometry is expressed against the un-split viewer so re-evaluations inside
+  // split mode compare like with like. The page-width formula mirrors pageWidth()
+  // exactly; a mode is only chosen when the rendered page width cannot change.
+  const unsplit = viewerWidth + (splitActive ? paneWidth + gap : 0);
+  const base = Math.max(240, Math.min(920, unsplit - inlineReserve - 72));
+  const pageLeft = Math.max(32, (unsplit - inlineReserve - pageCssWidth) / 2);
+  if (pageLeft >= paneWidth + gap) return "margin";
+  const narrowed = unsplit - paneWidth - gap;
+  const narrowedBase = Math.max(240, Math.min(920, narrowed - inlineReserve - 72));
+  const fitsNarrowed = pageCssWidth <= narrowed - inlineReserve - 64;
+  if (narrowedBase === base && fitsNarrowed) return "split";
+  return "navigation";
+}
+
+function evaluateDirectoryMode() {
+  if (elements["outline-panel"].hidden || !state.revision || !elements.pages.children.length) return;
+  applyDirectoryMode(computeDirectoryMode({
+    viewerWidth: elements.viewer.clientWidth,
+    pageCssWidth: elements.pages.children[0].offsetWidth,
+    inlineReserve: inlineReserve(),
+    splitActive: state.directoryMode === "split",
+  }));
+}
+
+function applyDirectoryMode(mode) {
+  if (state.directoryMode === mode) return;
+  const wasSplit = state.directoryMode === "split";
+  state.directoryMode = mode;
+  elements.reader.classList.toggle("directory-split", mode === "split");
+  elements.reader.classList.toggle("directory-margin", mode === "margin");
+  elements.reader.classList.toggle("directory-nav", mode === "navigation");
+  if (wasSplit && mode !== "split" && state.revision) {
+    // Split keeps page sizes fixed and recenters via CSS margins; on exit the inline
+    // margins may be stale from the narrowed stage, so re-center for full width.
+    [...elements.pages.children].forEach((wrapper, index) => {
+      applyPageSize(wrapper, snappedPageSize(displayedRatio(state.revision.page_geometry[index])));
+    });
+  }
+}
+
+function syncDirectoryActive({ reveal = false } = {}) {
+  // The deepest authoritative outline item owns the highlight; its Section/Chapter
+  // ancestors stay plain (the chapter is only a last-resort fallback).
+  const activeId = state.currentOutlineId || state.learningChapterId;
+  if (!activeId) return;
+  let active = null;
+  for (const target of elements["outline-tree"].querySelectorAll(".outline-target")) {
+    const isActive = target.closest("li")?.dataset.nodeId === activeId;
+    target.classList.toggle("is-active", isActive);
+    if (isActive) {
+      target.setAttribute("aria-current", "true");
+      active = target;
+    } else {
+      target.removeAttribute("aria-current");
+    }
+  }
+  active?.scrollIntoView({ block: reveal ? "center" : "nearest", inline: "nearest" });
+}
+
+function openDirectory() {
+  if (elements["outline-panel"].hidden) {
+    elements["outline-panel"].hidden = false;
+    elements["outline-toggle"].setAttribute("aria-expanded", "true");
+    chapterEntry.close();
+    elements["search-panel"].hidden = true;
+    elements["marks-panel"].hidden = true;
+    elements["knowledge-panel"].hidden = true;
+    elements["search-toggle"].setAttribute("aria-expanded", "false");
+    elements["marks-toggle"].setAttribute("aria-expanded", "false");
+    state.searchRequest += 1;
+    clearSearchMatch();
+    evaluateDirectoryMode();
+  }
+  loadBookMap();
+  syncDirectoryActive({ reveal: true });
+}
+
+function closeDirectory({ focusViewer = false } = {}) {
+  if (elements["outline-panel"].hidden) return;
+  elements["outline-panel"].hidden = true;
+  elements["outline-toggle"].setAttribute("aria-expanded", "false");
+  applyDirectoryMode(null);
+  if (focusViewer) elements.viewer.focus({ preventScroll: true });
+}
+
+function isOutlineAncestor(ancestorId, nodeId) {
+  if (!state.outlineKinship) return false;
+  let current = state.outlineKinship.byId.get(nodeId);
+  while (current) {
+    if (current.outline_node_id === ancestorId) return true;
+    current = current.parent_id ? state.outlineKinship.byId.get(current.parent_id) : null;
+  }
+  return false;
+}
+
+// Progressive collapse: nodes with real child OutlineNodes can fold. The collapse
+// set lives for the Reader session (per book); the current authoritative reading
+// path is always kept expanded, and entering a previously collapsed branch expands
+// only that path without disturbing other branches' user state.
+function expandDirectoryPath(nodeId) {
+  if (!state.directoryCollapsed || !state.outlineKinship || !nodeId) return;
+  let current = state.outlineKinship.byId.get(nodeId);
+  while (current) {
+    if (state.directoryCollapsed.delete(current.outline_node_id)) {
+      const item = elements["outline-tree"].querySelector(`li[data-node-id="${current.outline_node_id}"]`);
+      const list = item?.querySelector(":scope > ul");
+      if (list) {
+        list.hidden = false;
+        const fold = item.querySelector(":scope > .outline-row .outline-fold");
+        if (fold) {
+          fold.textContent = "收起";
+          fold.setAttribute("aria-expanded", "true");
+        }
+      }
+    }
+    current = current.parent_id ? state.outlineKinship.byId.get(current.parent_id) : null;
+  }
+}
+
 function renderOutline(payload) {
   renderReaderSectionHint();
-  const expanded = new Set([...elements["outline-tree"].querySelectorAll('.outline-target[aria-expanded="true"]')]
-    .map((button) => button.closest("li").dataset.nodeId));
   const nodes = payload.nodes || [];
   const children = new Map();
   for (const node of nodes) {
@@ -901,6 +1186,22 @@ function renderOutline(payload) {
     values.sort((a, b) => a.order_index - b.order_index);
   }
 
+  // First render of a book session: chapters outside the current reading path
+  // start collapsed; everything deeper defaults to expanded until the user folds it.
+  if (!state.directoryCollapsed) {
+    const collapsed = new Set();
+    const keep = new Set();
+    const anchorId = state.currentOutlineId || state.learningChapterId;
+    for (let n = anchorId && state.outlineKinship?.byId.get(anchorId);
+         n; n = n.parent_id ? state.outlineKinship.byId.get(n.parent_id) : null) {
+      keep.add(n.outline_node_id);
+    }
+    for (const node of nodes) {
+      if (node.kind === "CHAPTER" && !keep.has(node.outline_node_id)) collapsed.add(node.outline_node_id);
+    }
+    state.directoryCollapsed = collapsed;
+  }
+
   function branch(values, depth) {
     const list = document.createElement("ul");
     list.className = `outline-level outline-level-${depth}`;
@@ -909,52 +1210,62 @@ function renderOutline(payload) {
       item.dataset.nodeId = node.outline_node_id;
       const row = document.createElement("div");
       row.className = "outline-row";
-      const descendants = children.get(node.outline_node_id) || [];
-      const disclosure = document.createElement("button");
-      disclosure.type = "button";
-      disclosure.className = "outline-disclosure";
-      disclosure.textContent = descendants.length ? "▸" : "";
-      disclosure.disabled = !descendants.length;
-      disclosure.setAttribute("aria-label", descendants.length ? "展开此目录项" : "没有下级目录");
-
       const target = document.createElement("button");
       target.type = "button";
       target.className = "outline-target";
-      target.disabled = node.start_page === null && !descendants.length;
-      if (descendants.length) target.setAttribute("aria-expanded", "false");
+      target.disabled = node.start_page === null;
       const title = document.createElement("span");
       title.textContent = node.title;
-      const meta = document.createElement("small");
-      meta.textContent = node.start_page === null
-        ? (descendants.length ? "展开目录" : "页码待核实")
-        : `PDF 第 ${node.start_page + 1} 页`;
-      target.append(title, meta);
-      let toggleDescendants = null;
-      if (node.start_page !== null || descendants.length) {
-        target.addEventListener("click", () => {
-          selectKnowledgeChapterForNode(node);
-          toggleDescendants?.();
-          if (node.start_page !== null) {
-            goToPage(node.start_page);
-            elements.viewer.focus({ preventScroll: true });
-          }
-        });
+      target.append(title);
+      if (node.start_page === null) {
+        const meta = document.createElement("small");
+        meta.textContent = "页码待核实";
+        target.append(meta);
+      } else {
+        target.title = `PDF 第 ${node.start_page + 1} 页`;
       }
-      row.append(disclosure, target);
+      target.addEventListener("click", () => {
+        selectKnowledgeChapterForNode(node);
+        if (node.start_page === null) return;
+        // The landing anchor uses the same projected coordinate the current-identity
+        // derivation tests against, so the clicked node becomes — and stays — the
+        // authoritative current item for as long as the reading anchor is in its range.
+        state.navigationAnchorId = node.outline_node_id;
+        const destination = outlineNavigationTarget(node, state.outlineKinship);
+        goToPage(destination.page, destination.y);
+        if (state.directoryMode === "navigation") closeDirectory({ focusViewer: true });
+        else elements.viewer.focus({ preventScroll: true });
+      });
+      row.append(target);
       item.append(row);
+      const descendants = children.get(node.outline_node_id) || [];
       if (descendants.length) {
         const nested = branch(descendants, depth + 1);
-        nested.hidden = true;
-        toggleDescendants = () => {
+        nested.id = `outline-children-${node.outline_node_id}`;
+        const expanded = !state.directoryCollapsed.has(node.outline_node_id);
+        nested.hidden = !expanded;
+        // Editorial text affordance: no triangles, no persistent icon — a low-weight
+        // "展开/收起" label surfaces at the row end on hover or keyboard focus, and
+        // folding only changes child visibility, never the PDF position.
+        const fold = document.createElement("button");
+        fold.type = "button";
+        fold.className = "outline-fold";
+        fold.textContent = expanded ? "收起" : "展开";
+        fold.setAttribute("aria-expanded", String(expanded));
+        fold.setAttribute("aria-controls", nested.id);
+        fold.addEventListener("click", () => {
           const opening = nested.hidden;
+          // The authoritative reading path must never fold away its current item.
+          const currentId = state.currentOutlineId || state.learningChapterId;
+          if (!opening && currentId && isOutlineAncestor(node.outline_node_id, currentId)) return;
           nested.hidden = !opening;
-          disclosure.textContent = opening ? "▾" : "▸";
-          disclosure.setAttribute("aria-label", opening ? "折叠此目录项" : "展开此目录项");
-          target.setAttribute("aria-expanded", String(opening));
-        };
-        disclosure.addEventListener("click", toggleDescendants);
+          if (opening) state.directoryCollapsed.delete(node.outline_node_id);
+          else state.directoryCollapsed.add(node.outline_node_id);
+          fold.textContent = opening ? "收起" : "展开";
+          fold.setAttribute("aria-expanded", String(opening));
+        });
+        row.append(fold);
         item.append(nested);
-        if (expanded.has(node.outline_node_id)) toggleDescendants();
       }
       list.append(item);
     }
@@ -968,16 +1279,25 @@ function renderOutline(payload) {
   if (otherRoots.length) main.append(makeAuxiliaryOutlineGroup(otherRoots, branch));
   elements["outline-tree"].replaceChildren(main);
   elements["outline-empty"].hidden = nodes.length > 0;
+  const status = elements["outline-status"];
   if (payload.identity_conflict) {
-    elements["outline-status"].textContent = "检测到目录结构变化，已保留原有稳定目录，未自动覆盖。";
+    // Reconciliation detail stays in internal logs, not the reading UI.
+    status.hidden = true;
+    console.info("[directory] identity conflict guarded; serving the saved stable tree.",
+      { nodes: nodes.length, evidence_source: payload.evidence_source });
   } else if (nodes.length) {
-    const source = payload.evidence_source === "BOOKMARK" ? "PDF 内嵌书签" : "教材目录页";
-    elements["outline-status"].textContent = `依据：${source} · ${nodes.length} 项`;
+    status.hidden = true;
   } else if (payload.waiting_for_toc_completion) {
-    elements["outline-status"].textContent = "已发现目录页，正在等待连续目录页准备完成。";
+    status.hidden = false;
+    status.textContent = "已发现目录页，正在等待连续目录页准备完成。";
   } else {
-    elements["outline-status"].textContent = "未发现可用的 PDF 书签或已准备目录页。";
+    status.hidden = false;
+    status.textContent = "未发现可用的 PDF 书签或已准备目录页。";
   }
+  // The current reading path must be expanded before the active item is revealed.
+  state.directoryExpandedFor = state.currentOutlineId || state.learningChapterId || null;
+  expandDirectoryPath(state.directoryExpandedFor);
+  syncDirectoryActive({ reveal: true });
 }
 
 function selectKnowledgeChapterForNode(node) {
@@ -1004,8 +1324,7 @@ async function openKnowledgePanel(chapterId = null) {
   chapterEntry.close();
   state.knowledgeChapterId = chapter.outline_node_id;
   elements["knowledge-panel"].hidden = false;
-  elements["outline-panel"].hidden = true;
-  elements["outline-toggle"].setAttribute("aria-expanded", "false");
+  closeDirectory();
   elements["search-panel"].hidden = true;
   elements["search-toggle"].setAttribute("aria-expanded", "false");
   elements["marks-panel"].hidden = true;
@@ -1558,6 +1877,7 @@ function applyAssistantDockWidth(width) {
   elements["assistant-resize-handle"].setAttribute("aria-valuemin", String(minimum));
   elements["assistant-resize-handle"].setAttribute("aria-valuemax", String(maximum));
   elements["assistant-resize-handle"].setAttribute("aria-valuenow", String(state.assistantDockWidth));
+  evaluateDirectoryMode();
 }
 
 function renderAssistantViewportMode() {
@@ -2001,6 +2321,7 @@ function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = 
   renderAssistantViewportMode();
   hideAssistantAnswerActions(true);
   if (focusViewer) elements.viewer.focus({ preventScroll: true });
+  evaluateDirectoryMode();
 }
 
 function updateAssistantDockFromPointer(clientX) {
@@ -3503,25 +3824,15 @@ elements["reader-more"].addEventListener("keydown", (event) => {
   elements["reader-more-toggle"].focus();
 });
 elements["back-to-library"].addEventListener("click", returnToLibrary);
-elements["outline-toggle"].addEventListener("click", async () => {
-  const opening = elements["outline-panel"].hidden;
-  elements["outline-panel"].hidden = !opening;
-  elements["outline-toggle"].setAttribute("aria-expanded", String(opening));
-  if (opening) {
-    chapterEntry.close();
-    elements["search-panel"].hidden = true;
-    elements["marks-panel"].hidden = true;
-    elements["knowledge-panel"].hidden = true;
-    elements["search-toggle"].setAttribute("aria-expanded", "false");
-    elements["marks-toggle"].setAttribute("aria-expanded", "false");
-    state.searchRequest += 1;
-    clearSearchMatch();
-    await loadBookMap();
-  }
+elements["outline-toggle"].addEventListener("click", () => {
+  if (elements["outline-panel"].hidden) openDirectory();
+  else closeDirectory();
 });
-elements["outline-close"].addEventListener("click", () => {
-  elements["outline-panel"].hidden = true;
-  elements["outline-toggle"].setAttribute("aria-expanded", "false");
+elements["outline-close"].addEventListener("click", () => closeDirectory());
+elements["outline-panel"].addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  event.preventDefault();
+  closeDirectory({ focusViewer: true });
 });
 elements["knowledge-close"].addEventListener("click", () => {
   elements["knowledge-panel"].hidden = true;
@@ -3537,8 +3848,7 @@ elements["search-toggle"].addEventListener("click", () => {
   if (opening) {
     chapterEntry.close();
     setAssistantPanelOpen(false);
-    elements["outline-panel"].hidden = true;
-    elements["outline-toggle"].setAttribute("aria-expanded", "false");
+    closeDirectory();
     elements["knowledge-panel"].hidden = true;
     elements["marks-panel"].hidden = true;
     elements["marks-toggle"].setAttribute("aria-expanded", "false");
@@ -3575,8 +3885,7 @@ elements["marks-toggle"].addEventListener("click", async () => {
   if (opening) {
     chapterEntry.close();
     setAssistantPanelOpen(false);
-    elements["outline-panel"].hidden = true;
-    elements["outline-toggle"].setAttribute("aria-expanded", "false");
+    closeDirectory();
     elements["knowledge-panel"].hidden = true;
     elements["search-panel"].hidden = true;
     elements["search-toggle"].setAttribute("aria-expanded", "false");
@@ -3706,21 +4015,31 @@ elements["selection-actions"].addEventListener("keydown", (event) => {
     elements.viewer.focus({ preventScroll: true });
   }
 });
-elements.viewer.addEventListener("pointerdown", () => elements.viewer.focus({ preventScroll: true }));
+elements.viewer.addEventListener("pointerdown", () => {
+  state.pinnedLanding = null;
+  elements.viewer.focus({ preventScroll: true });
+});
 elements.viewer.addEventListener("contextmenu", (event) => {
   if (!event.defaultPrevented) hideSelectionActions();
 });
 elements.viewer.addEventListener("scroll", hideSelectionActions, { passive: true });
 elements.viewer.addEventListener("wheel", (event) => {
+  state.pinnedLanding = null;
   if (!event.ctrlKey) return;
   event.preventDefault();
   const direction = event.deltaY < 0 ? 1 : -1;
   setZoom(adjacentZoom(direction), captureZoomAnchor(event.clientX, event.clientY));
 }, { passive: false });
 elements.viewer.addEventListener("keydown", (event) => {
+  if (!event.ctrlKey) state.pinnedLanding = null;
   if (event.key === "Escape" && state.selection) {
     event.preventDefault();
     clearSelection();
+    return;
+  }
+  if (event.key === "Escape" && !elements["outline-panel"].hidden) {
+    event.preventDefault();
+    closeDirectory();
     return;
   }
   if (event.shiftKey && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
@@ -3761,6 +4080,7 @@ document.addEventListener("pointerdown", (event) => {
 window.addEventListener("resize", () => {
   applyAssistantDockWidth(state.assistantDockWidth);
   positionSelectionActions();
+  evaluateDirectoryMode();
   clearTimeout(state.resizeTimer);
   state.resizeTimer = setTimeout(relayoutPages, 120);
 });
@@ -3772,6 +4092,9 @@ window.addEventListener("pagehide", () => {
 
 applyAssistantDockWidth(state.assistantDockWidth);
 renderAssistantViewportMode();
+// Async in-flow reservations (learning footers, panels) shift pages after a
+// navigation landing; while the pin holds, re-assert the claimed destination.
+new ResizeObserver(() => { if (state.pinnedLanding) scheduleViewportUpdate(); }).observe(elements.pages);
 loadBooks().catch(() => announce("书库加载失败，请刷新后重试。", true));
 
 let readingTargets = [], readingOwner = null, readingTimer, readingBusy = false;

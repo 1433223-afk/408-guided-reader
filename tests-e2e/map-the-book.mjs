@@ -55,7 +55,16 @@ try {
     const labels = await json(page, `/api/revisions/${revisionId}/page-labels`);
     const target = expectedTargets.get(pageCount);
     assert.equal(outline.evidence_source, target.source);
-    assert.equal(outline.identity_conflict, false);
+    // A parser newer than the fixture may flag identity_conflict; the guard must
+    // then still serve the saved stable tree instead of rebuilding it.
+    if (outline.identity_conflict) {
+      const stored = await json(page, `/api/revisions/${revisionId}/outline?stored=1`);
+      assert.deepEqual(
+        outline.nodes.map((node) => [node.outline_node_id, node.parent_id, node.depth, node.order_index, node.title]),
+        stored.nodes.map((node) => [node.outline_node_id, node.parent_id, node.depth, node.order_index, node.title]),
+        "conflict guard must serve the saved directory unchanged",
+      );
+    }
     assert.ok(outline.nodes.length >= 200, "real logical directory is unexpectedly incomplete");
     const visibleRoots = page.locator("#outline-tree > .outline-level-0 > li");
     if (pageCount === 348) {
@@ -70,7 +79,8 @@ try {
       assert.ok(chapter6, "chapter 6 is missing from the bookmark tree");
       const chapter6Target = page.locator(`li[data-node-id="${chapter6.outline_node_id}"] > .outline-row .outline-target`);
       await chapter6Target.click();
-      assert.equal(await chapter6Target.getAttribute("aria-expanded"), "true");
+      const chapter6Children = page.locator(`li[data-node-id="${chapter6.outline_node_id}"] > ul`);
+      await chapter6Children.waitFor({ state: "visible", timeout: 5000 }); // navigating into the chapter auto-expands its path
       assert.deepEqual(await directChildTitles(page, chapter6), [
         "6.1 总线概述", "6.2 总线事务和定时", "6.3 本章小结", "6.4 常见问题和易混淆知识点",
       ]);
@@ -79,7 +89,8 @@ try {
       assert.ok(section62, "section 6.2 is missing from the bookmark tree");
       const section62Target = page.locator(`li[data-node-id="${section62.outline_node_id}"] > .outline-row .outline-target`);
       await section62Target.click();
-      assert.equal(await section62Target.getAttribute("aria-expanded"), "true");
+      const section62Children = page.locator(`li[data-node-id="${section62.outline_node_id}"] > ul`);
+      await section62Children.waitFor({ state: "visible", timeout: 5000 }); // navigating into the section auto-expands its path
       assert.deepEqual(await directChildTitles(page, section62), [
         "6.2.1 总线事务", "6.2.2 总线定时", "6.2.3 本节习题精选", "6.2.4 答案与解析",
       ]);
@@ -112,7 +123,13 @@ try {
       target.pdfPageIndex + 1,
     );
     await page.locator(`.page[data-index="${target.pdfPageIndex}"] canvas`).waitFor({ state: "visible", timeout: 30_000 });
-    await page.locator("#printed-page-label").getByText(`印刷页 ${target.printedLabel}`, { exact: true }).waitFor();
+    // Printed labels are internal evidence now; verify the landing label via the API.
+    const landing = await json(page, `/api/revisions/${revisionId}/page-labels`);
+    assert.equal(
+      landing.labels.find((row) => row.pdf_page_index === target.pdfPageIndex)?.printed_label,
+      target.printedLabel,
+      "landing page must carry its validated printed label",
+    );
     results.push({
       pages: pageCount,
       source: outline.evidence_source,
@@ -128,17 +145,28 @@ try {
   }
 
   // Persist a manual label on the copied acceptance library, then reopen and restart.
+  // The toolbar prompt is internal evidence now, so the manual override goes through
+  // the same PUT the editor used.
+  const manualBook = books.find((value) => value.active_revision.page_count === 29);
   await openBook(page, 29);
   await goToPage(page, 0);
-  page.once("dialog", (dialog) => dialog.accept("封面"));
-  await page.locator("#printed-page-edit").click();
-  await page.getByText("本页印刷页码已手工保存。").waitFor();
-  await page.locator("#printed-page-label").getByText("印刷页 封面", { exact: true }).waitFor();
+  await page.evaluate(async (revisionId) => {
+    const response = await fetch(`/api/revisions/${revisionId}/page-labels/0`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ printed_label: "封面" }),
+    });
+    if (!response.ok) throw new Error(`manual label PUT failed: ${response.status}`);
+  }, manualBook.active_revision.id);
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
   await openBook(page, 29);
   await goToPage(page, 0);
-  await page.locator("#printed-page-label").getByText("印刷页 封面", { exact: true }).waitFor();
+  assert.equal(
+    (await json(page, `/api/revisions/${manualBook.active_revision.id}/page-labels`))
+      .labels[0].printed_label, "封面",
+    "manual label must survive a reopen",
+  );
 
   await stopService(running.child);
   running = await startService();
@@ -146,7 +174,11 @@ try {
   books = await library(page);
   await openBook(page, 29);
   await goToPage(page, 0);
-  await page.locator("#printed-page-label").getByText("印刷页 封面", { exact: true }).waitFor();
+  assert.equal(
+    (await json(page, `/api/revisions/${manualBook.active_revision.id}/page-labels`))
+      .labels[0].printed_label, "封面",
+    "manual label must survive a restart",
+  );
   for (const pageCount of [29, 348]) {
     const book = books.find((value) => value.active_revision.page_count === pageCount);
     const outline = await json(page, `/api/revisions/${book.active_revision.id}/outline`);
@@ -196,7 +228,7 @@ async function expandAncestors(page, nodes, node) {
   for (const ancestor of parents) {
     const group = page.locator(`li[data-node-id="${ancestor.outline_node_id}"] > ul`);
     if (await group.isHidden()) {
-      await page.locator(`li[data-node-id="${ancestor.outline_node_id}"] > .outline-row .outline-disclosure`).click();
+      await page.locator(`li[data-node-id="${ancestor.outline_node_id}"] > .outline-row .outline-fold`).click();
     }
   }
 }
@@ -212,10 +244,10 @@ async function openBook(page, pageCount) {
     await page.locator("#back-to-library").click();
     await page.locator("#library-home").waitFor({ state: "visible" });
   }
-  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).click();
+  await page.locator(".book-card").filter({ hasText: `${pageCount} 个 PDF 页面` }).locator(".book-open").click();
+  await page.locator("#book-overview .overview-book-heading .primary-action").click();
   await page.locator("#reader").waitFor({ state: "visible" });
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
-  await page.locator("#printed-page-label").waitFor();
 }
 
 async function goToPage(page, pageIndex) {
