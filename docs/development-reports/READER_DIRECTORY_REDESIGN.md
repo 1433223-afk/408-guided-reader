@@ -122,4 +122,4 @@ Label: `IMPLEMENTATION_READY`.
 
 ## Git checkpoint
 
-`<filled by the commit>`
+`a39b747`
