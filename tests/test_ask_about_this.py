@@ -2550,24 +2550,53 @@ def test_incomplete_provider_response_is_retried_without_accepting_partial_text(
 
 def test_model_override_is_per_call_and_reported_without_changing_provider():
     providers, adapters = runtime_set(bakeoff_enabled=False)
-    default_model = providers.provider_identity("openrouter")[1]
+    default_model = providers.provider_identity("deepseek")[1]
     messages = [{"role": "user", "content": "bounded"}]
     events = []
     changed = providers.complete_for_with_metadata(
-        "openrouter", messages, model="openai/gpt-6-astra", timeout_seconds=120, attempt_observer=events.append)
-    ordinary = providers.complete_for_with_metadata("openrouter", messages)
-    assert [c["body"]["model"] for c in adapters["openrouter"].calls] == [
-        "openai/gpt-6-astra", default_model]
+        "deepseek", messages, model="deepseek-test-override", timeout_seconds=120, attempt_observer=events.append)
+    ordinary = providers.complete_for_with_metadata("deepseek", messages)
+    assert [c["body"]["model"] for c in adapters["deepseek"].calls] == [
+        "deepseek-test-override", default_model]
     assert changed.effective_config["request_parameters"]["timeout_seconds"] == 120
     assert ordinary.effective_config["request_parameters"]["timeout_seconds"] != 120
-    assert changed.effective_config["model"] == "openai/gpt-6-astra"
+    assert changed.effective_config["model"] == "deepseek-test-override"
     assert ordinary.effective_config["model"] == default_model
-    assert providers.provider_identity("openrouter")[1] == default_model
-    assert all(e["model"] == "openai/gpt-6-astra" for e in events)
+    assert providers.provider_identity("deepseek")[1] == default_model
+    assert all(e["model"] == "deepseek-test-override" for e in events)
     for invalid in ("", " ", "x" * 121, 123):
         with pytest.raises(ValueError, match="model is invalid"):
-            providers.complete_for_with_metadata("openrouter", messages, model=invalid)
-    assert len(adapters["openrouter"].calls) == 2
+            providers.complete_for_with_metadata("deepseek", messages, model=invalid)
+    assert len(adapters["deepseek"].calls) == 2
+
+
+def test_openrouter_only_approved_model_can_be_configured_or_selected(monkeypatch):
+    from dataclasses import replace
+
+    approved = "google/gemini-3.8-flash"
+    blocked = ("openai/gpt-6-astra", "example/free-model")
+    providers, adapters = runtime_set(bakeoff_enabled=False)
+    messages = [{"role": "user", "content": "bounded"}]
+    assert providers.complete_for_with_metadata(
+        "openrouter", messages, model=approved).effective_config["model"] == approved
+    for model in blocked:
+        with pytest.raises(ProviderFailure) as failure:
+            providers.complete_for_with_metadata("openrouter", messages, model=model)
+        assert failure.value.code == "unapproved_model"
+    assert len(adapters["openrouter"].calls) == 1
+
+    for model in blocked:
+        monkeypatch.setenv("GUIDED_READER_OPENROUTER_MODEL", model)
+        config = ProviderConfig.from_environment("openrouter")
+        with pytest.raises(ValueError, match="not approved"):
+            config.validate()
+        disabled = AgentRuntime(OpenAICompatibleAdapter("openrouter"),
+                                config=replace(config, endpoint="http://127.0.0.1:9999/chat"),
+                                credential_loader=lambda: "test-key")
+        assert disabled.status()["ai_off_reason"] == "UNAPPROVED_MODEL"
+        with pytest.raises(ProviderFailure) as failure:
+            disabled.complete(messages)
+        assert failure.value.code == "unapproved_model"
 
 
 def test_failed_child_explicit_retry_reuses_grounding_and_identity(assistant_fixture):

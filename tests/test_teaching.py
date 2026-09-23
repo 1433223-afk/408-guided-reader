@@ -650,9 +650,9 @@ def test_local_binding_failure_keeps_old_guide_and_retry_recovers(guide, monkeyp
 
 
 @pytest.mark.parametrize('guide_model,provider_model,expected', [
-    (None, None, 'openai/gpt-6-astra'),
+    (None, None, 'google/gemini-3.8-flash'),
     (None, 'google/gemini-3.8-flash', None),
-    ('custom-guide-model', 'provider-model', 'custom-guide-model')])
+    ('google/gemini-3.8-flash', 'google/gemini-3.8-flash', 'google/gemini-3.8-flash')])
 def test_guide_model_selection_respects_explicit_configuration(guide, monkeypatch, guide_model, provider_model, expected):
     _, runtime, g, _, _ = guide
     monkeypatch.setenv('GUIDED_READER_SYSTEM_PROVIDER', 'openrouter')

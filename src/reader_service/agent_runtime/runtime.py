@@ -26,6 +26,7 @@ from .credentials import (
 logger = logging.getLogger("reader_service.agent_runtime")
 
 PROVIDER_NAMES = ("deepseek", "zhipu", "openrouter")
+APPROVED_OPENROUTER_MODELS = frozenset({"google/gemini-3.8-flash"})
 PROVIDER_DEFAULTS = {
     "deepseek": {
         "endpoint": "https://api.deepseek.com/chat/completions",
@@ -150,6 +151,8 @@ class ProviderConfig:
         _validate_endpoint(self.endpoint)
         if not self.model or len(self.model) > 120:
             raise ValueError("provider model is invalid")
+        if self.provider == "openrouter" and self.model not in APPROVED_OPENROUTER_MODELS:
+            raise ValueError("OpenRouter model is not approved")
         if not 1 <= self.max_tokens <= 4096 or not 1 <= self.max_attempts <= 5:
             raise ValueError("provider request bounds are invalid")
         if not 0 <= self.temperature <= 2 or not 1 <= self.timeout_seconds <= 180:
@@ -274,11 +277,19 @@ class AgentRuntime:
     def status(self) -> dict:
         credential = self._credential_read()
         endpoint_valid = self._endpoint_valid()
-        model_valid = bool(self.config.model and len(self.config.model) <= 120)
+        model_valid = bool(
+            self.config.model and len(self.config.model) <= 120
+            and (self.config.provider != "openrouter"
+                 or self.config.model in APPROVED_OPENROUTER_MODELS)
+        )
         configured = self._configuration_valid and credential.available
         cooling = configured and self.clock() < self._cooling_until
         if not self._configuration_valid:
-            ai_off_reason = "INVALID_CONFIGURATION"
+            ai_off_reason = (
+                "UNAPPROVED_MODEL"
+                if not model_valid and self.config.provider == "openrouter"
+                else "INVALID_CONFIGURATION"
+            )
         elif not credential.available:
             ai_off_reason = credential.reason or "CREDENTIAL_UNAVAILABLE"
         elif cooling:
@@ -356,6 +367,12 @@ class AgentRuntime:
             config.provider, set()
         ):
             raise ValueError("reasoning effort is invalid for the selected provider")
+        if config.provider == "openrouter" and config.model not in APPROVED_OPENROUTER_MODELS:
+            raise ProviderFailure(
+                ProviderFailureKind.UNCONFIGURED,
+                "unapproved_model",
+                "OpenRouter 模型未获批准；请配置已批准的模型。",
+            )
         if not self._configuration_valid:
             raise ProviderFailure(
                 ProviderFailureKind.UNCONFIGURED,

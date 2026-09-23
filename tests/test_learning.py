@@ -677,7 +677,20 @@ def test_section_confirmation_preserves_unclear_topics_and_other_section(learnin
     section = points[0]['primary_section_id']
     own = [p for p in points if p['primary_section_id'] == section]
     other = [p for p in points if p['primary_section_id'] != section]
-    assert len(own) >= 2 and other
+    assert len(own) == 1 and other
+    # KP generation now yields one point for this short Section. Add a second
+    # published point in the test database to exercise mixed confirmation state.
+    with service.database.connect() as c:
+        extra = dict(c.execute('SELECT * FROM knowledge_points WHERE knowledge_point_id=?',
+                               (own[0]['knowledge_point_id'],)).fetchone())
+        extra['knowledge_point_id'] = str(uuid4())
+        extra['order_index'] = c.execute('SELECT MAX(order_index) + 1 FROM knowledge_points WHERE book_source_revision_id=? AND chapter_outline_node_id=?',
+                                         (rev, extra['chapter_outline_node_id'])).fetchone()[0]
+        extra['title'] += '（同节测试点）'
+        columns = ', '.join(extra)
+        placeholders = ', '.join('?' for _ in extra)
+        c.execute(f'INSERT INTO knowledge_points ({columns}) VALUES ({placeholders})', tuple(extra.values()))
+    own.append(extra)
     opened = master.repository.open(rev, own[0]['knowledge_point_id'])
     result = master.repository.confirm_section(rev, section)
     assert result == {'changed': len(own) - 1, 'unclear': 1}

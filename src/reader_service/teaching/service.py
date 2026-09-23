@@ -31,7 +31,7 @@ class TeachingService:
                                        os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "openrouter")).strip().lower()
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
         self.generator_model = os.environ.get("GUIDED_READER_GUIDE_MODEL") or (
-            "openai/gpt-6-astra" if self.provider == "openrouter"
+            "google/gemini-3.8-flash" if self.provider == "openrouter"
             and not os.environ.get("GUIDED_READER_OPENROUTER_MODEL") else None)
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
