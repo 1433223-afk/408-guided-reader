@@ -55,6 +55,7 @@
 /* Stable 92febf6 Reader: paint only. No size, grid, positioning, overflow, zoom or panel geometry overrides. */
 #reader { color:#26332b; }
 #reader .viewer { background:#d6d5ce; }
+#reader.directory-margin .viewer, #reader.directory-split:not(.practice-active) .viewer { background:#faf8f1; }
 #reader .toolbar { background:#f6f5ee;border-color:#ccccc2;box-shadow:none; }
 #reader :is(.search-panel,.knowledge-panel,.marks-panel,.assistant-panel,.guide-panel) { background:#f6f5ee;border-color:#ccccc2;border-radius:2px;box-shadow:0 2px 8px #26332b14; }
 #reader :is(button,input,textarea,select,.assistant-question-bubble,.assistant-answer-bubble,.mark-card,.learning-batch-card) { border-radius:2px; }

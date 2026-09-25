@@ -183,18 +183,19 @@ button, label { -webkit-tap-highlight-color: transparent; }
   width: var(--left-pane-width, 304px); display: flex; flex-direction: column; min-height: 0;
   background: #faf8f1; border-right: 1px solid #d6cfbf;
 }
-.reader.directory-split { grid-template-columns: calc(var(--left-pane-width, 304px) + 24px) minmax(0, 1fr); }
+#outline-panel { width: 304px; border-right: 0; }
+.reader.directory-split { grid-template-columns: 304px minmax(0, 1fr); }
 .reader.directory-split .outline-panel {
   position: relative; z-index: auto; top: auto; bottom: auto;
-  grid-column: 1; grid-row: 2; margin-right: 24px;
+  grid-column: 1; grid-row: 2; margin-right: 0;
 }
 .reader.directory-split .viewer { grid-column: 2; }
 .reader.directory-split .page { margin-left: auto !important; margin-right: auto !important; }
 .reader.directory-split.assistant-dock-open:not(.assistant-expanded) {
-  grid-template-columns: calc(var(--left-pane-width, 304px) + 24px) minmax(0, 1fr) var(--assistant-dock-width, 410px);
+  grid-template-columns: 304px minmax(0, 1fr) var(--assistant-dock-width, 410px);
 }
 .reader.directory-split.assistant-dock-open:not(.assistant-expanded) .assistant-panel:not(.assistant-overlay-open) { grid-column: 3; }
-.reader.directory-split.guide-open { grid-template-columns: calc(var(--left-pane-width, 304px) + 24px) minmax(0, 1fr) var(--guide-width, 410px); }
+.reader.directory-split.guide-open { grid-template-columns: 304px minmax(0, 1fr) var(--guide-width, 410px); }
 .reader.directory-split.guide-open .guide-panel { grid-column: 3; }
 .reader.directory-nav .viewer { visibility: hidden; }
 .reader.practice-active .viewer { visibility: visible; }
@@ -735,6 +736,7 @@ button, label { -webkit-tap-highlight-color: transparent; }
      squeezing the stage while the re-evaluation settles. */
   .reader.directory-split { grid-template-columns: minmax(0, 1fr); }
   .reader.directory-split .outline-panel { position: fixed; z-index: 8; top: 68px; left: 0; bottom: 0; width: min(304px, 100vw); }
+  .reader.directory-split #outline-panel { width: min(304px, 100vw); }
   .reader.directory-split .viewer { grid-column: 1; }
   .reader.assistant-dock-open:not(.assistant-expanded) .assistant-panel:not(.assistant-overlay-open),
   .reader.guide-open .guide-panel {

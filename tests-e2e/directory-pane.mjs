@@ -61,6 +61,10 @@ try {
   await page.locator('.book-card').filter({hasText: '348 个 PDF 页面'}).locator('.book-open').click();
   await page.locator('#book-overview .overview-book-heading .primary-action').click();
   await page.locator('.page canvas').first().waitFor({timeout: 30000});
+  // The Library remembers zoom across sessions; geometry-mode assertions below
+  // are calibrated at 100%, independent of the user's last saved reading zoom.
+  while (Number.parseInt(await page.locator('#zoom-value').textContent(), 10) > 100) await page.locator('#zoom-out').click();
+  while (Number.parseInt(await page.locator('#zoom-value').textContent(), 10) < 100) await page.locator('#zoom-in').click();
 
   const outline = await page.evaluate(async () => {
     const books = (await (await fetch('/api/books')).json()).books;
@@ -404,47 +408,49 @@ try {
   await page.locator('#outline-tree .outline-target').first().waitFor();
   await page.waitForTimeout(300);
   const chapter2 = outline.nodes.find(n => n.kind === 'CHAPTER' && n.title.startsWith('第2章'));
-  const chapter5 = outline.nodes.find(n => n.kind === 'CHAPTER' && n.title.startsWith('第5章'));
+  // Chapter 5 can be expanded already when it was the Library's saved starting
+  // position. Chapter 4 was not visited in this run, so it tests the default fold.
+  const chapter4 = outline.nodes.find(n => n.kind === 'CHAPTER' && n.title.startsWith('第4章'));
   const chapter3 = outline.nodes.find(n => n.kind === 'CHAPTER' && n.title.startsWith('第3章'));
   const list2 = page.locator(`li[data-node-id="${chapter2.outline_node_id}"] > ul`);
-  const list5 = page.locator(`li[data-node-id="${chapter5.outline_node_id}"] > ul`);
+  const list4 = page.locator(`li[data-node-id="${chapter4.outline_node_id}"] > ul`);
   const list3 = page.locator(`li[data-node-id="${chapter3.outline_node_id}"] > ul`);
-  const fold5 = page.locator(`li[data-node-id="${chapter5.outline_node_id}"] > .outline-row .outline-fold`);
+  const fold4 = page.locator(`li[data-node-id="${chapter4.outline_node_id}"] > .outline-row .outline-fold`);
   const fold2 = page.locator(`li[data-node-id="${chapter2.outline_node_id}"] > .outline-row .outline-fold`);
   const fold22 = page.locator(`li[data-node-id="${section22.outline_node_id}"] > .outline-row .outline-fold`);
   // Default: current chapter expanded, other chapters folded.
   assert.equal(await list2.isVisible(), true, 'the current chapter must be expanded on open');
   assert.equal(await fold2.getAttribute('aria-expanded'), 'true');
-  assert.equal(await list5.isVisible(), false, 'non-current chapters stay folded by default');
-  assert.equal(await fold5.getAttribute('aria-expanded'), 'false');
-  assert.equal(await fold5.textContent(), '展开');
+  assert.equal(await list4.isVisible(), false, 'non-current chapters stay folded by default');
+  assert.equal(await fold4.getAttribute('aria-expanded'), 'false');
+  assert.equal(await fold4.textContent(), '展开');
   // Leaves have no fold; sections with real children do.
   assert.equal(await page.locator(`li[data-node-id="${subsection.outline_node_id}"] > .outline-row .outline-fold`).count(), 0,
     'leaf subsections must not offer folding');
   assert.notEqual(await fold22.count(), 0);
   // The fold label stays hidden until the row is hovered (no persistent affordance).
-  assert.equal(await fold5.evaluate(el => getComputedStyle(el).opacity), '0');
-  await page.locator(`li[data-node-id="${chapter5.outline_node_id}"] > .outline-row`).hover();
+  assert.equal(await fold4.evaluate(el => getComputedStyle(el).opacity), '0');
+  await page.locator(`li[data-node-id="${chapter4.outline_node_id}"] > .outline-row`).hover();
   await page.waitForTimeout(160); // let the reveal transition finish
-  assert.equal(await fold5.evaluate(el => getComputedStyle(el).opacity), '1',
+  assert.equal(await fold4.evaluate(el => getComputedStyle(el).opacity), '1',
     'hovering a foldable row reveals the text affordance');
   await page.screenshot({path: 'test-results/directory-fold-hover.png'});
   // Folding changes child visibility only — never the PDF position.
   const beforeFold = await state();
-  await fold5.click();
-  assert.equal(await list5.isVisible(), true, 'fold click expands the chapter');
-  assert.equal(await fold5.getAttribute('aria-expanded'), 'true');
-  assert.equal(await fold5.textContent(), '收起');
-  await fold5.click();
-  assert.equal(await list5.isVisible(), false);
-  assert.equal(await fold5.getAttribute('aria-expanded'), 'false');
+  await fold4.click();
+  assert.equal(await list4.isVisible(), true, 'fold click expands the chapter');
+  assert.equal(await fold4.getAttribute('aria-expanded'), 'true');
+  assert.equal(await fold4.textContent(), '收起');
+  await fold4.click();
+  assert.equal(await list4.isVisible(), false);
+  assert.equal(await fold4.getAttribute('aria-expanded'), 'false');
   assert.deepEqual(await state(), beforeFold, 'folding must not move the PDF');
   // Keyboard: focus the fold and press Enter — same toggle, still no navigation.
-  await fold5.focus();
-  assert.equal(await fold5.evaluate(el => getComputedStyle(el).opacity), '1',
+  await fold4.focus();
+  assert.equal(await fold4.evaluate(el => getComputedStyle(el).opacity), '1',
     'keyboard focus reveals the text affordance');
   await page.keyboard.press('Enter');
-  assert.equal(await list5.isVisible(), true, 'Enter on a focused fold toggles expansion');
+  assert.equal(await list4.isVisible(), true, 'Enter on a focused fold toggles expansion');
   assert.deepEqual(await state(), beforeFold, 'keyboard folding must not move the PDF');
   // Section-level fold: a non-current section folds freely; the current section
   // (an ancestor of the current item) refuses to fold away its current item.
@@ -463,12 +469,12 @@ try {
   assert.equal(await list22.isVisible(), true, 'the current section must not fold away the current item');
   assert.equal(await fold22.getAttribute('aria-expanded'), 'true');
   // Session persistence across pane close/reopen, other branches untouched.
-  await fold5.click(); // leave chapter 5 folded
+  await fold4.click(); // leave chapter 4 folded
   await page.locator('#outline-close').click();
   await page.locator('#outline-toggle').click();
   await page.locator('#outline-tree .outline-target').first().waitFor();
   await page.waitForTimeout(300);
-  assert.equal(await list5.isVisible(), false, 'manual fold state persists across reopen');
+  assert.equal(await list4.isVisible(), false, 'manual fold state persists across reopen');
   assert.equal(await list2.isVisible(), true, 'the current path stays expanded');
   // Reading into a previously folded branch auto-expands only that path.
   const section31 = outline.nodes.find(n => n.kind === 'SECTION' && n.title.startsWith('3.1 '));
@@ -479,7 +485,7 @@ try {
   }, section31.start_page);
   await page.waitForTimeout(800);
   assert.equal(await list3.isVisible(), true, 'entering a folded branch expands its path');
-  assert.equal(await list5.isVisible(), false, 'other branches keep their fold state');
+  assert.equal(await list4.isVisible(), false, 'other branches keep their fold state');
   await page.screenshot({path: 'test-results/directory-collapse-current-path.png'});
   await page.locator('#outline-close').click();
 

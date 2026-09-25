@@ -151,7 +151,7 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
 const DIRECTORY_PANE_WIDTH = 304;
-const DIRECTORY_GAP = 24;
+const DIRECTORY_GAP = 0;
 const ASSISTANT_PROVIDER_LABELS = {
   deepseek: "DeepSeek", zhipu: "Zhipu", openrouter: "OpenRouter",
 };
@@ -647,8 +647,17 @@ function renderReaderSectionHint() {
   let deepest = deepestOf([...resolvedContaining, ...coarseContaining]) || deepestResolved;
   const anchored = state.navigationAnchorId && state.outlineKinship
     ? state.outlineKinship.byId.get(state.navigationAnchorId) : null;
-  if (anchored && [...resolvedContaining, ...coarseContaining].some(n => n.outline_node_id === anchored.outline_node_id)
-    && (!deepestResolved || deepestResolved.depth <= anchored.depth)) {
+  const anchoredTarget = anchored ? outlineNavigationTarget(anchored, state.outlineKinship) : null;
+  const pinnedToClickedNode = anchoredTarget && state.pinnedLanding
+    && state.pinnedLanding.pageIndex === anchoredTarget.page
+    && Math.abs(state.pinnedLanding.normalizedY - anchoredTarget.y) < 1e-9;
+  const anchoredInRange = anchored && [...resolvedContaining, ...coarseContaining]
+    .some(n => n.outline_node_id === anchored.outline_node_id);
+  // While the clicked destination is pinned, the clicked node owns its landing.
+  // CSS-pixel rounding can put the measured top anchor just before a same-page
+  // subsection boundary; user scrolling releases the pin and restores ordinary
+  // range-based tracking.
+  if (pinnedToClickedNode || (anchoredInRange && (!deepestResolved || deepestResolved.depth <= anchored.depth))) {
     deepest = anchored;
   }
   let section = deepestResolved?.kind === "SECTION" ? deepestResolved : null;
@@ -1111,7 +1120,7 @@ function evaluateDirectoryMode() {
     pageCssWidth: elements.pages.children[0].offsetWidth,
     inlineReserve: inlineReserve(),
     splitActive: state.directoryMode === "split",
-    paneWidth: state.leftPaneWidth,
+    paneWidth: DIRECTORY_PANE_WIDTH,
   }));
 }
 
@@ -1562,28 +1571,14 @@ function normalizePracticeSplit() {
 }
 
 function updateLeftPaneWidth(width, settle = false) {
-  if (state.practice.active) {
-    normalizePracticeSplit();
-    const { available, centerMin, leftMin } = practiceSplitLimits();
-    const rightSpace = elements.reader.classList.contains("assistant-dock-open") ? state.assistantDockWidth : 0;
-    const maximum = Math.max(leftMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - rightSpace - centerMin));
-    state.leftPaneWidth = Math.round(Math.max(leftMin, Math.min(maximum, width)));
-    normalizePracticeSplit();
-    if (settle) { fitPracticePdfForDock(); relayoutPages(); }
-    return;
-  }
-  const dock = elements.reader.classList.contains("assistant-dock-open") || elements.reader.classList.contains("guide-open")
-    ? state.assistantDockWidth : 0;
-  const maximum = Math.max(210, Math.min(440, window.innerWidth - dock - 344));
-  state.leftPaneWidth = Math.round(Math.max(210, Math.min(maximum, width)));
-  elements.reader.style.setProperty("--left-pane-width", `${state.leftPaneWidth}px`);
-  for (const handle of elements.reader.querySelectorAll(".left-resize-handle")) {
-    handle.setAttribute("aria-valuemin", "210");
-    handle.setAttribute("aria-valuemax", String(maximum));
-    handle.setAttribute("aria-valuenow", String(state.leftPaneWidth));
-  }
-  if (state.practice.active && settle) relayoutPages();
-  else evaluateDirectoryMode();
+  if (!state.practice.active) return;
+  normalizePracticeSplit();
+  const { available, centerMin, leftMin } = practiceSplitLimits();
+  const rightSpace = elements.reader.classList.contains("assistant-dock-open") ? state.assistantDockWidth : 0;
+  const maximum = Math.max(leftMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - rightSpace - centerMin));
+  state.leftPaneWidth = Math.round(Math.max(leftMin, Math.min(maximum, width)));
+  normalizePracticeSplit();
+  if (settle) { fitPracticePdfForDock(); relayoutPages(); }
 }
 
 function isOutlineAncestor(ancestorId, nodeId) {
@@ -1680,6 +1675,7 @@ function renderOutline(payload) {
         state.navigationAnchorId = node.outline_node_id;
         const destination = outlineNavigationTarget(node, state.outlineKinship);
         goToPage(destination.page, destination.y);
+        renderReaderSectionHint();
         if (state.directoryMode === "navigation") closeDirectory({ focusViewer: true });
         else elements.viewer.focus({ preventScroll: true });
       });
@@ -2314,7 +2310,7 @@ function assistantDockLimits() {
       maximum: Math.max(rightMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - state.leftPaneWidth - centerMin)) };
   }
   const { available, centerMin } = practiceSplitLimits();
-  const left = state.directoryMode === "split" && !elements["outline-panel"].hidden ? state.leftPaneWidth + 24 : 0;
+  const left = state.directoryMode === "split" && !elements["outline-panel"].hidden ? DIRECTORY_PANE_WIDTH : 0;
   const remaining = Math.max(0, available - left - centerMin);
   const minimum = Math.min(ASSISTANT_DOCK_MIN_WIDTH, remaining);
   const maximum = Math.max(minimum, Math.min(ASSISTANT_DOCK_MAX_WIDTH, remaining));
