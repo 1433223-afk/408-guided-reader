@@ -11,11 +11,12 @@ import { createMemoryUI } from "/memory-ui.js";
 import { createGuideUI } from "/guide-ui.js";
 import { createInlineUI } from "/inline-ui.js";
 import { createAssistantNavigator } from "/assistant-navigator.js";
+import { PRACTICE_BOOK_SHA256, PRACTICE_QUESTIONS, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "reader-more", "reader-more-toggle", "reader-more-menu", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "reader-more", "reader-more-toggle", "reader-more-menu", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "practice-panel", "practice-close", "practice-number", "practice-status", "practice-selection", "practice-attempts", "practice-progress", "practice-question-list", "practice-favorite", "practice-review-targets", "practice-review-space", "practice-review-close", "practice-review-title", "practice-review-description", "practice-hint", "practice-hint-button", "practice-retry", "practice-review", "practice-answer", "practice-back", "practice-next", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -58,6 +59,11 @@ const state = {
   directoryMode: null, currentSectionId: null, currentOutlineId: null, outlineKinship: null,
   pinnedLanding: null, navigationAnchorId: null,
   directoryCollapsed: null, directoryExpandedFor: null,
+  leftPaneWidth: 304,
+  practice: { active: false, index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
+    reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
+    submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
+    hints: [], hintLoading: false, hintEpoch: 0 },
 };
 
 const MASTER_WORKSPACE_MOTION = Object.freeze({
@@ -126,6 +132,21 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
     const card = [...elements['marks-list'].children].find(n => n.dataset.annotationId === item.source_id);
     if (card) { card.scrollIntoView({ block: 'center' }); card.tabIndex = -1; card.focus({ preventScroll: true }); }
   }
+}, returnToPractice: async (item, review = false) => {
+  const books = (await api('/api/books')).books;
+  const book = books.find(b => b.id === item.book_id && b.active_revision?.id === item.book_source_revision_id);
+  if (!book || book.active_revision.blob_sha256 !== PRACTICE_BOOK_SHA256) throw new Error('原教材当前不可用。');
+  if (state.book?.id !== book.id) { if (state.book) closeReader(); await openBook(book); }
+  if (!state.pdf || state.revision?.id !== item.book_source_revision_id) throw new Error('请重新打开原教材。');
+  elements['library-home'].hidden = true;
+  elements.reader.hidden = false;
+  await loadPracticeRecords();
+  if (!state.practice.active) enterPractice();
+  switchPracticeQuestion(PRACTICE_QUESTIONS.findIndex(question => question.number === item.source.number));
+  if (review) {
+    openPracticeReview();
+    await state.practice.reviewOpening;
+  }
 } });
 
 const ZOOM_LEVELS = [0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4];
@@ -136,7 +157,7 @@ const ASSISTANT_PROVIDER_LABELS = {
 };
 const ASSISTANT_DOCK_MIN_WIDTH = 320;
 const ASSISTANT_DOCK_MAX_WIDTH = 760;
-const ASSISTANT_READER_MIN_WIDTH = 280;
+const PRACTICE_PANE_MAX_WIDTH = 440;
 
 const teachingUiOptions = { state, api, goToPage,
   streamGuide: (path, options, onEvent) => streamAssistantResponse(path, {
@@ -147,8 +168,9 @@ const teachingUiOptions = { state, api, goToPage,
   readingAnchor: () => captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1),
   hideContextMenu: hideSelectionActions,
   contextMenu: openVisibleSelectionActions,
-  layout: change => { change(); evaluateDirectoryMode(); },
+  layout: change => { change(); if (state.practice.active) relayoutPages(); else evaluateDirectoryMode(); },
   closeDock: () => claimRightDock("guide"),
+  closeDirectory: () => closeDirectory(),
   setDockWidth: applyAssistantDockWidth,
   dockWidth: () => state.assistantDockWidth,
   explain: openAssistantDraftFromVisibleSelection };
@@ -294,8 +316,11 @@ async function openBook(book) {
   const generation = state.generation;
   cancelRenders();
   closePreparationStream();
+  resetPractice();
+  applyDirectoryMode(null);
   state.book = book;
   state.revision = book.active_revision;
+  if (state.revision.blob_sha256 === PRACTICE_BOOK_SHA256) loadPracticeRecords();
   state.readerSessionId = crypto.randomUUID();
   state.assistantState = emptyAssistantState();
   state.navigationAnchorId = null;
@@ -352,6 +377,8 @@ async function openBook(book) {
 }
 
 function closeReader() {
+  resetPractice();
+  applyDirectoryMode(null);
   abortAssistantStreams();
   chapterEntry.reset();
   inline.reset();
@@ -420,7 +447,8 @@ function displayedRatio(geometry) {
 function inlineReserve() { return elements.reader.classList.contains("inline-open") ? 332 : 0; }
 
 function pageWidth() {
-  return Math.max(240, Math.min(920, elements.viewer.clientWidth - inlineReserve() - 72)) * state.zoom;
+  const horizontalRoom = state.practice.active ? 32 : 72;
+  return Math.max(240, Math.min(920, elements.viewer.clientWidth - inlineReserve() - horizontalRoom)) * state.zoom;
 }
 
 function snappedPageSize(ratio) {
@@ -460,10 +488,11 @@ function applyPageSize(wrapper, size) {
   wrapper.style.width = `${size.cssWidth}px`;
   wrapper.style.height = `${size.cssHeight}px`;
   const available = elements.viewer.clientWidth - inlineReserve();
-  const fits = size.cssWidth <= available - 64;
-  const naturalLeft = fits ? (available - size.cssWidth) / 2 : 32;
+  const inset = state.practice.active ? 12 : 32;
+  const fits = size.cssWidth <= available - inset * 2;
+  const naturalLeft = fits ? (available - size.cssWidth) / 2 : inset;
   const alignedLeft = alignedCssDimension(naturalLeft, size.pixelRatio).css;
-  wrapper.style.marginLeft = `${Math.max(0, alignedLeft - 32)}px`;
+  wrapper.style.marginLeft = `${Math.max(0, alignedLeft - inset)}px`;
   wrapper.style.marginRight = "0";
 }
 
@@ -755,6 +784,7 @@ async function renderPage(index) {
       state.rendered.add(index);
       master.renderPage(index);
       renderGuideEntries(index);
+      renderPracticeOverlay(index);
       syncPagePreparationUi(index);
       ensureOverlay(index);
     }
@@ -806,6 +836,7 @@ function goToPage(index, offset = 0) {
 function setZoom(value, anchor = captureZoomAnchor()) {
   const newZoom = Math.max(0.5, Math.min(4, Math.round(value * 100) / 100));
   if (newZoom === state.zoom || !state.revision) return;
+  state.practice.restoreZoom = null;
   state.zoom = newZoom;
   elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
   relayoutPages(anchor);
@@ -894,18 +925,21 @@ function scheduleSave() {
   state.saveTimer = setTimeout(savePosition, 350);
 }
 
+function readingZoomForSave() { return state.practice.restoreZoom ?? state.zoom; }
+
 async function savePosition() {
   if (!state.revision || !state.pdf) return;
   const page = elements.pages.children[state.currentPage];
   if (!page) return;
   const normalizedOffset = currentNormalizedOffset(page);
+  const zoom = readingZoomForSave();
   try {
     await api(`/api/revisions/${state.revision.id}/position`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom: state.zoom }),
+      body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom }),
     });
-    state.revision.position = { pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom: state.zoom, updated_at: new Date().toISOString() };
+    state.revision.position = { pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom, updated_at: new Date().toISOString() };
   } catch (error) {
     announce("阅读位置未保存，请稍后重试。", true);
   }
@@ -919,7 +953,7 @@ function savePositionKeepalive() {
     method: "PUT",
     credentials: "same-origin",
     headers: { "X-Reader-Token": launchToken, "Content-Type": "application/json" },
-    body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: currentNormalizedOffset(page), zoom: state.zoom }),
+    body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: currentNormalizedOffset(page), zoom: readingZoomForSave() }),
     keepalive: true,
   }).catch(() => {});
 }
@@ -1069,12 +1103,15 @@ function computeDirectoryMode({ viewerWidth, pageCssWidth, inlineReserve = 0, sp
 }
 
 function evaluateDirectoryMode() {
-  if (elements["outline-panel"].hidden || !state.revision || !elements.pages.children.length) return;
+  if (!state.revision || !elements.pages.children.length) return;
+  if (state.practice.active) { applyDirectoryMode("split"); return; }
+  if (elements["outline-panel"].hidden) return;
   applyDirectoryMode(computeDirectoryMode({
     viewerWidth: elements.viewer.clientWidth,
     pageCssWidth: elements.pages.children[0].offsetWidth,
     inlineReserve: inlineReserve(),
     splitActive: state.directoryMode === "split",
+    paneWidth: state.leftPaneWidth,
   }));
 }
 
@@ -1115,6 +1152,7 @@ function syncDirectoryActive({ reveal = false } = {}) {
 
 function openDirectory() {
   if (elements["outline-panel"].hidden) {
+    elements["practice-panel"].hidden = true;
     elements["outline-panel"].hidden = false;
     elements["outline-toggle"].setAttribute("aria-expanded", "true");
     chapterEntry.close();
@@ -1135,8 +1173,417 @@ function closeDirectory({ focusViewer = false } = {}) {
   if (elements["outline-panel"].hidden) return;
   elements["outline-panel"].hidden = true;
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
-  applyDirectoryMode(null);
+  if (state.practice.active) elements["practice-panel"].hidden = false;
+  applyDirectoryMode(state.practice.active ? "split" : null);
   if (focusViewer) elements.viewer.focus({ preventScroll: true });
+}
+
+function resetPractice() {
+  if (state.practice.restoreZoom !== null && state.zoom === 1) {
+    state.zoom = state.practice.restoreZoom;
+    elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
+  }
+  state.practice = { active: false, index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
+    reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
+    submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
+    hints: [], hintLoading: false, hintEpoch: 0 };
+  elements.reader.classList.remove("practice-active");
+  elements["practice-panel"].hidden = true;
+  elements["practice-hint"].hidden = true;
+  master.leavePracticeReview();
+  elements.pages?.querySelectorAll(".practice-choice-area,.practice-question-mark,.practice-current-guide,.practice-entry").forEach(node => node.remove());
+}
+
+function practiceCurrentQuestion() { return PRACTICE_QUESTIONS[state.practice.index]; }
+function practiceRecord(number) {
+  return state.practice.records.get(number) || {number, attempt_count: 0, last_correct: null, ever_correct: false, favorite: false};
+}
+
+async function loadPracticeRecords() {
+  const revisionId = state.revision?.id;
+  if (!revisionId) return;
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/practice-prototype`);
+    if (state.revision?.id !== revisionId) return;
+    state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
+    updatePracticeRail();
+    renderPracticePages();
+  } catch (error) {
+    if (state.revision?.id === revisionId) announce(`练习状态暂时无法读取：${error.message}`, true);
+  }
+}
+
+function renderPracticeNavigation() {
+  const buttons = PRACTICE_QUESTIONS.map((question, index) => {
+    const record = practiceRecord(question.number);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "practice-question-link";
+    button.classList.toggle("current", state.practice.index === index);
+    button.classList.toggle("done", record.attempt_count > 0);
+    button.classList.toggle("correct", record.ever_correct);
+    button.classList.toggle("incorrect", record.last_correct === false);
+    button.classList.toggle("repeated", record.attempt_count > 1);
+    button.classList.toggle("favorite", record.favorite);
+    button.textContent = String(question.number).padStart(2, "0");
+    button.title = `${question.number} 题 · ${record.attempt_count ? `${record.attempt_count} 次作答 · ${record.last_correct ? "上次做对" : "上次未做对"}${record.ever_correct ? " · 做对过" : ""}` : "未做"}${record.favorite ? " · 已收藏" : ""}`;
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-current", state.practice.index === index ? "true" : "false");
+    button.addEventListener("click", () => switchPracticeQuestion(index));
+    return button;
+  });
+  elements["practice-question-list"].replaceChildren(...buttons);
+}
+
+function updatePracticeRail() {
+  const question = practiceCurrentQuestion();
+  const practice = state.practice;
+  const { selected, result, onAnswerPage } = practice;
+  const record = practiceRecord(question.number);
+  elements["practice-number"].textContent = String(question.number).padStart(2, "0");
+  const status = elements["practice-status"];
+  status.classList.toggle("correct", result === "correct" || !result && record.last_correct === true && !selected);
+  status.classList.toggle("incorrect", result === "incorrect" || !result && record.last_correct === false && !selected);
+  status.textContent = practice.submissionError ? "提交未保存，请重试" : practice.submitting ? "正在提交…"
+    : result === "correct" ? "✓ 正确" : result === "incorrect" ? "✕ 不正确"
+    : selected ? `已选 ${selected}` : record.attempt_count ? record.last_correct ? "上次做对" : "上次未做对" : "尚未作答";
+  elements["practice-selection"].textContent = result ? `本次选了 ${selected}`
+    : selected ? `再次点 ${selected} 或按 Enter 提交` : "在原书上点击 A / B / C / D";
+  elements["practice-attempts"].textContent = record.attempt_count
+    ? `作答 ${record.attempt_count} 次${record.ever_correct ? " · 做对过" : ""}${record.attempt_count > 1 ? " · 多次练习" : ""}` : "";
+  const done = [...practice.records.values()].filter(row => row.attempt_count > 0).length;
+  elements["practice-progress"].textContent = `已做 ${done} / ${PRACTICE_QUESTIONS.length}`;
+  const favorite = elements["practice-favorite"];
+  favorite.textContent = record.favorite ? "★" : "☆";
+  favorite.setAttribute("aria-pressed", String(record.favorite));
+  favorite.setAttribute("aria-label", record.favorite ? "取消收藏这道题" : "收藏这道题");
+  favorite.disabled = practice.savingFavorite;
+  elements["practice-hint-button"].hidden = !!result;
+  elements["practice-hint-button"].disabled = practice.hintLoading;
+  elements["practice-hint-button"].textContent = practice.hintLoading ? "正在生成提示…"
+    : practice.hints.length ? "再给一个提示" : "给我一个提示";
+  const hintArea = elements["practice-hint"];
+  hintArea.hidden = !practice.hints.length;
+  hintArea.replaceChildren(...practice.hints.map((hint, index) => {
+    const line = document.createElement("p");
+    const label = document.createElement("strong");
+    label.textContent = `提示 ${index + 1}`;
+    line.append(label, document.createTextNode(hint));
+    return line;
+  }));
+  elements["practice-retry"].hidden = result !== "incorrect" && !(record.attempt_count && record.last_correct === false && !selected);
+  elements["practice-review"].hidden = !record.attempt_count;
+  elements["practice-answer"].hidden = !record.attempt_count;
+  elements["practice-back"].hidden = !onAnswerPage;
+  const lastQuestion = practice.index === PRACTICE_QUESTIONS.length - 1;
+  elements["practice-next"].hidden = false;
+  elements["practice-next"].textContent = lastQuestion ? "结束练习" : "下一题 →";
+  elements["practice-next"].classList.toggle("primary", !onAnswerPage && result !== "incorrect");
+  elements["practice-retry"].classList.toggle("primary", !onAnswerPage && result === "incorrect");
+  elements["practice-back"].classList.toggle("primary", onAnswerPage);
+  elements["practice-review"].classList.toggle("emphasized", result === "incorrect");
+  elements["practice-review-targets"].hidden = !practice.reviewOpen;
+  for (const button of elements["practice-review-targets"].querySelectorAll("button")) {
+    button.classList.toggle("active", button.dataset.reviewTarget === practice.reviewTarget);
+    button.setAttribute("aria-pressed", String(button.dataset.reviewTarget === practice.reviewTarget));
+  }
+  renderPracticeNavigation();
+  for (const marker of elements.pages.querySelectorAll(".practice-choice-area")) {
+    marker.classList.toggle("selected", marker.dataset.choice === selected);
+    marker.classList.toggle("correct", result === "correct" && marker.dataset.choice === selected);
+    marker.classList.toggle("incorrect", result === "incorrect" && marker.dataset.choice === selected);
+  }
+}
+
+function renderPracticeOverlay(index) {
+  const wrapper = elements.pages.children[index];
+  if (!wrapper) return;
+  wrapper.querySelectorAll(".practice-choice-area,.practice-question-mark,.practice-current-guide,.practice-entry").forEach(node => node.remove());
+  if (state.revision?.blob_sha256 !== PRACTICE_BOOK_SHA256 || !wrapper.querySelector("canvas")) return;
+  if (index === 19) {
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = "practice-entry";
+    entry.style.cssText = "left:38%;top:69.2%";
+    entry.textContent = state.practice.active ? "练习中" : "练习 ›";
+    entry.setAttribute("aria-label", "开始 1.2.6 本节习题精选的单选练习");
+    entry.addEventListener("click", () => enterPractice());
+    wrapper.append(entry);
+  }
+  for (const [questionIndex, item] of PRACTICE_QUESTIONS.entries()) {
+    if (item.page !== index) continue;
+    const record = practiceRecord(item.number);
+    if (!state.practice.active && !record.attempt_count && !record.favorite) continue;
+    const mark = document.createElement("button");
+    mark.type = "button";
+    mark.className = "practice-question-mark";
+    mark.classList.toggle("current", state.practice.active && state.practice.index === questionIndex);
+    mark.classList.toggle("correct", record.ever_correct);
+    mark.classList.toggle("incorrect", record.last_correct === false);
+    mark.classList.toggle("repeated", record.attempt_count > 1);
+    mark.classList.toggle("favorite", record.favorite);
+    mark.dataset.attemptCount = record.attempt_count > 1 ? String(record.attempt_count) : "";
+    mark.style.cssText = `left:10.5%;top:${(item.promptY - .003)*100}%`;
+    mark.textContent = record.last_correct === false ? "×" : record.ever_correct ? "✓" : "·";
+    mark.title = `${item.number} 题 · ${record.attempt_count ? `${record.attempt_count} 次作答${record.last_correct ? " · 上次做对" : " · 上次未做对"}` : "未做"}${record.favorite ? " · 已收藏" : ""}`;
+    mark.setAttribute("aria-label", mark.title);
+    mark.addEventListener("click", () => { if (!state.practice.active) enterPractice(); switchPracticeQuestion(questionIndex); });
+    wrapper.append(mark);
+    if (state.practice.active && state.practice.index === questionIndex) {
+      const guide = document.createElement("span");
+      guide.className = "practice-current-guide";
+      guide.textContent = "当前";
+      guide.setAttribute("aria-hidden", "true");
+      const bottom = Math.max(...item.options.map(([, , , y1]) => y1));
+      guide.style.cssText = `top:${(item.promptY - .006)*100}%;height:${(bottom - item.promptY + .009)*100}%`;
+      wrapper.append(guide);
+    }
+  }
+  if (!state.practice.active) return;
+  const question = practiceQuestionForPage(index, state.practice.index);
+  if (!question) return;
+  question.options.forEach(([x0,y0,x1,y1], optionIndex) => {
+    const marker = document.createElement("span");
+    marker.className = "practice-choice-area";
+    marker.dataset.choice = "ABCD"[optionIndex];
+    marker.setAttribute("aria-hidden", "true");
+    marker.style.cssText = `left:${x0*100}%;top:${y0*100}%;width:${(x1-x0)*100}%;height:${(y1-y0)*100}%`;
+    wrapper.append(marker);
+  });
+  updatePracticeRail();
+}
+
+function renderPracticePages() {
+  for (const index of state.rendered) renderPracticeOverlay(index);
+}
+
+function showPracticeQuestion() {
+  const question = practiceCurrentQuestion();
+  state.practice.onAnswerPage = false;
+  updatePracticeRail();
+  renderPracticePages();
+  goToPage(question.page, Math.max(0, question.options[0][1] - .08));
+}
+
+function switchPracticeQuestion(index) {
+  if (!state.practice.active || index < 0 || index >= PRACTICE_QUESTIONS.length) return;
+  closePracticeReview();
+  state.practice.index = index;
+  state.practice.selected = null;
+  state.practice.result = null;
+  state.practice.submissionError = false;
+  state.practice.hintEpoch += 1;
+  state.practice.hints = [];
+  state.practice.hintLoading = false;
+  showPracticeQuestion();
+}
+
+function closePracticeReview() {
+  const practice = state.practice;
+  if (!practice.reviewOpen) return;
+  practice.reviewOpen = false;
+  practice.reviewTarget = null;
+  practice.reviewOpening = null;
+  master.leavePracticeReview();
+  if (!practice.reviewDockWasOpen) setAssistantPanelOpen(false);
+  practice.reviewDockWasOpen = false;
+  updatePracticeRail();
+}
+
+function openPracticeReview() {
+  if (!state.practice.active || !practiceRecord(practiceCurrentQuestion().number).attempt_count) return;
+  const practice = state.practice;
+  if (!practice.reviewOpen) practice.reviewDockWasOpen = !elements["assistant-panel"].hidden;
+  practice.reviewOpen = true;
+  practice.reviewTarget = null;
+  practice.reviewOpening = master.openPracticeReview(practiceCurrentQuestion().number);
+  updatePracticeRail();
+}
+
+async function selectPracticeReviewTarget(target) {
+  if (!state.practice.reviewOpen) return;
+  const practice = state.practice;
+  const number = practiceCurrentQuestion().number;
+  const previous = practice.reviewTarget;
+  state.practice.reviewTarget = target;
+  updatePracticeRail();
+  await practice.reviewOpening;
+  if (!practice.reviewOpen || practiceCurrentQuestion().number !== number) return;
+  const sent = await master.sendPracticeTarget(target);
+  if (!sent && practice.reviewOpen && practice.reviewTarget === target) {
+    practice.reviewTarget = previous;
+    updatePracticeRail();
+  }
+}
+
+function enterPractice() {
+  if (state.revision?.blob_sha256 !== PRACTICE_BOOK_SHA256 || state.practice.active) return;
+  guide.suspend();
+  if (state.assistantExpanded) setAssistantExpanded(false, { animate: false });
+  state.practice.active = true;
+  elements.reader.classList.add("practice-active");
+  if (!elements["outline-panel"].hidden) closeDirectory();
+  elements["practice-panel"].hidden = false;
+  applyDirectoryMode("split");
+  if (!elements["assistant-panel"].hidden) {
+    elements["assistant-panel"].classList.remove("assistant-overlay-open");
+    elements.reader.classList.add("assistant-dock-open");
+  }
+  applyAssistantDockWidth(state.assistantDockWidth);
+  fitPracticePdfForDock();
+  relayoutPages();
+  showPracticeQuestion();
+}
+
+function leavePractice() {
+  if (!state.practice.active) return;
+  closePracticeReview();
+  state.practice.hintEpoch += 1;
+  state.practice.hints = [];
+  state.practice.hintLoading = false;
+  const restoreZoom = state.practice.restoreZoom;
+  state.practice.active = false;
+  state.practice.restoreZoom = null;
+  if (restoreZoom !== null && state.zoom === 1) {
+    state.zoom = restoreZoom;
+    elements["zoom-value"].textContent = `${Math.round(restoreZoom * 100)}%`;
+  }
+  elements.reader.classList.remove("practice-active");
+  elements["practice-panel"].hidden = true;
+  renderPracticePages();
+  if (!elements["outline-panel"].hidden) evaluateDirectoryMode();
+  else applyDirectoryMode(null);
+  relayoutPages();
+}
+
+function selectPracticeChoice(choice) {
+  if (!state.practice.active || state.practice.result || state.practice.onAnswerPage || state.practice.submitting) return;
+  if (state.practice.selected === choice) { submitPracticeChoice(); return; }
+  state.practice.selected = choice;
+  state.practice.submissionError = false;
+  updatePracticeRail();
+}
+
+async function submitPracticeChoice() {
+  const practice = state.practice;
+  if (!practice.active || !practice.selected || practice.result || practice.onAnswerPage || practice.submitting) return;
+  const revisionId = state.revision?.id;
+  const number = practiceCurrentQuestion().number;
+  const choice = practice.selected;
+  practice.submitting = true;
+  updatePracticeRail();
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/practice-prototype/attempt`, {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({number, choice}),
+    });
+    if (state.revision?.id !== revisionId) return;
+    practice.records.set(number, payload.question);
+    if (practiceCurrentQuestion().number === number) practice.result = payload.question.last_correct ? "correct" : "incorrect";
+    renderPracticePages();
+  } catch (error) {
+    if (state.revision?.id === revisionId) { practice.submissionError = true; announce(`提交未保存：${error.message}`, true); }
+  } finally {
+    practice.submitting = false;
+    if (state.revision?.id === revisionId) updatePracticeRail();
+  }
+}
+
+let practicePointer = null;
+function updatePracticeHover(event) {
+  const overlay = event.currentTarget;
+  const question = state.practice.active && !state.practice.onAnswerPage && !state.practice.result && !event.buttons
+    ? practiceQuestionForPage(Number(overlay.dataset.pageIndex), state.practice.index) : null;
+  const rect = overlay.getBoundingClientRect();
+  const choice = question ? practiceChoiceAt(question, (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height) : null;
+  overlay.classList.toggle("practice-option-hover", !!choice);
+  for (const marker of overlay.parentElement.querySelectorAll(".practice-choice-area")) {
+    marker.classList.toggle("hover", marker.dataset.choice === choice);
+  }
+}
+function beginPracticePointer(event) {
+  if (!state.practice.active || event.button !== 0 || state.practice.onAnswerPage) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  const question = practiceQuestionForPage(Number(event.currentTarget.dataset.pageIndex), state.practice.index);
+  const choice = practiceChoiceAt(question, (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
+  practicePointer = choice ? { choice, x: event.clientX, y: event.clientY } : null;
+}
+function finishPracticePointer(event) {
+  const pointer = practicePointer;
+  practicePointer = null;
+  if (!pointer || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 6) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  const question = practiceQuestionForPage(Number(event.currentTarget.dataset.pageIndex), state.practice.index);
+  if (practiceChoiceAt(question, (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height) !== pointer.choice) return;
+  clearSelection();
+  selectPracticeChoice(pointer.choice);
+}
+
+function practiceSplitLimits() {
+  const available = elements.reader.clientWidth || window.innerWidth;
+  const leftMin = Math.min(210, Math.max(140, Math.round(available * .20)));
+  const rightMin = Math.min(240, Math.max(160, Math.round(available * .23)));
+  return {
+    available,
+    centerMin: Math.min(600, Math.max(360, Math.round(available * .58)), available - leftMin - rightMin),
+    leftMin,
+    rightMin,
+  };
+}
+
+function fitPracticePdfForDock() {
+  if (!state.practice.active || !elements.reader.classList.contains("assistant-dock-open") || state.zoom <= 1) return false;
+  if (pageWidth() <= elements.viewer.clientWidth - inlineReserve() - 24) return false;
+  if (state.practice.restoreZoom === null) state.practice.restoreZoom = state.zoom;
+  state.zoom = 1;
+  elements["zoom-value"].textContent = "100%";
+  return true;
+}
+
+function normalizePracticeSplit() {
+  if (!state.practice.active) return;
+  const { available, centerMin, leftMin, rightMin } = practiceSplitLimits();
+  const rightOpen = elements.reader.classList.contains("assistant-dock-open") && !elements["assistant-panel"].hidden;
+  state.assistantDockWidth = Math.min(PRACTICE_PANE_MAX_WIDTH, state.assistantDockWidth);
+  let excess = Math.max(0, state.leftPaneWidth + (rightOpen ? state.assistantDockWidth : 0) + centerMin - available);
+  if (rightOpen) state.assistantDockWidth = Math.max(rightMin, state.assistantDockWidth - excess);
+  excess = Math.max(0, state.leftPaneWidth + (rightOpen ? state.assistantDockWidth : 0) + centerMin - available);
+  state.leftPaneWidth = Math.max(leftMin, state.leftPaneWidth - excess);
+  elements.reader.style.setProperty("--left-pane-width", `${state.leftPaneWidth}px`);
+  elements.reader.style.setProperty("--assistant-dock-width", `${state.assistantDockWidth}px`);
+  for (const handle of elements.reader.querySelectorAll(".left-resize-handle")) {
+    handle.setAttribute("aria-valuemin", String(leftMin));
+    handle.setAttribute("aria-valuemax", String(Math.max(leftMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - (rightOpen ? state.assistantDockWidth : 0) - centerMin))));
+    handle.setAttribute("aria-valuenow", String(state.leftPaneWidth));
+  }
+  const rightHandle = elements["assistant-resize-handle"];
+  rightHandle.setAttribute("aria-valuemin", String(rightMin));
+  rightHandle.setAttribute("aria-valuemax", String(Math.max(rightMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - state.leftPaneWidth - centerMin))));
+  rightHandle.setAttribute("aria-valuenow", String(state.assistantDockWidth));
+}
+
+function updateLeftPaneWidth(width, settle = false) {
+  if (state.practice.active) {
+    normalizePracticeSplit();
+    const { available, centerMin, leftMin } = practiceSplitLimits();
+    const rightSpace = elements.reader.classList.contains("assistant-dock-open") ? state.assistantDockWidth : 0;
+    const maximum = Math.max(leftMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - rightSpace - centerMin));
+    state.leftPaneWidth = Math.round(Math.max(leftMin, Math.min(maximum, width)));
+    normalizePracticeSplit();
+    if (settle) { fitPracticePdfForDock(); relayoutPages(); }
+    return;
+  }
+  const dock = elements.reader.classList.contains("assistant-dock-open") || elements.reader.classList.contains("guide-open")
+    ? state.assistantDockWidth : 0;
+  const maximum = Math.max(210, Math.min(440, window.innerWidth - dock - 344));
+  state.leftPaneWidth = Math.round(Math.max(210, Math.min(maximum, width)));
+  elements.reader.style.setProperty("--left-pane-width", `${state.leftPaneWidth}px`);
+  for (const handle of elements.reader.querySelectorAll(".left-resize-handle")) {
+    handle.setAttribute("aria-valuemin", "210");
+    handle.setAttribute("aria-valuemax", String(maximum));
+    handle.setAttribute("aria-valuenow", String(state.leftPaneWidth));
+  }
+  if (state.practice.active && settle) relayoutPages();
+  else evaluateDirectoryMode();
 }
 
 function isOutlineAncestor(ancestorId, nodeId) {
@@ -1861,15 +2308,21 @@ function forgetAssistantScroll(rootId, removedNodeIds = null) {
 }
 
 function assistantDockLimits() {
-  const minimum = Math.min(ASSISTANT_DOCK_MIN_WIDTH, Math.max(240, window.innerWidth - 24));
-  const maximum = Math.max(
-    minimum,
-    Math.min(ASSISTANT_DOCK_MAX_WIDTH, window.innerWidth - ASSISTANT_READER_MIN_WIDTH),
-  );
+  if (state.practice.active) {
+    const { available, centerMin, rightMin } = practiceSplitLimits();
+    return { minimum: rightMin,
+      maximum: Math.max(rightMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - state.leftPaneWidth - centerMin)) };
+  }
+  const { available, centerMin } = practiceSplitLimits();
+  const left = state.directoryMode === "split" && !elements["outline-panel"].hidden ? state.leftPaneWidth + 24 : 0;
+  const remaining = Math.max(0, available - left - centerMin);
+  const minimum = Math.min(ASSISTANT_DOCK_MIN_WIDTH, remaining);
+  const maximum = Math.max(minimum, Math.min(ASSISTANT_DOCK_MAX_WIDTH, remaining));
   return { minimum, maximum };
 }
 
 function applyAssistantDockWidth(width) {
+  normalizePracticeSplit();
   const { minimum, maximum } = assistantDockLimits();
   state.assistantDockWidth = Math.round(Math.max(minimum, Math.min(maximum, width)));
   elements.reader.style.setProperty("--assistant-dock-width", `${state.assistantDockWidth}px`);
@@ -1877,6 +2330,7 @@ function applyAssistantDockWidth(width) {
   elements["assistant-resize-handle"].setAttribute("aria-valuemin", String(minimum));
   elements["assistant-resize-handle"].setAttribute("aria-valuemax", String(maximum));
   elements["assistant-resize-handle"].setAttribute("aria-valuenow", String(state.assistantDockWidth));
+  normalizePracticeSplit();
   evaluateDirectoryMode();
 }
 
@@ -2285,6 +2739,7 @@ function animateAssistantWorkspace(expanded) {
 }
 
 function setAssistantExpanded(expanded, { animate = true } = {}) {
+  if (expanded && state.practice.active) return;
   if (elements["assistant-panel"].hidden && expanded) return;
   if (expanded === state.assistantExpanded) return;
   if (animate && elements["assistant-panel"].classList.contains("master-active")) {
@@ -2311,21 +2766,26 @@ function claimRightDock(owner) {
 }
 
 function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = {}) {
+  const previousDock = elements.reader.classList.contains("assistant-dock-open");
   if (open) claimRightDock("ai");
   if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   elements["assistant-panel"].hidden = !open;
-  const overlayOpen = open && overlay && elements.reader.clientWidth <= 850;
+  const overlayOpen = open && overlay && elements.reader.clientWidth <= 850 && !state.practice.active;
   elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
+  if (open && !overlayOpen) applyAssistantDockWidth(state.assistantDockWidth);
+  const fittedPracticePdf = fitPracticePdfForDock();
   elements["assistant-panel"].classList.toggle("assistant-overlay-open", overlayOpen);
   elements["assistant-toggle"].setAttribute("aria-expanded", String(open));
   renderAssistantViewportMode();
   hideAssistantAnswerActions(true);
   if (focusViewer) elements.viewer.focus({ preventScroll: true });
   evaluateDirectoryMode();
+  if (state.practice.active && state.pdf
+      && (fittedPracticePdf || previousDock !== elements.reader.classList.contains("assistant-dock-open"))) relayoutPages();
 }
 
 function updateAssistantDockFromPointer(clientX) {
-  applyAssistantDockWidth(window.innerWidth - clientX);
+  applyAssistantDockWidth(elements.reader.getBoundingClientRect().right - clientX);
 }
 
 function beginAssistantResize(event) {
@@ -2353,6 +2813,7 @@ function finishAssistantResize(event) {
   if (elements["assistant-resize-handle"].hasPointerCapture(event.pointerId)) {
     elements["assistant-resize-handle"].releasePointerCapture(event.pointerId);
   }
+  if (state.practice.active) { fitPracticePdfForDock(); relayoutPages(); }
 }
 
 function resetAssistantPanel() {
@@ -3328,10 +3789,18 @@ async function loadOverlay(index, generation) {
     marker.setAttribute("aria-hidden", "true");
     overlay.append(marker);
   }
+  overlay.addEventListener("pointerdown", beginPracticePointer);
   overlay.addEventListener("pointerdown", beginSelection);
+  overlay.addEventListener("pointermove", updatePracticeHover);
   overlay.addEventListener("pointermove", extendSelection);
+  overlay.addEventListener("pointerleave", () => {
+    overlay.classList.remove("practice-option-hover");
+    overlay.parentElement.querySelectorAll(".practice-choice-area.hover").forEach(marker => marker.classList.remove("hover"));
+  });
   overlay.addEventListener("pointerup", finishSelection);
+  overlay.addEventListener("pointerup", finishPracticePointer);
   overlay.addEventListener("pointercancel", finishSelection);
+  overlay.addEventListener("pointercancel", () => { practicePointer = null; });
   overlay.addEventListener("contextmenu", openSelectionContextMenu);
   wrapper.append(overlay);
   wrapper.querySelector(".overlay-retry")?.remove();
@@ -3829,6 +4298,105 @@ elements["outline-toggle"].addEventListener("click", () => {
   else closeDirectory();
 });
 elements["outline-close"].addEventListener("click", () => closeDirectory());
+elements["practice-close"].addEventListener("click", leavePractice);
+elements["practice-favorite"].addEventListener("click", async () => {
+  const practice = state.practice;
+  if (!practice.active || practice.savingFavorite) return;
+  const revisionId = state.revision?.id;
+  const number = practiceCurrentQuestion().number;
+  const favorite = !practiceRecord(number).favorite;
+  practice.savingFavorite = true;
+  updatePracticeRail();
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/practice-prototype/favorite`, {
+      method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({number, favorite}),
+    });
+    if (state.revision?.id !== revisionId) return;
+    practice.records.set(number, payload.question);
+    renderPracticePages();
+  } catch (error) {
+    if (state.revision?.id === revisionId) announce(`收藏未保存：${error.message}`, true);
+  } finally {
+    practice.savingFavorite = false;
+    if (state.revision?.id === revisionId) updatePracticeRail();
+  }
+});
+elements["practice-hint-button"].addEventListener("click", async () => {
+  const practice = state.practice;
+  if (!practice.active || practice.result || practice.onAnswerPage || practice.hintLoading) return;
+  const revisionId = state.revision?.id;
+  const number = practiceCurrentQuestion().number;
+  const epoch = practice.hintEpoch;
+  practice.hintLoading = true;
+  updatePracticeRail();
+  try {
+    const payload = await api(`/api/revisions/${revisionId}/practice-prototype/hint/${number}`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({selected: practice.selected, previous_hints: practice.hints}),
+    });
+    if (state.revision?.id === revisionId && practice.active && practice.hintEpoch === epoch
+        && practiceCurrentQuestion().number === number && !practice.result) practice.hints.push(payload.hint);
+  } catch (error) {
+    if (state.revision?.id === revisionId && practice.hintEpoch === epoch) announce(`提示暂不可用：${error.message}`, true);
+  } finally {
+    if (state.revision?.id === revisionId && practice.hintEpoch === epoch) {
+      practice.hintLoading = false;
+      if (practice.active) updatePracticeRail();
+    }
+  }
+});
+elements["practice-retry"].addEventListener("click", () => {
+  closePracticeReview();
+  state.practice.selected = null;
+  state.practice.result = null;
+  state.practice.hintEpoch += 1;
+  state.practice.hints = [];
+  state.practice.hintLoading = false;
+  showPracticeQuestion();
+});
+elements["practice-review"].addEventListener("click", openPracticeReview);
+for (const button of elements["practice-review-targets"].querySelectorAll("[data-review-target]")) {
+  button.addEventListener("click", () => selectPracticeReviewTarget(button.dataset.reviewTarget));
+}
+elements["practice-answer"].addEventListener("click", () => {
+  closePracticeReview();
+  const question = practiceCurrentQuestion();
+  state.practice.onAnswerPage = true;
+  updatePracticeRail();
+  goToPage(question.answerPage, Math.max(0, question.answerY - .04));
+});
+elements["practice-back"].addEventListener("click", showPracticeQuestion);
+elements["practice-next"].addEventListener("click", () => {
+  if (state.practice.index === PRACTICE_QUESTIONS.length - 1) leavePractice();
+  else switchPracticeQuestion(state.practice.index + 1);
+});
+let leftResizeHandle = null;
+for (const handle of elements.reader.querySelectorAll(".left-resize-handle")) {
+  handle.addEventListener("pointerdown", event => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    leftResizeHandle = handle;
+    handle.setPointerCapture(event.pointerId);
+  });
+  handle.addEventListener("pointermove", event => {
+    if (leftResizeHandle !== handle) return;
+    updateLeftPaneWidth(event.clientX - elements.reader.getBoundingClientRect().left);
+  });
+  const finish = event => {
+    if (leftResizeHandle !== handle) return;
+    updateLeftPaneWidth(event.clientX - elements.reader.getBoundingClientRect().left);
+    leftResizeHandle = null;
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    if (state.practice.active) relayoutPages();
+  };
+  handle.addEventListener("pointerup", finish);
+  handle.addEventListener("pointercancel", finish);
+  handle.addEventListener("keydown", event => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    updateLeftPaneWidth(state.leftPaneWidth + (event.key === "ArrowRight" ? 16 : -16), true);
+  });
+}
 elements["outline-panel"].addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   event.preventDefault();
@@ -3932,6 +4500,7 @@ elements["assistant-resize-handle"].addEventListener("keydown", (event) => {
   else return;
   event.preventDefault();
   applyAssistantDockWidth(width);
+  if (state.practice.active) { fitPracticePdfForDock(); relayoutPages(); }
 });
 elements["assistant-model"].addEventListener("change", () => {
   if ((state.assistantState.current && !state.assistantDraft) || state.assistantPending) {
@@ -4032,6 +4601,10 @@ elements.viewer.addEventListener("wheel", (event) => {
 }, { passive: false });
 elements.viewer.addEventListener("keydown", (event) => {
   if (!event.ctrlKey) state.pinnedLanding = null;
+  if (state.practice.active && !event.ctrlKey && !event.altKey && !event.metaKey) {
+    if (event.key === "Enter") { event.preventDefault(); submitPracticeChoice(); return; }
+    if (/^[a-d]$/i.test(event.key)) { event.preventDefault(); selectPracticeChoice(event.key.toUpperCase()); return; }
+  }
   if (event.key === "Escape" && state.selection) {
     event.preventDefault();
     clearSelection();
@@ -4082,7 +4655,7 @@ window.addEventListener("resize", () => {
   positionSelectionActions();
   evaluateDirectoryMode();
   clearTimeout(state.resizeTimer);
-  state.resizeTimer = setTimeout(relayoutPages, 120);
+  state.resizeTimer = setTimeout(() => { fitPracticePdfForDock(); relayoutPages(); }, 120);
 });
 document.addEventListener("visibilitychange", () => document.hidden && savePosition());
 window.addEventListener("pagehide", () => {

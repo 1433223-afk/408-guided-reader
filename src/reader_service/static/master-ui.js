@@ -11,6 +11,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
   });
   let entries = { points: [], sections: [] };
   let current = null;
+  let practiceNumber = null;
   let poll = 0;
   let generation = 0;
   let sendIntent = null;
@@ -100,7 +101,9 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     names:{Quick:'快速', Deep:'深度'}});
   const post = (path, body = {}) => api(path, { method: "POST", body: JSON.stringify(body) });
   const scopeId = (point) => point.scope_id || point.knowledge_point_id || point.outline_node_id;
-  const base = (id = current && scopeId(current.point)) => `/api/revisions/${revision()}/learning/${id}`;
+  const base = (id = current && scopeId(current.point)) => practiceNumber !== null
+    ? `/api/revisions/${revision()}/practice-prototype/review/${practiceNumber}`
+    : `/api/revisions/${revision()}/learning/${id}`;
 
   async function refreshMasterStatus() {
     try {
@@ -110,6 +113,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
         answerProvider=status.answer_provider || 'deepseek';
         providerSelectionInitialized=true;
       }
+      if(practiceNumber!==null && answerProvider==='zhipu') answerProvider='deepseek';
     } catch(_error) {
       providerStatuses=[];
     }
@@ -220,6 +224,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     for (const page of pages.children) if (page.querySelector("canvas")) renderPage(Number(page.dataset.index));
   }
   async function open(point, unclear = false, topicId = null) {
+    if(practiceNumber !== null) leavePracticeReview();
     actionsPopover.hidePopover(); memorySlot.replaceChildren(); canConfirm=false; composerMore.hidden=true;
     if(current) topicDrafts.set(scopeId(current.point), {text:el('question').value,scroll:el('history').scrollTop,intent:sendIntent});
     const request = ++generation;
@@ -282,7 +287,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
         const status=document.createElement('span');
         status.textContent=message.review_state==='TECHNICAL_FAILURE' ? '审查暂未完成 ·' : message.review_state==='FAIL' ? '内容审查未通过 ·' : '';
         if(status.textContent) actions.append(status);
-        if(message.state==='COMPLETE') {
+        if(message.state==='COMPLETE' && practiceNumber === null) {
           const more=button('…',()=>showActions(message,more));
           more.setAttribute('aria-label','回答更多操作'); more.setAttribute('aria-haspopup','dialog'); actions.append(more);
         }
@@ -304,12 +309,13 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     resume.textContent=active ? '回到当前话题继续提问' : '继续提问';
     // A second question must not overtake an unanswered durable question.
     el("send").disabled = current.messages.some((m) => m.role === "user" && ["PENDING", "FAILED"].includes(m.state));
-    canConfirm = Boolean(active) && !historical && !composingNew;
-    composerMore.hidden=el('form').hidden;
+    canConfirm = practiceNumber === null && Boolean(active) && !historical && !composingNew;
+    composerMore.hidden=practiceNumber !== null || el('form').hidden;
     el("confirm").hidden = !canConfirm || Boolean(menuMessageId);
     if(!canConfirm && !menuMessageId) actionsPopover.hidePopover();
     el("confirm").textContent = current.point.scope_kind === "SECTION" ? "都清楚了" : "已弄懂";
-    el("question").placeholder = current.point.scope_kind === "SECTION" ? "这一节哪些地方还没完全懂？" : "这个知识点哪里还没完全懂？";
+    el("question").placeholder = practiceNumber !== null ? "继续追问这道题…"
+      : current.point.scope_kind === "SECTION" ? "这一节哪些地方还没完全懂？" : "这个知识点哪里还没完全懂？";
     clearTimeout(poll);
     if (!activeStream && current.messages.some((m) => m.state === "PENDING" || m.review_state === "PENDING")) {
       const request = generation;
@@ -379,7 +385,8 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       if(request!==generation) return;
       if(!completed) throw new Error('Master 流式回答未正常完成；问题已保留，可以重试。');
       if(streamView?.reasoning && completed.answer_message_id) recentReasoning.set(completed.answer_message_id,streamView.reasoning);
-      current=completed.learning; streamView=null; render(); await refreshEntries();
+      current=completed.learning; streamView=null; render();
+      if(practiceNumber === null) await refreshEntries();
     } catch(error) {
       if(error.name==='AbortError' || request!==generation) return;
       streamView=null;
@@ -404,7 +411,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     event.preventDefault();
     const question = el("question").value.trim();
     if (!question || el("send").disabled) return;
-    const mode = el("mode").value;
+    const mode = practiceNumber === null ? el("mode").value : "Fast";
     const reasoningMode=el('reasoning').value;
     if (!sendIntent || sendIntent.question !== question || sendIntent.review_mode !== mode
         || sendIntent.provider !== answerProvider || sendIntent.reasoning_mode !== reasoningMode) {
@@ -567,12 +574,83 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     item.append(status, button("这里没完全懂", () => { goToPage(point.end_page, point.end_y); open(point, true); }));
     if (saved?.thread_id) item.append(button("继续 Master 对话", () => open(point)));
   }
+
+  async function openPracticeReview(number) {
+    if(practiceNumber !== null && practiceNumber !== number) leavePracticeReview();
+    if(practiceNumber === number && current) { openDock(true); select(true); return; }
+    activeStream?.abort(); activeStream=null; streamView=null; sendIntent=null;
+    actionsPopover.hidePopover(); memorySlot.replaceChildren();
+    const request=++generation;
+    clearTimeout(poll);
+    practiceNumber=number;
+    el('provider').querySelector('option[value="zhipu"]').disabled=true;
+    if(answerProvider==='zhipu') answerProvider='deepseek';
+    current=null;
+    selectedTopicId=null;
+    composingNew=false;
+    el('history').replaceChildren();
+    el('form').hidden=true;
+    el('status').textContent='正在读取这道题的 Master 对话…';
+    openDock(true);
+    select(true);
+    dock.classList.add('master-practice-review');
+    try {
+      const result=await post(base() + '/open');
+      if(request!==generation) return;
+      current=result;
+      selectedTopicId=result.thread_id;
+      el('question').value='';
+      render();
+      await refreshMasterStatus();
+    } catch(error) {
+      if(request===generation) el('status').textContent=error.message;
+    }
+  }
+
+  function leavePracticeReview() {
+    if(practiceNumber===null) return;
+    activeStream?.abort(); activeStream=null; streamView=null;
+    ++generation;
+    clearTimeout(poll);
+    practiceNumber=null;
+    el('provider').querySelector('option[value="zhipu"]').disabled=false;
+    current=null;
+    selectedTopicId=null;
+    sendIntent=null;
+    dock.classList.remove('master-practice-review');
+    el('history').replaceChildren();
+    el('form').hidden=true;
+    el('status').textContent='从教材知识点打开持久对话。';
+    select(false);
+  }
+
+  async function sendPracticeTarget(target) {
+    if(practiceNumber===null || !current || !['A','B','C','D','整题'].includes(target)) return false;
+    if(activeStream || current.messages.some(message=>message.role==='user' && message.state!=='COMPLETE')) {
+      el('status').textContent='请先等待或重试上一条问题。';
+      return false;
+    }
+    syncComposer();
+    if(el('send').disabled) {
+      el('status').textContent=el('send').title || '当前模型暂不可调用。';
+      return false;
+    }
+    openDock(true);
+    select(true);
+    await runMasterStream('send', {intent_id:crypto.randomUUID(),target,review_mode:'Fast',
+      provider:answerProvider,reasoning_mode:el('reasoning').value});
+    return true;
+  }
+
   function reset() {
     activeStream?.abort(); activeStream=null; streamView=null; recentReasoning.clear();
     actionsPopover.hidePopover();
     ++generation;
     clearTimeout(poll);
     current = null;
+    practiceNumber = null;
+    el('provider').querySelector('option[value="zhipu"]').disabled=false;
+    dock.classList.remove('master-practice-review');
     selectedTopicId=null; composingNew=false; topicDrafts.clear();
     canConfirm=false; composerMore.hidden=true; memorySlot.replaceChildren(); menuMessageId=null;
     entries = { points: [], sections: [], topics: [] };
@@ -589,7 +667,8 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     el("confirm").hidden = true;
     resume.hidden=true; renderTopicList();
   }
-  return { refreshEntries, renderPage, decorateKnowledgeItem, reset, viewportChanged: () => {
+  return { refreshEntries, renderPage, decorateKnowledgeItem, reset,
+    openPracticeReview, leavePracticeReview, sendPracticeTarget, viewportChanged: () => {
       if(current) render();
       if(entriesChapterId !== (chapter?.() || null)) refreshEntries().catch(error => announce(error.message, true));
     }, selectAssistant: () => select(false),

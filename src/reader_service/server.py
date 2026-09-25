@@ -25,6 +25,9 @@ from reader_service.saved_explanations import (
     SavedExplanationService,
 )
 from reader_service.memory import LearningMemory
+from reader_service.practice_prototype import PracticePrototype
+from reader_service.practice_review import PracticeReviewService
+from reader_service.practice_hint import PracticeHintService
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -70,6 +73,9 @@ _REVISION_ANNOTATION_REVIEW = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)/review$"
 )
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
+_PRACTICE = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype(?:/(attempt|favorite))?$")
+_PRACTICE_REVIEW = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/review/(\d+)(?:/(open|send|retry))?$")
+_PRACTICE_HINT = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/hint/(\d+)$")
 _SESSION_COOKIE = "reader_launch"
 
 
@@ -103,12 +109,48 @@ def handler_factory(
     dompurify_root = root.joinpath("node_modules", "dompurify", "dist")
     katex_root = root.joinpath("node_modules", "katex", "dist")
     memory = LearningMemory(service.database)
+    practice = PracticePrototype(service.database)
+    practice_review = PracticeReviewService(practice, learning) if learning is not None else None
+    practice_hint = PracticeHintService(practice_review) if practice_review is not None else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path == "/api/practice-memory":
+                if not self._authorized():
+                    return
+                self._json(HTTPStatus.OK, {"items": practice.list_favorites()})
+                return
+            review_match = _PRACTICE_REVIEW.fullmatch(parsed.path)
+            if review_match and review_match.group(3) is None:
+                if not self._authorized():
+                    return
+                if practice_review is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Master 服务不可用。"})
+                    return
+                try:
+                    result = practice_review.snapshot(review_match.group(1), int(review_match.group(2)))
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            practice_match = _PRACTICE.fullmatch(parsed.path)
+            if practice_match and practice_match.group(2) is None:
+                if not self._authorized():
+                    return
+                try:
+                    records = practice.list(practice_match.group(1))
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"questions": records})
+                return
             if self._reading_request(parsed.path, 'GET'):
                 return
             if self._memory_request(parsed.path, 'GET'):
@@ -428,6 +470,78 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            hint_match = _PRACTICE_HINT.fullmatch(parsed.path)
+            if hint_match:
+                if not self._authorized():
+                    return
+                if practice_hint is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "提示服务暂不可用。"})
+                    return
+                try:
+                    result = practice_hint.hint(hint_match.group(1), int(hint_match.group(2)), self._read_json())
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except (TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except ProviderFailure as exc:
+                    self._provider_failure(exc)
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            review_match = _PRACTICE_REVIEW.fullmatch(parsed.path)
+            if review_match and review_match.group(3) is not None:
+                if not self._authorized():
+                    return
+                if practice_review is None:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Master 服务不可用。"})
+                    return
+                streaming = False
+                try:
+                    payload = self._read_json()
+                    revision_id, number_text, action = review_match.groups()
+                    number = int(number_text)
+                    streaming = action in {"send", "retry"} and self._wants_assistant_stream()
+                    if streaming:
+                        self._start_assistant_stream()
+                    if action == "open":
+                        result = practice_review.open(revision_id, number)
+                    elif action == "send":
+                        result = practice_review.send(revision_id, number, payload,
+                            self._assistant_stream_event if streaming else None)
+                    else:
+                        result = practice_review.retry(revision_id, number, payload["message_id"],
+                            self._assistant_stream_event if streaming else None)
+                except LookupError as exc:
+                    self._assistant_failure(streaming, HTTPStatus.NOT_FOUND, "PRACTICE_REVIEW_NOT_FOUND", str(exc))
+                    return
+                except (KeyError, ValueError, TypeError) as exc:
+                    self._assistant_failure(streaming, HTTPStatus.BAD_REQUEST, "INVALID_PRACTICE_REVIEW", str(exc))
+                    return
+                except ProviderFailure as exc:
+                    self._provider_failure(exc, streaming=streaming)
+                    return
+                except StreamConsumerDisconnected:
+                    return
+                if not streaming:
+                    self._json(HTTPStatus.OK, result)
+                return
+            practice_match = _PRACTICE.fullmatch(parsed.path)
+            if practice_match and practice_match.group(2) == "attempt":
+                if not self._authorized():
+                    return
+                try:
+                    payload = self._read_json()
+                    record = practice.attempt(practice_match.group(1), payload.get("number"), payload.get("choice"))
+                except (TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"question": record})
+                return
             if self._reading_request(parsed.path, 'POST'):
                 return
             if self._memory_request(parsed.path, 'POST'):
@@ -1062,6 +1176,21 @@ def handler_factory(
 
         def do_PUT(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            practice_match = _PRACTICE.fullmatch(parsed.path)
+            if practice_match and practice_match.group(2) == "favorite":
+                if not self._authorized():
+                    return
+                try:
+                    payload = self._read_json()
+                    record = practice.set_favorite(practice_match.group(1), payload.get("number"), payload.get("favorite"))
+                except (TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"question": record})
+                return
             label_match = _REVISION_PAGE_LABEL.fullmatch(parsed.path)
             if label_match:
                 if not self._authorized():
@@ -1299,7 +1428,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

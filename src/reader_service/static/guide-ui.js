@@ -5,7 +5,7 @@ const GUIDE_DOCK_MIN_WIDTH = 320;
 const GUIDE_DOCK_MAX_WIDTH = 760;
 const GUIDE_READER_MIN_WIDTH = 280;
 
-export function createGuideUI({ state, api, streamGuide, goToPage, explain, layout, closeDock, setDockWidth, dockWidth, contextMenu, hideContextMenu }) {
+export function createGuideUI({ state, api, streamGuide, goToPage, explain, layout, closeDock, closeDirectory, setDockWidth, dockWidth, contextMenu, hideContextMenu }) {
   const panel = document.createElement("aside");
   panel.id = "guide-panel";
   panel.className = "guide-panel";
@@ -323,7 +323,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
   }
   async function open(id) {
     if (suspended && id === sectionId && revisionId === state.revision.id) {
-      closeDock(); reopen.hidden = true; suspended = false;
+      closeDock(); closeDirectory?.(); reopen.hidden = true; suspended = false;
       panel.hidden = false; reader.classList.add("guide-open");
       setWidth(dockWidth?.() || width || GUIDE_DOCK_DEFAULT_WIDTH);
       scroll.scrollTop = suspendedScroll;
@@ -339,7 +339,8 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
     layout(() => { panel.hidden = false; reader.classList.add("guide-open"); });
     setWidth(dockWidth?.() || width || GUIDE_DOCK_DEFAULT_WIDTH);
     status.textContent = "正在读取导读…";
-    for (const id of ["outline-panel", "knowledge-panel", "search-panel", "marks-panel"]) document.getElementById(id).hidden = true;
+    closeDirectory?.();
+    for (const id of ["knowledge-panel", "search-panel", "marks-panel"]) document.getElementById(id).hidden = true;
     await load();
   }
   return { close, open, suspend };

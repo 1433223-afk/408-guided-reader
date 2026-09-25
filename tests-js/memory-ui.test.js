@@ -165,3 +165,52 @@ test('section-only records stay subordinate and technical review remains low fre
     assert.equal(await page.locator('.memory-technical-review').isVisible(),true);
   } finally {await browser.close();}
 });
+
+test('favorite Practice questions reuse Memory book and detail navigation', async () => {
+  const source=fs.readFileSync(new URL('../src/reader_service/static/memory-ui.js',import.meta.url),'utf8')
+    .replace(/^import .*;\r?\n/gm,'').replace('export function createMemoryUI','function createMemoryUI');
+  const browser=await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true});
+  try {
+    const page=await browser.newPage();await page.setContent('<div class="home-toolbar"></div>');
+    await page.addScriptTag({content:fs.readFileSync(new URL('../src/reader_service/static/screens.js',import.meta.url),'utf8').replaceAll('export ','')});
+    await page.addScriptTag({content:'function renderAssistantAnswer(n,s){n.textContent=s;}\n'+source+'\nwindow.createMemoryUI=createMemoryUI;'});
+    await page.evaluate(() => {
+      const practice={id:'revision-7',book_id:'book',book_title:'王道',book_source_revision_id:'revision',
+        source_kind:'PRACTICE',source_id:7,chapter_title:'第 1 章',section:{id:'section',title:'1.2 计算机系统层次结构'},
+        knowledge_point:null,source:{number:7,attempt_count:2,last_correct:false,favorite:true,
+          has_review_thread:true,exercise_title:'1.2.6 本节习题精选',pdf_page_index:20}};
+      window.practiceReturns=[];
+      createMemoryUI({announce:()=>{},returnToSource:()=>{},returnToPractice:(item,review)=>window.practiceReturns.push([item.source.number,review]),
+        api:async(path,options={})=>{
+          if(path==='/api/memory')return {items:[]};
+          if(path==='/api/practice-memory')return {items:practice.source.favorite?[practice]:[]};
+          if(path.endsWith('/outline'))return {nodes:[
+            {outline_node_id:'chapter',kind:'CHAPTER',title:'第 1 章',parent_id:null,start_page:0,start_y:0},
+            {outline_node_id:'section',kind:'SECTION',title:'1.2 计算机系统层次结构',parent_id:'chapter',start_page:0,start_y:0},
+          ]};
+          if(options.method==='PUT'){practice.source.favorite=false;return {question:practice.source};}
+          throw Error(path);
+        }});
+    });
+    await page.locator('.memory-open').click();
+    assert.match(await page.locator('#memory-status').innerText(),/正文记忆/);
+    await page.locator('#memory-library-view [data-memory-mode="practice"]').click();
+    await page.locator('.memory-book-open').click();
+    assert.equal(await page.locator('.memory-chapter h2').innerText(),'第 1 章');
+    assert.equal(await page.locator('.memory-section-open span').innerText(),'1.2 计算机系统层次结构');
+    await page.locator('.memory-item-open').click();
+    await page.locator('#memory-detail[data-detail-id="revision-7"]').waitFor();
+    assert.match(await page.locator('#memory-detail').innerText(),/作答 2 次/);
+    await page.getByRole('button',{name:'继续复盘'}).click();
+    assert.deepEqual(await page.evaluate(()=>window.practiceReturns),[[7,true]]);
+    await page.locator('.memory-open').click();
+    await page.locator('.memory-book-open').click();
+    await page.locator('.memory-item-open').click();
+    await page.locator('#memory-detail[data-detail-id="revision-7"]').waitFor();
+    await page.locator('#memory-detail .memory-more > summary').click();
+    await page.getByRole('button',{name:'取消收藏'}).click();
+    assert.match(await page.locator('#memory-status').innerText(),/还没有收藏的习题/);
+    await page.locator('#memory-library-view [data-memory-mode="body"]').click();
+    assert.match(await page.locator('#memory-status').innerText(),/正文记忆/);
+  } finally {await browser.close();}
+});

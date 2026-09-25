@@ -6,8 +6,8 @@ const REVIEW = {
   FAIL: { text: '内容需要核对', tone: 'failed' },
 };
 
-export function createMemoryUI({ api, announce, returnToSource, enterView = () => {}, leaveView = () => {}, home = () => {}, resume = () => {} }) {
-  let items = [], loading = null;
+export function createMemoryUI({ api, announce, returnToSource, returnToPractice = () => {}, enterView = () => {}, leaveView = () => {}, home = () => {}, resume = () => {} }) {
+  let items = [], practiceItems = [], loading = null, practiceLoading = null, mode = 'body';
   let pageEpoch = 0, detailEpoch = 0;
   let selectedBookId = null, selectedSectionId = null, selectedId = null;
   const outlines = new Map(), controls = new Set();
@@ -17,6 +17,7 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
   view.innerHTML = `<main class="memory-page-content">
     <section id="memory-library-view">
       <div class="memory-heading"><div><p class="eyebrow">LEARNING MEMORY</p><h1 id="memory-title" tabindex="-1">学习记忆</h1></div></div>
+      <nav class="memory-category-nav" aria-label="学习记忆类型"><button type="button" data-memory-mode="body">正文记忆</button><button type="button" data-memory-mode="practice">习题学习记录</button></nav>
       <p id="memory-status" role="status"></p><div id="memory-book-list"></div>
     </section>
     <section id="memory-book-view" hidden>
@@ -25,6 +26,7 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
         <div><p class="eyebrow">BOOK MEMORY</p><h1 id="memory-book-title" tabindex="-1"></h1><p id="memory-book-count" class="muted"></p></div>
         <button id="memory-search-toggle" type="button" aria-expanded="false">查找</button>
       </div>
+      <nav class="memory-category-nav" aria-label="学习记忆类型"><button type="button" data-memory-mode="body">正文记忆</button><button type="button" data-memory-mode="practice">习题学习记录</button></nav>
       <div id="memory-search" class="memory-search" hidden><label for="memory-query" class="sr-only">在当前教材中查找</label><input id="memory-query" type="search" placeholder="在当前教材中查找"></div>
       <div class="memory-browser">
         <nav id="memory-tree" aria-label="章节与小节"></nav>
@@ -43,8 +45,10 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
   };
   const text = (tag, value, className = '') => { const node = document.createElement(tag); node.textContent = value; node.className = className; return node; };
   const base = item => `/api/revisions/${item.book_source_revision_id}/memory/${item.id}`;
+  const currentItems = () => mode === 'practice' ? practiceItems : items;
   const sectionKey = item => item.section?.id || 'unassociated';
-  const titleOf = item => item.source.question || item.source.provenance?.answer_question
+  const titleOf = item => item.source_kind === 'PRACTICE' ? `第 ${String(item.source.number).padStart(2, '0')} 题`
+    : item.source.question || item.source.provenance?.answer_question
     || item.source.provenance?.child_focus || item.source.provenance?.root_focus
     || item.knowledge_point?.title || '收录的解释';
   const bodyOf = item => item.source_kind === 'MASTER' ? item.source.content : item.source.body;
@@ -52,13 +56,14 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
   const reviewOf = item => REVIEW[reviewState(item)] || null;
   const hasTechnicalReviewFailure = item => reviewState(item) === 'TECHNICAL_FAILURE';
   function summaryOf(item) {
+    if(item.source_kind === 'PRACTICE') return `${item.source.last_correct === null ? '尚未作答' : item.source.last_correct ? '上次做对' : '上次未做对'} · 作答 ${item.source.attempt_count} 次${item.source.has_review_thread ? ' · 已有 Master 复盘' : ''}`;
     const rendered = document.createElement('div'); renderAssistantAnswer(rendered, bodyOf(item) || '');
     const value = rendered.textContent.replace(/\s+/g, ' ').trim();
     return value.length > 82 ? `${value.slice(0, 82).trimEnd()}…` : value;
   }
   function sourceIdentity(item, includeSection = true) {
     const row = text('span', '', 'memory-source-line');
-    row.append(text('span', item.source_kind === 'MASTER' ? 'Master' : 'Assistant', 'memory-kind'));
+    row.append(text('span', item.source_kind === 'MASTER' ? 'Master' : item.source_kind === 'PRACTICE' ? '习题' : 'Assistant', 'memory-kind'));
     const parts = [];
     if(includeSection && item.section?.title) parts.push(item.section.title);
     if(Number.isInteger(item.source.pdf_page_index)) parts.push(`PDF ${item.source.pdf_page_index + 1}`);
@@ -78,6 +83,21 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
     if (!loading) loading = api('/api/memory').then(result => { items = result.items; updateControls(); }).finally(() => { loading = null; });
     await loading;
   }
+  async function refreshPractice(force = false) {
+    if (!practiceLoading || force) practiceLoading = api('/api/practice-memory').then(result => { practiceItems = result.items; })
+      .finally(() => { practiceLoading = null; });
+    await practiceLoading;
+  }
+  function syncModeTabs() {
+    view.querySelectorAll('[data-memory-mode]').forEach(node => node.setAttribute('aria-current', String(node.dataset.memoryMode === mode)));
+  }
+  async function switchMode(next) {
+    if (mode === next) return;
+    const request = ++pageEpoch; ++detailEpoch;
+    mode = next; syncModeTabs(); el('status').textContent = '正在读取…';
+    try { await (next === 'practice' ? refreshPractice(true) : refresh()); if(request === pageEpoch && !view.hidden) showHome(true); }
+    catch(error) { if(request === pageEpoch) el('status').textContent = error.message; }
+  }
   function control(revision, kind, id) {
     const entry = { revision, kind, id, item: null };
     const node = button('收入学习记忆', async () => {
@@ -95,7 +115,7 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
   }
   function books() {
     const grouped = new Map();
-    for(const item of items) {
+    for(const item of currentItems()) {
       if(!grouped.has(item.book_id)) grouped.set(item.book_id, {id:item.book_id, title:item.book_title, items:[]});
       grouped.get(item.book_id).items.push(item);
     }
@@ -105,22 +125,22 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
     ++pageEpoch; ++detailEpoch; selectedBookId = selectedSectionId = selectedId = null;
     view.setAttribute('aria-labelledby', 'memory-title');
     el('book-view').hidden = true; el('library-view').hidden = false;
-    const rows = books(); el('status').textContent = rows.length ? '' : '还没有学习记忆。';
+    const rows = books(); el('status').textContent = rows.length ? '' : mode === 'practice' ? '还没有收藏的习题。' : '还没有正文记忆。';
     el('book-list').replaceChildren(...rows.map(book => {
       const row = button('', () => openBook(book.id), 'memory-book-open'); row.dataset.bookId = book.id;
       const info = text('span', '', 'memory-book-info');
-      info.append(text('strong', book.title), text('span', `${book.items.length} 条记忆`, 'muted'));
+      info.append(text('strong', book.title), text('span', `${book.items.length} ${mode === 'practice' ? '道收藏题' : '条记忆'}`, 'muted'));
       row.append(info, text('span', '→', 'memory-book-arrow')); return row;
     }));
     if(focus) el('title').focus();
   }
   async function openBook(bookId, focus = true) {
-    const bookItems = items.filter(item => item.book_id === bookId);
+    const bookItems = currentItems().filter(item => item.book_id === bookId);
     if(!bookItems.length) { showHome(focus); return; }
     const request = ++pageEpoch; ++detailEpoch; selectedBookId = bookId; selectedId = null;
     view.setAttribute('aria-labelledby', 'memory-book-title');
     el('library-view').hidden = true; el('book-view').hidden = false;
-    el('book-title').textContent = bookItems[0].book_title; el('book-count').textContent = `${bookItems.length} 条记忆`;
+    el('book-title').textContent = bookItems[0].book_title; el('book-count').textContent = `${bookItems.length} ${mode === 'practice' ? '道收藏题' : '条记忆'}`;
     el('tree').replaceChildren(text('p', '正在读取目录…', 'muted')); el('items').replaceChildren(); el('detail').hidden = true;
     el('query').value = ''; el('search').hidden = true; el('search-toggle').setAttribute('aria-expanded', 'false');
     const revision = bookItems[0].book_source_revision_id;
@@ -161,11 +181,12 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
   }
   function matches(item, query) {
     if(!query) return true;
-    return [titleOf(item), bodyOf(item), item.section?.title, item.knowledge_point?.title]
+    return [titleOf(item), item.source_kind === 'PRACTICE' ? summaryOf(item) : bodyOf(item),
+      item.section?.title, item.knowledge_point?.title]
       .filter(Boolean).join(' ').toLocaleLowerCase().includes(query);
   }
   function renderBook() {
-    const bookItems = items.filter(item => item.book_id === selectedBookId);
+    const bookItems = currentItems().filter(item => item.book_id === selectedBookId);
     if(!bookItems.length) { showHome(true); return; }
     const nodes = outlines.get(bookItems[0].book_source_revision_id) || [];
     const chapters = sectionNavigation(bookItems, nodes);
@@ -187,18 +208,20 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
     const groups = new Map();
     for(const item of shown) {
       const unassigned = !item.knowledge_point;
-      const key = unassigned ? `unassigned:${sectionKey(item)}` : item.knowledge_point.id;
+      const key = item.source_kind === 'PRACTICE' ? `practice:${sectionKey(item)}`
+        : unassigned ? `unassigned:${sectionKey(item)}` : item.knowledge_point.id;
       if(!groups.has(key)) groups.set(key, {
         id:key,
-        title:unassigned ? '未归属知识点' : item.knowledge_point.title,
+        title:item.source_kind === 'PRACTICE' ? item.source.exercise_title
+          : unassigned ? '未归属知识点' : item.knowledge_point.title,
         sectionTitle:item.section?.title || '未关联 Section',
-        unassigned,
+        unassigned:unassigned && item.source_kind !== 'PRACTICE',
         items:[],
       });
       groups.get(key).items.push(item);
     }
     const content = [];
-    if(query) content.push(text('p', shown.length ? `${shown.length} 条结果` : '没有找到相关记忆', 'memory-result-count'));
+    if(query) content.push(text('p', shown.length ? `${shown.length} 条结果` : '没有找到相关记录', 'memory-result-count'));
     for(const group of groups.values()) {
       const section = text('section', '', `memory-kp-group${group.unassigned ? ' memory-unassigned-group' : ''}`);
       section.dataset.kpId = group.id;
@@ -212,7 +235,7 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
       }
       content.push(section);
     }
-    if(!query && !shown.length) content.push(text('p', '这个小节暂无学习记忆。', 'muted'));
+    if(!query && !shown.length) content.push(text('p', mode === 'practice' ? '这个小节暂无收藏习题。' : '这个小节暂无学习记忆。', 'muted'));
     el('items').replaceChildren(...content);
   }
   async function detail(item, focus = true) {
@@ -221,27 +244,35 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
     const panel = el('detail'); panel.replaceChildren(text('p', '正在读取…', 'muted')); panel.hidden = false;
     panel.removeAttribute('data-detail-id'); panel.setAttribute('aria-busy', 'true');
     try {
-      item = (await api(base(item))).item;
+      item = await latest(item);
       if(request !== detailEpoch || view.hidden) return;
       panel.replaceChildren(); panel.dataset.detailId = item.id; panel.setAttribute('aria-busy', 'false');
       const head = text('div', '', 'memory-detail-header'), identity = text('div');
       identity.append(text('h2', titleOf(item)), sourceIdentity(item));
-      const sourceReturn = button('返回来源', async () => {
+      const practiceItem = item.source_kind === 'PRACTICE';
+      const sourceReturn = button(practiceItem ? '回到原题' : '返回来源', async () => {
         sourceReturn.disabled = true;
-        try { const fresh = (await api(base(item))).item; if(request !== detailEpoch || view.hidden) return; close(false); await returnToSource(fresh); }
+        try { const fresh = await latest(item); if(request !== detailEpoch || view.hidden) return; close(false); await (practiceItem ? returnToPractice(fresh, false) : returnToSource(fresh)); }
         catch(error) { enterView(); view.hidden = false; el('status').textContent = error.message; }
         finally { sourceReturn.disabled = false; }
       });
-      const remove = button('移出学习记忆', async () => {
+      const remove = button(practiceItem ? '取消收藏' : '移出学习记忆', async () => {
         remove.disabled = true;
         try {
-          await api(base(item), {method:'DELETE'}); selectedId = null; await refresh();
-          if(items.some(entry => entry.book_id === selectedBookId)) {
-            const available = items.filter(entry => entry.book_id === selectedBookId).map(sectionKey);
+          if(practiceItem) {
+            await api(`/api/revisions/${item.book_source_revision_id}/practice-prototype/favorite`, {
+              method:'PUT', headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({number:item.source.number, favorite:false}),
+            });
+            await refreshPractice(true);
+          } else { await api(base(item), {method:'DELETE'}); await refresh(); }
+          selectedId = null;
+          if(currentItems().some(entry => entry.book_id === selectedBookId)) {
+            const available = currentItems().filter(entry => entry.book_id === selectedBookId).map(sectionKey);
             if(!available.includes(selectedSectionId)) selectedSectionId = available[0];
             renderBook();
           } else showHome(true);
-          announce('已移出，原内容保留。');
+          announce(practiceItem ? '已取消收藏。' : '已移出，原内容保留。');
         } catch(error) { el('status').textContent = error.message; remove.disabled = false; }
       });
       const more = text('details', '', 'memory-more');
@@ -249,12 +280,28 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
       const menu = text('div', '', 'memory-more-menu');
       if(hasTechnicalReviewFailure(item)) menu.append(text('p', '审查暂不可用', 'memory-technical-review'));
       menu.append(remove); more.append(trigger, menu);
-      const actions = text('div', '', 'memory-detail-actions'); actions.append(sourceReturn, more);
+      const actions = text('div', '', 'memory-detail-actions'); actions.append(sourceReturn);
+      if(practiceItem && item.source.has_review_thread) actions.append(button('继续复盘', async () => {
+        try { const fresh = await latest(item); if(request !== detailEpoch || view.hidden) return; close(false); await returnToPractice(fresh, true); }
+        catch(error) { enterView(); view.hidden = false; el('status').textContent = error.message; }
+      }));
+      actions.append(more);
       head.append(identity, actions); panel.append(head);
       const body = text('div', '', 'memory-detail-body');
-      const review = reviewOf(item); if(review) body.append(text('p', review.text, `memory-review-status ${review.tone}`));
-      const answer = text('div', '', 'memory-answer assistant-answer-bubble'); renderAssistantAnswer(answer, bodyOf(item));
-      body.append(answer); panel.append(body);
+      if(practiceItem) {
+        body.classList.add('memory-practice-detail');
+        body.append(text('p', [item.book_title, item.chapter_title, item.section?.title, item.source.exercise_title]
+          .filter(Boolean).join(' · '), 'memory-meta'));
+        body.append(text('h3', '本题记录'));
+        body.append(text('p', `原题位于 PDF 第 ${item.source.pdf_page_index + 1} 页。`));
+        body.append(text('p', `最近一次：${item.source.last_correct === null ? '尚未作答' : item.source.last_correct ? '做对' : '未做对'} · 作答 ${item.source.attempt_count} 次`));
+        body.append(text('p', `收藏状态：已收藏 · Master 复盘：${item.source.has_review_thread ? '已有对话' : '尚无对话'}`));
+      } else {
+        const review = reviewOf(item); if(review) body.append(text('p', review.text, `memory-review-status ${review.tone}`));
+        const answer = text('div', '', 'memory-answer assistant-answer-bubble'); renderAssistantAnswer(answer, bodyOf(item));
+        body.append(answer);
+      }
+      panel.append(body);
       if(focus) { head.tabIndex = -1; head.focus({preventScroll:true}); }
     } catch(error) {
       if(request === detailEpoch && !view.hidden) {
@@ -262,14 +309,23 @@ export function createMemoryUI({ api, announce, returnToSource, enterView = () =
       }
     }
   }
+  async function latest(item) {
+    if(item.source_kind !== 'PRACTICE') return (await api(base(item))).item;
+    await refreshPractice(true);
+    const fresh = practiceItems.find(entry => entry.id === item.id);
+    if(!fresh) throw Error('这道题已取消收藏。');
+    return fresh;
+  }
   function closeSearch() { el('search').hidden = true; el('search-toggle').setAttribute('aria-expanded', 'false'); }
   async function open() {
     const request = ++pageEpoch; ++detailEpoch; enterView(); view.hidden = false; el('status').textContent = '正在读取…';
-    try { await refresh(); if(request === pageEpoch && !view.hidden) showHome(true); }
+    syncModeTabs();
+    try { await (mode === 'practice' ? refreshPractice(true) : refresh()); if(request === pageEpoch && !view.hidden) showHome(true); }
     catch (error) { if(request === pageEpoch) el('status').textContent = error.message; }
   }
   function close(focus = true) { ++pageEpoch; ++detailEpoch; view.hidden = true; leaveView(); if (focus) entry.focus(); }
   el('back-books').onclick = () => showHome(true);
+  view.querySelectorAll('[data-memory-mode]').forEach(node => { node.onclick = () => switchMode(node.dataset.memoryMode); });
   el('search-toggle').onclick = () => {
     const opening = el('search').hidden;
     el('search').hidden = !opening; el('search-toggle').setAttribute('aria-expanded', String(opening));

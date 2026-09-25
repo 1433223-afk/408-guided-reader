@@ -743,7 +743,46 @@ from reader_service.teaching.schema import TEACHING_SCHEMA, INLINE_TEACHING_SCHE
 from reader_service.memory_schema import SCHEMA as MEMORY_SCHEMA
 from reader_service.learning.reading import SCHEMA as READING_SCHEMA
 
-MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA), (19, MASTER_REASONING_SCHEMA))
+PRACTICE_PROTOTYPE_SCHEMA = """
+CREATE TABLE practice_prototype_state (
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    question_number INTEGER NOT NULL CHECK (question_number BETWEEN 1 AND 16),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    last_correct INTEGER CHECK (last_correct IN (0, 1)),
+    ever_correct INTEGER NOT NULL DEFAULT 0 CHECK (ever_correct IN (0, 1)),
+    favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (book_source_revision_id, question_number)
+);
+"""
+
+PRACTICE_REVIEW_SCHEMA = """
+ALTER TABLE practice_prototype_state ADD COLUMN last_choice TEXT CHECK (last_choice IN ('A', 'B', 'C', 'D'));
+CREATE TABLE practice_review_threads (
+    id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    question_number INTEGER NOT NULL CHECK (question_number BETWEEN 1 AND 16),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (book_source_revision_id, question_number)
+);
+CREATE TABLE practice_review_messages (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES practice_review_threads(id) ON DELETE CASCADE,
+    intent_id TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('PENDING', 'FAILED', 'COMPLETE')),
+    provider TEXT,
+    model TEXT,
+    reasoning_mode TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (thread_id, intent_id, role)
+);
+CREATE INDEX ix_practice_review_messages_thread ON practice_review_messages(thread_id, created_at);
+"""
+
+MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA), (19, MASTER_REASONING_SCHEMA), (20, PRACTICE_PROTOTYPE_SCHEMA), (21, PRACTICE_REVIEW_SCHEMA))
 
 
 class Database:

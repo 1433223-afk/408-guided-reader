@@ -68,10 +68,43 @@
         <div id="pages" class="pages"></div>
       </div>
       <aside id="outline-panel" class="outline-panel" aria-label="目录" hidden>
+        <div class="left-resize-handle" role="separator" tabindex="0" aria-label="调整左侧宽度" aria-orientation="vertical"></div>
         <div class="outline-heading"><strong>目录</strong><button id="outline-close" type="button" aria-label="关闭目录">×</button></div>
         <p id="outline-status" class="outline-status">正在读取教材目录…</p>
         <nav id="outline-tree" class="outline-tree" aria-label="教材目录"></nav>
         <p id="outline-empty" class="marks-empty">尚未从教材书签或目录页建立目录。</p>
+      </aside>
+      <aside id="practice-panel" class="outline-panel practice-panel" aria-label="练习" hidden>
+        <div class="left-resize-handle" role="separator" tabindex="0" aria-label="调整左侧宽度" aria-orientation="vertical"></div>
+        <div class="outline-heading"><strong>练习</strong><button id="practice-close" type="button" aria-label="退出练习">×</button></div>
+        <div class="practice-content">
+          <div class="practice-context"><span>1.2.6 本节习题精选</span><button id="practice-favorite" type="button" aria-label="收藏这道题" aria-pressed="false" title="收藏这道题">☆</button></div>
+          <div class="practice-question-heading"><span>第 <strong id="practice-number" class="practice-number">01</strong> 题</span><span>单项选择题</span></div>
+          <p id="practice-status" class="practice-status" aria-live="polite">点击原书里的选项</p>
+          <p id="practice-selection" class="practice-selection">再次点击当前选项或按 Enter 提交</p>
+          <p id="practice-attempts" class="practice-attempts"></p>
+          <div id="practice-hint" class="practice-hint" aria-live="polite" hidden></div>
+          <div class="practice-main-actions" aria-label="做题推进">
+            <p class="practice-action-label">继续练习</p>
+            <button id="practice-retry" type="button" hidden>再试一次</button>
+            <button id="practice-next" type="button" hidden>下一题 →</button>
+            <button id="practice-back" type="button" hidden>← 返回题目</button>
+          </div>
+          <div class="practice-secondary-actions" aria-label="学习这题">
+            <p class="practice-action-label">理解这题</p>
+            <button id="practice-hint-button" type="button">给我一个提示</button>
+            <button id="practice-review" type="button" hidden>帮我找出错在哪</button>
+            <button id="practice-answer" type="button" hidden>查看官方解析</button>
+          </div>
+          <div id="practice-review-targets" class="practice-review-targets" hidden>
+            <p>选择要复盘的部分</p>
+            <div><button type="button" data-review-target="A">A</button><button type="button" data-review-target="B">B</button><button type="button" data-review-target="C">C</button><button type="button" data-review-target="D">D</button><button type="button" data-review-target="整题">整题</button></div>
+          </div>
+          <div class="practice-navigation">
+            <p id="practice-progress" class="practice-progress">已做 0 / 16</p>
+            <div id="practice-question-list" class="practice-question-list" aria-label="练习题目"></div>
+          </div>
+        </div>
       </aside>
       <aside id="search-panel" class="search-panel" aria-label="书内搜索" hidden>
         <div class="marks-panel-heading"><strong>书内搜索</strong><button id="search-close" type="button" aria-label="关闭书内搜索">×</button></div>
