@@ -73,14 +73,15 @@
         <nav id="outline-tree" class="outline-tree" aria-label="教材目录"></nav>
         <p id="outline-empty" class="marks-empty">尚未从教材书签或目录页建立目录。</p>
       </aside>
-      <aside id="practice-panel" class="outline-panel practice-panel" aria-label="练习" hidden>
+      <aside id="practice-panel" class="outline-panel practice-panel" aria-label="做题模式" hidden>
         <div class="left-resize-handle" role="separator" tabindex="0" aria-label="调整左侧宽度" aria-orientation="vertical"></div>
-        <div class="outline-heading"><strong>练习</strong><button id="practice-close" type="button" aria-label="退出练习">×</button></div>
+        <div class="outline-heading"><strong>做题模式</strong><button id="practice-close" type="button" aria-label="退出做题模式">×</button></div>
         <div class="practice-content">
-          <div class="practice-context"><span>1.2.6 本节习题精选</span><button id="practice-favorite" type="button" aria-label="收藏这道题" aria-pressed="false" title="收藏这道题">☆</button></div>
+          <div class="practice-context"><span id="practice-section-title">1.2.6 本节习题精选</span><button id="practice-favorite" type="button" aria-label="收藏这道题" aria-pressed="false" title="收藏这道题">☆</button></div>
           <div class="practice-question-heading"><span>第 <strong id="practice-number" class="practice-number">01</strong> 题</span><span>单项选择题</span></div>
           <p id="practice-status" class="practice-status" aria-live="polite">点击原书里的选项</p>
           <p id="practice-selection" class="practice-selection">再次点击当前选项或按 Enter 提交</p>
+          <p id="practice-page-note" class="practice-selection" hidden>本题选项跨页，继续向下查看</p>
           <p id="practice-attempts" class="practice-attempts"></p>
           <div id="practice-hint" class="practice-hint" aria-live="polite" hidden></div>
           <div class="practice-main-actions" aria-label="做题推进">

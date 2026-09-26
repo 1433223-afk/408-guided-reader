@@ -116,3 +116,101 @@ def test_review_requires_submission_and_reuses_question_thread(tmp_path):
         )
     reopened = PracticeReviewService(practice, master)
     assert reopened.snapshot("revision", 1)["messages"][-1]["state"] == "FAILED"
+
+
+def test_second_section_solve_and_review_sources_are_separate(tmp_path):
+    database = Database(tmp_path / "state.sqlite3")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute("INSERT INTO books(id, title, status, created_at) VALUES ('book', '王道', 'ACTIVE', 'now')")
+        connection.execute(
+            """INSERT INTO book_source_revisions
+               (id, book_id, blob_sha256, byte_size, page_count, page_geometry_json, label, status, created_at)
+               VALUES ('revision', 'book', ?, 1, 348, '[]', 'sample', 'ACTIVE', 'now')""",
+            (SOURCE_SHA256,),
+        )
+
+    class SecondFoundation:
+        def __init__(self):
+            self.pages = []
+
+        def overlay(self, _revision, page):
+            self.pages.append(page)
+            lines = {
+                227: [_line(.296, "01. 计算机工作的最小时间周期是（）。"),
+                      _line(.316, "A. 时钟周期"), _line(.316, "B. 指令周期"),
+                      _line(.316, "C. 存取周期"), _line(.316, "D. 总线周期")],
+                228: [_line(.749, "01. A"), _line(.769, "时钟周期是最小时间单位。"),
+                      _line(.832, "02. D")],
+                229: [], 230: [],
+            }
+            return {"status": "READY", "lines": lines[page]}
+
+    foundation = SecondFoundation()
+    practice = PracticePrototype(database)
+    master = SimpleNamespace(runtime=FakeRuntime(), foundation=foundation, provider="deepseek")
+    review = PracticeReviewService(practice, master)
+    solve = review.question_source("revision", 101)
+    assert foundation.pages == [227]
+    assert solve["section"] == "5.2.4 本节习题精选"
+    assert solve["question_number"] == 1
+    assert set(solve["options"]) == set("ABCD")
+    assert "official_answer" not in solve and "时钟周期是最小时间单位" not in str(solve)
+    practice.attempt("revision", 101, "B")
+    source = review.source("revision", 101)
+    assert source["official_answer"] == "A"
+    assert source["official_explanation"] == "时钟周期是最小时间单位。"
+    assert source["last_choice"] == "B" and source["last_correct"] is False
+    assert foundation.pages == [227, 227, 228, 229, 230]
+
+
+def test_cross_page_question_reuses_solve_and_review_sources(tmp_path):
+    database = Database(tmp_path / "state.sqlite3")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute("INSERT INTO books(id, title, status, created_at) VALUES ('book', '王道', 'ACTIVE', 'now')")
+        connection.execute(
+            """INSERT INTO book_source_revisions
+               (id, book_id, blob_sha256, byte_size, page_count, page_geometry_json, label, status, created_at)
+               VALUES ('revision', 'book', ?, 1, 348, '[]', 'sample', 'ACTIVE', 'now')""",
+            (SOURCE_SHA256,),
+        )
+
+    class CrossPageFoundation:
+        def __init__(self):
+            self.pages = []
+
+        def overlay(self, _revision, page):
+            self.pages.append(page)
+            lines = {
+                227: [_line(.874, "09. 关于 CPU 时钟信号，正确的是（）。"),
+                      _line(.894, "A. 每隔一个时钟信号开始执行一个新的指令"),
+                      _line(.914, "B. 状态元件在时钟边沿改变状态")],
+                228: [_line(.109, "C. 时钟周期以最长组合逻辑延迟为基础"),
+                      _line(.129, "D. 每个时钟周期执行一条完整指令")],
+                229: [_line(.418, "09. A"), _line(.438, "官方解析内容。"),
+                      _line(.541, "10. C")],
+                230: [],
+            }
+            return {"status": "READY", "lines": lines[page]}
+
+    practice = PracticePrototype(database)
+    foundation = CrossPageFoundation()
+    review = PracticeReviewService(practice, SimpleNamespace(
+        runtime=FakeRuntime(), foundation=foundation, provider="deepseek"))
+    solve = review.question_source("revision", 109)
+    assert foundation.pages == [227, 228]
+    assert [item["pdf_page_number"] for item in solve["pages"]] == [228, 229]
+    assert set(solve["options"]) == set("ABCD")
+    assert "official_answer" not in solve and "官方解析" not in str(solve)
+    original_overlay = foundation.overlay
+    foundation.overlay = lambda revision, page: ({"status": "READY", "lines": []}
+                                                 if page == 228 else original_overlay(revision, page))
+    with pytest.raises(ValueError, match="选项尚未完整"):
+        review.question_source("revision", 109)
+    foundation.overlay = original_overlay
+    practice.attempt("revision", 109, "B")
+    source = review.source("revision", 109)
+    assert source["official_answer"] == "A"
+    assert source["last_choice"] == "B"
+    assert source["official_explanation"] == "官方解析内容。"

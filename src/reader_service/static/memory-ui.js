@@ -47,7 +47,7 @@ export function createMemoryUI({ api, announce, returnToSource, returnToPractice
   const base = item => `/api/revisions/${item.book_source_revision_id}/memory/${item.id}`;
   const currentItems = () => mode === 'practice' ? practiceItems : items;
   const sectionKey = item => item.section?.id || 'unassociated';
-  const titleOf = item => item.source_kind === 'PRACTICE' ? `第 ${String(item.source.number).padStart(2, '0')} 题`
+  const titleOf = item => item.source_kind === 'PRACTICE' ? `第 ${String(item.source.label ?? item.source.number).padStart(2, '0')} 题`
     : item.source.question || item.source.provenance?.answer_question
     || item.source.provenance?.child_focus || item.source.provenance?.root_focus
     || item.knowledge_point?.title || '收录的解释';

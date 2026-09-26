@@ -11,12 +11,12 @@ import { createMemoryUI } from "/memory-ui.js";
 import { createGuideUI } from "/guide-ui.js";
 import { createInlineUI } from "/inline-ui.js";
 import { createAssistantNavigator } from "/assistant-navigator.js";
-import { PRACTICE_BOOK_SHA256, PRACTICE_QUESTIONS, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
+import { PRACTICE_BOOK_SHA256, PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
 const elements = Object.fromEntries(
-  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "reader-more", "reader-more-toggle", "reader-more-menu", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "practice-panel", "practice-close", "practice-number", "practice-status", "practice-selection", "practice-attempts", "practice-progress", "practice-question-list", "practice-favorite", "practice-review-targets", "practice-review-space", "practice-review-close", "practice-review-title", "practice-review-description", "practice-hint", "practice-hint-button", "practice-retry", "practice-review", "practice-answer", "practice-back", "practice-next", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
+  ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "reader-more", "reader-more-toggle", "reader-more-menu", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "practice-panel", "practice-close", "practice-section-title", "practice-number", "practice-status", "practice-selection", "practice-attempts", "practice-progress", "practice-question-list", "practice-favorite", "practice-review-targets", "practice-review-space", "practice-review-close", "practice-review-title", "practice-review-description", "practice-hint", "practice-hint-button", "practice-retry", "practice-review", "practice-answer", "practice-back", "practice-next", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
     .map((id) => [id, document.getElementById(id)]),
 );
 
@@ -60,7 +60,7 @@ const state = {
   pinnedLanding: null, navigationAnchorId: null,
   directoryCollapsed: null, directoryExpandedFor: null,
   leftPaneWidth: 304,
-  practice: { active: false, index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
+  practice: { active: false, sectionId: "126", index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
     hints: [], hintLoading: false, hintEpoch: 0 },
@@ -141,8 +141,10 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
   elements['library-home'].hidden = true;
   elements.reader.hidden = false;
   await loadPracticeRecords();
-  if (!state.practice.active) enterPractice();
-  switchPracticeQuestion(PRACTICE_QUESTIONS.findIndex(question => question.number === item.source.number));
+  const section = PRACTICE_SECTIONS.find(candidate => candidate.questions.some(question => question.number === item.source.number));
+  if (!section) throw new Error('这道题的原书练习暂不可用。');
+  if (!state.practice.active || state.practice.sectionId !== section.id) enterPractice(section.id);
+  switchPracticeQuestion(practiceQuestions().findIndex(question => question.number === item.source.number));
   if (review) {
     openPracticeReview();
     await state.practice.reviewOpening;
@@ -1005,6 +1007,7 @@ async function startPreparation() {
     if (payload.pages.length && payload.pages.every(p => p.status === "READY")) {
       stream.close();
       if (state.eventSource === stream) state.eventSource = null;
+      if (state.revision?.blob_sha256 === PRACTICE_BOOK_SHA256) loadPracticeRecords();
     }
   });
   stream.onerror = () => {
@@ -1188,14 +1191,15 @@ function closeDirectory({ focusViewer = false } = {}) {
 }
 
 function resetPractice() {
+  replacePracticeSections(null);
   if (state.practice.restoreZoom !== null && state.zoom === 1) {
     state.zoom = state.practice.restoreZoom;
     elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
   }
-  state.practice = { active: false, index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
+  state.practice = { active: false, sectionId: "126", index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
-    hints: [], hintLoading: false, hintEpoch: 0 };
+    hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, pendingCatalog: null };
   elements.reader.classList.remove("practice-active");
   elements["practice-panel"].hidden = true;
   elements["practice-hint"].hidden = true;
@@ -1203,7 +1207,10 @@ function resetPractice() {
   elements.pages?.querySelectorAll(".practice-choice-area,.practice-question-mark,.practice-current-guide,.practice-entry").forEach(node => node.remove());
 }
 
-function practiceCurrentQuestion() { return PRACTICE_QUESTIONS[state.practice.index]; }
+function practiceSection() { return PRACTICE_SECTIONS.find(section => section.id === state.practice.sectionId); }
+function practiceQuestions() { return practiceSection().questions; }
+function practiceCurrentQuestion() { return practiceQuestions()[state.practice.index]; }
+function practiceLabel(question) { return question.label ?? question.number; }
 function practiceRecord(number) {
   return state.practice.records.get(number) || {number, attempt_count: 0, last_correct: null, ever_correct: false, favorite: false};
 }
@@ -1211,9 +1218,15 @@ function practiceRecord(number) {
 async function loadPracticeRecords() {
   const revisionId = state.revision?.id;
   if (!revisionId) return;
+  const loadEpoch = ++state.practice.catalogLoadEpoch;
   try {
-    const payload = await api(`/api/revisions/${revisionId}/practice-prototype`);
-    if (state.revision?.id !== revisionId) return;
+    const [catalog, payload] = await Promise.all([
+      api(`/api/revisions/${revisionId}/practice-prototype/catalog`),
+      api(`/api/revisions/${revisionId}/practice-prototype`),
+    ]);
+    if (state.revision?.id !== revisionId || state.practice.catalogLoadEpoch !== loadEpoch) return;
+    if (state.practice.active) state.practice.pendingCatalog = catalog.sections;
+    else replacePracticeSections(catalog.sections);
     state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
     updatePracticeRail();
     renderPracticePages();
@@ -1223,7 +1236,7 @@ async function loadPracticeRecords() {
 }
 
 function renderPracticeNavigation() {
-  const buttons = PRACTICE_QUESTIONS.map((question, index) => {
+  const buttons = practiceQuestions().map((question, index) => {
     const record = practiceRecord(question.number);
     const button = document.createElement("button");
     button.type = "button";
@@ -1234,8 +1247,8 @@ function renderPracticeNavigation() {
     button.classList.toggle("incorrect", record.last_correct === false);
     button.classList.toggle("repeated", record.attempt_count > 1);
     button.classList.toggle("favorite", record.favorite);
-    button.textContent = String(question.number).padStart(2, "0");
-    button.title = `${question.number} 题 · ${record.attempt_count ? `${record.attempt_count} 次作答 · ${record.last_correct ? "上次做对" : "上次未做对"}${record.ever_correct ? " · 做对过" : ""}` : "未做"}${record.favorite ? " · 已收藏" : ""}`;
+    button.textContent = String(practiceLabel(question)).padStart(2, "0");
+    button.title = `${practiceLabel(question)} 题 · ${record.attempt_count ? `${record.attempt_count} 次作答 · ${record.last_correct ? "上次做对" : "上次未做对"}${record.ever_correct ? " · 做对过" : ""}` : "未做"}${record.favorite ? " · 已收藏" : ""}`;
     button.setAttribute("aria-label", button.title);
     button.setAttribute("aria-current", state.practice.index === index ? "true" : "false");
     button.addEventListener("click", () => switchPracticeQuestion(index));
@@ -1249,7 +1262,8 @@ function updatePracticeRail() {
   const practice = state.practice;
   const { selected, result, onAnswerPage } = practice;
   const record = practiceRecord(question.number);
-  elements["practice-number"].textContent = String(question.number).padStart(2, "0");
+  elements["practice-section-title"].textContent = practiceSection().title;
+  elements["practice-number"].textContent = String(practiceLabel(question)).padStart(2, "0");
   const status = elements["practice-status"];
   status.classList.toggle("correct", result === "correct" || !result && record.last_correct === true && !selected);
   status.classList.toggle("incorrect", result === "incorrect" || !result && record.last_correct === false && !selected);
@@ -1260,8 +1274,9 @@ function updatePracticeRail() {
     : selected ? `再次点 ${selected} 或按 Enter 提交` : "在原书上点击 A / B / C / D";
   elements["practice-attempts"].textContent = record.attempt_count
     ? `作答 ${record.attempt_count} 次${record.ever_correct ? " · 做对过" : ""}${record.attempt_count > 1 ? " · 多次练习" : ""}` : "";
-  const done = [...practice.records.values()].filter(row => row.attempt_count > 0).length;
-  elements["practice-progress"].textContent = `已做 ${done} / ${PRACTICE_QUESTIONS.length}`;
+  const done = practiceQuestions().filter(question => practiceRecord(question.number).attempt_count > 0).length;
+  elements["practice-progress"].textContent = `已做 ${done} / ${practiceQuestions().length}`;
+  document.getElementById("practice-page-note").hidden = !question.regions || onAnswerPage || !!result;
   const favorite = elements["practice-favorite"];
   favorite.textContent = record.favorite ? "★" : "☆";
   favorite.setAttribute("aria-pressed", String(record.favorite));
@@ -1284,7 +1299,7 @@ function updatePracticeRail() {
   elements["practice-review"].hidden = !record.attempt_count;
   elements["practice-answer"].hidden = !record.attempt_count;
   elements["practice-back"].hidden = !onAnswerPage;
-  const lastQuestion = practice.index === PRACTICE_QUESTIONS.length - 1;
+  const lastQuestion = practice.index === practiceQuestions().length - 1;
   elements["practice-next"].hidden = false;
   elements["practice-next"].textContent = lastQuestion ? "结束练习" : "下一题 →";
   elements["practice-next"].classList.toggle("primary", !onAnswerPage && result !== "incorrect");
@@ -1309,24 +1324,29 @@ function renderPracticeOverlay(index) {
   if (!wrapper) return;
   wrapper.querySelectorAll(".practice-choice-area,.practice-question-mark,.practice-current-guide,.practice-entry").forEach(node => node.remove());
   if (state.revision?.blob_sha256 !== PRACTICE_BOOK_SHA256 || !wrapper.querySelector("canvas")) return;
-  if (index === 19) {
+  for (const section of PRACTICE_SECTIONS.filter(section => section.entryPage === index)) {
     const entry = document.createElement("button");
     entry.type = "button";
     entry.className = "practice-entry";
-    entry.style.cssText = "left:38%;top:69.2%";
-    entry.textContent = state.practice.active ? "练习中" : "练习 ›";
-    entry.setAttribute("aria-label", "开始 1.2.6 本节习题精选的单选练习");
-    entry.addEventListener("click", () => enterPractice());
+    entry.style.cssText = `left:${section.entryLeft*100}%;top:${((section.entryTop + (section.entryBottom ?? section.entryTop)) / 2)*100}%`;
+    entry.style.setProperty("--practice-entry-scale", String(Math.min(1, Math.max(.83, wrapper.clientWidth / 920))));
+    const current = state.practice.active && state.practice.sectionId === section.id;
+    entry.classList.toggle("is-current", current);
+    entry.textContent = current ? "做题中" : wrapper.clientWidth < 600 ? "做题" : "做题模式";
+    entry.disabled = current;
+    entry.title = current ? "正在做题" : "进入做题模式";
+    entry.setAttribute("aria-label", current ? `${section.title} 正在做题` : `进入 ${section.title} 的做题模式`);
+    entry.addEventListener("click", () => enterPractice(section.id));
     wrapper.append(entry);
   }
-  for (const [questionIndex, item] of PRACTICE_QUESTIONS.entries()) {
+  for (const section of PRACTICE_SECTIONS) for (const [questionIndex, item] of section.questions.entries()) {
     if (item.page !== index) continue;
     const record = practiceRecord(item.number);
     if (!state.practice.active && !record.attempt_count && !record.favorite) continue;
     const mark = document.createElement("button");
     mark.type = "button";
     mark.className = "practice-question-mark";
-    mark.classList.toggle("current", state.practice.active && state.practice.index === questionIndex);
+    mark.classList.toggle("current", state.practice.active && state.practice.sectionId === section.id && state.practice.index === questionIndex);
     mark.classList.toggle("correct", record.ever_correct);
     mark.classList.toggle("incorrect", record.last_correct === false);
     mark.classList.toggle("repeated", record.attempt_count > 1);
@@ -1334,27 +1354,28 @@ function renderPracticeOverlay(index) {
     mark.dataset.attemptCount = record.attempt_count > 1 ? String(record.attempt_count) : "";
     mark.style.cssText = `left:10.5%;top:${(item.promptY - .003)*100}%`;
     mark.textContent = record.last_correct === false ? "×" : record.ever_correct ? "✓" : "·";
-    mark.title = `${item.number} 题 · ${record.attempt_count ? `${record.attempt_count} 次作答${record.last_correct ? " · 上次做对" : " · 上次未做对"}` : "未做"}${record.favorite ? " · 已收藏" : ""}`;
+    mark.title = `${practiceLabel(item)} 题 · ${record.attempt_count ? `${record.attempt_count} 次作答${record.last_correct ? " · 上次做对" : " · 上次未做对"}` : "未做"}${record.favorite ? " · 已收藏" : ""}`;
     mark.setAttribute("aria-label", mark.title);
-    mark.addEventListener("click", () => { if (!state.practice.active) enterPractice(); switchPracticeQuestion(questionIndex); });
+    mark.addEventListener("click", () => { if (!state.practice.active || state.practice.sectionId !== section.id) enterPractice(section.id); switchPracticeQuestion(questionIndex); });
     wrapper.append(mark);
-    if (state.practice.active && state.practice.index === questionIndex) {
-      const guide = document.createElement("span");
-      guide.className = "practice-current-guide";
-      guide.textContent = "当前";
-      guide.setAttribute("aria-hidden", "true");
-      const bottom = Math.max(...item.options.map(([, , , y1]) => y1));
-      guide.style.cssText = `top:${(item.promptY - .006)*100}%;height:${(bottom - item.promptY + .009)*100}%`;
-      wrapper.append(guide);
-    }
   }
   if (!state.practice.active) return;
-  const question = practiceQuestionForPage(index, state.practice.index);
-  if (!question) return;
-  question.options.forEach(([x0,y0,x1,y1], optionIndex) => {
+  const active = practiceCurrentQuestion();
+  const region = practiceQuestionForPage(index, active);
+  if (!region) return;
+  const promptPage = active.page === index;
+  const top = promptPage ? active.promptY : Math.min(...region.options.map(({rect}) => rect[1]));
+  const bottom = Math.max(...region.options.map(({rect}) => rect[3]));
+  const guide = document.createElement("span");
+  guide.className = "practice-current-guide";
+  guide.textContent = promptPage ? "当前" : "续";
+  guide.setAttribute("aria-hidden", "true");
+  guide.style.cssText = `top:${(top - .006)*100}%;height:${(bottom - top + .009)*100}%`;
+  wrapper.append(guide);
+  region.options.forEach(({choice, rect: [x0,y0,x1,y1]}) => {
     const marker = document.createElement("span");
     marker.className = "practice-choice-area";
-    marker.dataset.choice = "ABCD"[optionIndex];
+    marker.dataset.choice = choice;
     marker.setAttribute("aria-hidden", "true");
     marker.style.cssText = `left:${x0*100}%;top:${y0*100}%;width:${(x1-x0)*100}%;height:${(y1-y0)*100}%`;
     wrapper.append(marker);
@@ -1371,11 +1392,11 @@ function showPracticeQuestion() {
   state.practice.onAnswerPage = false;
   updatePracticeRail();
   renderPracticePages();
-  goToPage(question.page, Math.max(0, question.options[0][1] - .08));
+  goToPage(question.page, Math.max(0, question.promptY - .08));
 }
 
 function switchPracticeQuestion(index) {
-  if (!state.practice.active || index < 0 || index >= PRACTICE_QUESTIONS.length) return;
+  if (!state.practice.active || index < 0 || index >= practiceQuestions().length) return;
   closePracticeReview();
   state.practice.index = index;
   state.practice.selected = null;
@@ -1425,11 +1446,19 @@ async function selectPracticeReviewTarget(target) {
   }
 }
 
-function enterPractice() {
-  if (state.revision?.blob_sha256 !== PRACTICE_BOOK_SHA256 || state.practice.active) return;
+function enterPractice(sectionId = "126") {
+  if (state.revision?.blob_sha256 !== PRACTICE_BOOK_SHA256) return;
+  if (state.practice.active && state.practice.sectionId === sectionId) return;
+  if (state.practice.active) leavePractice();
+  if (!PRACTICE_SECTIONS.some(section => section.id === sectionId)) return;
   guide.suspend();
   if (state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   state.practice.active = true;
+  state.practice.sectionId = sectionId;
+  state.practice.index = 0;
+  state.practice.selected = null;
+  state.practice.result = null;
+  state.practice.hints = [];
   elements.reader.classList.add("practice-active");
   if (!elements["outline-panel"].hidden) closeDirectory();
   elements["practice-panel"].hidden = false;
@@ -1453,6 +1482,10 @@ function leavePractice() {
   const restoreZoom = state.practice.restoreZoom;
   state.practice.active = false;
   state.practice.restoreZoom = null;
+  if (state.practice.pendingCatalog) {
+    replacePracticeSections(state.practice.pendingCatalog);
+    state.practice.pendingCatalog = null;
+  }
   if (restoreZoom !== null && state.zoom === 1) {
     state.zoom = restoreZoom;
     elements["zoom-value"].textContent = `${Math.round(restoreZoom * 100)}%`;
@@ -1501,7 +1534,7 @@ let practicePointer = null;
 function updatePracticeHover(event) {
   const overlay = event.currentTarget;
   const question = state.practice.active && !state.practice.onAnswerPage && !state.practice.result && !event.buttons
-    ? practiceQuestionForPage(Number(overlay.dataset.pageIndex), state.practice.index) : null;
+    ? practiceQuestionForPage(Number(overlay.dataset.pageIndex), practiceCurrentQuestion()) : null;
   const rect = overlay.getBoundingClientRect();
   const choice = question ? practiceChoiceAt(question, (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height) : null;
   overlay.classList.toggle("practice-option-hover", !!choice);
@@ -1512,7 +1545,7 @@ function updatePracticeHover(event) {
 function beginPracticePointer(event) {
   if (!state.practice.active || event.button !== 0 || state.practice.onAnswerPage) return;
   const rect = event.currentTarget.getBoundingClientRect();
-  const question = practiceQuestionForPage(Number(event.currentTarget.dataset.pageIndex), state.practice.index);
+  const question = practiceQuestionForPage(Number(event.currentTarget.dataset.pageIndex), practiceCurrentQuestion());
   const choice = practiceChoiceAt(question, (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
   practicePointer = choice ? { choice, x: event.clientX, y: event.clientY } : null;
 }
@@ -1521,7 +1554,7 @@ function finishPracticePointer(event) {
   practicePointer = null;
   if (!pointer || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 6) return;
   const rect = event.currentTarget.getBoundingClientRect();
-  const question = practiceQuestionForPage(Number(event.currentTarget.dataset.pageIndex), state.practice.index);
+  const question = practiceQuestionForPage(Number(event.currentTarget.dataset.pageIndex), practiceCurrentQuestion());
   if (practiceChoiceAt(question, (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height) !== pointer.choice) return;
   clearSelection();
   selectPracticeChoice(pointer.choice);
@@ -4363,7 +4396,7 @@ elements["practice-answer"].addEventListener("click", () => {
 });
 elements["practice-back"].addEventListener("click", showPracticeQuestion);
 elements["practice-next"].addEventListener("click", () => {
-  if (state.practice.index === PRACTICE_QUESTIONS.length - 1) leavePractice();
+  if (state.practice.index === practiceQuestions().length - 1) leavePractice();
   else switchPracticeQuestion(state.practice.index + 1);
 });
 let leftResizeHandle = null;

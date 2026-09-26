@@ -1,5 +1,5 @@
 // Reader 2.0 prototype only. Coordinates were checked against the original
-// 2026 计算机组成原理 PDF, pages 20–23. Never apply to another source revision.
+// 2026 计算机组成原理 PDF (sections 1.2.6 and 5.2.4). Never apply to another source revision.
 export const PRACTICE_BOOK_SHA256 = "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd";
 
 // Each rectangle is normalized [left, top, right, bottom] on the PDF page.
@@ -26,12 +26,61 @@ export const PRACTICE_QUESTIONS = [
   {number: 16, promptY: 0.827, page: 20, answerPage: 22, answerY: .82, options: [[.17,.845,.62,.865],[.17,.865,.60,.885],[.17,.885,.84,.905],[.17,.905,.44,.925]]},
 ];
 
-export function practiceQuestionForPage(page, questionIndex) {
-  const question = PRACTICE_QUESTIONS[questionIndex];
-  return question?.page === page ? question : null;
+// 5.2.4: OCR line quads supplied the headings and A/B/C/D rectangles; the
+// matching 5.2.5 answer headings supplied the destinations. PDF 228–229.
+// A question may name multiple page regions. Only printed 09 needs that
+// extension; the existing single-page fixtures retain their compact shape.
+export const PRACTICE_QUESTIONS_524 = [
+  {number: 101, label: 1, page: 227, promptY: .288, answerPage: 228, answerY: .749, options: [[.188,.306,.310,.326],[.348,.306,.471,.326],[.518,.306,.641,.327],[.684,.306,.806,.327]]},
+  {number: 102, label: 2, page: 227, promptY: .329, answerPage: 228, answerY: .832, options: [[.187,.345,.312,.367],[.349,.346,.471,.366],[.518,.346,.640,.367],[.684,.346,.806,.367]]},
+  {number: 103, label: 3, page: 227, promptY: .369, answerPage: 228, answerY: .893, options: [[.188,.386,.497,.406],[.188,.407,.439,.426],[.188,.426,.643,.447],[.188,.446,.345,.466]]},
+  {number: 104, label: 4, page: 227, promptY: .469, answerPage: 229, answerY: .110, options: [[.187,.486,.246,.507],[.348,.486,.408,.506],[.519,.486,.577,.507],[.684,.485,.807,.507]]},
+  {number: 105, label: 5, page: 227, promptY: .509, answerPage: 229, answerY: .172, options: [[.188,.525,.364,.545],[.519,.526,.712,.545],[.188,.546,.382,.566],[.520,.546,.714,.566]]},
+  {number: 106, label: 6, page: 227, promptY: .568, answerPage: 229, answerY: .213, options: [[.189,.586,.494,.605],[.188,.605,.622,.625],[.188,.625,.474,.645],[.188,.645,.530,.665]]},
+  {number: 107, label: 7, page: 227, promptY: .667, answerPage: 229, answerY: .254, options: [[.189,.685,.716,.704],[.189,.705,.473,.724],[.188,.724,.696,.745],[.188,.744,.531,.765]]},
+  {number: 108, label: 8, page: 227, promptY: .767, answerPage: 229, answerY: .316, options: [[.189,.785,.568,.804],[.188,.804,.584,.824],[.188,.824,.530,.844],[.188,.844,.596,.864]]},
+  {number: 109, label: 9, page: 227, promptY: .874, answerPage: 229, answerY: .418, regions: [
+    {page: 227, options: [{choice: "A", rect: [.189,.886,.679,.902]}, {choice: "B", rect: [.189,.905,.714,.922]}]},
+    {page: 228, options: [{choice: "C", rect: [.174,.101,.698,.117]}, {choice: "D", rect: [.173,.120,.718,.137]}]},
+  ]},
+  {number: 110, label: 10, page: 228, promptY: .142, answerPage: 229, answerY: .541, options: [[.173,.158,.679,.179],[.172,.178,.678,.198],[.172,.198,.678,.218],[.173,.219,.680,.238]]},
+  {number: 111, label: 11, page: 228, promptY: .242, answerPage: 229, answerY: .624, options: [[.174,.259,.478,.278],[.172,.278,.643,.298],[.173,.298,.716,.318],[.171,.317,.275,.338]]},
+  {number: 112, label: 12, page: 228, promptY: .341, answerPage: 229, answerY: .685, options: [[.171,.356,.275,.377],[.334,.356,.436,.377],[.502,.356,.605,.377],[.668,.357,.791,.378]]},
+  {number: 113, label: 13, page: 228, promptY: .380, answerPage: 229, answerY: .767, options: [[.173,.398,.675,.417],[.172,.417,.752,.437],[.173,.438,.654,.457],[.172,.457,.730,.477]]},
+  {number: 114, label: 14, page: 228, promptY: .480, answerPage: 229, answerY: .828, options: [[.173,.517,.404,.536],[.504,.517,.733,.536],[.173,.537,.386,.556],[.504,.536,.773,.557]]},
+  {number: 115, label: 15, page: 228, promptY: .559, answerPage: 230, answerY: .109, options: [[.173,.597,.523,.616],[.173,.616,.615,.636],[.173,.637,.679,.656],[.172,.655,.662,.676]]},
+];
+
+export const PRACTICE_SECTIONS = [
+  {id: "126", title: "1.2.6 本节习题精选", entryPage: 19, entryTop: .6951, entryBottom: .7102, entryLeft: .364, questions: PRACTICE_QUESTIONS},
+  {id: "524", title: "5.2.4 本节习题精选", entryPage: 227, entryTop: .2369, entryBottom: .2535, entryLeft: .366, questions: PRACTICE_QUESTIONS_524},
+];
+const VERIFIED_DEMO_SECTIONS = [...PRACTICE_SECTIONS];
+
+export function replacePracticeSections(sections) {
+  if (!Array.isArray(sections) || !sections.length) {
+    PRACTICE_SECTIONS.splice(0, PRACTICE_SECTIONS.length, ...VERIFIED_DEMO_SECTIONS);
+    return;
+  }
+  const merged = sections.map(section => ({...section, questions: [...section.questions]}));
+  for (const verified of VERIFIED_DEMO_SECTIONS) {
+    const section = merged.find(item => item.id === verified.id);
+    if (!section) { merged.push(verified); continue; }
+    const available = new Set(section.questions.map(question => question.number));
+    section.questions.push(...verified.questions.filter(question => !available.has(question.number)));
+    section.questions.sort((a, b) => (a.label ?? a.number) - (b.label ?? b.number));
+  }
+  merged.sort((a, b) => a.entryPage - b.entryPage);
+  PRACTICE_SECTIONS.splice(0, PRACTICE_SECTIONS.length, ...merged);
 }
 
-export function practiceChoiceAt(question, x, y) {
-  const index = question?.options.findIndex(([x0,y0,x1,y1]) => x >= x0 && x <= x1 && y >= y0 && y <= y1) ?? -1;
-  return index < 0 ? null : "ABCD"[index];
+export function practiceQuestionForPage(page, question) {
+  if (!question) return null;
+  const regions = question.regions || [{page: question.page,
+    options: question.options.map((rect, index) => ({choice: "ABCD"[index], rect}))}];
+  return regions.find(region => region.page === page) || null;
+}
+
+export function practiceChoiceAt(region, x, y) {
+  return region?.options.find(({rect: [x0,y0,x1,y1]}) => x >= x0 && x <= x1 && y >= y0 && y <= y1)?.choice || null;
 }

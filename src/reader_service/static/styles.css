@@ -272,9 +272,18 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .practice-question-link.current { color: #315942; background: #edf1e9; box-shadow: inset 0 -1px #829e82; font-weight: 700; }
 .practice-question-link.repeated::before { content: "·"; position: absolute; left: 5px; top: 2px; font-size: 14px; }
 .practice-question-link.favorite::after { content: "★"; position: absolute; right: 4px; top: 1px; color: #aa8543; font-size: 9px; }
-.practice-entry { position: absolute; z-index: 6; min-height: 29px; padding: 3px 10px; border: 1px solid #afbdad; border-radius: 16px; background: rgb(245 249 241 / 94%); color: #3d6749; box-shadow: 0 1px 4px #27382718; font-size: 12px; font-weight: 650; cursor: pointer; }
-.practice-entry:hover, .practice-entry:focus-visible { background: #e2eee0; border-color: #7d9b7e; }
-.practice-entry:focus-visible, .practice-question-mark:focus-visible { outline: 2px solid #608564; outline-offset: 2px; }
+.practice-entry {
+  position: absolute; z-index: 6; min-width: 60px; min-height: 29px; padding: 0 8px;
+  transform: translateY(-50%) scale(var(--practice-entry-scale, 1)); transform-origin: left center;
+  border: 1px solid #aa8543; border-radius: 2px;
+  background: #fbf7ed; color: #765323;
+  font: 600 14px/1.1 var(--font-ui); text-align: center; white-space: nowrap; cursor: pointer;
+}
+.practice-entry:hover, .practice-entry:focus-visible { background: #f3e8d4; border-color: #8d682f; }
+.practice-entry.is-current { background: #f0e6d1; border-color: #b69a68; cursor: default; }
+.practice-entry.is-current:hover { background: #f0e6d1; border-color: #b69a68; }
+.practice-entry:focus-visible { outline: 2px solid #946b31; outline-offset: 2px; }
+.practice-question-mark:focus-visible { outline: 2px solid #608564; outline-offset: 2px; }
 .practice-question-mark { position: absolute; z-index: 6; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #99958a; cursor: pointer; font: 16px/1 Georgia, serif; }
 .practice-question-mark:hover { color: #47674e; background: rgb(238 241 230 / 76%); }
 .practice-question-mark.current { color: #365f45; }

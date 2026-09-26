@@ -48,6 +48,14 @@ try {
   assert.equal(await page.locator('#practice-panel').isVisible(), true);
   assert.equal(await page.locator('#practice-next').isVisible(), true);
   assert.equal(await page.locator('#practice-hint-button').isVisible(), true);
+  const storedAttempts = await page.evaluate(async () => {
+    const books = (await (await fetch('/api/books')).json()).books;
+    const revision = books.find(book => book.active_revision?.page_count === 348).active_revision.id;
+    const records = (await (await fetch(`/api/revisions/${revision}/practice-prototype`)).json()).questions;
+    return records.find(record => record.number === 1)?.attempt_count || 0;
+  });
+  await page.waitForFunction(count => Number(document.querySelector('#practice-attempts').textContent.match(/(\d+) 次/)?.[1] || 0) === count,
+    storedAttempts);
   const initialAttempts = Number((await page.locator('#practice-attempts').innerText()).match(/(\d+) 次/)?.[1] || 0);
   const initialFavorite = await page.locator('#practice-favorite').getAttribute('aria-pressed');
   const expectedFavorite = initialFavorite === 'true' ? 'false' : 'true';

@@ -74,6 +74,7 @@ _REVISION_ANNOTATION_REVIEW = re.compile(
 )
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
 _PRACTICE = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype(?:/(attempt|favorite))?$")
+_PRACTICE_CATALOG = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/catalog$")
 _PRACTICE_REVIEW = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/review/(\d+)(?:/(open|send|retry))?$")
 _PRACTICE_HINT = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/hint/(\d+)$")
 _SESSION_COOKIE = "reader_launch"
@@ -118,6 +119,20 @@ def handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            catalog_match = _PRACTICE_CATALOG.fullmatch(parsed.path)
+            if catalog_match:
+                if not self._authorized():
+                    return
+                try:
+                    sections = practice.public_catalog(catalog_match.group(1))
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except ValueError as exc:
+                    self._json(HTTPStatus.CONFLICT, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, {"sections": sections})
+                return
             if parsed.path == "/api/practice-memory":
                 if not self._authorized():
                     return

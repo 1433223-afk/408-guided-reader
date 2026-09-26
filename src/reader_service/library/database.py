@@ -782,7 +782,50 @@ CREATE TABLE practice_review_messages (
 CREATE INDEX ix_practice_review_messages_thread ON practice_review_messages(thread_id, created_at);
 """
 
-MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA), (19, MASTER_REASONING_SCHEMA), (20, PRACTICE_PROTOTYPE_SCHEMA), (21, PRACTICE_REVIEW_SCHEMA))
+# Extend only the source-specific Practice IDs. Rebuild SQLite CHECK constraints
+# while preserving the accepted first Section's state and Review conversations.
+PRACTICE_SECOND_SECTION_SCHEMA = """
+CREATE TABLE practice_prototype_state_new (
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    question_number INTEGER NOT NULL CHECK (question_number BETWEEN 1 AND 16 OR question_number BETWEEN 101 AND 108 OR question_number BETWEEN 110 AND 115),
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    last_correct INTEGER CHECK (last_correct IN (0, 1)),
+    ever_correct INTEGER NOT NULL DEFAULT 0 CHECK (ever_correct IN (0, 1)),
+    favorite INTEGER NOT NULL DEFAULT 0 CHECK (favorite IN (0, 1)),
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_choice TEXT CHECK (last_choice IN ('A', 'B', 'C', 'D')),
+    PRIMARY KEY (book_source_revision_id, question_number)
+);
+INSERT INTO practice_prototype_state_new SELECT * FROM practice_prototype_state;
+DROP TABLE practice_prototype_state;
+ALTER TABLE practice_prototype_state_new RENAME TO practice_prototype_state;
+CREATE TABLE practice_review_threads_new (
+    id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    question_number INTEGER NOT NULL CHECK (question_number BETWEEN 1 AND 16 OR question_number BETWEEN 101 AND 108 OR question_number BETWEEN 110 AND 115),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (book_source_revision_id, question_number)
+);
+INSERT INTO practice_review_threads_new SELECT * FROM practice_review_threads;
+DROP TABLE practice_review_threads;
+ALTER TABLE practice_review_threads_new RENAME TO practice_review_threads;
+"""
+
+# Migration 22 is already present in local libraries. Extend its bounded ID
+# check for printed 09 without rewriting the applied migration.
+PRACTICE_CROSS_PAGE_SCHEMA = PRACTICE_SECOND_SECTION_SCHEMA.replace(
+    "BETWEEN 101 AND 108 OR question_number BETWEEN 110 AND 115",
+    "BETWEEN 101 AND 115",
+)
+
+# The answer and source catalog validates each ID before any write. SQLite
+# keeps only a safe positive integer domain; old IDs and rows stay unchanged.
+PRACTICE_AUTOMATIC_CATALOG_SCHEMA = PRACTICE_CROSS_PAGE_SCHEMA.replace(
+    "question_number BETWEEN 1 AND 16 OR question_number BETWEEN 101 AND 115",
+    "question_number BETWEEN 1 AND 9007199254740991",
+)
+
+MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA), (19, MASTER_REASONING_SCHEMA), (20, PRACTICE_PROTOTYPE_SCHEMA), (21, PRACTICE_REVIEW_SCHEMA), (22, PRACTICE_SECOND_SECTION_SCHEMA), (23, PRACTICE_CROSS_PAGE_SCHEMA), (24, PRACTICE_AUTOMATIC_CATALOG_SCHEMA))
 
 
 class Database:
@@ -819,6 +862,15 @@ class Database:
                     self._backup_master_topics(connection, version)
                 if version == 19:
                     self._backup_master_execution_settings(connection, version)
+                if version in (22, 23, 24):
+                    self._backup_practice(connection, version)
+                    connection.execute("PRAGMA foreign_keys = OFF")
+                    connection.executescript(f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations(version) VALUES ({version});")
+                    if connection.execute("PRAGMA foreign_key_check").fetchone():
+                        raise RuntimeError("Practice migration failed foreign-key validation")
+                    connection.commit()
+                    connection.execute("PRAGMA foreign_keys = ON")
+                    continue
                 if version == 13:
                     # SQLite's documented table-rebuild procedure: disable cascades outside
                     # the transaction, preserve IDs, and validate all FKs before committing.
@@ -859,6 +911,22 @@ class Database:
             "数据升级：已验证备份；合并同一学习范围的重复 Master 话题，保留对话、学习历史、记忆与掌握状态。",
             flush=True,
         )
+
+    def _backup_practice(self, connection, version):
+        backup_path = self.path.with_name(f"{self.path.name}.pre-migration-{version}.bak")
+        destination = sqlite3.connect(backup_path)
+        try:
+            connection.backup(destination)
+            destination.commit()
+            if destination.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise RuntimeError("Practice backup failed integrity verification")
+            if list(destination.iterdump()) != list(connection.iterdump()):
+                raise RuntimeError("Practice backup differs from existing data")
+        finally:
+            destination.close()
+        detail = {22: "扩展第二组习题编号", 23: "接入跨页第 09 题",
+                  24: "接入逐章节自动习题来源"}[version]
+        print(f"数据升级：已验证备份；{detail}，保留原有作答、收藏与 Master 复盘。", flush=True)
 
     def _backup_master_execution_settings(self, connection, version):
         backup_path = self.path.with_name(f"{self.path.name}.pre-migration-{version}.bak")
