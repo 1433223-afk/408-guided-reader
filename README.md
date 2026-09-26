@@ -1,116 +1,44 @@
 # 408 Guided Reader
 
-**408 导学阅读器** — a new project.
+在原来的教材上读、问、练，把不懂的地方真正弄明白。
 
-> The original PDF remains the book. AI becomes the teacher attached to the book.
+## 为什么做
 
-The reader keeps the original 408 textbook as the permanent reading surface, progressively builds a
-machine-readable layer around it, creates stable learning structure only where it is needed, and
-adds optional AI teaching exactly where a learner wants a teacher — without replacing the book.
+用 PDF 学 408 时，我经常遇到这样的情况：一句话没看懂，切出去问 AI；回答里又冒出一个不熟悉的术语，再开一轮对话。回到书上，刚才的问题和教材位置已经分开了。做题、看解析、回正文复习，又要重复这个过程。
 
-See `PRODUCT_BLUEPRINT.md` for what the product is.
+我想把这些动作放回书里。
 
----
+## 原书还是原书
 
-## Project identity
+408 Guided Reader 不会把教材改写成另一本“AI 教材”。PDF 始终是阅读主体；文字识别、知识点、导读、AI 解释和习题交互，都贴在书的周围。原书还是原书，AI 只是终于知道你在学什么。
 
-This is a **new project**, not a version of any previous one. It may selectively reuse proven
-components from the earlier `408-ai-ebook` repository, but that repository's product rules, phase
-decisions and domain model carry **no authority here**.
+临时看不懂的内容，可以直接选中问 Assistant；AI 回答里的术语也可以继续往下问。需要长期弄明白的问题，则进入对应知识点的 Master 学习对话。导读尝试讲清“为什么学这一节”，行间教学补上作者省略的中间步骤。
 
-## Authority boundaries
+## 现在能做什么
 
-| Document | Role | Status |
-|---|---|---|
-| `AGENTS.md` | Entry point and routing — identifies current authority and working rules | Active |
-| `PRODUCT_BLUEPRINT.md` | **Product authority** — what the product is and must do | Frozen at Gate D |
-| `IMPLEMENTATION_BLUEPRINT.md` | **Engineering authority** — architecture, contracts, phases | Frozen at Gate D |
-| `docs/archive/transition/**` | Historical / audit / transition evidence | **Never authority.** Not cold-start reading. |
+- 阅读原始 PDF，在书上选择文字、搜索、做标记，并从目录和知识点返回原文。
+- 在已准备好的内容上查看导读和行间教学，随手提问或继续追问。
+- 按知识点保留 Master 学习对话，把值得回看的正文内容放进 Learning Memory。
+- 在当前适配的王道《计算机组成原理》版本中，直接在 PDF 上做能可靠定位的单选题：选答案、要渐进提示、查看官方解析，答完进入 Master 复盘。收藏的题目也可以从 Learning Memory 找回。
 
-Read `AGENTS.md` first. It is short and tells you where to go next.
+习题功能目前针对特定教材版本，不能当作通用 PDF 题库；识别证据不足的题目仍可照常阅读，但不会提供自动判题。
 
-## Run the reader in a normal Windows browser
+## 当前状态
 
-Prerequisites: Python 3.11+, Node.js 20+, and Chrome or Edge.
+项目仍在开发，主要面向 Windows 本地使用。现在的启动方式是运行本地服务，再用 Chrome 或 Edge 打开 Reader；还没有面向普通用户的一键安装包。教材准备和 AI 功能也会受到 PDF 质量、模型配置和网络状态影响。即使 AI 暂时不可用，原 PDF 仍可以阅读。
 
-```powershell
-cd D:\codex\408-guided-reader
-python -m pip install -e .[test]
-npm install
-guided-reader
-```
+## 本地运行
 
-Keep that PowerShell window open. This single Core Service process serves both the frontend and API,
-binds only to `127.0.0.1:8765`, prints `READY http://127.0.0.1:8765/`, and asks Windows to open the
-default browser. Opening that plain localhost URL establishes an HttpOnly, same-site launch session;
-there is no second frontend/API process or port to start.
-If it does not open Chrome/Edge automatically, copy the complete printed URL into a normal Chrome or
-Edge address bar. `python -m reader_service` is an equivalent startup command if the
-`guided-reader` script is not on `PATH`.
+需要 Python 3.11+、Node.js 20+，以及 Chrome 或 Edge。在仓库根目录运行：
 
-Runtime data is stored outside the repository under the user's local application-data directory.
-Override it for development with `guided-reader --data-dir D:\some\reader-data`. The loopback bind is
-intentional: no firewall rule, LAN exposure, container port forwarding, or `0.0.0.0` bind is needed.
+~~~powershell
+python -m pip install -e .
+npm ci
+python -m reader_service
+~~~
 
-When a Core Service is started by a transient Codex/tool execution, that execution environment may
-terminate the child process when its task ends. That is not a repository networking failure. For an
-interactive session in the user's normal browser, run the command above directly in the user's own
-PowerShell and leave it running.
+保持终端窗口打开，然后访问终端显示的 http://127.0.0.1:8765/ 。模型和 API Key 的配置项见 [.env.example](.env.example)；密钥请留在本机，不要提交到仓库。
 
-Run the deterministic and service tests with `pytest` and the geometry tests with `npm test`. The
-real-browser reading and R2 selectable-page flows are exercised with:
+仓库不提供教材 PDF。请使用你自己合法取得的教材文件，并遵守相应版权要求。
 
-```powershell
-$env:READER_REAL_PDF='D:\path\to\a-real-scan.pdf'
-npm run test:e2e
-npm run test:e2e:r2
-npm run test:e2e:recovery
-```
-
-R3's formal annotation walkthrough reuses an app data directory that already contains the prepared,
-hash-verified 29-page sample and 348-page complete scan. The same prepared library drives Find in
-Book and Map the Book acceptance:
-
-```powershell
-$env:READER_DATA_DIR='D:\path\to\reader-data'
-npm run test:e2e:r3
-npm run test:e2e:find
-npm run test:e2e:map
-npm run test:e2e:ask
-```
-
-Opening a book schedules progressive page preparation. The visible page and nearby pages take
-priority; the original PDF canvas remains readable while preparation runs or if one page fails. A
-prepared page has a transparent text overlay: drag across one or more lines, then use the normal
-copy shortcut or save the selection as a highlight with an optional short note. The page's **Marks**
-button shows saved quotes/notes and the delete affordance. The Reader's **目录** button opens the
-book's bookmark/TOC-derived logical directory; known targets navigate through the same original-PDF
-page path. The toolbar shows a validated printed-page label when known and lets the user persist a
-per-page manual label when inference must remain UNKNOWN. `--prepare-workers` (1–4, default 1) and
-`--render-dpi` (default 200) are development tuning controls.
-
-On a prepared page, selecting original-PDF text and right-clicking exposes **问 AI** when at least one
-named model is available. Every textbook selection starts a retained temporary explanation topic;
-select text in the current Assistant answer to **再问一层**, up to depth 5. The compact side panel can
-switch topics, return to a parent explanation, continue at the same level, or close one topic and its
-deeper explanations. Provider/model is fixed within each topic; all topics clear when the Reader
-closes. A completed Assistant answer can be explicitly saved to Notes; the resulting AI-labelled
-Annotation is committed immediately, while a separately configured reviewer updates only its
-verification metadata. Review failure never removes the saved explanation. Store keys as Windows
-**Generic Credentials** using the fixed targets documented in
-`.env.example`; keys are never stored in the app database or config files. Exact provider request
-bodies are available only from the authenticated localhost process-memory surface at
-`/api/assistant/inspection`; this bounded buffer and all explanation state disappear on service restart.
-
-The inherited nine-page real OCR suite uses external, hash-checked textbook files and runs only when
-both paths are supplied:
-
-```powershell
-$env:READER_REAL_PRIMARY='D:\path\to\2026计算机组成原理_第1-29页.pdf'
-$env:READER_REAL_DMA='D:\path\to\2026计算机组成原理_第320-348页.pdf'
-pytest tests/test_real_ocr_acceptance.py
-```
-
-The current product still contains no body-heading detection, Pass 2 range refinement, layout
-regions, correction-tier UI, chapter preparation, structure-scoped search, persistent Assistant
-history, or multimodal explanation.
+使用中遇到问题，或有想改进的地方，欢迎开 Issue。
