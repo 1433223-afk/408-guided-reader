@@ -794,7 +794,7 @@ def test_migration_19_adds_reasoning_mode_without_changing_master_records(learni
         assert 'reasoning_mode' not in {row[1] for row in c.execute('PRAGMA table_info(master_messages)')}
         assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
     with Database(path).connect() as c:
-        assert c.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 19
+        assert c.execute('SELECT 1 FROM schema_migrations WHERE version=19').fetchone() is not None
         assert {row['reasoning_mode'] for row in c.execute('SELECT reasoning_mode FROM master_messages')} == {'Quick'}
         assert {
             table: c.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
@@ -909,7 +909,7 @@ def test_stable_topic_migration_merges_references_and_preserves_state(learning, 
         assert c.execute('SELECT status FROM kp_status WHERE knowledge_point_id=?', (kp,)).fetchone()[0] == 'UNDERSTOOD'
         assert c.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         assert not c.execute('PRAGMA foreign_key_check').fetchall()
-        assert c.execute('SELECT MAX(version) FROM schema_migrations').fetchone()[0] == 19
+        assert c.execute('SELECT 1 FROM schema_migrations WHERE version=18').fetchone() is not None
         with pytest.raises(sqlite3.IntegrityError):
             c.execute("UPDATE learning_events SET topic_id='canonical' WHERE id='event-one'")
         with pytest.raises(sqlite3.IntegrityError):

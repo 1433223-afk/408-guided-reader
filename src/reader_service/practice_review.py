@@ -74,11 +74,8 @@ class PracticeReviewService:
 
     def _approved_provider(self, requested: str) -> tuple[str, str]:
         provider, model = self.master.runtime.provider_identity(requested)
-        if (provider, model) not in {
-            ("deepseek", "deepseek-flash"),
-            ("openrouter", "google/gemini-3.8-flash"),
-        }:
-            raise ValueError("当前 Practice Review 只可使用已获准的 DeepSeek Flash 或 Gemini 3.8。")
+        if (provider, model) != ("deepseek", "deepseek-flash"):
+            raise ValueError("当前 Practice Review 只可使用已获准的 DeepSeek Flash。")
         return provider, model
 
     def _snapshot(self, connection, revision_id: str, number: int) -> dict:

@@ -29,6 +29,7 @@ test('selectable overlay mounts without waiting for annotation request',async()=
     document:{createElement:()=>({dataset:{},setAttribute(){},addEventListener(){}})},
     inline:{renderPage(){}},renderAnnotations(){},renderSearchMatch(){},updateMarksPanel(){},
     beginSelection(){},extendSelection(){},finishSelection(){},openSelectionContextMenu(){},
+    beginPracticePointer(){},updatePracticeHover(){},finishPracticePointer(){},
     refreshAnnotationPage:()=>{requested=true;return new Promise(()=>{});}};
   await runInNewContext(source.slice(source.indexOf('async function loadOverlay('),source.indexOf('function renderAnnotations('))+'loadOverlay(0,1)',context);
   assert.equal(mounted,true);assert.equal(requested,true);
