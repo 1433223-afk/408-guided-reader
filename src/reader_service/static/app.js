@@ -1031,8 +1031,12 @@ function closePreparationStream() {
 
 function applyPreparationStatuses(pages) {
   elements["preparation-status"].onclick = null;
+  let updated = false;
   for (const page of pages) {
     const previous = state.preparation.get(page.pdf_page_index);
+    if (previous?.status === page.status && previous?.prepared_at === page.prepared_at
+        && previous?.failure_code === page.failure_code) continue;
+    updated = true;
     state.preparation.set(page.pdf_page_index, page);
     const wrapper = elements.pages.children[page.pdf_page_index];
     if (wrapper) {
@@ -1041,7 +1045,7 @@ function applyPreparationStatuses(pages) {
     }
     if (page.status === "READY" && previous?.status !== "READY") ensureOverlay(page.pdf_page_index);
   }
-  updatePreparationLabel();
+  if (updated) updatePreparationLabel();
 }
 
 function coverageText(coverage) {

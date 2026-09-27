@@ -1,11 +1,29 @@
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from reader_service.foundation.rapidocr_adapter import RapidOcrEngine
+
+
+@pytest.mark.parametrize(("cores", "expected"), [(16, 4), (4, 3), (1, 1)])
+def test_ocr_reserves_cpu_for_the_reader(monkeypatch, cores, expected):
+    settings = []
+
+    class FakeRapidOCR:
+        def __init__(self, *, params):
+            settings.append(params)
+
+    monkeypatch.setattr("reader_service.foundation.rapidocr_adapter.os.cpu_count", lambda: cores)
+    monkeypatch.setitem(sys.modules, "rapidocr", SimpleNamespace(RapidOCR=FakeRapidOCR))
+    RapidOcrEngine()
+    assert settings == [{
+        "EngineConfig.onnxruntime.intra_op_num_threads": expected,
+        "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+    }]
 
 
 @pytest.mark.parametrize("mode", ["ok", "exception", "bad_geometry", "rotated"])

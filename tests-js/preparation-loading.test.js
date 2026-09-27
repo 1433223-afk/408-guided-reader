@@ -18,6 +18,26 @@ test('completed book viewport changes do not schedule preparation',()=>{
     clearTimeout:()=>{},setTimeout:()=>{throw Error('No scheduling for READY book');}};
   runInNewContext(source.slice(source.indexOf('function schedulePreparationPriority('),source.indexOf('async function refreshAssistantStatus()'))+'schedulePreparationPriority(0,1)',context);
 });
+test('OCR progress only touches pages whose state changed',()=>{
+  const calls={sync:[],overlay:[],labels:0};
+  const children=Array.from({length:300},()=>({dataset:{}}));
+  const state={preparation:new Map(Array.from({length:300},(_,pdf_page_index)=>
+    [pdf_page_index,{pdf_page_index,status:'NOT_PREPARED',prepared_at:null,failure_code:null}]))};
+  const context={state,elements:{pages:{children},'preparation-status':{}},
+    syncPagePreparationUi:index=>calls.sync.push(index),
+    ensureOverlay:index=>calls.overlay.push(index),
+    updatePreparationLabel:()=>calls.labels++};
+  const code=source.slice(source.indexOf('function applyPreparationStatuses('),source.indexOf('function coverageText('));
+  const pages=Array.from(state.preparation.values(),page=>({...page}));
+  pages[125]={pdf_page_index:125,status:'READY',prepared_at:'now',failure_code:null};
+  runInNewContext(code+'applyPreparationStatuses(pages)',{...context,pages});
+  assert.deepEqual(calls.sync,[125]);
+  assert.deepEqual(calls.overlay,[125]);
+  assert.equal(calls.labels,1);
+  runInNewContext(code+'applyPreparationStatuses(pages)',{...context,pages});
+  assert.deepEqual(calls.sync,[125]);
+  assert.equal(calls.labels,1);
+});
 test('selectable overlay mounts without waiting for annotation request',async()=>{
   let mounted=false, requested=false;
   const wrapper={querySelector:s=>s==='canvas'?{}:s==='.text-overlay'&&mounted?{}:null,

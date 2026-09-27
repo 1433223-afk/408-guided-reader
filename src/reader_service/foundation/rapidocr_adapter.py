@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from importlib.metadata import version
 from math import isfinite
@@ -14,7 +15,13 @@ class RapidOcrEngine:
     def __init__(self) -> None:
         from rapidocr import RapidOCR
 
-        self._engine = RapidOCR()
+        # ONNX Runtime otherwise uses every available core for each model.
+        # OCR runs beside the HTTP reader, so leave CPU capacity for browsing.
+        threads = max(1, min(4, (os.cpu_count() or 2) - 1))
+        self._engine = RapidOCR(params={
+            "EngineConfig.onnxruntime.intra_op_num_threads": threads,
+            "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+        })
 
     @property
     def profile(self) -> str:
