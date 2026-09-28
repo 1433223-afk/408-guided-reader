@@ -328,6 +328,34 @@ class KnowledgeService:
             verdict, reviewer_identity = self._review(
                 review_payload, revision_id, chapter_id, attempt_id,
             )
+            if verdict.verdict == "FAIL":
+                repaired = self._absorb_reviewed_duplicates(
+                    windows, partitions_by_window, candidates, verdict,
+                )
+                if repaired is not None:
+                    inspection["initial_review"] = self._safe_review_observation(
+                        verdict, review_hash, len(self._canonical(review_payload)),
+                    )
+                    partitions_by_window = repaired
+                    candidates = materialize_candidates(windows, partitions_by_window)
+                    points = publication_points(candidates)
+                    self._validate_points(points, section_bounds)
+                    review_payload = build_compact_review_ledger(
+                        source_payload["chapter"], units, windows,
+                        partitions_by_window, candidates,
+                        semantic_provider=generator_identity[0],
+                        semantic_model=generator_identity[1],
+                        review_rubric=REVIEW_RUBRIC,
+                        overlap_warnings=self._overlap_warnings(points),
+                        fragmentation_warnings=build_fragmentation_warnings(
+                            windows, partitions_by_window,
+                        ),
+                    )
+                    review_hash = self._digest(review_payload)
+                    verdict, reviewer_identity = self._review(
+                        review_payload, revision_id, chapter_id, attempt_id,
+                        review_round=1,
+                    )
             review_summary = verdict.summary
             inspection["review"] = self._safe_review_observation(
                 verdict,
@@ -774,12 +802,51 @@ class KnowledgeService:
                     ) from failure
         raise AssertionError("bounded semantic classification loop exhausted")
 
+    @staticmethod
+    def _absorb_reviewed_duplicates(
+        windows: list[dict], partitions: dict[str, dict],
+        candidates: list[dict], verdict: ReviewVerdict,
+    ) -> dict[str, dict] | None:
+        """Absorb only exact, one-sided duplicate candidates, then require a fresh Review."""
+        blocking = [finding for finding in verdict.findings if finding["severity"] == "BLOCKING"]
+        if not blocking or any(finding["type"] != "DUPLICATE_MASTERY_BOUNDARY" for finding in blocking):
+            return None
+        if any(finding["detail"].startswith("duplicate_mastery_groups 声明") for finding in blocking):
+            return None
+        selected = []
+        for finding in blocking:
+            matches = [candidate for candidate in candidates
+                       if candidate["primary_section_id"] == finding["section_id"]
+                       and candidate["unit_ids"] == finding["unit_ids"]]
+            if len(matches) != 1:
+                return None
+            selected.append(matches[0])
+        keys = {(candidate["window_id"], tuple(candidate["unit_ids"])) for candidate in selected}
+        if not keys or len(keys) >= len(candidates):
+            return None
+        repaired = copy.deepcopy(partitions)
+        for window in windows:
+            partition = repaired[window["window_id"]]
+            removed = [target for target in partition["learning_targets"]
+                       if (window["window_id"], tuple(target["unit_ids"])) in keys]
+            if not removed:
+                continue
+            partition["learning_targets"] = [target for target in partition["learning_targets"]
+                if (window["window_id"], tuple(target["unit_ids"])) not in keys]
+            absorbed = set(partition["non_kp_units"])
+            absorbed.update(unit_id for target in removed for unit_id in target["unit_ids"])
+            partition["non_kp_units"] = [unit["unit_id"] for unit in window["units"]
+                                         if unit["unit_id"] in absorbed]
+            validate_semantic_output(json.dumps(partition, ensure_ascii=False), window)
+        return repaired
+
     def _review(
         self,
         payload: dict,
         revision_id: str,
         chapter_id: str,
         attempt_id: str,
+        review_round: int = 0,
     ):
         identity = self._configured_identity(self.reviewer_provider, "REVIEW")
         messages = [
@@ -794,7 +861,7 @@ class KnowledgeService:
                     attempt_id,
                     section_id=None,
                     packet_or_stage_id="chapter-structural-review",
-                    semantic_round=0,
+                    semantic_round=review_round,
                     structured_attempt=current_attempt,
                     provider_role="KP_STRUCTURAL_REVIEWER",
                     pipeline_stage="STRUCTURAL_REVIEW",
@@ -806,7 +873,7 @@ class KnowledgeService:
                     self.reviewer_provider,
                     messages,
                     interaction_id=(
-                        f"kp-review:{attempt_id}:structured-{structured_attempt}"
+                        f"kp-review:{attempt_id}:round-{review_round}:structured-{structured_attempt}"
                     ),
                     max_tokens=self.reviewer_max_tokens,
                     attempt_observer=observer,
@@ -832,7 +899,7 @@ class KnowledgeService:
                     chapter_id,
                     attempt_id,
                     packet_or_stage_id="chapter-structural-review",
-                    semantic_round=0,
+                    semantic_round=review_round,
                     structured_attempt=structured_attempt,
                     pipeline_stage="STRUCTURAL_REVIEW",
                     failure_code="invalid_review_output",

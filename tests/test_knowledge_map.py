@@ -1450,6 +1450,60 @@ def test_duplicate_mastery_boundary_type_forces_blocking_even_on_claimed_pass(se
     assert finding["severity"] == "BLOCKING"
 
 
+def test_exact_reviewed_duplicate_is_absorbed_and_independently_reviewed_again(service):
+    removed_units = []
+
+    def reviewer(payload, count):
+        if count == 1:
+            candidate = payload["candidates"][0]
+            removed_units.extend(candidate["unit_ids"])
+            return review_answer("FAIL", "前文概述与后文主题重复。", [
+                review_finding(candidate["primary_section_id"], candidate["unit_ids"],
+                               finding_type="DUPLICATE_MASTERY_BOUNDARY"),
+            ])
+        assert count == 2
+        assert not any(set(candidate["unit_ids"]) & set(removed_units)
+                       for candidate in payload["candidates"])
+        assert all(unit_id in [unit for window in payload["windows"]
+                               for unit in window["non_kp_units"]] for unit_id in removed_units)
+        return review_answer()
+
+    fixture = build_fixture(service, runtime=ScriptedRuntime(review=reviewer))
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    ready = claim_and_run(fixture)
+
+    assert ready["status"] == "READY"
+    assert ready["knowledge_points"]
+    inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
+    assert inspection["attempts"][0]["initial_review"]["verdict"] == "FAIL"
+    assert inspection["attempts"][0]["review"]["verdict"] == "PASS"
+    review_rounds = {attempt["semantic_round"] for attempt in inspection["pipeline_attempts"]
+                     if attempt["pipeline_stage"] == "STRUCTURAL_REVIEW"}
+    assert review_rounds == {0, 1}
+
+
+def test_duplicate_absorption_cannot_publish_when_second_review_rejects(service):
+    def reviewer(payload, count):
+        candidate = payload["candidates"][0]
+        finding_type = "DUPLICATE_MASTERY_BOUNDARY" if count == 1 else "FACET_OR_EXAMPLE_PROMOTED_TO_KP"
+        return review_answer("FAIL", "仍有阻断问题。", [
+            review_finding(candidate["primary_section_id"], candidate["unit_ids"],
+                           finding_type=finding_type),
+        ])
+
+    fixture = build_fixture(service, runtime=ScriptedRuntime(review=reviewer))
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    failed = claim_and_run(fixture)
+
+    assert failed["status"] == "FAILED"
+    assert failed["failure_code"] == "review_rejected"
+    assert failed["knowledge_points"] == []
+
+
 def test_facet_example_promoted_to_kp_is_blocking(service):
     def reviewer(payload, _count):
         window = next(w for w in payload["windows"] if w["learning_targets"])
@@ -1661,7 +1715,9 @@ def test_malformed_duplicate_group_is_invalid_review_output(service):
 
 
 def test_duplicate_group_and_finding_dedupe_into_one_blocking(service):
-    def reviewer(payload, _count):
+    def reviewer(payload, count):
+        if count == 2:
+            return review_answer()
         candidates = payload["candidates"]
         first = candidates[0]
         return review_answer(
@@ -1682,12 +1738,11 @@ def test_duplicate_group_and_finding_dedupe_into_one_blocking(service):
     revision_id = fixture["revision"]["id"]
     chapter_id = fixture["chapter"]["outline_node_id"]
     fixture["knowledge"].request_prepare(revision_id, chapter_id)
-    failed = claim_and_run(fixture)
+    ready = claim_and_run(fixture)
 
-    assert failed["status"] == "FAILED"
-    assert failed["failure_code"] == "review_rejected"
+    assert ready["status"] == "READY"
     inspection = fixture["knowledge"].inspect_payloads(revision_id, chapter_id)
-    findings = inspection["attempts"][0]["review"]["findings"]
+    findings = inspection["attempts"][0]["initial_review"]["findings"]
     duplicate_findings = [
         finding
         for finding in findings

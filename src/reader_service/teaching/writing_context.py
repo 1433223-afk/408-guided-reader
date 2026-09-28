@@ -82,7 +82,7 @@ def build(connection, revision_id, packet, ledger):
                "current_section": packet["section"]["title"],
                "previous_section": previous["title"] if previous else None,
                "next_section": following["title"] if following else None,
-               "published_kps": points}
+               "published_kps": points, "body": body}
     excluded = {e["source_id"] for e in removed}
     lines = set(body.splitlines())
     # Internal formatter allowlist; draft_messages never sends these IDs to the author.
@@ -101,7 +101,7 @@ def build(connection, revision_id, packet, ledger):
             "title": point["title"], "one_sentence_meaning": point["one_sentence_meaning"],
             "source_id": source_id,
         })
-    # No OCR-derived exam notes: this experiment uses the published skeleton only.
+    # Send cleaned current-section prose and published KPs, never exam notes.
     used = {r["outline_node_id"]: r for r in siblings + [r for r in (previous, following) if r]}
     dependencies = [{k: r[k] for k in ("outline_node_id", "identity_revision")} for r in used.values()]
     return context, dependencies, removed

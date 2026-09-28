@@ -503,7 +503,7 @@ def test_author_context_uses_only_directory_titles_outside_section(guide):
     assert not any(e['source_id'] in draft_messages(GENERATOR, context)[1]['content'] for e in packet['evidence'])
 
 
-def test_kp_author_input_uses_published_meanings_without_ocr(guide):
+def test_kp_author_input_uses_published_meanings_and_clean_section_text(guide):
     fixture, _, g, rev, section = guide
     fixture['knowledge'].request_prepare(rev, fixture['chapter']['outline_node_id'])
     claim_and_run(fixture)
@@ -519,12 +519,14 @@ def test_kp_author_input_uses_published_meanings_without_ocr(guide):
         c.execute("UPDATE chapter_preparations SET status='FAILED' WHERE book_source_revision_id=?", (rev,))
         unavailable, _, _ = writing_context.build(c, rev, packet, ledger)
         assert unavailable['published_kps'] == []
-    # A closed field allowlist must hold even if raw material is accidentally present.
+    # The writer receives cleaned current-section body, never source IDs or exam notes.
     messages = draft_messages(GENERATOR, {**context, 'body': 'OCR_SECRET',
         'textbook_exam_notes': ['EXAM_NOISE'], 'body_source_ids': ['SOURCE_SECRET']})
     wire = json.dumps(messages, ensure_ascii=False)
-    assert all(word not in wire for word in ('OCR_SECRET', 'EXAM_NOISE', 'SOURCE_SECRET'))
-    supplied = json.loads(messages[1]['content'].split('当前节已发布知识骨架（仅供理解，不要求逐项覆盖）：\n')[1])
+    assert 'OCR_SECRET' in wire
+    assert all(word not in wire for word in ('EXAM_NOISE', 'SOURCE_SECRET'))
+    supplied = json.loads(messages[1]['content'].split('当前节已发布知识骨架（仅供理解，不要求逐项覆盖）：\n')[1]
+                          .split('\n\n本节教材正文')[0])
     assert supplied == expected
 
 
@@ -605,6 +607,16 @@ def test_guide_review_uses_supported_low_reasoning_mode(guide, monkeypatch):
     drain(selected)
     assert runtime.options[-1]['thinking_mode'] is None
     assert runtime.options[-1]['reasoning_effort'] == 'low'
+
+
+def test_guide_writer_disables_deepseek_thinking_by_default(guide, monkeypatch):
+    _, runtime, g, rev, section = guide
+    monkeypatch.setenv('GUIDED_READER_GUIDE_PROVIDER', 'deepseek')
+    selected = TeachingService(g.database, runtime)
+    selected.request(rev, section, str(uuid4()))
+    drain(selected)
+    assert runtime.options[0]['thinking_mode'] == 'disabled'
+    assert runtime.options[0]['reasoning_effort'] is None
 
 
 def test_numeric_meaning_is_not_mistaken_for_table_locator(guide):

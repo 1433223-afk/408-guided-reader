@@ -291,9 +291,9 @@ class TeachingService:
             options = {
                 "interaction_id": f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 "max_tokens": 16384 if role == "GENERATE" else 8192,
-                "reasoning_effort": "low" if (generating and self.provider == "openrouter")
+                "reasoning_effort": "low" if (generating and selected in {"openrouter", "zhipu"})
                     or (role == "REVIEW" and selected == "zhipu") else None,
-                "thinking_mode": "disabled" if role == "REVIEW" and selected == "deepseek" else None,
+                "thinking_mode": "disabled" if selected == "deepseek" else None,
                 "model": model_override,
                 "timeout_seconds": 120 if generating and self.provider == "openrouter" else None,
                 "json_object": selected == "openrouter" and role != "WRITE",
