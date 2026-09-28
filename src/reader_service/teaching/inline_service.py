@@ -17,10 +17,10 @@ class InlineTeachingService(TeachingService):
         super().__init__(database, runtime)
         # Guide may use its own latency-tuned provider; Inline Teaching keeps the
         # established System provider and model routing.
-        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "openrouter").strip().lower()
+        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "deepseek").strip().lower()
         self.generator_model = os.environ.get("GUIDED_READER_INLINE_MODEL") or (
             "google/gemini-3.8-flash" if self.provider == "openrouter" else None)
-        self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "openrouter").strip().lower()
+        self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
         self.reviewer_model = "google/gemini-3.8-flash" if self.reviewer == "openrouter" else None
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
@@ -101,7 +101,8 @@ class InlineTeachingService(TeachingService):
                 interaction_id=f"inline:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 max_tokens=8192, model=self.generator_model if generating else self.reviewer_model,
                 json_object=selected == "openrouter",
-                reasoning_effort="low" if generating and selected == "openrouter" else None,
+                reasoning_effort="low" if (generating and selected == "openrouter")
+                    or (not generating and selected == "zhipu") else None,
                 timeout_seconds=120 if generating and selected == "openrouter" else None)
             self._update(asset["id"], **{metadata_key: encoded({
                 "effective_config": completion.effective_config, "latency_ms": completion.latency_ms,

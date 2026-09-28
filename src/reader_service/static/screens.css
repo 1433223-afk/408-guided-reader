@@ -109,6 +109,9 @@
 @media(max-width:1320px) {
   #reader .toolbar { gap:16px;padding-inline:16px; }
   #reader .toolbar .preparation-status { display:none; }
+  #reader .toolbar .reader-controls { gap:0; }
+  #reader .toolbar .reader-controls .control-divider { margin-inline:2px; }
+  #reader .toolbar #guide-reopen { padding-inline:4px; }
 }
 @media(max-width:1180px) {
   #reader .toolbar .book-heading,#reader .toolbar .reader-controls { max-width:calc(50% - 70px); }

@@ -28,7 +28,7 @@ class TeachingService:
         self._draft_condition = threading.Condition()
         self._drafts = {}
         self.provider = os.environ.get("GUIDED_READER_GUIDE_PROVIDER",
-                                       os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "openrouter")).strip().lower()
+                                       os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "deepseek")).strip().lower()
         self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
         self.generator_model = os.environ.get("GUIDED_READER_GUIDE_MODEL") or (
             "google/gemini-3.8-flash" if self.provider == "openrouter"
@@ -291,7 +291,9 @@ class TeachingService:
             options = {
                 "interaction_id": f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 "max_tokens": 16384 if role == "GENERATE" else 8192,
-                "reasoning_effort": "low" if generating and self.provider == "openrouter" else None,
+                "reasoning_effort": "low" if (generating and self.provider == "openrouter")
+                    or (role == "REVIEW" and selected == "zhipu") else None,
+                "thinking_mode": "disabled" if role == "REVIEW" and selected == "deepseek" else None,
                 "model": model_override,
                 "timeout_seconds": 120 if generating and self.provider == "openrouter" else None,
                 "json_object": selected == "openrouter" and role != "WRITE",

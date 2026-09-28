@@ -34,8 +34,8 @@ if (launchToken) {
 
 const state = {
   books: [], book: null, revision: null, pdf: null, zoom: 1,
-  currentPage: 0, generation: 0, renderTasks: new Map(), rendered: new Set(),
-  scrollFrame: 0, saveTimer: 0, resizeTimer: 0, priorityTimer: 0,
+  currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), rendered: new Set(),
+  scrollFrame: 0, saveTimer: 0, resizeTimer: 0, viewerLayoutWidth: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
   annotationData: new Map(), guideSelection: null, selection: null, selecting: false, selectionMenuPoint: null,
   searchRequest: 0, searchMatch: null,
@@ -486,29 +486,38 @@ function alignedCssDimension(target, pixelRatio) {
   return exact || closest;
 }
 
-function applyPageSize(wrapper, size) {
-  wrapper.style.width = `${size.cssWidth}px`;
-  wrapper.style.height = `${size.cssHeight}px`;
+function pageLeftMargin(size) {
   const available = elements.viewer.clientWidth - inlineReserve();
   const inset = state.practice.active ? 12 : 32;
   const fits = size.cssWidth <= available - inset * 2;
   const naturalLeft = fits ? (available - size.cssWidth) / 2 : inset;
-  const alignedLeft = alignedCssDimension(naturalLeft, size.pixelRatio).css;
-  wrapper.style.marginLeft = `${Math.max(0, alignedLeft - inset)}px`;
+  return Math.max(0, alignedCssDimension(naturalLeft, size.pixelRatio).css - inset);
+}
+
+function applyPageSize(wrapper, size, leftMargin = pageLeftMargin(size)) {
+  wrapper.style.width = `${size.cssWidth}px`;
+  wrapper.style.height = `${size.cssHeight}px`;
+  wrapper.style.marginLeft = `${leftMargin}px`;
   wrapper.style.marginRight = "0";
 }
 
 function buildPlaceholders() {
+  const sizes = new Map();
+  const margins = new Map();
   const pages = state.revision.page_geometry.map((geometry, index) => {
-    const size = snappedPageSize(displayedRatio(geometry));
+    const ratio = displayedRatio(geometry);
+    if (!sizes.has(ratio)) sizes.set(ratio, snappedPageSize(ratio));
+    const size = sizes.get(ratio);
+    if (!margins.has(size.cssWidth)) margins.set(size.cssWidth, pageLeftMargin(size));
     const page = document.createElement("article");
     page.className = "page";
     page.dataset.index = String(index);
     page.dataset.page = String(index + 1);
-    applyPageSize(page, size);
+    applyPageSize(page, size, margins.get(size.cssWidth));
     return page;
   });
   elements.pages.replaceChildren(...pages);
+  state.viewerLayoutWidth = elements.viewer.clientWidth;
 }
 
 function applyRestoredPosition() {
@@ -757,11 +766,13 @@ function updateViewport() {
 async function renderPage(index) {
   if (!state.pdf || state.rendered.has(index) || state.renderTasks.has(index)) return;
   const generation = state.generation;
+  const renderGeneration = state.renderGeneration;
   const wrapper = elements.pages.children[index];
+  let task = null;
   wrapper.classList.add("loading");
   try {
     const page = await state.pdf.getPage(index + 1);
-    if (generation !== state.generation) return;
+    if (generation !== state.generation || renderGeneration !== state.renderGeneration) return;
     const base = page.getViewport({ scale: 1 });
     const size = snappedPageSize(base.height / base.width);
     const viewport = page.getViewport({ scale: size.backingWidth / base.width });
@@ -777,7 +788,7 @@ async function renderPage(index) {
     const canvasContext = canvas.getContext("2d", { alpha: false });
     canvasContext.imageSmoothingEnabled = true;
     canvasContext.imageSmoothingQuality = "high";
-    const task = page.render({
+    task = page.render({
       canvasContext,
       viewport,
       transform: [
@@ -791,7 +802,7 @@ async function renderPage(index) {
     });
     state.renderTasks.set(index, task);
     await task.promise;
-    if (generation === state.generation) {
+    if (generation === state.generation && renderGeneration === state.renderGeneration) {
       state.rendered.add(index);
       master.renderPage(index);
       renderGuideEntries(index);
@@ -802,8 +813,11 @@ async function renderPage(index) {
   } catch (error) {
     if (error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
   } finally {
-    state.renderTasks.delete(index);
-    wrapper?.classList.remove("loading");
+    if (generation === state.generation && renderGeneration === state.renderGeneration
+        && (!task || state.renderTasks.get(index) === task)) {
+      state.renderTasks.delete(index);
+      wrapper?.classList.remove("loading");
+    }
   }
 }
 
@@ -813,7 +827,10 @@ function clearPage(index) {
   state.renderTasks.delete(index);
   state.rendered.delete(index);
   const wrapper = elements.pages.children[index];
-  if (wrapper) wrapper.replaceChildren();
+  if (wrapper) {
+    wrapper.replaceChildren();
+    wrapper.classList.remove("loading");
+  }
   if (state.selection?.pageIndex === index) clearSelection();
 }
 
@@ -861,13 +878,21 @@ function adjacentZoom(direction) {
 
 function relayoutPages(anchor = captureZoomAnchor()) {
   if (!state.revision) return;
+  state.renderGeneration += 1;
   cancelRenders();
   state.pinnedLanding = null;
+  const sizes = new Map();
+  const margins = new Map();
   [...elements.pages.children].forEach((wrapper, index) => {
-    const size = snappedPageSize(displayedRatio(state.revision.page_geometry[index]));
-    wrapper.replaceChildren();
-    applyPageSize(wrapper, size);
+    const ratio = displayedRatio(state.revision.page_geometry[index]);
+    if (!sizes.has(ratio)) sizes.set(ratio, snappedPageSize(ratio));
+    const size = sizes.get(ratio);
+    if (!margins.has(size.cssWidth)) margins.set(size.cssWidth, pageLeftMargin(size));
+    if (wrapper.firstChild) wrapper.replaceChildren();
+    wrapper.classList.remove("loading");
+    applyPageSize(wrapper, size, margins.get(size.cssWidth));
   });
+  state.viewerLayoutWidth = elements.viewer.clientWidth;
   // Before PDF restoration, placeholders are layout only, not a reading position.
   if (state.pdf) restoreZoomAnchor(anchor);
   scheduleViewportUpdate();
@@ -4687,8 +4712,6 @@ window.addEventListener("resize", () => {
   applyAssistantDockWidth(state.assistantDockWidth);
   positionSelectionActions();
   evaluateDirectoryMode();
-  clearTimeout(state.resizeTimer);
-  state.resizeTimer = setTimeout(() => { fitPracticePdfForDock(); relayoutPages(); }, 120);
 });
 document.addEventListener("visibilitychange", () => document.hidden && savePosition());
 window.addEventListener("pagehide", () => {
@@ -4701,6 +4724,20 @@ renderAssistantViewportMode();
 // Async in-flow reservations (learning footers, panels) shift pages after a
 // navigation landing; while the pin holds, re-assert the claimed destination.
 new ResizeObserver(() => { if (state.pinnedLanding) scheduleViewportUpdate(); }).observe(elements.pages);
+// Dock open/close, pane dragging, and window resize all change the PDF column.
+// Rebuild only after its width settles, so pages rendered before and after the
+// change use the same scale and their text/interaction layers stay aligned.
+new ResizeObserver(() => {
+  if (!state.pdf || elements.reader.hidden) return;
+  if (Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) < 1) return;
+  clearTimeout(state.resizeTimer);
+  state.resizeTimer = setTimeout(() => {
+    if (!state.pdf || elements.reader.hidden
+        || Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) < 1) return;
+    fitPracticePdfForDock();
+    relayoutPages();
+  }, 120);
+}).observe(elements.viewer);
 loadBooks().catch(() => announce("书库加载失败，请刷新后重试。", true));
 
 let readingTargets = [], readingOwner = null, readingTimer, readingBusy = false;

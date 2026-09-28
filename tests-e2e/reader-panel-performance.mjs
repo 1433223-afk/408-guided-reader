@@ -242,13 +242,26 @@ try {
       assert.ok(result.stateChangeMs === null || result.stateChangeMs < 50,
         `${result.name} shell state took ${result.stateChangeMs}ms`);
       assert.ok(result.maxLongTaskMs < 50, `${result.name} long task took ${result.maxLongTaskMs}ms`);
-      assert.equal(result.removedPdfNodes, 0, `${result.name} removed PDF DOM`);
-      assert.equal(result.canvasIdentityPreserved, true, `${result.name} replaced a rendered PDF canvas`);
-      assert.equal(result.canvasSizesStable, true, `${result.name} changed PDF canvas dimensions`);
+      if (result.viewerWidthChanged) {
+        assert.equal(result.renderedWidthsUniform, true,
+          `${result.name} left adjacent PDF pages at different widths`);
+        assert.equal(result.textLayersAligned, true,
+          `${result.name} left OCR text offset from its PDF page`);
+      } else {
+        assert.equal(result.removedPdfNodes, 0, `${result.name} removed PDF DOM`);
+        assert.equal(result.canvasIdentityPreserved, true, `${result.name} replaced a rendered PDF canvas`);
+        assert.equal(result.canvasSizesStable, true, `${result.name} changed PDF canvas dimensions`);
+      }
       assert.equal(result.wrapperIdentityPreserved, true, `${result.name} replaced a PDF wrapper`);
       assert.equal(result.zoomStable, true, `${result.name} changed zoom`);
-      assert.ok(Math.abs(result.scrollTopDelta) < 1, `${result.name} moved PDF scroll by ${result.scrollTopDelta}`);
-      if (!result.closedLayout) assert.ok(Math.abs(result.scrollLeftDelta) < 1,
+      if (result.viewerWidthChanged) {
+        assert.equal(result.readingAnchor.page, result.readingAnchorBefore.page,
+          `${result.name} moved to a different PDF page`);
+        assert.ok(Math.abs(result.readingAnchor.y - result.readingAnchorBefore.y) < .015,
+          `${result.name} moved the reading position within the page`);
+      } else assert.ok(Math.abs(result.scrollTopDelta) < 1,
+        `${result.name} moved PDF scroll by ${result.scrollTopDelta}`);
+      if (!result.closedLayout && !result.viewerWidthChanged) assert.ok(Math.abs(result.scrollLeftDelta) < 1,
         `${result.name} moved horizontal PDF scroll by ${result.scrollLeftDelta}`);
       assert.equal(result.currentPageStable, true, `${result.name} changed the current page`);
       assert.ok(Math.abs(result.toolbarLayout.left - result.toolbarLayout.readerLeft) < .5
@@ -311,11 +324,21 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
   await page.evaluate(({ name, expectedState, dockSelector }) => {
     const pages = document.querySelector('#pages');
     const viewer = document.querySelector('#viewer');
+    window.__readerAnchor = () => {
+      const center = viewer.getBoundingClientRect().top + viewer.clientHeight / 2;
+      const wrappers = [...pages.children];
+      const wrapper = wrappers.find(node => node.getBoundingClientRect().bottom >= center)
+        || wrappers.at(-1);
+      const rect = wrapper.getBoundingClientRect();
+      return { page: Number(wrapper.dataset.index), y: (center - rect.top) / rect.height };
+    };
     const canvases = [...pages.querySelectorAll('canvas')];
     const wrappers = [...pages.children];
     const metric = window.__readerPanelMetric = {
       name, clickStart: null, firstFrame: null, stateChange: null, longTasks: [], removedPdfNodes: 0,
       canvases, wrappers, scrollTop: viewer.scrollTop, scrollLeft: viewer.scrollLeft,
+      viewerWidth: viewer.clientWidth,
+      readingAnchorBefore: window.__readerAnchor(),
       zoom: document.querySelector('#zoom-value').textContent,
       canvasSizes: canvases.map(canvas => {
         const bounds = canvas.getBoundingClientRect();
@@ -392,6 +415,18 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       firstFrameMs: metric.firstFrame === null ? null : metric.firstFrame - metric.clickStart,
       maxLongTaskMs: Math.max(0, ...longTasks),
       removedPdfNodes: metric.removedPdfNodes,
+      viewerWidthChanged: Math.abs(viewer.clientWidth - metric.viewerWidth) > 1,
+      renderedWidthsUniform: (() => {
+        const widths = currentCanvases.map(canvas => canvas.getBoundingClientRect().width);
+        return !widths.length || Math.max(...widths) - Math.min(...widths) < 1;
+      })(),
+      textLayersAligned: currentCanvases.every(canvas => {
+        const overlay = canvas.closest('.page').querySelector('.text-overlay');
+        if (!overlay) return true;
+        const paper = canvas.getBoundingClientRect(), text = overlay.getBoundingClientRect();
+        return Math.abs(paper.left - text.left) < .5 && Math.abs(paper.top - text.top) < .5
+          && Math.abs(paper.width - text.width) < .5 && Math.abs(paper.height - text.height) < .5;
+      }),
       canvasIdentityPreserved: metric.canvasSizes.every((saved, index) => byPage.get(saved.page) === metric.canvases[index]),
       canvasSizesStable: metric.canvasSizes.every(saved => {
         const canvas = byPage.get(saved.page); if (!canvas) return false;
@@ -404,6 +439,8 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       scrollTopDelta: viewer.scrollTop - metric.scrollTop,
       scrollLeftDelta: viewer.scrollLeft - metric.scrollLeft,
       currentPageStable: Number(document.querySelector('#page-number').value) === metric.currentPage,
+      readingAnchorBefore: metric.readingAnchorBefore,
+      readingAnchor: window.__readerAnchor(),
       toolbarLayout: (() => {
         const reader = document.querySelector('#reader').getBoundingClientRect();
         const toolbar = document.querySelector('#reader .toolbar');

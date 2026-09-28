@@ -562,17 +562,17 @@ def test_writer_contract_retry_keeps_clean_system_and_context(guide):
     assert g.snapshot(rev, section)['published'] is not None
 
 
-@pytest.mark.parametrize('configured,expected', [(None, 'openrouter'), ('deepseek', 'deepseek')])
+@pytest.mark.parametrize('configured,expected', [(None, 'deepseek'), ('zhipu', 'zhipu')])
 def test_guide_generator_route_respects_explicit_configuration(guide, monkeypatch, configured, expected):
     fixture, runtime, g, rev, section = guide
     if configured is None:
         monkeypatch.delenv('GUIDED_READER_SYSTEM_PROVIDER', raising=False)
     else:
         monkeypatch.setenv('GUIDED_READER_SYSTEM_PROVIDER', configured)
-    monkeypatch.setenv('GUIDED_READER_REVIEW_PROVIDER', 'openrouter')
+    monkeypatch.setenv('GUIDED_READER_REVIEW_PROVIDER', 'zhipu')
     selected = TeachingService(g.database, runtime)
     assert selected.provider == expected
-    assert selected.reviewer == 'openrouter'
+    assert selected.reviewer == 'zhipu'
 
 
 def test_guide_provider_override_does_not_change_inline_provider(guide, monkeypatch):
@@ -591,9 +591,20 @@ def test_guide_reasoning_does_not_change_review_call(guide, monkeypatch):
     selected.request(rev, section, str(uuid4()))
     drain(selected)
     assert runtime.options[0]['reasoning_effort'] == 'low'
-    assert runtime.options[1]['reasoning_effort'] is None
+    assert runtime.options[1]['reasoning_effort'] == 'low'
     assert runtime.options[0]['model'] == selected.generator_model
     assert runtime.options[1]['model'] is None
+
+
+def test_guide_review_uses_supported_low_reasoning_mode(guide, monkeypatch):
+    _, runtime, g, rev, section = guide
+    monkeypatch.setenv('GUIDED_READER_GUIDE_PROVIDER', 'deepseek')
+    monkeypatch.setenv('GUIDED_READER_REVIEW_PROVIDER', 'zhipu')
+    selected = TeachingService(g.database, runtime)
+    selected.request(rev, section, str(uuid4()))
+    drain(selected)
+    assert runtime.options[-1]['thinking_mode'] is None
+    assert runtime.options[-1]['reasoning_effort'] == 'low'
 
 
 def test_numeric_meaning_is_not_mistaken_for_table_locator(guide):
@@ -666,6 +677,7 @@ def test_guide_model_selection_respects_explicit_configuration(guide, monkeypatc
 
 def test_reading_emphasis_is_not_exam_weight():
     assert validate_draft('阅读时怎样抓重点：重点在于理解知识的联系。', {'evidence': []})
-    for phrase in ('考试重点', '考研重点', '重点考查', '高频常考', '必考'):
+    for phrase in ('考试重点', '考研重点', '重点考查', '高频常考', '必考',
+                   '本节是全书考查频度最高的板块', '执行轨迹图是考查的重中之重'):
         with pytest.raises(ValueError, match='考试权重'):
             validate_draft(phrase, {'evidence': []})

@@ -61,6 +61,8 @@ def test_publish_round_trip_no_kp_and_allowlisted_context(inline):
     drain(g)
     pub = g.snapshot(rev, sec)['published']
     assert pub and len(r.calls) == 2
+    assert [call[0] for call in r.calls] == ['deepseek', 'zhipu']
+    assert r.calls[1][2]['reasoning_effort'] == 'low'
     assert len(pub['content']['items']) == 2
     with g.database.connect() as c:
         row = c.execute('SELECT * FROM inline_teaching_assets').fetchone()
