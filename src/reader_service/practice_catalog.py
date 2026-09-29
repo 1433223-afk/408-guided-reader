@@ -17,6 +17,11 @@ OPTION = re.compile(r"(?<![A-Za-z])([ABCD])\s*[.．、]")
 ANSWER = re.compile(r"^\s*(\d{1,2})\s*[.．]\s*([ABCD])(?:\s|$)")
 SECTION_HEADING = re.compile(r"^\s*\*?\d+(?:\.\d+){1,3}(?!\d)")
 LEGACY_SECTION = {"1.2.6": 0, "5.2.4": 100}
+VERIFIED_SOURCE_SHA256 = "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd"
+EXERCISE_TITLE = re.compile(r"本节[习试]题精选")
+CHOICE_HEADING = re.compile(r"单项选择题|单选题")
+OTHER_QUESTION_HEADING = re.compile(r"^[一二三四五六七八九十]+[、.．]\s*(?!单项选择题|单选题).{0,12}题")
+SECTION_TITLE = re.compile(r"^\*?\d+\.\d+(?!\.)\s")
 
 
 def _bounds(quad):
@@ -32,7 +37,7 @@ def _heading(lines, node, phrase):
 
 def _exercise_entry_right(line):
     """End of the printed heading, even when OCR merges later page text into its line."""
-    match = re.search(r"\*?\d+(?:\.\d+){1,3}\s*本节习题\S*", line["text"])
+    match = re.search(r"\*?\d+(?:\.\d+){1,3}\s*本节[习试]题\S*", line["text"])
     if match:
         cells = [cell for cell in line["cells"]
                  if cell[2] < match.end() and cell[3] > match.start()]
@@ -97,7 +102,7 @@ def _separate_options(options):
 
 
 def _identity(source_sha256, section_number, printed_number):
-    legacy_base = LEGACY_SECTION.get(section_number)
+    legacy_base = LEGACY_SECTION.get(section_number) if source_sha256 == VERIFIED_SOURCE_SHA256 else None
     if legacy_base is not None and (section_number != "1.2.6" or printed_number <= 16):
         return legacy_base + printed_number
     seed = f"{source_sha256}:{section_number}:{printed_number}".encode("utf-8")
@@ -158,7 +163,9 @@ def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict
            ORDER BY start_page,order_index""", (revision_id,))]
     pairs = []
     for node in nodes:
-        if node["kind"] != "EXERCISES":
+        # Existing Outline rows may classify "本节试题精选" as SUBSECTION.
+        # The printed title is sufficient here; no Outline rewrite is needed.
+        if not EXERCISE_TITLE.search(node["title"]):
             continue
         answer = next((item for item in nodes if item["kind"] == "ANSWERS"
                        and item["parent_id"] == node["parent_id"]
@@ -183,11 +190,19 @@ def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict
     sections = []
     used_ids = set()
     for exercise, answer in pairs:
-        exercise_head = _heading(pages, exercise, "本节习题")
+        exercise_head = _heading(pages, exercise, EXERCISE_TITLE.search(exercise["title"]).group())
         answer_head = _heading(pages, answer, "答案与解析")
         if not exercise_head or not answer_head:
             continue
         body = _line_stream(pages, exercise_head, answer_head)
+        choice_start = next((pos for pos, line in enumerate(body)
+                             if CHOICE_HEADING.search(line["text"])), None)
+        if choice_start is None:
+            continue
+        body = body[choice_start + 1:]
+        other_start = next((pos for pos, line in enumerate(body)
+                            if OTHER_QUESTION_HEADING.match(line["text"])), len(body))
+        body = body[:other_start]
         starts = [(pos, int(match.group(1))) for pos, line in enumerate(body)
                   if (match := QUESTION.match(line["text"]))]
         run = []
@@ -200,7 +215,8 @@ def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict
         if not run:
             continue
         following_sections = [_heading(pages, node, "") for node in nodes
-                              if node["kind"] == "SECTION" and node["start_page"] >= answer_head["page"]]
+                              if (node["kind"] in {"SECTION", "CHAPTER"} or SECTION_TITLE.match(node["title"]))
+                              and node["start_page"] >= answer_head["page"]]
         boundary = next((head for head in sorted((head for head in following_sections
                                                   if head and _after(head, answer_head)),
                                                  key=lambda line: (line["page"], line["ordinal"]))), None)
@@ -209,6 +225,13 @@ def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict
             last_page = max(pages)
             boundary = {"page": last_page, "ordinal": len(pages[last_page]) + 1}
         answer_lines = _line_stream(pages, answer_head, boundary)
+        answer_choice_start = next((pos for pos, line in enumerate(answer_lines)
+                                    if CHOICE_HEADING.search(line["text"])), None)
+        if answer_choice_start is not None:
+            answer_lines = answer_lines[answer_choice_start + 1:]
+        other_answer_start = next((pos for pos, line in enumerate(answer_lines)
+                                   if OTHER_QUESTION_HEADING.match(line["text"])), len(answer_lines))
+        answer_lines = answer_lines[:other_answer_start]
         answer_hits = defaultdict(list)
         for pos, line in enumerate(answer_lines):
             if match := ANSWER.match(line["text"]):

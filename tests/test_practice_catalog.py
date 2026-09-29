@@ -25,14 +25,15 @@ def _line(connection, page, ordinal, text, y):
     )
 
 
-def _source(database, *, missing_d=False):
+def _source(database, *, missing_d=False, trial_heading=False,
+            source_sha256=SOURCE_SHA256, next_kind='SECTION'):
     with database.connect() as connection:
         connection.execute("INSERT INTO books(id,title,status,created_at) VALUES ('book','王道','ACTIVE','now')")
         connection.execute(
             """INSERT INTO book_source_revisions
                (id,book_id,blob_sha256,byte_size,page_count,page_geometry_json,label,status,created_at)
                VALUES ('revision','book',?,1,4,'[]','sample','ACTIVE','now')""",
-            (SOURCE_SHA256,),
+            (source_sha256,),
         )
         for page in range(4):
             connection.execute(
@@ -40,9 +41,10 @@ def _source(database, *, missing_d=False):
                    route,foundation_version) VALUES ('revision',?,'READY','OCR',1)""", (page,))
         for node_id, parent, kind, title, page, order in (
             ('section', None, 'SECTION', '8.1 示例', 0, 0),
-            ('exercise', 'section', 'EXERCISES', '8.1.1 本节习题精选', 0, 0),
+            ('exercise', 'section', 'SUBSECTION' if trial_heading else 'EXERCISES',
+             '8.1.1 本节试题精选' if trial_heading else '8.1.1 本节习题精选', 0, 0),
             ('answers', 'section', 'ANSWERS', '8.1.2 答案与解析', 2, 1),
-            ('next', None, 'SECTION', '8.2 下一节', 3, 1),
+            ('next', None, next_kind, '8.2 下一节', 3, 1),
         ):
             connection.execute(
                 """INSERT INTO outline_nodes(outline_node_id,book_source_revision_id,
@@ -50,10 +52,11 @@ def _source(database, *, missing_d=False):
                    confidence,evidence_json) VALUES (?,'revision',?,?,?,?,? ,?,'PARTIAL',1,'{}')""",
                 (node_id, parent, 1 if parent else 0, order, kind, title, page),
             )
-        _line(connection, 0, 0, '8.1.1 本节习题精选 无关水印', .20)
-        _line(connection, 0, 1, '01. 哪项正确？', .26)
-        _line(connection, 0, 2, 'A. 甲 B. 乙', .30)
-        _line(connection, 0, 3, '乙的续行', .33)
+        _line(connection, 0, 0, ('8.1.1 本节试题精选' if trial_heading else '8.1.1 本节习题精选') + ' 无关水印', .20)
+        _line(connection, 0, 1, '一、单项选择题', .23)
+        _line(connection, 0, 2, '01. 哪项正确？', .26)
+        _line(connection, 0, 3, 'A. 甲 B. 乙', .30)
+        _line(connection, 0, 4, '乙的续行', .33)
         _line(connection, 1, 0, 'C. 丙', .12)
         if not missing_d:
             _line(connection, 1, 1, 'D. 丁', .15)
@@ -93,6 +96,40 @@ def test_cross_page_catalog_is_generated_and_keeps_answer_out_of_solve_ui(tmp_pa
     assert 'official_answer' not in solve
     source = review.source('revision', question['number'])
     assert source['official_answer'] == 'A' and source['official_explanation'] == '甲符合条件。'
+
+
+def test_existing_trial_heading_is_recognized_without_outline_rebuild(tmp_path):
+    database = Database(tmp_path / 'state.sqlite3')
+    database.initialize()
+    other_sha = 'f' * 64
+    _source(database, trial_heading=True, source_sha256=other_sha)
+    practice = PracticePrototype(database)
+    sections = practice.public_catalog('revision')
+    assert len(sections) == 1 and len(sections[0]['questions']) == 1
+    number = sections[0]['questions'][0]['number']
+    assert number > 1_000_000
+    assert practice.attempt('revision', number, 'A')['last_correct'] is True
+
+
+def test_later_question_type_cannot_override_a_single_choice_answer(tmp_path):
+    database = Database(tmp_path / 'state.sqlite3')
+    database.initialize()
+    _source(database)
+    with database.connect() as connection:
+        _line(connection, 2, 3, '二、判断题', .35)
+        _line(connection, 2, 4, '01. B', .39)
+        sections = build_catalog(connection, 'revision', SOURCE_SHA256)
+    assert sections[0]['questions'][0]['answer'] == 'A'
+
+
+def test_misclassified_next_section_still_bounds_the_answer_block(tmp_path):
+    database = Database(tmp_path / 'state.sqlite3')
+    database.initialize()
+    _source(database, next_kind='SUBSECTION')
+    with database.connect() as connection:
+        _line(connection, 3, 1, '01. B', .25)
+        sections = build_catalog(connection, 'revision', SOURCE_SHA256)
+    assert sections[0]['questions'][0]['answer'] == 'A'
 
 
 def test_incomplete_option_group_is_not_published_or_scoreable(tmp_path):

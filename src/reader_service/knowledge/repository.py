@@ -423,6 +423,8 @@ class KnowledgeRepository:
                     semantic_round, structured_attempt, transport_attempt
                 ) DO UPDATE SET
                     status = excluded.status,
+                    started_at = CASE WHEN excluded.status = 'STARTED'
+                        THEN excluded.started_at ELSE chapter_pipeline_attempts.started_at END,
                     completed_at = excluded.completed_at,
                     latency_ms = excluded.latency_ms,
                     finish_reason = excluded.finish_reason,
@@ -863,6 +865,35 @@ class KnowledgeRepository:
                 "knowledge_points": [],
             }
         result = dict(state)
+        if result["prepare_stage"] == "REVIEWING" and (
+            result["status"] == "PREPARING"
+            or result["regeneration_state"] == "RUNNING"
+        ):
+            review_attempt = connection.execute(
+                """
+                SELECT semantic_round, structured_attempt, transport_attempt,
+                       started_at
+                FROM chapter_pipeline_attempts
+                WHERE book_source_revision_id = ?
+                  AND chapter_outline_node_id = ?
+                  AND preparation_attempt_id = ?
+                  AND pipeline_stage = 'STRUCTURAL_REVIEW'
+                  AND packet_or_stage_id = 'chapter-structural-review'
+                  AND started_at >= ?
+                ORDER BY semantic_round DESC, structured_attempt DESC,
+                         transport_attempt DESC LIMIT 1
+                """,
+                (revision_id, chapter_id, result["attempt_id"], result["updated_at"]),
+            ).fetchone()
+            review_round = int(review_attempt["semantic_round"]) if review_attempt else 0
+            result["review_progress"] = {
+                "round": review_round + 1,
+                "completed_rounds": review_round,
+                "current_total_rounds": review_round + 1,
+                "structured_attempt": int(review_attempt["structured_attempt"]) if review_attempt else 1,
+                "transport_attempt": int(review_attempt["transport_attempt"]) if review_attempt else 1,
+                "started_at": review_attempt["started_at"] if review_attempt else result["updated_at"],
+            }
         # An explicit, asset-preserving Outline correction may require review of
         # the published map. Keep it readable; never turn READY into data loss.
         chapter_evidence = connection.execute(

@@ -1,11 +1,11 @@
-"""Bounded, source-specific Practice state for the Reader 2.0 demo."""
+"""Practice state for conservatively extracted Wangdao single-choice questions."""
 
 from __future__ import annotations
 
 from reader_service.library.database import Database
-from reader_service.practice_catalog import build_catalog, public_sections
+from reader_service.practice_catalog import VERIFIED_SOURCE_SHA256, build_catalog, public_sections
 
-SOURCE_SHA256 = "6844d8eb2637f8adc6dcc54c686ac3b32df0452597550af807751169020c46bd"
+SOURCE_SHA256 = VERIFIED_SOURCE_SHA256
 ANSWERS = "DABDDACA DCCBCCDD".replace(" ", "")
 SECTION_524_ANSWERS = {
     101: "A", 102: "D", 103: "C", 104: "B", 105: "D", 106: "B", 107: "B",
@@ -26,13 +26,14 @@ class PracticePrototype:
         self.database = database
 
     @staticmethod
-    def _require_source(connection, revision_id: str) -> None:
+    def _require_source(connection, revision_id: str) -> str:
         row = connection.execute(
             "SELECT blob_sha256 FROM book_source_revisions WHERE id = ? AND status = 'ACTIVE'",
             (revision_id,),
         ).fetchone()
-        if row is None or row["blob_sha256"] != SOURCE_SHA256:
-            raise LookupError("这份教材没有可用的 Practice 样本。")
+        if row is None:
+            raise LookupError("原教材当前不可用。")
+        return row["blob_sha256"]
 
     @staticmethod
     def _number(value: object) -> int:
@@ -42,8 +43,8 @@ class PracticePrototype:
 
     def catalog(self, revision_id: str) -> list[dict]:
         with self.database.connect() as connection:
-            self._require_source(connection, revision_id)
-            return build_catalog(connection, revision_id, SOURCE_SHA256)
+            source_sha256 = self._require_source(connection, revision_id)
+            return build_catalog(connection, revision_id, source_sha256)
 
     def public_catalog(self, revision_id: str) -> list[dict]:
         return public_sections(self.catalog(revision_id))
@@ -56,7 +57,9 @@ class PracticePrototype:
                     return question
         # The two existing, visually verified fixtures remain usable while
         # their OCR/Outline is unavailable; no new question uses this path.
-        if 1 <= number <= len(ANSWERS) or number in SECTION_524_ANSWERS:
+        with self.database.connect() as connection:
+            source_sha256 = self._require_source(connection, revision_id)
+        if source_sha256 == SOURCE_SHA256 and (1 <= number <= len(ANSWERS) or number in SECTION_524_ANSWERS):
             return None
         raise ValueError("这道题尚未通过来源核对，不能作答。")
 
@@ -84,6 +87,7 @@ class PracticePrototype:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """SELECT state.*, book.id AS book_id, book.title AS book_title,
+                          revision.blob_sha256 AS source_sha256,
                           review.id AS review_thread_id
                    FROM practice_prototype_state state
                    JOIN book_source_revisions revision
@@ -93,9 +97,8 @@ class PracticePrototype:
                      ON review.book_source_revision_id = revision.id
                     AND review.question_number = state.question_number
                    WHERE state.favorite = 1 AND revision.status = 'ACTIVE'
-                     AND revision.blob_sha256 = ? AND book.status = 'ACTIVE'
+                     AND book.status = 'ACTIVE'
                    ORDER BY state.updated_at DESC, state.question_number""",
-                (SOURCE_SHA256,),
             ).fetchall()
             outlines = {(row["book_source_revision_id"], row["outline_node_id"]): dict(row)
                         for row in connection.execute(
@@ -110,6 +113,8 @@ class PracticePrototype:
                     for question in section["questions"]}
             question = catalog_by_revision[revision_id].get(row["question_number"])
             number = row["question_number"]
+            if question is None and row["source_sha256"] != SOURCE_SHA256:
+                continue
             if question:
                 exercise = outlines.get((revision_id, question["sectionId"]))
                 section = outlines.get((revision_id, exercise["parent_id"])) if exercise else None

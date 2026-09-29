@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {PRACTICE_QUESTIONS, PRACTICE_QUESTIONS_524, PRACTICE_SECTIONS,
+import {PRACTICE_BOOK_SHA256, PRACTICE_QUESTIONS, PRACTICE_QUESTIONS_524, PRACTICE_SECTIONS,
   replacePracticeSections, practiceQuestionForPage, practiceChoiceAt} from '../src/reader_service/static/practice-fixture.js';
 
 test('one cross-page Exercise keeps four choices on their source pages', () => {
@@ -24,10 +24,19 @@ test('saved demo questions remain locatable while generated OCR is partial', () 
   try {
     replacePracticeSections([{id: '126', title: '1.2.6', entryPage: 19, entryTop: .7,
       questions: [{number: 2, label: 2, page: 19, regions: []}]},
-    {id: 'other', title: 'other', entryPage: 26, entryTop: .3, questions: [{number: 999, label: 1}]}]);
+    {id: 'other', title: 'other', entryPage: 26, entryTop: .3, questions: [{number: 999, label: 1}]}], PRACTICE_BOOK_SHA256);
     assert.equal(PRACTICE_SECTIONS.find(section => section.id === '126').questions.length, 16);
     assert.ok(PRACTICE_SECTIONS.some(section => section.id === '524'));
     assert.ok(PRACTICE_SECTIONS.some(section => section.id === 'other'));
+  } finally {
+    replacePracticeSections(null);
+  }
+});
+
+test('another book receives only its generated sections', () => {
+  try {
+    replacePracticeSections([{id: 'new', title: 'new', entryPage: 2, questions: []}], 'f'.repeat(64));
+    assert.deepEqual(PRACTICE_SECTIONS.map(section => section.id), ['new']);
   } finally {
     replacePracticeSections(null);
   }

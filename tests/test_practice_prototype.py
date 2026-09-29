@@ -1,4 +1,4 @@
-"""Only the source-specific Practice demo's durable state and answer boundary."""
+"""Practice's durable state, source isolation, and answer boundary."""
 
 import pytest
 
@@ -49,9 +49,8 @@ def test_practice_state_survives_reopen_and_keeps_last_and_ever_correct(tmp_path
     assert reopened.list_favorites()[0]["source"]["attempt_count"] == 3
     assert reopened.set_favorite("supported", 1, False)["favorite"] is False
     assert reopened.list_favorites() == []
-    with pytest.raises(LookupError):
-        reopened.list("other")
-    with pytest.raises(LookupError):
+    assert reopened.list("other") == []
+    with pytest.raises(ValueError, match="尚未通过来源核对"):
         reopened.attempt("other", 1, "D")
     with pytest.raises(ValueError):
         reopened.attempt("supported", 17, "A")

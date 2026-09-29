@@ -51,19 +51,15 @@ export const PRACTICE_QUESTIONS_524 = [
   {number: 115, label: 15, page: 228, promptY: .559, answerPage: 230, answerY: .109, options: [[.173,.597,.523,.616],[.173,.616,.615,.636],[.173,.637,.679,.656],[.172,.655,.662,.676]]},
 ];
 
-export const PRACTICE_SECTIONS = [
+const VERIFIED_DEMO_SECTIONS = [
   {id: "126", title: "1.2.6 本节习题精选", entryPage: 19, entryTop: .6951, entryBottom: .7102, entryLeft: .364, questions: PRACTICE_QUESTIONS},
   {id: "524", title: "5.2.4 本节习题精选", entryPage: 227, entryTop: .2369, entryBottom: .2535, entryLeft: .366, questions: PRACTICE_QUESTIONS_524},
 ];
-const VERIFIED_DEMO_SECTIONS = [...PRACTICE_SECTIONS];
+export const PRACTICE_SECTIONS = [];
 
-export function replacePracticeSections(sections) {
-  if (!Array.isArray(sections) || !sections.length) {
-    PRACTICE_SECTIONS.splice(0, PRACTICE_SECTIONS.length, ...VERIFIED_DEMO_SECTIONS);
-    return;
-  }
-  const merged = sections.map(section => ({...section, questions: [...section.questions]}));
-  for (const verified of VERIFIED_DEMO_SECTIONS) {
+export function replacePracticeSections(sections, sourceSha256 = null) {
+  const merged = Array.isArray(sections) ? sections.map(section => ({...section, questions: [...section.questions]})) : [];
+  if (sourceSha256 === PRACTICE_BOOK_SHA256) for (const verified of VERIFIED_DEMO_SECTIONS) {
     const section = merged.find(item => item.id === verified.id);
     if (!section) { merged.push(verified); continue; }
     const available = new Set(section.questions.map(question => question.number));

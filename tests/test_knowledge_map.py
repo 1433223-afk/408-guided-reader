@@ -336,6 +336,34 @@ def semantic_inputs(fixture):
     return source, units, build_semantic_windows(units), bounds
 
 
+def test_windows_in_one_section_generate_concurrently(service, monkeypatch):
+    fixture = build_fixture(service)
+    knowledge = fixture["knowledge"]
+    knowledge.section_generation_workers = 2
+    barrier = threading.Barrier(2)
+    windows = [
+        {"window_id": f"w{index}", "primary_section_id": "same-section",
+         "primary_section_title": "正文", "outline_subsection_title": None}
+        for index in (1, 2)
+    ]
+    progress = []
+    def classify(window, *_args):
+        barrier.wait(timeout=2)
+        return {"window_id": window["window_id"]}, ("deepseek", "deepseek-flash")
+    monkeypatch.setattr(knowledge, "_classify_window", classify)
+    monkeypatch.setattr(
+        fixture["repository"], "update_progress",
+        lambda *_args, **kwargs: progress.append(kwargs),
+    )
+    partitions, identity = knowledge._classify_windows(
+        windows, {}, "revision", "chapter", "attempt",
+    )
+    assert set(partitions) == {"w1", "w2"}
+    assert identity == ("deepseek", "deepseek-flash")
+    assert len(progress) == 1
+    assert progress[0]["sections_completed"] == 1
+
+
 def test_front_matter_without_sections_cannot_enqueue_preparation(service):
     fixture = build_fixture(service)
     revision = fixture["revision"]["id"]
@@ -701,7 +729,7 @@ def test_group_first_partition_is_strict_and_complete():
             validate_semantic_output(json.dumps(value, ensure_ascii=False), window)
 
 
-@pytest.mark.parametrize("title", ["2.4 本章小结", "2.5 常见问题和易混淆知识点", "FAQ", "2.1.3 本节试题精选", "2.2.3 本节试题精选"])
+@pytest.mark.parametrize("title", ["2.4 本章小结", "归纳总结", "2.5 常见问题和易混淆知识点", "1.7 本章疑难点", "FAQ", "2.1.3 本节试题精选", "2.2.3 本节试题精选"])
 def test_summary_and_faq_windows_are_non_minting_review_material(title):
     window = semantic_window(section_title=title, unit_count=2)
     payload = semantic_window_payload({"chapter_outline_node_id": "chapter", "title": "第2章"}, window)
@@ -713,6 +741,15 @@ def test_summary_and_faq_windows_are_non_minting_review_material(title):
     assert validate_semantic_output(valid, window)["learning_targets"] == []
     with pytest.raises(ValueError, match="cannot mint KnowledgePoints"):
         validate_semantic_output(semantic_answer({"units": payload["units"]}), window)
+
+
+def test_thought_expansion_can_mint_a_genuinely_new_mechanism():
+    window = semantic_window(section_title="思维拓展", unit_count=2)
+    payload = semantic_window_payload({"chapter_outline_node_id": "chapter", "title": "第2章"}, window)
+    assert payload["window"]["kp_creation"] != "FORBIDDEN_REVIEW_MATERIAL"
+    assert validate_semantic_output(
+        semantic_answer({"units": payload["units"]}), window,
+    )["learning_targets"]
 
 
 def test_prompts_freeze_one_pass_absorption_and_terminal_review_contract():
@@ -757,7 +794,8 @@ def test_prompts_freeze_one_pass_absorption_and_terminal_review_contract():
     assert "duplicate mastery audit" in REVIEW_SYSTEM_MESSAGE
     assert "duplicate_mastery_groups" in REVIEW_SYSTEM_MESSAGE
     assert "独立掌握状态、独立诊断路径和独立补救路径" in REVIEW_SYSTEM_MESSAGE
-    assert "不能成为保留两个 KP 的理由" in REVIEW_SYSTEM_MESSAGE
+    assert "本身不足以证明独立" in REVIEW_SYSTEM_MESSAGE
+    assert "可独立诊断的算法、表结构、计算或应用方法" in REVIEW_SYSTEM_MESSAGE
     assert set(REVIEW_FINDING_TYPES) == {
         "DUPLICATE_MASTERY_BOUNDARY",
         "SYSTEMATIC_OVER_FRAGMENTATION",
@@ -2079,6 +2117,62 @@ def test_duplicate_requests_restart_recovery_and_attempt_interruption(service):
     state = fixture["repository"].snapshot(revision_id, chapter_id)
     assert state["prepare_stage"] == "QUEUED"
     assert state["knowledge_points"] == []
+
+
+def test_review_progress_reports_current_round_without_exposing_drafts(service):
+    fixture = build_fixture(service)
+    revision_id = fixture["revision"]["id"]
+    chapter_id = fixture["chapter"]["outline_node_id"]
+    fixture["knowledge"].request_prepare(revision_id, chapter_id)
+    repository = fixture["repository"]
+    attempt_id = repository.snapshot(revision_id, chapter_id)["attempt_id"]
+    repository.update_progress(
+        revision_id, chapter_id, attempt_id,
+        stage="REVIEWING", sections_completed=1, sections_total=1,
+    )
+    assert repository.snapshot(revision_id, chapter_id)["review_progress"]["round"] == 1
+
+    for round_number in (0, 1):
+        repository.record_pipeline_attempt(
+            revision_id, chapter_id, attempt_id,
+            section_id=None, packet_or_stage_id="chapter-structural-review",
+            semantic_round=round_number, structured_attempt=1,
+            provider_role="KP_STRUCTURAL_REVIEWER",
+            pipeline_stage="STRUCTURAL_REVIEW",
+            event={
+                "status": "STARTED", "provider": "zhipu", "model": "reviewer-model",
+                "interaction_id": f"review-{round_number}", "transport_attempt": 1,
+            },
+        )
+        progress = repository.snapshot(revision_id, chapter_id)["review_progress"]
+        assert progress["round"] == round_number + 1
+        assert progress["completed_rounds"] == round_number
+        assert progress["current_total_rounds"] == round_number + 1
+        assert progress["started_at"]
+    assert repository.snapshot(revision_id, chapter_id)["knowledge_points"] == []
+
+    # A resumed preparation keeps its attempt ID; old review rows must not
+    # make the newly started first round look like an already running retry.
+    repository.update_progress(
+        revision_id, chapter_id, attempt_id,
+        stage="GENERATING", sections_completed=0, sections_total=1,
+    )
+    repository.update_progress(
+        revision_id, chapter_id, attempt_id,
+        stage="REVIEWING", sections_completed=1, sections_total=1,
+    )
+    assert repository.snapshot(revision_id, chapter_id)["review_progress"]["round"] == 1
+    repository.record_pipeline_attempt(
+        revision_id, chapter_id, attempt_id,
+        section_id=None, packet_or_stage_id="chapter-structural-review",
+        semantic_round=1, structured_attempt=1,
+        provider_role="KP_STRUCTURAL_REVIEWER", pipeline_stage="STRUCTURAL_REVIEW",
+        event={
+            "status": "STARTED", "provider": "zhipu", "model": "reviewer-model",
+            "interaction_id": "review-1", "transport_attempt": 1,
+        },
+    )
+    assert repository.snapshot(revision_id, chapter_id)["review_progress"]["round"] == 2
 
 
 def test_running_chapter_job_converges_when_book_delete_wins(service):

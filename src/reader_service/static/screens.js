@@ -217,6 +217,18 @@ export function createBookCover(book, className = '', {
 }
 
 let structureDetailId = 0;
+function reviewProgressLine(p) {
+  if (p.prepare_stage !== 'REVIEWING') return null;
+  const progress = p.review_progress;
+  if (!progress) return '正在进行整章审查，可能需要较长时间';
+  const round = Math.max(1, Number(progress.round) || 1);
+  const started = Date.parse(progress.started_at);
+  const elapsed = Number.isFinite(started)
+    ? ` · 本轮已等待 ${Math.max(0, Math.floor((Date.now() - started) / 1000))} 秒` : '';
+  const retry = Number(progress.structured_attempt) > 1 || Number(progress.transport_attempt) > 1
+    ? ' · 正在重试本轮请求' : '';
+  return `第 ${round} 轮审查，已完成 ${round - 1} 轮${elapsed}${retry}；如需修正会增加复审轮次`;
+}
 export function createStructureLifecycle(p, run) {
   const ready = p.status === 'READY', updating = ready && p.regeneration_state === 'RUNNING';
   const failed = p.status === 'FAILED' || (ready && p.regeneration_state === 'FAILED');
@@ -248,6 +260,8 @@ export function createStructureLifecycle(p, run) {
       if(i<current) item.className='completed'; list.append(item);
     }); progress.append(list);
     if(Number.isInteger(p.sections_total) && p.sections_total>0 && Number.isInteger(p.sections_completed)) progress.append(node('p', `${p.sections_completed} / ${p.sections_total} 小节`, 'muted'));
+    const reviewLine = reviewProgressLine(p);
+    if(reviewLine) progress.append(node('p', reviewLine, 'muted'));
     if(updating) progress.append(node('p', '仍可使用现有学习结构。', 'muted'));
     root.append(progress);
   }
@@ -280,7 +294,7 @@ export function createStructureLifecycle(p, run) {
 
 export function createScreens({api, home, memory, read, remove, revision, announce, isAuxiliary}) {
   const overview = node('section', '', 'book-overview'); overview.id = 'book-overview'; overview.hidden = true;
-  let selectedBook = null, selectedChapter = null, epoch = 0, timer, nodes = [], learning = null, currentSection = null, reading = [];
+  let selectedBook = null, selectedChapter = null, epoch = 0, timer, nodes = [], learning = null, currentSection = null, reading = [], contextKey = null, visiblePayload = null;
   const chapters = new Map();
   const importAction = () => action('＋ 导入教材', () => document.getElementById('import-input').click(), 'primary-action');
   overview.append(header('home', home, memory, importAction()));
@@ -302,8 +316,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
     position.textContent = p.updated_at ? `上次读到 PDF ${p.pdf_page_index + 1} / ${book.active_revision.page_count}` : '尚未开始阅读';
     rail.replaceChildren(node('p', '正在读取章节…')); map.replaceChildren();
     const stamp = epoch;
-    learning = null;
-    api(`/api/revisions/${book.active_revision.id}/learning`).then(value => { if(stamp === epoch) learning = value; }).catch(() => {});
+    learning = null; contextKey = visiblePayload = null;
     try {
       let value = await api(`/api/revisions/${book.active_revision.id}/outline?stored=1`);
       if (!value.evidence_source) value = await api(`/api/revisions/${book.active_revision.id}/outline`);
@@ -351,13 +364,33 @@ export function createScreens({api, home, memory, read, remove, revision, announ
     if(!refresh) map.replaceChildren(node('h2', chapter.title), node('p', '正在读取本章学习结构…', 'muted'));
     try {
       const payload = await api(`/api/revisions/${selectedBook.active_revision.id}/chapters/${chapterId}/knowledge-map`);
-      const states = await api(`/api/revisions/${selectedBook.active_revision.id}/learning`).catch(() => null);
-      reading = (await api(`/api/revisions/${selectedBook.active_revision.id}/section-reading`).catch(() => ({sections:[]}))).sections;
-      if(stamp !== epoch || overview.hidden) return; learning = states;
+      if(stamp !== epoch || overview.hidden) return;
+      visiblePayload = payload;
       renderMap(payload, chapter);
       if(expanded) map.querySelectorAll('.overview-section').forEach(n => { if(expanded.has(n.dataset.sectionId)) n.open = expanded.get(n.dataset.sectionId); });
       if(payload.status === 'PREPARING' || payload.regeneration_state === 'RUNNING') timer = setTimeout(() => loadMap(true), 1400);
-    } catch(error) { if(stamp === epoch) localError(map, error, loadMap); }
+      const nextContextKey = `${chapterId}:${payload.structure_version}`;
+      if(contextKey !== nextContextKey) {
+        contextKey = nextContextKey;
+        const ownerId = selectedBook.active_revision.id;
+        Promise.all([
+          api(`/api/revisions/${ownerId}/learning`).catch(() => null),
+          api(`/api/revisions/${ownerId}/section-reading`).catch(() => ({sections:[]})),
+        ]).then(([states, sections]) => {
+          if(overview.hidden || selectedBook.active_revision.id !== ownerId
+              || selectedChapter !== chapterId || contextKey !== nextContextKey) return;
+          learning = states; reading = sections.sections;
+          const openSections = new Map([...map.querySelectorAll('.overview-section')].map(n => [n.dataset.sectionId,n.open]));
+          renderMap(visiblePayload, chapter);
+          map.querySelectorAll('.overview-section').forEach(n => { if(openSections.has(n.dataset.sectionId)) n.open = openSections.get(n.dataset.sectionId); });
+        });
+      }
+    } catch(error) {
+      if(stamp === epoch) {
+        localError(map, error, loadMap);
+        timer = setTimeout(() => loadMap(true), 3000);
+      }
+    }
   }
   function renderMap(p, chapter) {
     map.replaceChildren(); const h = node('div', '', 'chapter-heading'); h.append(node('h2', chapter.title));
@@ -541,7 +574,7 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
       snapshot = value; error = null; render();
       if (newlyReady) published();
       timer = setTimeout(load, value.status === 'PREPARING' || value.regeneration_state === 'RUNNING' ? 700 : 5000);
-    } catch(e) { if (stamp === epoch) {error = '知识点状态读取失败，请重试（不会生成内容）'; render();} }
+    } catch(e) { if (stamp === epoch) {error = '知识点状态读取失败，正在自动重试'; render(); timer = setTimeout(load, 3000);} }
     finally { if (stamp === epoch) loading = false; }
   }
   entry.onclick = async () => {

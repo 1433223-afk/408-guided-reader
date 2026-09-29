@@ -18,7 +18,8 @@ MAX_SEMANTIC_WINDOW_CHARACTERS = 48_000
 # without saturation. Exceeding this unit count falls back to real Outline
 # subsection windows; it is never a KP-count quota.
 MAX_WHOLE_SECTION_UNITS = (16_384 - 1024) // 64
-MAX_REVIEW_EXCERPT_CHARACTERS = 200
+MAX_REVIEW_EXCERPT_CHARACTERS = 160
+MAX_REVIEW_BRIEF_EXCERPT_CHARACTERS = 32
 MAX_PAGE_TOP_FURNITURE_Y = 0.10
 MIN_PAGE_BOTTOM_CONTINUATION_Y = 0.84
 MAX_PAGE_TOP_CONTINUATION_Y = 0.20
@@ -33,8 +34,10 @@ _NON_MINTING_SECTION_MARKERS = (
     "本章小结",
     "本节小结",
     "章节小结",
+    "归纳总结",
     "常见问题",
     "易混淆",
+    "疑难点",
     "faq",
     "试题精选",
 )
@@ -551,6 +554,16 @@ def build_compact_review_ledger(
         (candidate["window_id"], tuple(candidate["unit_ids"])): candidate["candidate_id"]
         for candidate in candidates
     }
+    unit_text = {unit["unit_id"]: unit["text"] for unit in units}
+    candidate_units = {
+        unit_id for candidate in candidates for unit_id in candidate["unit_ids"]
+    }
+    detailed_units = set()
+    for candidate in candidates:
+        ids = candidate["unit_ids"]
+        # Keep the start, the most substantial source unit, and the end of
+        # each candidate. Other source units remain visible as short cues.
+        detailed_units.update((ids[0], max(ids, key=lambda unit_id: len(unit_text[unit_id])), ids[-1]))
     sections = []
     section_ids = []
     for unit in units:
@@ -567,8 +580,11 @@ def build_compact_review_ledger(
                 "units": [
                     {
                         "unit_id": unit["unit_id"],
-                        "excerpt": unit["text"][:MAX_REVIEW_EXCERPT_CHARACTERS],
-                        "fingerprint": unit["fingerprint"][:8],
+                        "excerpt": unit["text"][:(
+                            MAX_REVIEW_EXCERPT_CHARACTERS
+                            if unit["unit_id"] in detailed_units or unit["unit_id"] not in candidate_units
+                            else MAX_REVIEW_BRIEF_EXCERPT_CHARACTERS
+                        )],
                     }
                     for unit in section_units
                 ],

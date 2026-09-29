@@ -11,7 +11,7 @@ import { createMemoryUI } from "/memory-ui.js";
 import { createGuideUI } from "/guide-ui.js";
 import { createInlineUI } from "/inline-ui.js";
 import { createAssistantNavigator } from "/assistant-navigator.js";
-import { PRACTICE_BOOK_SHA256, PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
+import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -136,7 +136,7 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
 }, returnToPractice: async (item, review = false) => {
   const books = (await api('/api/books')).books;
   const book = books.find(b => b.id === item.book_id && b.active_revision?.id === item.book_source_revision_id);
-  if (!book || book.active_revision.blob_sha256 !== PRACTICE_BOOK_SHA256) throw new Error('原教材当前不可用。');
+  if (!book) throw new Error('原教材当前不可用。');
   if (state.book?.id !== book.id) { if (state.book) closeReader(); await openBook(book); }
   if (!state.pdf || state.revision?.id !== item.book_source_revision_id) throw new Error('请重新打开原教材。');
   elements['library-home'].hidden = true;
@@ -323,7 +323,7 @@ async function openBook(book) {
   applyDirectoryMode(null);
   state.book = book;
   state.revision = book.active_revision;
-  if (state.revision.blob_sha256 === PRACTICE_BOOK_SHA256) loadPracticeRecords();
+  loadPracticeRecords();
   state.readerSessionId = crypto.randomUUID();
   state.assistantState = emptyAssistantState();
   state.navigationAnchorId = null;
@@ -1055,7 +1055,7 @@ async function startPreparation(schedule = true) {
     if (preparationFinished(payload.pages, payload.active_jobs)) {
       stream.close();
       if (state.eventSource === stream) state.eventSource = null;
-      if (state.revision?.blob_sha256 === PRACTICE_BOOK_SHA256 && payload.pages.every(p => p.status === "READY")) loadPracticeRecords();
+      if (payload.pages.every(p => p.status === "READY")) loadPracticeRecords();
     }
   });
   stream.onerror = () => {
@@ -1253,7 +1253,7 @@ function resetPractice() {
     state.zoom = state.practice.restoreZoom;
     elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
   }
-  state.practice = { active: false, sectionId: "126", index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
+  state.practice = { active: false, sectionId: null, index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
     hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, pendingCatalog: null };
@@ -1283,7 +1283,7 @@ async function loadPracticeRecords() {
     ]);
     if (state.revision?.id !== revisionId || state.practice.catalogLoadEpoch !== loadEpoch) return;
     if (state.practice.active) state.practice.pendingCatalog = catalog.sections;
-    else replacePracticeSections(catalog.sections);
+    else replacePracticeSections(catalog.sections, state.revision.blob_sha256);
     state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
     updatePracticeRail();
     renderPracticePages();
@@ -1315,6 +1315,7 @@ function renderPracticeNavigation() {
 }
 
 function updatePracticeRail() {
+  if (!state.practice.active || !practiceSection()) return;
   const question = practiceCurrentQuestion();
   const practice = state.practice;
   const { selected, result, onAnswerPage } = practice;
@@ -1333,7 +1334,7 @@ function updatePracticeRail() {
     ? `作答 ${record.attempt_count} 次${record.ever_correct ? " · 做对过" : ""}${record.attempt_count > 1 ? " · 多次练习" : ""}` : "";
   const done = practiceQuestions().filter(question => practiceRecord(question.number).attempt_count > 0).length;
   elements["practice-progress"].textContent = `已做 ${done} / ${practiceQuestions().length}`;
-  document.getElementById("practice-page-note").hidden = !question.regions || onAnswerPage || !!result;
+  document.getElementById("practice-page-note").hidden = !question.regions || question.regions.length < 2 || onAnswerPage || !!result;
   const favorite = elements["practice-favorite"];
   favorite.textContent = record.favorite ? "★" : "☆";
   favorite.setAttribute("aria-pressed", String(record.favorite));
@@ -1380,7 +1381,7 @@ function renderPracticeOverlay(index) {
   const wrapper = elements.pages.children[index];
   if (!wrapper) return;
   wrapper.querySelectorAll(".practice-choice-area,.practice-question-mark,.practice-current-guide,.practice-entry").forEach(node => node.remove());
-  if (state.revision?.blob_sha256 !== PRACTICE_BOOK_SHA256 || !wrapper.querySelector("canvas")) return;
+  if (!state.revision || !wrapper.querySelector("canvas")) return;
   for (const section of PRACTICE_SECTIONS.filter(section => section.entryPage === index)) {
     const entry = document.createElement("button");
     entry.type = "button";
@@ -1503,8 +1504,8 @@ async function selectPracticeReviewTarget(target) {
   }
 }
 
-function enterPractice(sectionId = "126") {
-  if (state.revision?.blob_sha256 !== PRACTICE_BOOK_SHA256) return;
+function enterPractice(sectionId) {
+  if (!state.revision) return;
   if (state.practice.active && state.practice.sectionId === sectionId) return;
   if (state.practice.active) leavePractice();
   if (!PRACTICE_SECTIONS.some(section => section.id === sectionId)) return;
@@ -1540,7 +1541,7 @@ function leavePractice() {
   state.practice.active = false;
   state.practice.restoreZoom = null;
   if (state.practice.pendingCatalog) {
-    replacePracticeSections(state.practice.pendingCatalog);
+    replacePracticeSections(state.practice.pendingCatalog, state.revision.blob_sha256);
     state.practice.pendingCatalog = null;
   }
   if (restoreZoom !== null && state.zoom === 1) {
@@ -1905,6 +1906,19 @@ function renderKnowledgeMap(payload) {
     VALIDATING: "正在校验整章学习地图",
     PUBLISHING: "正在整体发布学习地图",
   };
+  const reviewProgress = () => {
+    const progress = payload.review_progress;
+    if (!progress) return "正在进行整章结构审查，所需时间可能较长";
+    const round = Math.max(1, Number(progress.round) || 1);
+    const startedAt = Date.parse(progress.started_at);
+    const elapsed = Number.isFinite(startedAt)
+      ? `；本轮已等待 ${Math.max(0, Math.floor((Date.now() - startedAt) / 1000))} 秒`
+      : "";
+    const retry = Number(progress.structured_attempt) > 1 || Number(progress.transport_attempt) > 1
+      ? "；正在重试本轮请求" : "";
+    const next = round === 1 ? "；如需修正会增加一轮复审" : "";
+    return `正在第 ${round} 轮整章审查（已完成 ${round - 1}/${round} 轮）${elapsed}${retry}${next}。整章审查可能需要较长时间`;
+  };
   if (payload.status === "NOT_PREPARED") {
     elements["knowledge-status"].textContent = "本章学习地图尚未准备；PDF 阅读和现有工具可继续使用。";
     elements["knowledge-empty"].textContent = "尚未准备这个章节的学习地图。";
@@ -1912,10 +1926,13 @@ function renderKnowledgeMap(payload) {
     return;
   }
   if (payload.status === "PREPARING") {
-    const stage = stages[payload.prepare_stage] || "正在准备本章学习地图";
     const total = Number(payload.sections_total) || 0;
     const completed = Math.min(Number(payload.sections_completed) || 0, total);
-    const progress = total > 0 ? `；已完成 ${completed}/${total} 个小节` : "";
+    const stage = payload.prepare_stage === "REVIEWING"
+      ? reviewProgress()
+      : (stages[payload.prepare_stage] || "正在准备本章学习地图");
+    const progress = total > 0 && payload.prepare_stage !== "REVIEWING"
+      ? `；已完成 ${completed}/${total} 个小节` : "";
     elements["knowledge-status"].textContent = `${stage}${progress}；地图会在整章通过后一次出现。`;
     elements["knowledge-empty"].textContent = "准备期间不会显示部分草稿。";
     return;
@@ -1932,8 +1949,12 @@ function renderKnowledgeMap(payload) {
   if (replacementRunning) {
     const total = Number(payload.sections_total) || 0;
     const completed = Math.min(Number(payload.sections_completed) || 0, total);
-    const progress = total > 0 ? `，已完成 ${completed}/${total} 个小节` : "";
-    replacementStatus = `；${stages[payload.prepare_stage] || "正在重新生成"}${progress}，当前地图继续可用`;
+    const progress = total > 0 && payload.prepare_stage !== "REVIEWING"
+      ? `，已完成 ${completed}/${total} 个小节` : "";
+    const stage = payload.prepare_stage === "REVIEWING"
+      ? reviewProgress()
+      : (stages[payload.prepare_stage] || "正在重新生成");
+    replacementStatus = `；${stage}${progress}，当前地图继续可用`;
     elements["knowledge-prepare"].textContent = "正在重新生成知识点";
   } else if (payload.regeneration_state === "FAILED") {
     replacementStatus = `；上次重新生成失败（${payload.regeneration_failure_stage || "准备"} / ${payload.regeneration_failure_code || "失败"}），旧地图保持不变`;

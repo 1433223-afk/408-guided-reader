@@ -1,4 +1,4 @@
-"""Transient, progressive Solve-mode hints for the source-specific Practice demo."""
+"""Transient, progressive Solve-mode hints for Practice questions."""
 
 from __future__ import annotations
 

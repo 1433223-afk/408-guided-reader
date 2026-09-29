@@ -39,7 +39,7 @@ MAX_SAFE_REVIEW_DETAIL_CHARACTERS = 240
 MAX_SOURCE_CHARACTERS = 180_000
 DEFAULT_GENERATOR_MAX_TOKENS = 4_096
 DEFAULT_REVIEWER_MAX_TOKENS = 8_192
-DEFAULT_SECTION_GENERATION_WORKERS = 2
+DEFAULT_SECTION_GENERATION_WORKERS = 4
 
 REVIEW_RUBRIC = (
     "independently_trackable_granularity",
@@ -70,13 +70,14 @@ GENERATOR_SYSTEM_MESSAGE = """你是教材 Chapter Knowledge Map 的内部语义
 必须按主题优先判断，而不是按 unit 或标题逐条判断：先确定本窗口的教材内容真正包含哪几个值得独立记录理解状态的学习主题，再把这些 units 分配给各主题。教材的编号、小标题、黑体词条和枚举成员只是证据的组织形式，本身不构成 KP 划分；绝不能因为某条证据自带编号或标题就单独铸造一个 KP。
 KP 是最小的、值得独立教学、独立检查、独立诊断、独立补救并长期记录掌握状态的学习单元。必须预设吸收：只有当前教材证据能正面证明某个内容需要独立 teaching + assessment + diagnosis + remediation，才建立一个 learning target。对相邻条目必须先问：未来是否确实需要分别教学，并在学习者失败时采用不同的诊断或补救路径？只要不需要分别教学，或补救路径没有实质区别，就必须合为同一个 target。若不确定是否值得维护两个独立 mastery 状态，也必须合并。能单独出一道事实题、拥有不同标题、术语、段落、方向、变体或编号，都不足以形成 mastery boundary。
 标题本身、例子本身不成为 KP；definition/property/ordinary step/example 默认属于同一 learning target。只有既能独立教学、又具有不同错误模式或补救路径，且当前 source evidence 对两者都有充分展开时，才可以拆成不同 targets。
-同一学习对象的多种分类方式，默认合为一个分类框架；分类维度或分类项本身不单独成为 KP。同一学习目标下的一组成套方法、互补步骤或替代实现，默认整体理解并合为一个 target；只有其中某项有充分独立展开，并确实需要不同教学、检查和补救时才拆分。
+同一学习对象的多种分类方式，默认合为一个分类框架；分类维度或分类项本身不单独成为 KP。同一学习目标下的一组成套方法、互补步骤或替代实现，默认整体理解并合为一个 target；只有其中某项有充分独立展开，并确实需要不同教学、检查和补救时才拆分。同一任务的几种简短替代方法若各只占少量证据，应优先组成一个可比较和选择的 target；不得再额外铸造“方法概览”或“方法比较总结”target。
 框架、机制或分类家族的成员默认吸收进共同的框架型 target。典型正例：多种寻址方式应优先形成少数框架型 KP（如把隐含/立即/直接/间接/寄存器类简单寻址合为一个家族 target、把相对/基址/变址合为偏移寻址家族 target），而不是每种寻址方式一个 KP，更不是“家族统称一个 KP + 每个成员各一个 KP + 汇总表一个 KP”；多项性能指标应优先按性能评价框架或公式体系组织成一个 KP（如速度类指标与 CPU 执行时间模型），而不是每个指标一个 KP；运算器、控制器、存储器、输入/输出设备等部件应优先作为整机结构主题的一部分理解，而不是每个部件一个 KP。
 同一 Section 内，同一个 mastery theme 在不同位置多次出现（先简述后展开、前文机制在后文复述、预告或回顾）时：不得因为出现位置不同而铸造多个 KP。只在内容最完整、最主要、最适合作为独立教学主题的位置铸造一次；其它位置的预告、简述、复述、重复解释一律进入 non_kp_units，作为该主题的重复证据被吸收。不得为了“保留所有出现位置”而创建重复 mastery state。典型情形：本节开头“计算机系统的组成与软/硬件逻辑等价”的简述与后文再次展开的“软/硬件逻辑功能等价性”，若维护的是同一个理解状态，只允许一个 KP，较弱或重复的一处进入 non_kp_units。
 当一个完整机制已作为框架 target 存在时，例题、演算示例、复习性总结和派生指标默认属于该框架内部，纳入其连续 source span 或进入 non_kp_units，除非确有独立的教学、诊断与补救路径。典型情形：主频、CPI、IPS、CPU 执行时间、MIPS、FLOPS 等性能指标应优先按共同的性能评价框架 / CPU 执行时间模型组织，不要因为每个名称可以单独出一道题就逐项铸造独立 KP；同一公式的 worked example（如 CPU 执行时间计算例题）默认属于公式框架本身。
+“思维拓展”等栏目不自动铸造或禁止 KP：若只是给已有方法换题目情境，进入 non_kp_units；若原文确实讲出此前没有的算法步骤及其成立依据，并能独立诊断错误，则可以铸造 KP。必须根据原文内容判断，不能仅根据栏目标题判断。
 软尺度参考（不是 quota，禁止为凑数量机械合并或拆分）：篇幅短的窗口通常 1–3 个 learning targets，普通窗口通常 2–5 个，机制复杂、篇幅长的窗口通常 4–8 个。明显超出参考范围时，必须能为每个 target 说出独立的诊断与补救理由。
 例题、章节概览、后文预告和对前文的比较总结，默认进入 non_kp_units 或吸收到其所说明的 learning target，不单独铸造 KP；它们包含的新且充分展开的独立机制除外。仅表达“应学习/掌握/把握规律/举一反三/下文将介绍”等要求、建议或过渡的 unit 必须进入 non_kp_units；不得把它命名为“应用概述”“学习要求”“学习建议”等泛化 target。
-window.kp_creation 为 FORBIDDEN_REVIEW_MATERIAL 时，该窗口属于本章/本节小结、常见问题、易混淆、FAQ 或试题精选：learning_targets 必须为空，全部 unit_id 必须进入 non_kp_units；这些内容只补充已有 KP，绝不在这里铸造新 KP。不得把课后选择题及其重复考查的定义、性质包装成“试题辨析”等独立 KP。
+window.kp_creation 为 FORBIDDEN_REVIEW_MATERIAL 时，该窗口属于本章/本节小结、常见问题、易混淆、疑难点、FAQ 或试题精选：learning_targets 必须为空，全部 unit_id 必须进入 non_kp_units；这些内容只补充已有 KP，绝不在这里铸造新 KP。不得把课后选择题及其重复考查的定义、性质包装成“试题辨析”等独立 KP。
 non_kp_units 只表示这些 evidence 不在本窗口铸造成独立 KP，不表示内容无价值。facet/property/step/example 可以被包含在某个 target 的连续 source evidence 中。
 不得追求特定 KP 数量，也不得创建掩盖不同机制、错误模式或补救路径的宽泛伞形 KP。
 unit_id、Section、Outline 小节和来源范围均由服务端确定；不得创建或改写，不得输出 Section/page/ref/坐标/来源字段，不得跨 window 或跨 Section 组合，也不得生成 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
@@ -86,15 +87,15 @@ learning_targets 按教材顺序排列，每个 target 的 unit_ids 必须连续
 REVIEW_SYSTEM_MESSAGE = """你是独立的 Chapter Knowledge Map 结构审查者，只判断给定的完整 Chapter map 是否可以发布。
 KP 是值得独立记录理解状态、并具有独立诊断与补救价值的学习主题。能单独出一道事实题、拥有独立标题或术语、或只是同一框架/机制/分类家族的成员，都不足以构成独立 KP。
 输入是服务端生成的 compact ledger：完整 unit/partition accounting、候选标题与含义、截断证据提示、overlap warnings 和 fragmentation warnings，不含原始几何。必须先扫描全部 Sections，再整体检查：可独立追踪的颗粒度、语义重复/近重复、instructional specificity、拆分/合并质量、主要学习内容覆盖、Section/来源忠实度和 map-level balance。
-在给出 findings 和 verdict 之前，必须先对候选执行一次显式 duplicate mastery audit：逐组询问“如果学习者已经真正理解 Candidate A，Candidate B 是否仍值得维护一个独立掌握状态、独立诊断路径和独立补救路径？”若否，则两者属于同一个 mastery boundary，必须写入 duplicate_mastery_groups。以下情况不能成为保留两个 KP 的理由：source span 不同；一处是前文简述、一处是后文展开；标题用词不同；两处都可以单独出题；两处来自不同教材小标题。不要输出完整 N×N 配对矩阵，只输出实际判断为 duplicate 的分组；没有任何重复时必须显式返回空数组。
+在给出 findings 和 verdict 之前，必须先对候选执行一次显式 duplicate mastery audit：逐组询问“如果学习者已经真正理解 Candidate A，Candidate B 是否仍值得维护一个独立掌握状态、独立诊断路径和独立补救路径？”若否，则两者属于同一个 mastery boundary，必须写入 duplicate_mastery_groups。source span、标题或小标题不同，以及两处都可以出题，本身不足以证明独立。但前文讲概念、后文提供可独立诊断的算法、表结构、计算或应用方法时，应保留不同 KP；只有后文没有新增独立学习目标、仅复述同一机制时才判重复。截断证据不能证明两个候选相同的，应给 MINOR_NAMING_OVERLAP 警告，不得阻断发布。不要输出完整 N×N 配对矩阵，只输出实际判断为 duplicate 的分组；没有任何重复时必须显式返回空数组。
 必须专门检查三类会让整张图不可发布的缺陷。每个 KP 未来都会独立承载 mastery 状态、Master Topic 与学习记忆：(1) 同一 Section 内两个候选维护同一个理解状态（duplicate mastery boundary），例如一处简述与后文展开的同一主题被分别铸造；(2) 把同一 framework/mechanism/taxonomy 家族逐成员拆成无独立诊断与补救价值的碎片 KP（系统性过拆），同时出现“家族总称 KP + 每个成员 KP + 汇总表 KP”是明确的过拆信号；(3) 把例题、演算示例、复习性总结或框架内派生指标提升为独立 KP，而它没有独立的教学、诊断与补救价值（facet/example 被错误提升）。
 每个 finding 必须给出结构化 type，服务端按 type 固定执行 severity，你不再输出 severity 字段：DUPLICATE_MASTERY_BOUNDARY、SYSTEMATIC_OVER_FRAGMENTATION、FACET_OR_EXAMPLE_PROMOTED_TO_KP 固定为 BLOCKING（其中 FACET_OR_EXAMPLE_PROMOTED_TO_KP 仅当你判断该候选确实没有独立掌握与诊断价值时使用；若例题本身展开了新机制或确有独立补救路径，不得用该类型）；MINOR_NAMING_OVERLAP、MINOR_GRANULARITY_IMBALANCE 固定为 WARNING。命名相近但 mastery state 确实不同的候选属于 MINOR_NAMING_OVERLAP，不得按重复处理；轻微不均衡、可选命名方案归 MINOR_GRANULARITY_IMBALANCE。
+“思维拓展”或例题若明确给出此前未讲的新算法步骤及其成立依据，可以是独立学习目标；不得仅因为栏目名称或问题叙述形式，把它判成 FACET_OR_EXAMPLE_PROMOTED_TO_KP。反过来，换一个题目复用旧方法仍不是新 KP。判断要落在候选对应的原文证据上。
 overlap_warnings 和 fragmentation_warnings 只是审查信号，不是自动失败；来源空隙正常，不要求 no-gaps。你只能定位问题，不能改写候选，不能生成来源字段，也不能写入 Learning、Mastery、Progress、Master、Teaching 或 ExamEvidence。
 存在优化空间、可选的命名/合并方案、轻微不均衡、例示/回顾是否另列、或因截断证据无法高置信判断的问题必须使用 MINOR_* 类型；不得因为还能改进就阻断发布。
 每个 finding 必须定位到一个现有 section_id，并引用该 Section 中一个或多个给定 unit_id；只定位真正需要改变的最小 units。跨 Section 重复应为需要修复的一侧给出定位明确的 finding，不要把正确对照一并列为修复目标。
 只返回一个 JSON 对象，且只能含四个字段：{"verdict":"PASS 或 FAIL","summary":"不超过 1000 字的简体中文理由","duplicate_mastery_groups":[["重复组的 candidate_id","…"],…]（无重复时为 []）,"findings":[{"dimension":"review_rubric 中的一个值","type":"DUPLICATE_MASTERY_BOUNDARY 或 SYSTEMATIC_OVER_FRAGMENTATION 或 FACET_OR_EXAMPLE_PROMOTED_TO_KP 或 MINOR_NAMING_OVERLAP 或 MINOR_GRANULARITY_IMBALANCE","section_id":"现有 Section ID","unit_ids":["该 Section 的给定 unit_id"],"detail":"具体、可操作的简体中文问题说明"}]}。
 FAIL 必须至少有一个 BLOCKING 类型的 finding；PASS 不得含 BLOCKING 类型的 finding。不得返回 Markdown 代码围栏、修订后的 KP 或其他文字。"""
-
 
 class KnowledgePipelineError(RuntimeError):
     def __init__(
@@ -155,7 +156,7 @@ class KnowledgeService:
             reviewer_provider
             or os.environ.get(
                 "GUIDED_READER_KP_REVIEW_PROVIDER",
-                os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu"),
+                os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "deepseek"),
             )
         ).strip().lower()
         self.generator_max_tokens = (
@@ -253,6 +254,8 @@ class KnowledgeService:
                 revision_id, chapter_id, attempt_id,
                 stage="RESOLVING_SOURCE", sections_completed=0, sections_total=0,
             )
+            page_start, page_end = self.required_page_range(revision_id, chapter_id)
+            self.foundation.repair_empty_ocr_pages(revision_id, page_start, page_end)
             resolved = self.outline.resolve_chapter_physical(revision_id, chapter_id)
             chapter = resolved["chapter"]
             revision = self.library.revision(revision_id)
@@ -628,40 +631,32 @@ class KnowledgeService:
         for window in windows:
             section_windows.setdefault(window["primary_section_id"], []).append(window)
 
-        def classify_section(local_windows: list[dict]):
-            local_results = {}
-            local_identities = set()
-            for window in local_windows:
-                if is_non_minting_review_window(window):
-                    # Zero generator provider calls: the deterministic
-                    # non-cast rule already forces an empty learning-target
-                    # partition, so the server synthesizes it and runs it
-                    # through the identical validator and accounting.
-                    partition = self._synthesized_non_minting_partition(window)
-                    identity = None
-                else:
-                    partition, identity = self._classify_window(
-                        window, chapter, revision_id, chapter_id, attempt_id
-                    )
-                local_results[window["window_id"]] = partition
-                if identity is not None:
-                    local_identities.add(identity)
-            return local_results, local_identities
+        def classify_window(window: dict):
+            if is_non_minting_review_window(window):
+                # Zero provider calls for material forbidden to mint KPs.
+                return self._synthesized_non_minting_partition(window), None
+            return self._classify_window(
+                window, chapter, revision_id, chapter_id, attempt_id,
+            )
 
         first_failure: Exception | None = None
         completed_sections = 0
-        workers = min(self.section_generation_workers, len(section_windows))
+        remaining_by_section = {
+            section_id: len(local_windows)
+            for section_id, local_windows in section_windows.items()
+        }
+        workers = min(self.section_generation_workers, len(windows))
         executor = ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="kp-semantic-section"
+            max_workers=workers, thread_name_prefix="kp-semantic-window"
         )
         futures = {
-            executor.submit(classify_section, local_windows): section_id
-            for section_id, local_windows in section_windows.items()
+            executor.submit(classify_window, window): window
+            for window in windows
         }
         try:
             for future in as_completed(futures):
                 try:
-                    section_results, section_identities = future.result()
+                    partition, identity = future.result()
                 except CancelledError:
                     continue
                 except Exception as failure:
@@ -671,15 +666,20 @@ class KnowledgeService:
                             if sibling is not future:
                                 sibling.cancel()
                 else:
-                    results.update(section_results)
-                    identities.update(section_identities)
-                    completed_sections += 1
-                    self.repository.update_progress(
-                        revision_id, chapter_id, attempt_id,
-                        stage="GENERATING",
-                        sections_completed=completed_sections,
-                        sections_total=len(section_windows),
-                    )
+                    window = futures[future]
+                    results[window["window_id"]] = partition
+                    if identity is not None:
+                        identities.add(identity)
+                    section_id = window["primary_section_id"]
+                    remaining_by_section[section_id] -= 1
+                    if remaining_by_section[section_id] == 0:
+                        completed_sections += 1
+                        self.repository.update_progress(
+                            revision_id, chapter_id, attempt_id,
+                            stage="GENERATING",
+                            sections_completed=completed_sections,
+                            sections_total=len(section_windows),
+                        )
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
         if first_failure is not None:

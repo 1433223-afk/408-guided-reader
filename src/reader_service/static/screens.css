@@ -120,6 +120,9 @@
   #reader .toolbar { gap:10px;padding-inline:10px; }
   #reader .toolbar .book-heading,#reader .toolbar .reader-controls { max-width:calc(50% - 60px); }
   #reader .toolbar .reader-controls { gap:0; }
+  #reader .toolbar :is(#inline-open,#reader-kp-action) { width:32px;min-width:32px;padding:0;font-size:0;flex-shrink:0; }
+  #reader .toolbar #inline-open::before { content:'✦';font:16px var(--font-ui); }
+  #reader .toolbar #reader-kp-action::before { content:'KP';font:600 11px var(--font-ui); }
   .reader-more { position:relative;display:block;flex:none; }
   #reader .toolbar .reader-more>#reader-more-toggle {
     display:flex;align-items:center;justify-content:center;width:32px;height:32px;cursor:pointer;

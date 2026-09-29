@@ -11,9 +11,11 @@ test('Chapter lifecycle exposes actions, real stages and safe failure details',a
  await render({status:'NOT_PREPARED'});assert.equal(await page.locator('details').count(),0);
  await page.getByRole('button',{name:'生成学习结构'}).click();assert.equal(await page.evaluate(()=>window.calls),1);
  for(const [stage,label] of [['GENERATING','生成知识点'],['REVIEWING','独立审查']]){
- await render({status:'PREPARING',prepare_stage:stage,sections_completed:3,sections_total:7});
+ await render({status:'PREPARING',prepare_stage:stage,sections_completed:3,sections_total:7,
+   review_progress: stage === 'REVIEWING' ? {round:2,started_at:new Date(Date.now()-4000).toISOString(),structured_attempt:2} : null});
  assert.equal(await page.locator('[aria-current=step]').textContent(),label);
  assert.ok((await page.locator('main').innerText()).includes('3 / 7 小节'));assert.equal(await page.locator('button').count(),0);
+ if(stage === 'REVIEWING') assert.match(await page.locator('main').innerText(), /第 2 轮审查，已完成 1 轮.*正在重试本轮请求/);
  }
  await render({status:'FAILED',failure_code:'empty_response',generator_provider:'test-provider'});
  assert.equal(await page.locator('details').count(),0);
