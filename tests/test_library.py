@@ -88,6 +88,19 @@ def test_encrypted_input_has_clear_failure_and_commits_nothing(service):
     assert list(service.paths.blob_root().rglob("*.pdf")) == []
 
 
+def test_pdf_with_empty_user_password_can_be_imported(service):
+    from io import BytesIO
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)
+    writer.encrypt("", owner_password="owner-only")
+    output = BytesIO()
+    writer.write(output)
+    book = import_bytes(service, output.getvalue(), "owner-restricted.pdf")["book"]
+    assert book["active_revision"]["page_count"] == 1
+
+
 def test_position_rejects_pages_outside_revision(service):
     book = import_bytes(service, make_pdf(), "book.pdf")["book"]
     with pytest.raises(ValueError, match="outside"):

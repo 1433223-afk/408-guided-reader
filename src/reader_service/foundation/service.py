@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import unicodedata
+from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
@@ -26,6 +27,9 @@ class FoundationService:
         self.engine_factory = engine_factory
         self.render_dpi = render_dpi
         self._local = threading.local()
+        # PDFium has process-wide mutable state; OCR may run on two workers,
+        # but page opening, text probing, and rendering must be serialized.
+        self._pdfium_lock = threading.Lock()
 
     def ensure_revision(self, revision_id: str) -> dict:
         revision = self.library.revision(revision_id)
@@ -275,31 +279,78 @@ class FoundationService:
             self.repository.fail_page(revision_id, page_index, "PAGE_PREPARE_FAILED")
             return "FAILED"
 
+    def repair_empty_ocr_pages(
+        self, revision_id: str, page_start: int, page_end: int
+    ) -> list[int]:
+        """Revisit legacy READY pages with no text only when their scan has content."""
+        candidates = self.repository.empty_ready_ocr_pages(
+            revision_id, page_start, page_end
+        )
+        repaired = []
+        if not candidates:
+            return repaired
+        pdf_path = self.library.pdf_path(revision_id)
+        for page_index in candidates:
+            if not self._page_has_visible_content(pdf_path, page_index):
+                continue
+            if self.repository.reset_empty_ready_ocr_page(revision_id, page_index):
+                self.prepare_page(revision_id, page_index)
+                repaired.append(page_index)
+        return repaired
+
     def _extract(self, pdf_path: Path, page_index: int):
         try:
             import pypdfium2 as pdfium
 
-            document = pdfium.PdfDocument(pdf_path)
-            page = document[page_index]
-            width, height = page.get_size()
-            embedded = probe_embedded_text(page, width, height)
-            if embedded.trustworthy:
-                page.close()
-                document.close()
-                return "EMBEDDED", "embedded-positioned-text:v2", list(embedded.lines)
-            bitmap = page.render(scale=self.render_dpi / 72)
-            image = bitmap.to_numpy().copy()
-            bitmap.close()
-            page.close()
-            document.close()
+            with self._pdfium_lock:
+                with closing(pdfium.PdfDocument(pdf_path)) as document:
+                    with closing(document[page_index]) as page:
+                        width, height = page.get_size()
+                        embedded = probe_embedded_text(page, width, height)
+                        if embedded.trustworthy:
+                            return "EMBEDDED", "embedded-positioned-text:v2", list(embedded.lines)
+                        with closing(page.render(scale=self.render_dpi / 72)) as bitmap:
+                            image = bitmap.to_numpy().copy()
         except Exception as exc:
             raise PagePreparationError("PAGE_RENDER_FAILED", str(exc)) from exc
         try:
             engine = self._engine()
             lines = list(engine.prepare_page(image, (image.shape[1], image.shape[0])))
+            if not lines and self._image_has_visible_content(image):
+                # Empty OCR on a text-heavy scan is occasionally transient. A
+                # second bounded pass is cheaper than silently publishing a hole.
+                lines = list(engine.prepare_page(image, (image.shape[1], image.shape[0])))
+                if not lines:
+                    raise PagePreparationError(
+                        "OCR_EMPTY_ON_NONBLANK_PAGE", "OCR returned no text for a nonblank page"
+                    )
             return "OCR", engine.profile, lines
+        except PagePreparationError:
+            raise
         except Exception as exc:
             raise PagePreparationError("OCR_FAILED", str(exc)) from exc
+
+    @staticmethod
+    def _image_has_visible_content(image) -> bool:
+        sample = image[::6, ::6]
+        if sample.ndim == 3:
+            sample = sample[:, :, :3].min(axis=2)
+        return bool((sample < 220).mean() >= 0.003)
+
+    def _page_has_visible_content(self, pdf_path: Path, page_index: int) -> bool:
+        try:
+            import pypdfium2 as pdfium
+
+            with self._pdfium_lock:
+                with closing(pdfium.PdfDocument(pdf_path)) as document:
+                    with closing(document[page_index]) as page:
+                        with closing(page.render(scale=self.render_dpi / 72)) as bitmap:
+                            image = bitmap.to_numpy()
+                            return self._image_has_visible_content(image)
+        except Exception:
+            # If inspection fails, let the normal page preparation report its
+            # render/recognition failure instead of trusting a zero-line result.
+            return True
 
     def _engine(self) -> OcrEngine:
         engine = getattr(self._local, "engine", None)

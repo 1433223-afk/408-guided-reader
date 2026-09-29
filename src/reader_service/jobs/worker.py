@@ -37,6 +37,12 @@ class PreparationCoordinator:
         self._wake = threading.Event()
         self._dispatch_lock = threading.Lock()
         self._threads: list[threading.Thread] = []
+        self._map_wake = threading.Event()
+        self._map_stop = threading.Event()
+        self._map_lock = threading.Lock()
+        self._map_pending: set[str] = set()
+        self._map_milestones: dict[str, int] = {}
+        self._map_thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self._threads:
@@ -45,6 +51,11 @@ class PreparationCoordinator:
         self.jobs.recover()
         if self.knowledge is not None:
             self.knowledge.repository.recover_preparing_jobs()
+        if self.outline is not None:
+            self._map_thread = threading.Thread(
+                target=self._run_map_refresh, name="outline-refresh", daemon=True,
+            )
+            self._map_thread.start()
         for index in range(self.worker_count):
             thread = threading.Thread(
                 target=self._run,
@@ -60,6 +71,11 @@ class PreparationCoordinator:
         for thread in self._threads:
             thread.join(timeout=timeout)
         self._threads.clear()
+        self._map_stop.set()
+        self._map_wake.set()
+        if self._map_thread is not None:
+            self._map_thread.join(timeout=timeout)
+            self._map_thread = None
 
     def schedule_revision(
         self, revision_id: str, visible_pages: set[int] | None = None, current_page: int = 0
@@ -70,11 +86,14 @@ class PreparationCoordinator:
         # a second persistence authority.
         with self._dispatch_lock:
             self.jobs.cancel_other_revisions(revision_id)
-            if any(p["status"] != "READY" for p in self.foundation.statuses(revision_id)):
+            if (not self.jobs.has_page_jobs(
+                revision_id, revision["page_count"], revision["foundation_version"]
+            ) and any(p["status"] != "READY" for p in self.foundation.statuses(revision_id))):
                 self.jobs.enqueue_pages(
                     revision_id, revision["page_count"], revision["foundation_version"]
                 )
                 self.jobs.complete_already_ready_pages(revision_id, 0, revision["page_count"])
+            self.jobs.resume_cancelled_pages(revision_id, revision["foundation_version"])
             self.jobs.prioritize(revision_id, visible_pages or {current_page}, current_page)
         # Viewport scheduling must never wait for Outline evidence scanning.
         self._wake.set()
@@ -159,15 +178,45 @@ class PreparationCoordinator:
                     break
                 was_ready = self.foundation.repository.page_status(job["book_source_revision_id"], page_index) == "READY"
                 status = self.foundation.prepare_page(job["book_source_revision_id"], page_index)
-                if not was_ready and status == "READY" and (
-                    page_index < 20 or page_index % 16 == 15
-                ):
-                    self._refresh_map(job["book_source_revision_id"])
+                if not was_ready and status == "READY":
+                    self._queue_map_refresh(job["book_source_revision_id"], page_index)
             self.jobs.complete(job["id"], cancelled=cancelled)
 
-    def _refresh_map(self, revision_id: str) -> None:
+    def _queue_map_refresh(self, revision_id: str, page_index: int) -> None:
         if self.outline is None:
             return
+        if page_index < 20:
+            ready, total = self.foundation.repository.prefix_progress(revision_id, 20)
+            milestone = total if ready == total else max(1, ready // 4 * 4)
+            with self._map_lock:
+                if milestone <= self._map_milestones.get(revision_id, 0):
+                    return
+                self._map_milestones[revision_id] = milestone
+                self._map_pending.add(revision_id)
+        elif page_index % 16 == 15:
+            with self._map_lock:
+                self._map_pending.add(revision_id)
+        else:
+            return
+        self._map_wake.set()
+
+    def _run_map_refresh(self) -> None:
+        while True:
+            self._map_wake.wait()
+            self._map_wake.clear()
+            with self._map_lock:
+                pending = self._map_pending
+                self._map_pending = set()
+            if not pending and self._map_stop.is_set():
+                return
+            for revision_id in pending:
+                self._refresh_map(revision_id)
+            if self._map_stop.is_set():
+                with self._map_lock:
+                    if not self._map_pending:
+                        return
+
+    def _refresh_map(self, revision_id: str) -> None:
         try:
             self.outline.bootstrap(revision_id)
         except Exception as exc:

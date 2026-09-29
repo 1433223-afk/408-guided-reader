@@ -19,6 +19,21 @@ class JobRepository:
     ) -> None:
         self.enqueue_page_range(revision_id, 0, page_count, foundation_version)
 
+    def has_page_jobs(
+        self, revision_id: str, page_count: int, foundation_version: int
+    ) -> bool:
+        with self.database.connect() as connection:
+            count = connection.execute(
+                """
+                SELECT COUNT(*) FROM jobs
+                WHERE book_source_revision_id = ? AND job_type = 'PAGE_PREPARE'
+                  AND foundation_version = ? AND page_start = page_end
+                  AND page_start >= 0 AND page_start < ?
+                """,
+                (revision_id, foundation_version, page_count),
+            ).fetchone()[0]
+        return count == page_count
+
     def enqueue_page_range(
         self,
         revision_id: str,
@@ -56,26 +71,25 @@ class JobRepository:
         self, revision_id: str, visible_pages: set[int], current_page: int
     ) -> None:
         timestamp = now()
+        visible = sorted(visible_pages)
+        visible_match = (
+            f"page_start IN ({','.join('?' for _ in visible)})"
+            if visible else "0"
+        )
         with self.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT id, page_start FROM jobs WHERE book_source_revision_id = ? "
-                "AND job_type = 'PAGE_PREPARE' AND status = 'QUEUED'",
-                (revision_id,),
-            ).fetchall()
-            # Close the read cursor before upgrading to a write. A worker may
-            # commit meanwhile; a live WAL snapshot cannot then become a writer.
-            for row in rows:
-                index = row["page_start"]
-                if index in visible_pages:
-                    priority = 3000 - abs(index - current_page)
-                elif abs(index - current_page) <= 4:
-                    priority = 2000 - abs(index - current_page)
-                else:
-                    priority = max(0, 1000 - abs(index - current_page))
-                connection.execute(
-                    "UPDATE jobs SET priority = ?, updated_at = ? WHERE id = ?",
-                    (priority, timestamp, row["id"]),
-                )
+            connection.execute(
+                f"""
+                UPDATE jobs SET priority = CASE
+                    WHEN {visible_match} THEN 3000 - ABS(page_start - ?)
+                    WHEN ABS(page_start - ?) <= 4 THEN 2000 - ABS(page_start - ?)
+                    ELSE MAX(0, 1000 - ABS(page_start - ?))
+                END, updated_at = ?
+                WHERE book_source_revision_id = ?
+                  AND job_type = 'PAGE_PREPARE' AND status = 'QUEUED'
+                """,
+                (*visible, current_page, current_page, current_page, current_page,
+                 timestamp, revision_id),
+            )
 
     def recover(self) -> int:
         timestamp = now()
@@ -224,10 +238,44 @@ class JobRepository:
                 WHERE job_type = 'PAGE_PREPARE' AND book_source_revision_id = ?
                   AND page_start = ? AND page_end = ? AND foundation_version = ?
                   AND status IN ('SUCCEEDED', 'CANCELLED')
+                  AND EXISTS (
+                      SELECT 1 FROM ocr_pages AS page
+                      WHERE page.book_source_revision_id = jobs.book_source_revision_id
+                        AND page.pdf_page_index = jobs.page_start
+                        AND page.status = 'FAILED'
+                  )
                 """,
                 (now(), revision_id, page_index, page_index, foundation_version),
             )
-            return cursor.rowcount == 1
+            if cursor.rowcount != 1:
+                return False
+            connection.execute(
+                """
+                UPDATE ocr_pages SET status = 'NOT_PREPARED', failure_code = NULL
+                WHERE book_source_revision_id = ? AND pdf_page_index = ?
+                """,
+                (revision_id, page_index),
+            )
+            return True
+
+    def resume_cancelled_pages(self, revision_id: str, foundation_version: int) -> int:
+        """Resume unfinished pages when an active revision is opened again."""
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE jobs SET status = 'QUEUED', cancel_requested = 0, updated_at = ?
+                WHERE book_source_revision_id = ? AND job_type = 'PAGE_PREPARE'
+                  AND foundation_version = ? AND status = 'CANCELLED'
+                  AND EXISTS (
+                      SELECT 1 FROM ocr_pages AS page
+                      WHERE page.book_source_revision_id = jobs.book_source_revision_id
+                        AND page.pdf_page_index = jobs.page_start
+                        AND page.status = 'NOT_PREPARED'
+                  )
+                """,
+                (now(), revision_id, foundation_version),
+            )
+            return cursor.rowcount
 
     def counts(self, revision_id: str) -> dict[str, int]:
         result = {"QUEUED": 0, "RUNNING": 0, "SUCCEEDED": 0, "CANCELLED": 0}

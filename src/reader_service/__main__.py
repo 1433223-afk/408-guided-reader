@@ -35,6 +35,12 @@ def default_data_dir() -> Path:
     return Path.cwd().joinpath("var", "reader-data")
 
 
+def default_prepare_workers() -> int:
+    # Scanned books need every page OCR'd. On larger CPUs, a second page
+    # worker reduces the full-book wait while leaving cores for the Reader UI.
+    return 2 if (os.cpu_count() or 1) >= 12 else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Start the 408 Guided Reader")
     parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "localhost"))
@@ -42,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", type=Path, default=default_data_dir())
     parser.add_argument("--no-open", action="store_true", help="Do not launch the browser")
     parser.add_argument("--token", help=argparse.SUPPRESS)
-    parser.add_argument("--prepare-workers", type=int, default=1)
+    parser.add_argument("--prepare-workers", type=int, default=default_prepare_workers())
     parser.add_argument("--render-dpi", type=int, default=200)
     return parser
 

@@ -37,6 +37,7 @@ const state = {
   currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, viewerLayoutWidth: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
+  preparationRetryTimer: 0, preparationRetryDelay: 1000,
   annotationData: new Map(), guideSelection: null, selection: null, selecting: false, selectionMenuPoint: null,
   searchRequest: 0, searchMatch: null,
   outlineRequest: 0, outlineNodes: [], pageLabels: new Map(), mapTimer: 0,
@@ -847,6 +848,7 @@ function setCurrentPage(index) {
   }
   updateMarksPanel();
   updatePrintedPageLabel();
+  updatePreparationLabel();
 }
 
 function goToPage(index, offset = 0) {
@@ -998,17 +1000,36 @@ function currentNormalizedOffset(page) {
   return Math.max(0, Math.min(1, (elements.viewer.scrollTop - page.offsetTop) / page.offsetHeight));
 }
 
-async function startPreparation() {
+function preparationFinished(pages, activeJobs = false) {
+  return pages.length > 0 && !activeJobs && pages.every(p => ["READY", "FAILED"].includes(p.status));
+}
+
+function schedulePreparationReconnect(revisionId, generation) {
+  if (state.revision?.id !== revisionId || state.generation !== generation) return;
+  clearTimeout(state.preparationRetryTimer);
+  const delay = state.preparationRetryDelay;
+  state.preparationRetryDelay = Math.min(delay * 2, 10000);
+  state.preparationRetryTimer = setTimeout(() => {
+    state.preparationRetryTimer = 0;
+    if (state.revision?.id === revisionId && state.generation === generation) startPreparation(false);
+  }, delay);
+}
+
+async function startPreparation(schedule = true) {
   if (!state.revision) return;
   const revisionId = state.revision.id;
   const generation = state.generation;
   const current = () => state.revision?.id === revisionId && state.generation === generation;
+  clearTimeout(state.preparationRetryTimer);
+  state.preparationRetryTimer = 0;
   try {
     const saved = await api(`/api/revisions/${revisionId}/preparation`);
     if (!current()) return;
+    const recoveringStatus = !!elements["preparation-status"].onclick;
     applyPreparationStatuses(saved.pages);
-    if (saved.pages.length && saved.pages.every(p => p.status === "READY")) return;
-    if (saved.pages.some(p => !["READY", "FAILED"].includes(p.status))) await api(`/api/revisions/${revisionId}/preparation`, {
+    if (recoveringStatus) updatePreparationLabel();
+    if (preparationFinished(saved.pages, (saved.jobs?.QUEUED || 0) + (saved.jobs?.RUNNING || 0) > 0)) return;
+    if (schedule && saved.pages.some(p => !["READY", "FAILED"].includes(p.status))) await api(`/api/revisions/${revisionId}/preparation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ current_page: state.currentPage, visible_pages: [state.currentPage] }),
@@ -1019,6 +1040,7 @@ async function startPreparation() {
     elements["preparation-status"].textContent = "文字状态读取失败，点击重试";
     elements["preparation-status"].onclick = () => startPreparation();
     elements["preparation-status"].className = "preparation-status failed";
+    if (!schedule) schedulePreparationReconnect(revisionId, generation);
     return;
   }
   if (!current()) return;
@@ -1026,25 +1048,31 @@ async function startPreparation() {
   const stream = new EventSource(`/api/revisions/${revisionId}/preparation/events`, { withCredentials: true });
   state.eventSource = stream;
   stream.addEventListener("pages", (event) => {
-    if (!current()) return;
+    if (!current() || state.eventSource !== stream) return;
     const payload = JSON.parse(event.data);
+    state.preparationRetryDelay = 1000;
     applyPreparationStatuses(payload.pages);
-    if (payload.pages.length && payload.pages.every(p => p.status === "READY")) {
+    if (preparationFinished(payload.pages, payload.active_jobs)) {
       stream.close();
       if (state.eventSource === stream) state.eventSource = null;
-      if (state.revision?.blob_sha256 === PRACTICE_BOOK_SHA256) loadPracticeRecords();
+      if (state.revision?.blob_sha256 === PRACTICE_BOOK_SHA256 && payload.pages.every(p => p.status === "READY")) loadPracticeRecords();
     }
   });
   stream.onerror = () => {
-    // EventSource reconnects after the bounded server stream closes. Reading and
-    // already-prepared overlays remain independent of stream availability.
-    if (state.eventSource === stream) updatePreparationLabel();
+    if (!current() || state.eventSource !== stream) return;
+    stream.close();
+    state.eventSource = null;
+    updatePreparationLabel();
+    schedulePreparationReconnect(revisionId, generation);
   };
 }
 
 function closePreparationStream() {
   state.eventSource?.close();
   state.eventSource = null;
+  clearTimeout(state.preparationRetryTimer);
+  state.preparationRetryTimer = 0;
+  state.preparationRetryDelay = 1000;
   state.preparation.clear();
   state.overlayData.clear();
   state.annotationData.clear();
@@ -2124,15 +2152,23 @@ function syncPagePreparationUi(index) {
   retry.textContent = "文字准备失败 · 重试";
   retry.addEventListener("click", async (event) => {
     event.stopPropagation();
+    const revisionId = state.revision?.id;
+    if (!revisionId) return;
     retry.disabled = true;
     retry.textContent = "已加入重试队列……";
     try {
-      await api(`/api/revisions/${state.revision.id}/preparation/retry`, {
+      await api(`/api/revisions/${revisionId}/preparation/retry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdf_page_index: index }),
       });
+      if (state.revision?.id !== revisionId) return;
+      applyPreparationStatuses([{
+        ...state.preparation.get(index), status: "NOT_PREPARED", failure_code: null,
+      }]);
+      startPreparation(false);
     } catch (_error) {
+      if (state.revision?.id !== revisionId) return;
       retry.disabled = false;
       retry.textContent = "文字准备失败 · 重试";
       announce("重试未能加入队列，请稍后再试。", true);
@@ -2150,12 +2186,17 @@ function updatePreparationLabel() {
     output.textContent = "正在读取已保存文字层…";
     output.className = "preparation-status";
   } else if (ready + failed === pages.length) {
-    output.textContent = failed ? `${ready} 页文字层 · ${failed} 页失败` : "文字层已生成";
+    output.textContent = failed ? `${ready} 页文字层 · ${failed} 页失败 · 原书为准` : "文字层已生成 · 原书为准";
     output.title = "OCR 处理完成不代表全文识别无误；可能存在漏字、错字，请以原 PDF 为准。";
     output.className = `preparation-status ${failed ? "failed" : "ready"}`;
   } else {
-    output.textContent = `${ready} / ${pages.length} 页可选择`;
-    output.className = "preparation-status";
+    const current = state.preparation.get(state.currentPage)?.status;
+    const pageLabel = current === "READY" ? "本页可选"
+      : current === "PREPARING" ? "本页识别中"
+      : current === "FAILED" ? "本页文字失败" : "本页待识别";
+    output.textContent = `${pageLabel} · ${ready}/${pages.length} 页${current === "READY" ? " · 原书为准" : ""}`;
+    output.title = "原 PDF 可继续阅读；文字层优先准备当前页。OCR 可能漏字、错字，请以原书为准。";
+    output.className = `preparation-status ${current === "FAILED" ? "failed" : ""}`;
   }
 }
 

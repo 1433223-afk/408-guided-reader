@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import sqlite3
 
@@ -82,6 +85,22 @@ def import_pdf(service, pages=1):
         BytesIO(payload), content_length=len(payload), filename="fixture.pdf"
     )
     return result["book"]["active_revision"]
+
+
+def import_inked_pdf(service):
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    content = DecodedStreamObject()
+    content.set_data(("0 0 0 rg\n" + "".join(
+        f"40 {100 + row * 12} 500 4 re f\n" for row in range(40)
+    )).encode())
+    page[NameObject("/Contents")] = writer._add_object(content)
+    output = BytesIO()
+    writer.write(output)
+    payload = output.getvalue()
+    return service.intake(
+        BytesIO(payload), content_length=len(payload), filename="inked.pdf"
+    )["book"]["active_revision"]
 
 
 def import_embedded_text_pdf(service, *, rotation=0, origin=(0, 0)):
@@ -344,3 +363,105 @@ def test_one_page_failure_does_not_block_other_pages_or_pdf_reading(service):
         "READY", "FAILED", "READY"
     ]
     assert service.pdf_path(revision["id"]).read_bytes().startswith(b"%PDF-")
+
+
+def test_empty_ocr_retries_nonblank_page_but_accepts_blank_page(service):
+    inked = import_inked_pdf(service)
+    blank = import_pdf(service)
+
+    class TransientEmptyEngine:
+        profile = "fixture:empty-retry"
+
+        def __init__(self):
+            self.calls = 0
+
+        def prepare_page(self, image, size):
+            self.calls += 1
+            return [] if self.calls == 1 else [LINE]
+
+    inked_foundation = FoundationService(
+        service, FoundationRepository(service.database), TransientEmptyEngine
+    )
+    assert inked_foundation.prepare_page(inked["id"], 0) == "READY"
+    assert inked_foundation._engine().calls == 2
+    assert len(inked_foundation.overlay(inked["id"], 0)["lines"]) == 1
+
+    blank_foundation = FoundationService(
+        service, FoundationRepository(service.database), TransientEmptyEngine
+    )
+    assert blank_foundation.prepare_page(blank["id"], 0) == "READY"
+    assert blank_foundation._engine().calls == 1
+    assert blank_foundation.overlay(blank["id"], 0)["lines"] == []
+
+
+def test_nonblank_page_cannot_publish_empty_ocr_and_legacy_hole_repairs(service):
+    revision = import_inked_pdf(service)
+    repository = FoundationRepository(service.database)
+
+    class EmptyEngine:
+        profile = "fixture:empty"
+
+        def prepare_page(self, image, size):
+            return []
+
+    foundation = FoundationService(service, repository, EmptyEngine)
+    assert foundation.prepare_page(revision["id"], 0) == "FAILED"
+    assert foundation.overlay(revision["id"], 0)["failure_code"] == "OCR_EMPTY_ON_NONBLANK_PAGE"
+
+    repository.mark_preparing(revision["id"], 0)
+    repository.publish_page(
+        revision["id"], 0, route="OCR", foundation_version=1,
+        engine_profile="legacy:empty", lines=[],
+    )
+    repaired = FoundationService(
+        service, repository, lambda: FixedEngine()
+    )
+    assert repaired.repair_empty_ocr_pages(revision["id"], 0, 1) == [0]
+    assert len(repaired.overlay(revision["id"], 0)["lines"]) == 1
+
+
+def test_parallel_ocr_serializes_pdfium_rendering(service, monkeypatch):
+    import pypdfium2 as pdfium
+
+    revision = import_pdf(service, pages=2)
+    original_document = pdfium.PdfDocument
+    count_lock = threading.Lock()
+    start = threading.Barrier(2)
+    active = 0
+    peak = 0
+
+    class TrackingDocument:
+        def __init__(self, path):
+            nonlocal active, peak
+            with count_lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.05)
+            self.document = original_document(path)
+
+        def __getitem__(self, index):
+            return self.document[index]
+
+        def close(self):
+            nonlocal active
+            self.document.close()
+            with count_lock:
+                active -= 1
+
+    class ParallelFoundation(FoundationService):
+        def _extract(self, pdf_path, page_index):
+            start.wait(timeout=5)
+            return super()._extract(pdf_path, page_index)
+
+    monkeypatch.setattr(pdfium, "PdfDocument", TrackingDocument)
+    foundation = ParallelFoundation(
+        service, FoundationRepository(service.database), FixedEngine,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(
+            lambda index: foundation._extract(service.pdf_path(revision["id"]), index),
+            range(2),
+        ))
+    assert [result[0] for result in results] == ["OCR", "OCR"]
+    assert peak == 1
+    assert active == 0

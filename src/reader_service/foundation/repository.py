@@ -18,6 +18,13 @@ class FoundationRepository:
 
     def ensure_pages(self, revision_id: str, page_count: int, foundation_version: int) -> None:
         with self.database.connect() as connection:
+            existing = connection.execute(
+                "SELECT COUNT(*) FROM ocr_pages WHERE book_source_revision_id = ? "
+                "AND pdf_page_index < ?",
+                (revision_id, page_count),
+            ).fetchone()[0]
+            if existing == page_count:
+                return
             connection.executemany(
                 """
                 INSERT INTO ocr_pages(
@@ -40,6 +47,18 @@ class FoundationRepository:
                 (revision_id,),
             )
             return [dict(row) for row in rows]
+
+    def prefix_progress(self, revision_id: str, page_end: int) -> tuple[int, int]:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN status = 'READY' THEN 1 ELSE 0 END) AS ready
+                FROM ocr_pages WHERE book_source_revision_id = ? AND pdf_page_index < ?
+                """,
+                (revision_id, page_end),
+            ).fetchone()
+            return int(row["ready"] or 0), int(row["total"])
 
     def search_snapshot(self, revision_id: str) -> tuple[dict[str, int], list[dict]]:
         """Read search coverage and READY-page text from one database snapshot."""
@@ -102,6 +121,46 @@ class FoundationRepository:
                 (revision_id, page_index),
             ).fetchone()
             return row[0] if row else None
+
+    def empty_ready_ocr_pages(
+        self, revision_id: str, page_start: int, page_end: int
+    ) -> list[int]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT page.pdf_page_index FROM ocr_pages AS page
+                WHERE page.book_source_revision_id = ?
+                  AND page.pdf_page_index >= ? AND page.pdf_page_index < ?
+                  AND page.status = 'READY' AND page.route = 'OCR'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ocr_lines AS line
+                      WHERE line.book_source_revision_id = page.book_source_revision_id
+                        AND line.pdf_page_index = page.pdf_page_index
+                  )
+                ORDER BY page.pdf_page_index
+                """,
+                (revision_id, page_start, page_end),
+            ).fetchall()
+            return [int(row[0]) for row in rows]
+
+    def reset_empty_ready_ocr_page(self, revision_id: str, page_index: int) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE ocr_pages SET status = 'NOT_PREPARED', route = NULL,
+                    engine_profile = NULL, confidence = NULL, prepared_at = NULL,
+                    failure_code = NULL
+                WHERE book_source_revision_id = ? AND pdf_page_index = ?
+                  AND status = 'READY' AND route = 'OCR'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ocr_lines AS line
+                      WHERE line.book_source_revision_id = ocr_pages.book_source_revision_id
+                        AND line.pdf_page_index = ocr_pages.pdf_page_index
+                  )
+                """,
+                (revision_id, page_index),
+            )
+            return cursor.rowcount == 1
 
     def mark_preparing(self, revision_id: str, page_index: int) -> bool:
         with self.database.connect() as connection:

@@ -133,6 +133,71 @@ def test_search_api_returns_results_and_authoritative_coverage(service):
     assert len(result["results"][0]["match_ranges"]) == 2
 
 
+def test_preparation_stream_closes_cleanly_and_waits_for_queued_retry(service):
+    from types import SimpleNamespace
+
+    payload = make_pdf()
+    imported = service.intake(BytesIO(payload), content_length=len(payload), filename="progress.pdf")
+    revision_id = imported["book"]["active_revision"]["id"]
+    snapshots = [
+        [{"pdf_page_index": 0, "status": "FAILED", "prepared_at": None, "failure_code": "OCR"}],
+        [{"pdf_page_index": 0, "status": "READY", "prepared_at": "now", "failure_code": None}],
+    ]
+    calls = 0
+
+    def statuses(_revision_id):
+        nonlocal calls
+        result = snapshots[min(calls, 1)]
+        calls += 1
+        return result
+
+    preparation = SimpleNamespace(
+        foundation=SimpleNamespace(ensure_revision=lambda _id: {}, statuses=statuses),
+        jobs=SimpleNamespace(counts=lambda _id: {"QUEUED": 1 if calls == 1 else 0, "RUNNING": 0}),
+    )
+    with running_server(service, preparation=preparation) as (base, token):
+        request = Request(
+            f"{base}/api/revisions/{revision_id}/preparation/events",
+            headers={"X-Reader-Token": token},
+        )
+        with urlopen(request, timeout=3) as response:
+            body = response.read().decode("utf-8")
+            assert response.headers["Connection"] == "close"
+    assert calls >= 2
+    assert "retry: 1000" in body
+    assert body.count("event: pages") == 2
+    assert '"active_jobs":true' in body
+    assert '"active_jobs":false' in body
+
+
+def test_retry_api_resets_failed_page_before_background_worker_claims_it(service):
+    from reader_service.jobs import JobRepository, PreparationCoordinator
+
+    payload = make_pdf()
+    imported = service.intake(BytesIO(payload), content_length=len(payload), filename="retry.pdf")
+    revision_id = imported["book"]["active_revision"]["id"]
+    repository = FoundationRepository(service.database)
+    foundation = FoundationService(service, repository, lambda: None)
+    jobs = JobRepository(service.database)
+    preparation = PreparationCoordinator(service, foundation, jobs)
+    preparation.schedule_revision(revision_id)
+    job = jobs.claim()
+    assert job is not None
+    repository.fail_page(revision_id, 0, "OCR_FAILED")
+    jobs.complete(job["id"])
+
+    with running_server(service, preparation=preparation) as (base, token):
+        status, _ = request_json(
+            f"{base}/api/revisions/{revision_id}/preparation/retry", token,
+            method="POST", data=b'{"pdf_page_index":0}',
+            headers={"Content-Type": "application/json"},
+        )
+        _, snapshot = request_json(f"{base}/api/revisions/{revision_id}/preparation", token)
+    assert status == 202
+    assert snapshot["pages"][0]["status"] == "NOT_PREPARED"
+    assert snapshot["jobs"]["QUEUED"] == 1
+
+
 def test_plain_browser_entry_bootstraps_same_origin_api_session(service):
     with running_server(service) as (base, _):
         opener = build_opener(HTTPCookieProcessor(CookieJar()))

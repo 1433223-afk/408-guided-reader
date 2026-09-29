@@ -49,26 +49,172 @@ def test_conditional_claim_has_one_winner(service):
     assert sum(claim is not None for claim in claims) == 1
 
 
-def test_priority_refresh_releases_read_snapshot_before_writing(service):
+def test_two_page_workers_prepare_distinct_pages_concurrently(service):
+    from types import SimpleNamespace
+
+    revision = import_revision(service, 2)
+    barrier = threading.Barrier(2)
+    calls = []
+    refreshes = []
+
+    class ConcurrentFoundation(FoundationService):
+        def _extract(self, pdf_path, page_index):
+            calls.append(page_index)
+            barrier.wait(timeout=10)
+            return "OCR", "fixture:v1", [LINE]
+
+    foundation = ConcurrentFoundation(
+        service, FoundationRepository(service.database), lambda: None,
+    )
+    jobs = JobRepository(service.database)
+    coordinator = PreparationCoordinator(
+        service, foundation, jobs, worker_count=2,
+        outline=SimpleNamespace(bootstrap=lambda revision_id: refreshes.append(
+            foundation.repository.prefix_progress(revision_id, 20)[0]
+        )),
+    )
+    coordinator.schedule_revision(revision["id"])
+    coordinator.start()
+    try:
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline and jobs.counts(revision["id"])["SUCCEEDED"] < 2:
+            time.sleep(0.02)
+    finally:
+        coordinator.stop()
+
+    assert set(calls) == {0, 1}
+    assert jobs.counts(revision["id"])["SUCCEEDED"] == 2
+    assert [page["status"] for page in foundation.statuses(revision["id"])] == [
+        "READY", "READY"
+    ]
+    assert refreshes and refreshes[-1] == 2
+
+
+def test_priority_refresh_updates_queued_pages_in_one_statement(service):
     revision = import_revision(service, 3)
     jobs = JobRepository(service.database)
     jobs.enqueue_pages(revision["id"], 3, 1)
+    writes = []
 
-    class ConcurrentDatabase:
+    class CountingDatabase:
         @contextmanager
         def connect(self):
             with service.database.connect() as connection:
                 class Connection:
                     def execute(self, sql, parameters=()):
-                        cursor = connection.execute(sql, parameters)
-                        if sql.startswith("SELECT id, page_start"):
-                            # A worker commits while the scheduling SELECT is still live.
-                            with service.database.connect() as writer:
-                                writer.execute("UPDATE jobs SET attempts = attempts + 1")
-                        return cursor
+                        if sql.lstrip().startswith("UPDATE jobs SET priority"):
+                            writes.append(sql)
+                        return connection.execute(sql, parameters)
                 yield Connection()
 
-    JobRepository(ConcurrentDatabase()).prioritize(revision["id"], {2}, 2)
+    JobRepository(CountingDatabase()).prioritize(revision["id"], {2}, 2)
+    assert len(writes) == 1
+    assert jobs.claim()["page_start"] == 2
+
+
+def test_viewport_reschedule_does_not_enqueue_whole_book_again(service):
+    revision = import_revision(service, 8)
+    foundation = FoundationService(
+        service, FoundationRepository(service.database), lambda: None,
+    )
+
+    class CountingJobs(JobRepository):
+        def __init__(self, database):
+            super().__init__(database)
+            self.enqueues = 0
+
+        def enqueue_pages(self, *args):
+            self.enqueues += 1
+            return super().enqueue_pages(*args)
+
+    jobs = CountingJobs(service.database)
+    coordinator = PreparationCoordinator(service, foundation, jobs)
+    coordinator.schedule_revision(revision["id"], {0}, 0)
+    coordinator.schedule_revision(revision["id"], {6}, 6)
+
+    assert jobs.enqueues == 1
+    assert jobs.claim()["page_start"] == 6
+
+
+def test_early_page_directory_refresh_is_coalesced(service):
+    from types import SimpleNamespace
+
+    revision = import_revision(service, 20)
+
+    class FastFoundation(FoundationService):
+        def _extract(self, pdf_path, page_index):
+            return "OCR", "fixture:v1", [LINE]
+
+    foundation = FastFoundation(
+        service, FoundationRepository(service.database), lambda: None,
+    )
+    jobs = JobRepository(service.database)
+    refreshes = []
+    coordinator = PreparationCoordinator(
+        service, foundation, jobs, worker_count=1,
+        outline=SimpleNamespace(bootstrap=lambda revision_id: refreshes.append(revision_id)),
+    )
+    coordinator.schedule_revision(revision["id"])
+    coordinator.start()
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and jobs.counts(revision["id"])["SUCCEEDED"] < 20:
+            time.sleep(0.02)
+    finally:
+        coordinator.stop()
+
+    assert jobs.counts(revision["id"])["SUCCEEDED"] == 20
+    assert 1 <= len(refreshes) <= 6
+
+
+def test_directory_refresh_does_not_block_page_ocr(service):
+    from types import SimpleNamespace
+
+    revision = import_revision(service, 8)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class FastFoundation(FoundationService):
+        def _extract(self, pdf_path, page_index):
+            return "OCR", "fixture:v1", [LINE]
+
+    def slow_refresh(revision_id):
+        entered.set()
+        release.wait(timeout=10)
+
+    foundation = FastFoundation(
+        service, FoundationRepository(service.database), lambda: None,
+    )
+    jobs = JobRepository(service.database)
+    coordinator = PreparationCoordinator(
+        service, foundation, jobs, worker_count=1,
+        outline=SimpleNamespace(bootstrap=slow_refresh),
+    )
+    coordinator.schedule_revision(revision["id"])
+    coordinator.start()
+    try:
+        assert entered.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and jobs.counts(revision["id"])["SUCCEEDED"] < 8:
+            time.sleep(0.02)
+        assert jobs.counts(revision["id"])["SUCCEEDED"] == 8
+    finally:
+        release.set()
+        coordinator.stop()
+
+
+def test_reopening_resumes_cancelled_unfinished_pages(service):
+    revision = import_revision(service, 3)
+    repository = FoundationRepository(service.database)
+    foundation = FoundationService(service, repository, lambda: None)
+    jobs = JobRepository(service.database)
+    coordinator = PreparationCoordinator(service, foundation, jobs)
+    coordinator.schedule_revision(revision["id"])
+    jobs.cancel_revision(revision["id"])
+    assert jobs.counts(revision["id"])["CANCELLED"] == 3
+
+    coordinator.schedule_revision(revision["id"], {2}, 2)
+    assert jobs.counts(revision["id"])["QUEUED"] == 3
     assert jobs.claim()["page_start"] == 2
 
 
@@ -138,9 +284,13 @@ def test_failed_page_retry_is_explicit_and_requeues_only_that_page(service):
     jobs.complete(job["id"])
 
     assert coordinator.retry_page(revision["id"], 0) is True
-    assert repository.page_status(revision["id"], 0) == "FAILED"
-    assert jobs.claim()["page_start"] == 0
+    assert repository.page_status(revision["id"], 0) == "NOT_PREPARED"
+    retried = jobs.claim()
+    assert retried["page_start"] == 0
     assert coordinator.retry_page(revision["id"], 0) is False
+    assert foundation.prepare_page(revision["id"], 0) == "FAILED"
+    jobs.complete(retried["id"])
+    assert coordinator.retry_page(revision["id"], 0) is True
 
 
 def test_ready_book_reopen_never_scans_outline_or_enqueues_new_version(service):

@@ -67,6 +67,10 @@ try {
   assert.equal(await page.locator(".library").count(), 0, "legacy permanent sidebar still exists");
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
   assert.equal(await page.locator(".page").count(), expectedPages, "unexpected real-fixture page count");
+  await page.waitForFunction(() => /本页(?:待识别|识别中|可选|文字失败)|文字层已生成|页文字层/.test(
+    document.querySelector("#preparation-status")?.textContent || "",
+  ));
+  assert.match(await page.locator("#preparation-status").getAttribute("title"), /以原书为准/);
   const initialCanvases = await page.locator(".page canvas").count();
   assert.ok(initialCanvases <= 8, "virtualization retained too many canvases");
 

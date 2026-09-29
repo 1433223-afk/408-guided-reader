@@ -138,7 +138,9 @@ class LibraryService:
                 raise IntakeError("The PDF is incomplete (missing end marker)")
 
         reader = PdfReader(path, strict=True)
-        if reader.is_encrypted:
+        # Some publisher PDFs carry owner permissions but open with an empty
+        # user password. The reader can render these without a password.
+        if reader.is_encrypted and not reader.decrypt(""):
             raise IntakeError("Encrypted or password-protected PDFs are not supported")
         if not reader.pages:
             raise IntakeError("The PDF contains no readable pages")

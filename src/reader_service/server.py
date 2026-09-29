@@ -1551,8 +1551,15 @@ def handler_factory(
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
             self.end_headers()
+            self.close_connection = True
+            try:
+                self.wfile.write(b"retry: 1000\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                return
             previous = None
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
@@ -1561,19 +1568,27 @@ def handler_factory(
                 except LookupError:
                     # The book may be deleted while an already-open SSE stream winds down.
                     return
+                terminal = bool(pages) and all(page["status"] in ("READY", "FAILED") for page in pages)
+                active_jobs = False
+                if terminal:
+                    counts = coordinator.jobs.counts(revision_id)
+                    active_jobs = bool(counts["QUEUED"] or counts["RUNNING"])
                 signature = tuple(
                     (page["pdf_page_index"], page["status"], page["prepared_at"], page["failure_code"])
                     for page in pages
-                )
+                ) + (active_jobs,)
                 if signature != previous:
-                    payload = json.dumps({"pages": pages}, ensure_ascii=False, separators=(",", ":"))
+                    payload = json.dumps(
+                        {"pages": pages, "active_jobs": active_jobs},
+                        ensure_ascii=False, separators=(",", ":"),
+                    )
                     try:
                         self.wfile.write(f"event: pages\ndata: {payload}\n\n".encode("utf-8"))
                         self.wfile.flush()
                     except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                         return
                     previous = signature
-                if pages and all(page["status"] in ("READY", "FAILED") for page in pages):
+                if terminal and not active_jobs:
                     return
                 time.sleep(0.25)
 
