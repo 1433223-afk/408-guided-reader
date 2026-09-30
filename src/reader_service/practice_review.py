@@ -74,8 +74,8 @@ class PracticeReviewService:
 
     def _approved_provider(self, requested: str) -> tuple[str, str]:
         provider, model = self.master.runtime.provider_identity(requested)
-        if (provider, model) != ("deepseek", "deepseek-flash"):
-            raise ValueError("当前 Practice Review 只可使用已获准的 DeepSeek Flash。")
+        if (provider, model) not in {("deepseek", "deepseek-flash"), ("zhipu", "GLM-5.3-Flash")}:
+            raise ValueError("当前 Practice Review 只可使用已获准的 DeepSeek Flash 或智谱 Flash。")
         return provider, model
 
     def _snapshot(self, connection, revision_id: str, number: int) -> dict:
@@ -234,6 +234,8 @@ class PracticeReviewService:
         return question.strip()
 
     def send(self, revision_id: str, number: object, payload: dict, stream=None) -> dict:
+        if hasattr(self.master, "refresh_provider_routes"):
+            self.master.refresh_provider_routes()
         number = self.practice._number(number)
         intent_id = payload.get("intent_id")
         if not isinstance(intent_id, str) or not 1 <= len(intent_id) <= 120:

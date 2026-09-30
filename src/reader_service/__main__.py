@@ -4,6 +4,7 @@ import argparse
 import os
 import secrets
 import threading
+from urllib.parse import urlencode
 import webbrowser
 from pathlib import Path
 
@@ -111,7 +112,7 @@ def main() -> None:
         ),
     )
     host, port = server.server_address[:2]
-    url = f"http://{host}:{port}/"
+    url = f"http://{host}:{port}/?{urlencode({'token': token})}"
     print(f"READY {url}", flush=True)
     print(
         "Keep this terminal open while reading. Copy the READY URL into Chrome or Edge if no browser opens.",

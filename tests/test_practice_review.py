@@ -92,8 +92,9 @@ def test_review_requires_submission_and_reuses_question_thread(tmp_path):
     assert "A 选项" in runtime.calls[1][1][1]["content"]
     with pytest.raises(ValueError, match="发送标识"):
         review.send("revision", 1, {"intent_id": "a", "target": "C", "provider": "deepseek"})
-    with pytest.raises(ValueError, match="只可使用已获准"):
-        review.send("revision", 1, {"intent_id": "unauthorized", "target": "C", "provider": "zhipu"})
+    accepted = review.send("revision", 1, {"intent_id": "zhipu", "target": "C", "provider": "zhipu"})
+    assert accepted["messages"][-1]["role"] == "assistant"
+    assert runtime.calls[-1][0] == "zhipu"
     original_provider_identity = runtime.provider_identity
     runtime.provider_identity = lambda _provider: ("openrouter", "google/gemini-3.8-flash")
     with pytest.raises(ValueError, match="只可使用已获准"):

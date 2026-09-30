@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import sqlite3
+import pytest
 
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
@@ -28,6 +29,37 @@ LINE = DetectedLine(
         (0.5, 0.6, 4, 5),
     ),
 )
+
+
+def test_legacy_oversized_page_fails_before_pdfium_render(service, monkeypatch):
+    import pypdfium2 as pdfium
+    revision = import_pdf(service)
+    class HugePage:
+        def get_size(self): return 100000, 100000
+        def close(self): pass
+        def render(self, **kwargs): raise AssertionError("must not allocate huge bitmap")
+    class Document:
+        def __init__(self, path): pass
+        def __getitem__(self, index): return HugePage()
+        def close(self): pass
+    monkeypatch.setattr(pdfium, "PdfDocument", Document)
+    foundation = FoundationService(service, FoundationRepository(service.database), FixedEngine)
+    assert foundation.prepare_page(revision["id"], 0) == "FAILED"
+    assert foundation.statuses(revision["id"])[0]["failure_code"] == "PDF_PAGE_RESOURCE_LIMIT"
+    # The legacy-empty-page repair probe is also bounded.
+    assert foundation._page_has_visible_content(service.pdf_path(revision["id"]), 0) is True
+
+
+@pytest.mark.parametrize("dimensions", [(float("nan"), 100), (100, float("inf")), (0, 100), (612, 792)])
+def test_render_budget_rejects_nonfinite_and_accepts_standard_pages(service, dimensions):
+    from reader_service.foundation.contracts import PagePreparationError
+    foundation = FoundationService(service, FoundationRepository(service.database), FixedEngine)
+    if dimensions == (612, 792):
+        foundation._validate_render_budget(*dimensions)
+    else:
+        with pytest.raises(PagePreparationError) as failure:
+            foundation._validate_render_budget(*dimensions)
+        assert failure.value.code == "PDF_PAGE_RESOURCE_LIMIT"
 
 
 def positioned_line(x, y, text):

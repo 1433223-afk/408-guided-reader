@@ -12,6 +12,14 @@ from .contracts import (GENERATOR, REVIEWER, draft_messages, generation_messages
                         strict_json, validate_guide, validate_review, validate_draft)
 
 
+class ReviewOutputInvalid(ValueError):
+    """The provider returned text, but not a usable Review verdict."""
+
+
+class ReviewValidationFailed(ValueError):
+    """The Review verdict violated the deterministic source contract."""
+
+
 class TeachingService:
     asset_table = "teaching_assets"
     pointer_table = "section_guides"
@@ -27,12 +35,27 @@ class TeachingService:
         self.runtime = runtime
         self._draft_condition = threading.Condition()
         self._drafts = {}
-        self.provider = os.environ.get("GUIDED_READER_GUIDE_PROVIDER",
-                                       os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "deepseek")).strip().lower()
-        self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
+        self._auto_provider = not any(k in os.environ for k in ("GUIDED_READER_GUIDE_PROVIDER", "GUIDED_READER_SYSTEM_PROVIDER"))
+        self._auto_reviewer = "GUIDED_READER_REVIEW_PROVIDER" not in os.environ
+        preferred = runtime.preferred_provider() if hasattr(runtime, "preferred_provider") else "deepseek"
+        self.provider = os.environ.get("GUIDED_READER_GUIDE_PROVIDER", os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", preferred)).strip().lower()
+        review = runtime.reviewer_provider(self.provider) if hasattr(runtime, "reviewer_provider") else "zhipu"
+        self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", review).strip().lower()
         self.generator_model = os.environ.get("GUIDED_READER_GUIDE_MODEL") or (
             "google/gemini-3.8-flash" if self.provider == "openrouter"
             and not os.environ.get("GUIDED_READER_OPENROUTER_MODEL") else None)
+
+    def _role_provider(self, generating):
+        if hasattr(self.runtime, "preferred_provider"):
+            generator = self.runtime.preferred_provider() if self._auto_provider else self.provider
+            return generator if generating else self.runtime.reviewer_provider(generator) if self._auto_reviewer else self.reviewer
+        return self.provider if generating else self.reviewer
+
+    def _provider_mode(self):
+        if hasattr(self.runtime, "configured_providers"):
+            count = len(self.runtime.configured_providers())
+            return "SINGLE" if count == 1 else "DUAL" if count == 2 else "NONE"
+        return "SINGLE" if self.provider == self.reviewer else "DUAL"
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
         try:
@@ -198,7 +221,8 @@ class TeachingService:
                     published["sources"][source_id] = {"pdf_page_index": anchor["pdf_page_index"],
                         "y": min(p[1] for p in anchor["quad"]), "available": evidence.safe_anchor(c, anchor)}
             latest = c.execute("SELECT id,version,state,stage,semantic_rework_count,terminal,failure_code,failure_detail FROM teaching_assets WHERE book_source_revision_id=? AND section_node_id=? ORDER BY version DESC LIMIT 1", (revision_id, section_id)).fetchone()
-            return {"section": {"id": section_id, "title": node["title"]}, "published": published, "task": dict(latest) if latest else None}
+            return {"section": {"id": section_id, "title": node["title"]}, "published": published, "task": dict(latest) if latest else None,
+                    "provider_mode": self._provider_mode()}
 
     def _asset(self, job_id):
         with self.database.connect() as c:
@@ -280,7 +304,7 @@ class TeachingService:
             return value
         feedback = ""
         generating = role in {"WRITE", "GENERATE"}
-        selected = self.provider if generating else self.reviewer
+        selected = self._role_provider(generating)
         provider, model = self.runtime.provider_identity(selected)
         model_override = self.generator_model if generating else None
         metadata_key = "generator_json" if generating else "reviewer_json"
@@ -291,12 +315,11 @@ class TeachingService:
             options = {
                 "interaction_id": f"guide:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 "max_tokens": 16384 if role == "GENERATE" else 8192,
-                "reasoning_effort": "low" if (generating and selected in {"openrouter", "zhipu"})
-                    or (role == "REVIEW" and selected == "zhipu") else None,
+                "reasoning_effort": "low" if selected in {"zhipu", "openrouter"} else None,
                 "thinking_mode": "disabled" if selected == "deepseek" else None,
                 "model": model_override,
-                "timeout_seconds": 120 if generating and self.provider == "openrouter" else None,
                 "json_object": selected == "openrouter" and role != "WRITE",
+                "retain_request_body": False,
             }
             stream_call = getattr(self.runtime, "stream_for_with_metadata", None)
             if callable(stream_call):
@@ -320,10 +343,20 @@ class TeachingService:
                     value = validator(completion.answer)
                     self._draft_update(asset["id"], stage="generating", text=value)
                     return value
-                value = strict_json(completion.answer)
+                try:
+                    value = strict_json(completion.answer)
+                except ValueError as exc:
+                    if role == "REVIEW" and attempt:
+                        raise ReviewOutputInvalid("审查结果格式无效，请重试。") from exc
+                    raise
                 if draft is not None:
                     validate_formatted(value, draft, payload["source"])
-                return validator(value)
+                try:
+                    return validator(value)
+                except ValueError as exc:
+                    if role == "REVIEW" and attempt:
+                        raise ReviewValidationFailed("审查结果未通过来源校验，请重试。") from exc
+                    raise
             except ValueError as exc:
                 feedback = "\n上次契约验证失败：" + str(exc) + " 请严格修正格式和来源约束。"
                 if attempt:
@@ -402,7 +435,7 @@ class TeachingService:
                 count = asset["semantic_rework_count"] + 1
                 self._update(asset["id"], semantic_rework_count=count, review_verdict="FAIL", issues_json=encoded(verdict["issues"]),
                     state="FAILED" if count == 3 else "REJECTED", terminal=int(count == 3), stage="GENERATE",
-                    failure_code="SEMANTIC_EXHAUSTED" if count == 3 else None)
+                    failure_code="SEMANTIC_EXHAUSTED" if count == 3 else "REVIEW_RESULT_FAIL")
                 if count < 3:
                     self._draft_update(asset["id"], stage="revising")
                     with self.database.connect() as c:
@@ -419,12 +452,20 @@ class TeachingService:
                     return
                 if not evidence.current(c, json.loads(live["dependencies_json"])):
                     raise ValueError("导读来源已变化，未发布候选。")
-                c.execute("UPDATE teaching_assets SET state='PUBLISHED',stage='COMPLETE',content_json=?,review_verdict='PASS',published_at=? WHERE id=?",
+                c.execute("UPDATE teaching_assets SET state='PUBLISHED',stage='COMPLETE',content_json=?,review_verdict='PASS',failure_code=NULL,failure_detail=NULL,published_at=? WHERE id=?",
                           (encoded(candidate), now(), asset["id"]))
                 c.execute("INSERT INTO section_guides VALUES (?,?,?) ON CONFLICT(book_source_revision_id,section_node_id) DO UPDATE SET asset_id=excluded.asset_id", (asset["book_source_revision_id"], asset["section_node_id"], asset["id"]))
             self._draft_update(asset["id"], terminal="complete")
         except Exception as exc:
-            code = exc.code if isinstance(exc, ProviderFailure) else "CONTRACT_OR_SOURCE_FAILURE" if isinstance(exc, ValueError) else "TECHNICAL_FAILURE"
-            detail = str(exc) if isinstance(exc, ValueError) else "模型调用失败；教材及已发布导读不受影响。"
+            reviewing = asset["stage"] == "REVIEW"
+            code = ("PROVIDER_CALL_FAILED" if reviewing else exc.code) if isinstance(exc, ProviderFailure) else (
+                "REVIEW_OUTPUT_INVALID" if isinstance(exc, ReviewOutputInvalid) else
+                "DETERMINISTIC_VALIDATION_FAILED" if reviewing and isinstance(exc, ValueError) else
+                "CONTRACT_OR_SOURCE_FAILURE" if isinstance(exc, ValueError) else "TECHNICAL_FAILURE")
+            detail = (exc.user_message if isinstance(exc, ProviderFailure) else
+                      str(exc) if isinstance(exc, (ReviewOutputInvalid, ReviewValidationFailed)) else
+                      "导读来源校验失败，请重试。" if reviewing and isinstance(exc, ValueError) else
+                      str(exc) if isinstance(exc, ValueError) else
+                      "审查服务暂时不可用，请稍后重试。" if reviewing else "模型调用失败；教材及已发布导读不受影响。")
             self._update(asset["id"], state="FAILED", failure_code=code, failure_detail=detail)
             self._draft_update(asset["id"], terminal="error", detail=detail)

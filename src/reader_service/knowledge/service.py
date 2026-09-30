@@ -148,17 +148,20 @@ class KnowledgeService:
         self.outline = outline
         self.repository = repository
         self.runtime = runtime
+        self._auto_generator_provider = generator_provider is None and "GUIDED_READER_KP_GENERATOR_PROVIDER" not in os.environ
+        self._auto_reviewer_provider = reviewer_provider is None and "GUIDED_READER_KP_REVIEW_PROVIDER" not in os.environ and "GUIDED_READER_REVIEW_PROVIDER" not in os.environ
         self.generator_provider = (
             generator_provider
-            or os.environ.get("GUIDED_READER_KP_GENERATOR_PROVIDER", runtime.active_provider)
+            or os.environ.get("GUIDED_READER_KP_GENERATOR_PROVIDER", runtime.preferred_provider() if hasattr(runtime, "preferred_provider") else runtime.active_provider)
         ).strip().lower()
         self.reviewer_provider = (
             reviewer_provider
             or os.environ.get(
                 "GUIDED_READER_KP_REVIEW_PROVIDER",
-                os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "deepseek"),
+                os.environ.get("GUIDED_READER_REVIEW_PROVIDER", runtime.preferred_provider() if hasattr(runtime, "preferred_provider") else "deepseek"),
             )
         ).strip().lower()
+
         self.generator_max_tokens = (
             generator_max_tokens if generator_max_tokens is not None
             else self._environment_int(
@@ -186,6 +189,14 @@ class KnowledgeService:
         self.post_review_validator = post_review_validator
         self._inspections: deque[dict] = deque(maxlen=8)
         self._inspection_lock = threading.Lock()
+
+    def refresh_provider_routes(self):
+        if not hasattr(self.runtime, "preferred_provider"):
+            return
+        if self._auto_generator_provider:
+            self.generator_provider = self.runtime.preferred_provider()
+        if self._auto_reviewer_provider:
+            self.reviewer_provider = self.runtime.preferred_provider()
 
     def snapshot(self, revision_id: str, chapter_id: str) -> dict:
         self.library.revision(revision_id)
@@ -217,6 +228,7 @@ class KnowledgeService:
         return int(chapter["start_page"]), end
 
     def run_job(self, job: dict) -> dict:
+        self.refresh_provider_routes()
         revision_id = job["book_source_revision_id"]
         chapter_id = job["chapter_outline_node_id"]
         try:

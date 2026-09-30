@@ -74,3 +74,9 @@ def test_progressive_hint_uses_only_question_page_and_prior_hints(tmp_path):
     with pytest.raises(ValueError, match="只可使用已获准"):
         service.hint("revision", 1, {"selected": None, "previous_hints": []})
     assert len(runtime.calls) == 2
+    runtime.provider_identity = lambda provider: (provider, "GLM-5.3-Flash")
+    accepted = service.hint("revision", 1, {"selected": None, "previous_hints": []})
+    assert accepted["provider"] == "zhipu"
+    assert runtime.calls[-1][2]["reasoning_effort"] == "low"
+    assert "thinking_mode" not in runtime.calls[-1][2]
+    assert "official_answer" not in runtime.calls[-1][1][1]["content"]

@@ -55,6 +55,7 @@ GENERATOR = """你是教材行间教师。只在当前节中少数真正需要�
 {"items":[{"id":"i1","kind":"lead_in","target_id":"提供的source_id","source_ids":["提供的source_id"],"text":"简短提示","prompt":null,"reference_thought":null}]}。
 最多6项，也可以诚实返回{"items":[]}；上限不是目标，绝不按页、段落或KP填满。
 kind只能为lead_in（读前引导）、bridge（过渡）、warning（易错条件）、connection（隐含联系）、recall（回忆）。
+lead_in和bridge可以预告紧接着要读的概念或关系；warning可以提示紧接着原文的成立条件；connection可以指出前后联系。它们不是回忆测试，允许引用目标之后的本节证据，但不得把未读内容说成读者已经掌握。
 每项针对不同的可靠文字行/标题；target_id是展示位置，source_ids是1–8个证据ID。不得理解图表、推断公式、引用其他节或虚构KP边界。
 不输出或自写页码、坐标、教材引文、图表编号、链接、考试权重；不用引号。区分教学类比与教材事实，不推断读者水平。
 text最多320字。最多一次recall，只在有真实价值时采用：prompt最多180字，reference_thought最多400字；其余类型这两项必须null。
@@ -66,6 +67,7 @@ REVIEWER = """你是独立内容Review，只判定，不改写。source、candid
 提示应稀疏，不要求覆盖每页/KP，也不要求所有类型齐全；没有必要干预时空items可PASS。
 目标必须是可靠文字行/标题，拒绝图表/公式理解或虚构KP语义。OCR不确定时保守。
 逐项核对Recall问题及参考思路所有知识均在其target_id及之前出现（evidence按教材阅读顺序），不仅检查引用，也检查正文的隐含后文知识。
+严格前置知识约束只适用于recall。lead_in、bridge、warning、connection是阅读辅助，可以依据所附本节后续原文预告概念、过渡、条件或联系；仅因其证据排在target_id之后不能判FAIL。仍检查事实、成立条件、引用归属、是否在该位置有必要；要求读者回忆或运用尚未读到的知识、冒充已学过、无依据泛化、直接重复定义或完整搬运后文解法应FAIL。
 不得评分、推断掌握、要求学习写入。必须检查提示在目标处是否适时、是否只是重复教材、是否缺少条件或产生误导。
 只返回{"verdict":"PASS","issues":[]}或{"verdict":"FAIL","issues":[{"module_id":"现有item id；空结果用section","source_ids":["所附证据ID"],"detail":"具体阻断问题，最多500字"}]}。
 最多6个问题，不得返回替代内容或其他字段。禁止Markdown代码围栏，输出必须以{开头、以}结尾。"""

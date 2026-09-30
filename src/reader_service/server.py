@@ -6,7 +6,7 @@ import mimetypes
 import re
 import sys
 import time
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -116,6 +116,29 @@ def handler_factory(
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
+
+        def parse_request(self) -> bool:
+            if not super().parse_request():
+                return False
+            # Validate before dispatch, including static bootstrap and every
+            # write entry point. A local cookie must never authorize another
+            # website's request to the loopback service.
+            port = self.server.server_port
+            hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+            if port == 80:
+                hosts.update({"127.0.0.1", "localhost"})
+            supplied_hosts = self.headers.get_all("Host", [])
+            host = supplied_hosts[0].lower() if len(supplied_hosts) == 1 else ""
+            origins = self.headers.get_all("Origin", [])
+            if self.headers.get("Sec-Fetch-Site") == "cross-site" or host not in hosts or (origins and (
+                len(origins) != 1 or origins[0].lower() != f"http://{host}"
+            )):
+                self.close_connection = True
+                self._json(HTTPStatus.FORBIDDEN, {
+                    "code": "UNTRUSTED_LOCAL_ORIGIN", "error": "Reader 只接受当前本地启动地址的请求。"
+                })
+                return False
+            return True
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -1180,7 +1203,9 @@ def handler_factory(
                     label=_first(parameters, "label"),
                 )
             except IntakeError as exc:
-                self._json(HTTPStatus.UNPROCESSABLE_ENTITY, {"error": str(exc)})
+                status = HTTPStatus.INSUFFICIENT_STORAGE if exc.code == "STORAGE_FULL" else HTTPStatus.UNPROCESSABLE_ENTITY
+                self.close_connection = True
+                self._json(status, {"code": exc.code, "error": str(exc)})
                 return
             except LookupError as exc:
                 self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
@@ -1342,14 +1367,21 @@ def handler_factory(
         def _authorized(self) -> bool:
             supplied = self.headers.get("X-Reader-Token", "")
             cookie = SimpleCookie()
-            cookie.load(self.headers.get("Cookie", ""))
+            try:
+                cookie.load(self.headers.get("Cookie", ""))
+            except CookieError:
+                pass
             cookie_token = cookie.get(_SESSION_COOKIE)
-            if hmac.compare_digest(supplied, token) or (
-                cookie_token is not None and hmac.compare_digest(cookie_token.value, token)
+            if self._token_matches(supplied) or (
+                cookie_token is not None and self._token_matches(cookie_token.value)
             ):
                 return True
             self._json(HTTPStatus.UNAUTHORIZED, {"error": "Missing or invalid launch token"})
             return False
+
+        @staticmethod
+        def _token_matches(supplied: str) -> bool:
+            return hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8"))
 
         def _read_json(self) -> dict:
             length = int(self.headers.get("Content-Length", "0"))
@@ -1455,10 +1487,15 @@ def handler_factory(
                 content_type = "text/javascript; charset=utf-8"
             headers = None
             if filename == "index.html":
+                supplied = parse_qs(urlparse(self.path).query).get("token", [])
+                if not (len(supplied) == 1 and self._token_matches(supplied[0])):
+                    if not self._authorized():
+                        return
                 headers = {
                     "Set-Cookie": (
                         f"{_SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict"
-                    )
+                    ),
+                    "Referrer-Policy": "no-referrer",
                 }
             self._file(target, content_type, headers=headers)
 

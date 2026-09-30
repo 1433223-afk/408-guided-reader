@@ -107,11 +107,20 @@ def test_atomic_replacement_retry_replay_restart_and_guide_isolation(inline):
 
 def test_three_semantic_cycles_and_review_rewrite_never_pass(inline):
     _, r, g, rev, sec = inline
+    original = r.complete_for_with_metadata
+    rework_orders = []
+    def ordered_feedback(provider, messages, **kwargs):
+        payload = json.loads(messages[1]['content'])
+        if 'rework' in payload:
+            rework_orders.append(list(payload))
+        return original(provider, messages, **kwargs)
+    r.complete_for_with_metadata = ordered_feedback
     r.reject = True
     g.request(rev, sec, str(uuid4())); drain(g)
     snap = g.snapshot(rev, sec)
     assert snap['task']['terminal'] == 1 and snap['task']['semantic_rework_count'] == 3
     assert not snap['published'] and len(r.calls) == 6
+    assert rework_orders == [['source', 'rework'], ['source', 'rework']]
     g.retry(rev, sec, snap['task']['id']); drain(g)
     assert len(r.calls) == 6
     r.reject = False; r.review_output = {'verdict': 'PASS', 'issues': [], 'rewrite': 'new text'}
@@ -146,6 +155,19 @@ def test_no_intervention_is_reviewed_success(inline):
     g.request(rev, sec, str(uuid4())); drain(g)
     pub = g.snapshot(rev, sec)['published']
     assert pub['no_intervention'] and pub['content'] == {'items': []} and len(r.calls) == 2
+
+
+@pytest.mark.parametrize('kind', ['lead_in', 'bridge', 'warning', 'connection'])
+def test_non_recall_can_preview_later_evidence_but_foreign_source_is_rejected(inline, kind):
+    _, r, g, rev, sec = inline
+    with g.database.connect() as c: packet, _, _ = inline_evidence.build(c, rev, sec)
+    value = candidate(packet)
+    value['items'] = [value['items'][0]]
+    value['items'][0].update(kind=kind, source_ids=[packet['evidence'][-1]['source_id']])
+    assert contracts.validate(value, packet) == value
+    value['items'][0]['source_ids'] = ['foreign-source']
+    with pytest.raises(ValueError, match='本节'):
+        contracts.validate(value, packet)
 
 
 def test_unresolved_and_foreign_rejected_before_provider(inline):

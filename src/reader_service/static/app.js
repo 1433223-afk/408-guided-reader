@@ -34,7 +34,7 @@ if (launchToken) {
 
 const state = {
   books: [], book: null, revision: null, pdf: null, zoom: 1,
-  currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), rendered: new Set(),
+  currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), pageRenderRequests: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, viewerLayoutWidth: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
   preparationRetryTimer: 0, preparationRetryDelay: 1000,
@@ -171,7 +171,15 @@ const teachingUiOptions = { state, api, goToPage,
   readingAnchor: () => captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1),
   hideContextMenu: hideSelectionActions,
   contextMenu: openVisibleSelectionActions,
-  layout: change => { change(); if (state.practice.active) relayoutPages(); else evaluateDirectoryMode(); },
+  layout: change => {
+    const anchor = captureZoomAnchor();
+    const previousReserve = inlineReserve();
+    change();
+    // Inline cards consume space inside the viewer without changing its width,
+    // so the viewer ResizeObserver cannot detect this layout change.
+    if (state.practice.active || inlineReserve() !== previousReserve) relayoutPages(anchor);
+    else evaluateDirectoryMode();
+  },
   closeDock: () => claimRightDock("guide"),
   closeDirectory: () => closeDirectory(),
   setDockWidth: applyAssistantDockWidth,
@@ -757,7 +765,7 @@ function updateViewport() {
   const keepStart = Math.max(0, (first ?? 0) - 2);
   const keepEnd = Math.min(state.pdf.numPages - 1, last + 2);
   for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
-  for (const index of [...state.rendered]) {
+  for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys()])) {
     if (index < keepStart || index > keepEnd) clearPage(index);
   }
   scheduleSave();
@@ -765,15 +773,19 @@ function updateViewport() {
 }
 
 async function renderPage(index) {
-  if (!state.pdf || state.rendered.has(index) || state.renderTasks.has(index)) return;
+  if (!state.pdf || state.rendered.has(index) || state.pageRenderRequests.has(index)) return;
   const generation = state.generation;
   const renderGeneration = state.renderGeneration;
   const wrapper = elements.pages.children[index];
+  const request = {};
+  state.pageRenderRequests.set(index, request);
+  const ownsPage = () => generation === state.generation && renderGeneration === state.renderGeneration
+    && state.pageRenderRequests.get(index) === request && elements.pages.children[index] === wrapper;
   let task = null;
   wrapper.classList.add("loading");
   try {
     const page = await state.pdf.getPage(index + 1);
-    if (generation !== state.generation || renderGeneration !== state.renderGeneration) return;
+    if (!ownsPage()) return;
     const base = page.getViewport({ scale: 1 });
     const size = snappedPageSize(base.height / base.width);
     const viewport = page.getViewport({ scale: size.backingWidth / base.width });
@@ -803,7 +815,7 @@ async function renderPage(index) {
     });
     state.renderTasks.set(index, task);
     await task.promise;
-    if (generation === state.generation && renderGeneration === state.renderGeneration) {
+    if (ownsPage()) {
       state.rendered.add(index);
       master.renderPage(index);
       renderGuideEntries(index);
@@ -812,10 +824,10 @@ async function renderPage(index) {
       ensureOverlay(index);
     }
   } catch (error) {
-    if (error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
+    if (ownsPage() && error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
   } finally {
-    if (generation === state.generation && renderGeneration === state.renderGeneration
-        && (!task || state.renderTasks.get(index) === task)) {
+    if (ownsPage()) {
+      state.pageRenderRequests.delete(index);
       state.renderTasks.delete(index);
       wrapper?.classList.remove("loading");
     }
@@ -823,6 +835,7 @@ async function renderPage(index) {
 }
 
 function clearPage(index) {
+  state.pageRenderRequests.delete(index);
   const task = state.renderTasks.get(index);
   if (task) task.cancel();
   state.renderTasks.delete(index);
@@ -836,6 +849,7 @@ function clearPage(index) {
 }
 
 function cancelRenders() {
+  state.pageRenderRequests.clear();
   for (const task of state.renderTasks.values()) task.cancel();
   state.renderTasks.clear();
   state.rendered.clear();

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import errno
+import math
 import os
+import shutil
+import sqlite3
 import threading
 from pathlib import Path
 from typing import BinaryIO
@@ -10,13 +14,16 @@ from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 from reader_service.storage import BlobStore, ManagedPaths
+from reader_service.pdf_limits import validate_render_size
 
 from .database import Database
 from .repository import LibraryRepository
 
 
 class IntakeError(ValueError):
-    pass
+    def __init__(self, message: str, *, code: str = "INVALID_PDF"):
+        super().__init__(message)
+        self.code = code
 
 
 class LibraryService:
@@ -53,10 +60,13 @@ class LibraryService:
             raise IntakeError("A book title is required")
         clean_label = (label or clean_filename).strip() or clean_filename
 
-        temporary, output = self.paths.new_upload()
+        temporary = None
         digest = hashlib.sha256()
         remaining = content_length
         try:
+            if shutil.disk_usage(self.paths.root).free < content_length + 1024 * 1024:
+                raise IntakeError("磁盘剩余空间不足，无法导入 PDF；请释放空间后重试。", code="STORAGE_FULL")
+            temporary, output = self.paths.new_upload()
             with output:
                 while remaining:
                     chunk = stream.read(min(1024 * 1024, remaining))
@@ -96,10 +106,22 @@ class LibraryService:
                     raise
                 return {"duplicate": False, "book": self.repository.get_book(created_book_id)}
         except IntakeError:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
             raise
-        except (PdfReadError, OSError, ValueError, TypeError, KeyError) as exc:
-            temporary.unlink(missing_ok=True)
+        except (OSError, sqlite3.Error) as exc:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            full = (getattr(exc, "errno", None) in (errno.ENOSPC, errno.EDQUOT)
+                    or getattr(exc, "winerror", None) in (39, 112)
+                    or getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_FULL)
+            raise IntakeError(
+                "磁盘剩余空间不足，无法导入 PDF；请释放空间后重试。" if full else
+                "无法保存 PDF，请检查数据目录是否可写后重试。",
+                code="STORAGE_FULL" if full else "STORAGE_WRITE_FAILED") from exc
+        except (PdfReadError, ValueError, TypeError, KeyError) as exc:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
             raise IntakeError(f"The PDF is corrupt or unreadable: {exc}") from exc
 
     def revision(self, revision_id: str) -> dict:
@@ -149,8 +171,15 @@ class LibraryService:
         for index, page in enumerate(reader.pages):
             box = page.mediabox
             x0, y0, x1, y1 = map(float, (box.left, box.bottom, box.right, box.top))
-            if x1 <= x0 or y1 <= y0:
+            if not all(math.isfinite(v) for v in (x0, y0, x1, y1)) or x1 <= x0 or y1 <= y0:
                 raise IntakeError(f"Page {index + 1} has invalid media-box geometry")
+            try:
+                unit = float(page.get("/UserUnit", 1))
+                if not math.isfinite(unit) or unit <= 0:
+                    raise ValueError("PDF UserUnit 无效。")
+                validate_render_size((x1 - x0) * unit, (y1 - y0) * unit)
+            except ValueError as exc:
+                raise IntakeError(f"第 {index + 1} 页：{exc}", code="PDF_PAGE_RESOURCE_LIMIT") from exc
             rotation = int(page.get("/Rotate", 0) or 0) % 360
             if rotation not in (0, 90, 180, 270):
                 raise IntakeError(f"Page {index + 1} has an unsupported rotation")

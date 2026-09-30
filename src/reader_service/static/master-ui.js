@@ -583,8 +583,6 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     const request=++generation;
     clearTimeout(poll);
     practiceNumber=number;
-    el('provider').querySelector('option[value="zhipu"]').disabled=true;
-    if(answerProvider==='zhipu') answerProvider='deepseek';
     current=null;
     selectedTopicId=null;
     composingNew=false;

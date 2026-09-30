@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import pytest
 from contextlib import contextmanager
 from http.cookiejar import CookieJar
 from io import BytesIO
@@ -114,6 +115,25 @@ def test_api_requires_launch_token(service):
             raise AssertionError("API accepted a request without the per-launch token")
 
 
+def test_non_ascii_token_is_unauthorized_instead_of_crashing(service):
+    with running_server(service) as (base, _):
+        with pytest.raises(HTTPError) as failure:
+            urlopen(Request(base + "/api/books", headers={"X-Reader-Token": "caf\u00e9"}))
+        assert failure.value.code == 401
+
+
+def test_full_storage_api_reports_actionable_error(service, monkeypatch):
+    import errno
+    def full():
+        raise OSError(errno.ENOSPC, "disk full")
+    monkeypatch.setattr(service.paths, "new_upload", full)
+    with running_server(service) as (base, token):
+        with pytest.raises(HTTPError) as failure:
+            request_json(base + "/api/books", token, method="POST", data=make_pdf())
+        assert failure.value.code == 507
+        assert json.load(failure.value)["code"] == "STORAGE_FULL"
+
+
 def test_search_api_returns_results_and_authoritative_coverage(service):
     from types import SimpleNamespace
 
@@ -199,9 +219,9 @@ def test_retry_api_resets_failed_page_before_background_worker_claims_it(service
 
 
 def test_plain_browser_entry_bootstraps_same_origin_api_session(service):
-    with running_server(service) as (base, _):
+    with running_server(service) as (base, token):
         opener = build_opener(HTTPCookieProcessor(CookieJar()))
-        with opener.open(f"{base}/") as response:
+        with opener.open(f"{base}/?token={token}") as response:
             assert response.status == 200
             assert "reader_launch=" in response.headers["Set-Cookie"]
             assert "HttpOnly" in response.headers["Set-Cookie"]
@@ -209,6 +229,47 @@ def test_plain_browser_entry_bootstraps_same_origin_api_session(service):
         with opener.open(f"{base}/api/books") as response:
             assert response.status == 200
             assert json.load(response) == {"books": []}
+        with opener.open(f"{base}/") as response:
+            assert response.status == 200
+        payload = make_pdf()
+        request = Request(f"{base}/api/books", data=payload, headers={
+            "Content-Type": "application/pdf", "X-File-Name": "cookie.pdf", "Origin": base})
+        with opener.open(request) as response:
+            assert response.status == 201
+            book = json.load(response)["book"]
+        with opener.open(Request(f"{base}/api/books/{book['id']}", method="DELETE", headers={"Origin": base})) as response:
+            assert response.status == 204
+
+
+def test_anonymous_or_invalid_bootstrap_never_creates_a_session(service):
+    with running_server(service) as (base, token):
+        opener = build_opener(HTTPCookieProcessor(CookieJar()))
+        for path in ("/", "/?token=wrong", f"/?token={token}&token=wrong", "/api/books"):
+            with pytest.raises(HTTPError) as failure:
+                opener.open(base + path)
+            assert failure.value.code == 401
+            assert failure.value.headers.get("Set-Cookie") is None
+        with pytest.raises(HTTPError) as failure:
+            opener.open(Request(base + "/api/books", data=make_pdf()))
+        assert failure.value.code == 401
+        assert service.list_books() == []
+        assert not list(service.paths.blob_root().rglob("*.pdf"))
+
+
+@pytest.mark.parametrize("headers", [
+    {"Host": "untrusted.example"}, {"Origin": "https://untrusted.example"},
+    {"Origin": "null"}, {"Sec-Fetch-Site": "cross-site"},
+])
+def test_untrusted_browser_requests_cannot_bootstrap_or_mutate(service, headers):
+    with running_server(service) as (base, token):
+        for path, method, data in ((f"/?token={token}", "GET", None),
+                                   ("/api/books", "POST", make_pdf())):
+            with pytest.raises(HTTPError) as failure:
+                urlopen(Request(base + path, method=method, data=data,
+                                headers={"X-Reader-Token": token, **headers}))
+            assert failure.value.code == 403
+            assert failure.value.headers.get("Set-Cookie") is None
+        assert service.list_books() == []
 
 
 def test_annotation_api_resolves_runtime_selection_and_persists_durable_anchor(service):

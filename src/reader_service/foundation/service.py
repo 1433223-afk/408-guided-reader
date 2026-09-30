@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 from reader_service.library import LibraryService
+from reader_service.pdf_limits import validate_render_size
 
 from .contracts import OcrEngine, PagePreparationError
 from .embedded import probe_embedded_text
@@ -306,11 +307,14 @@ class FoundationService:
                 with closing(pdfium.PdfDocument(pdf_path)) as document:
                     with closing(document[page_index]) as page:
                         width, height = page.get_size()
+                        self._validate_render_budget(width, height)
                         embedded = probe_embedded_text(page, width, height)
                         if embedded.trustworthy:
                             return "EMBEDDED", "embedded-positioned-text:v2", list(embedded.lines)
                         with closing(page.render(scale=self.render_dpi / 72)) as bitmap:
                             image = bitmap.to_numpy().copy()
+        except PagePreparationError:
+            raise
         except Exception as exc:
             raise PagePreparationError("PAGE_RENDER_FAILED", str(exc)) from exc
         try:
@@ -344,6 +348,7 @@ class FoundationService:
             with self._pdfium_lock:
                 with closing(pdfium.PdfDocument(pdf_path)) as document:
                     with closing(document[page_index]) as page:
+                        self._validate_render_budget(*page.get_size())
                         with closing(page.render(scale=self.render_dpi / 72)) as bitmap:
                             image = bitmap.to_numpy()
                             return self._image_has_visible_content(image)
@@ -358,3 +363,9 @@ class FoundationService:
             engine = self.engine_factory()
             self._local.engine = engine
         return engine
+
+    def _validate_render_budget(self, width, height):
+        try:
+            validate_render_size(width, height, self.render_dpi)
+        except ValueError as exc:
+            raise PagePreparationError("PDF_PAGE_RESOURCE_LIMIT", str(exc)) from exc

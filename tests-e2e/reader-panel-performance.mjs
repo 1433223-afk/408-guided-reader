@@ -8,6 +8,7 @@ import { chromium } from 'playwright-core';
 const source = process.env.READER_DATA_DIR;
 if (!source) throw new Error('READER_DATA_DIR must name the real prepared Library');
 const functionalSmoke = process.env.READER_FUNCTIONAL_SMOKE === '1';
+const layoutSmoke = process.env.READER_LAYOUT_SMOKE === '1';
 const resizeOnly = functionalSmoke || process.env.READER_DOCK_RESIZE_ONLY === '1';
 const viewportWidth = Number(process.env.READER_VIEWPORT_WIDTH || 1440);
 
@@ -191,8 +192,13 @@ try {
 
   if (!resizeOnly || functionalSmoke) {
     // Inline Teaching: warm the current-section asset, toggle it, and open/close an anchored Guidance card.
-    const inlineSource = Object.values(fixture.inlineSnapshot.published.sources).find(source => source.available);
-    await goToSource(page, inlineSource.pdf_page_index, Math.min(...inlineSource.quad.map(point => point[1])));
+    const inlineItem = fixture.inlineSnapshot.published.content.items.find(item =>
+      fixture.inlineSnapshot.published.sources[item.target_id]?.available);
+    const inlineSource = fixture.inlineSnapshot.published.sources[inlineItem.target_id];
+    // Source ownership uses the line centre. Landing at a header's upper edge
+    // can legitimately put the top-of-viewport identity in the preceding section.
+    await goToSource(page, inlineSource.pdf_page_index,
+      inlineSource.quad.reduce((sum, point) => sum + point[1], 0) / 4);
     await page.waitForFunction(id => document.querySelector('#inline-open')?.dataset.sectionId === id,
       fixture.inlineSection.outline_node_id);
     await page.waitForTimeout(900);
@@ -239,14 +245,18 @@ try {
   try {
     assert.deepEqual(pageErrors, []);
     for (const result of results) {
-      assert.ok(result.stateChangeMs === null || result.stateChangeMs < 50,
-        `${result.name} shell state took ${result.stateChangeMs}ms`);
-      assert.ok(result.maxLongTaskMs < 50, `${result.name} long task took ${result.maxLongTaskMs}ms`);
-      if (result.viewerWidthChanged) {
+      if (!layoutSmoke) {
+        assert.ok(result.stateChangeMs === null || result.stateChangeMs < 50,
+          `${result.name} shell state took ${result.stateChangeMs}ms`);
+        assert.ok(result.maxLongTaskMs < 50, `${result.name} long task took ${result.maxLongTaskMs}ms`);
+      }
+      if (result.pdfLayoutChanged) {
         assert.equal(result.renderedWidthsUniform, true,
           `${result.name} left adjacent PDF pages at different widths`);
         assert.equal(result.textLayersAligned, true,
           `${result.name} left OCR text offset from its PDF page`);
+        assert.equal(result.renderedWidthsMatchLayout, true,
+          `${result.name} left PDF pages at a scale from the previous layout`);
       } else {
         assert.equal(result.removedPdfNodes, 0, `${result.name} removed PDF DOM`);
         assert.equal(result.canvasIdentityPreserved, true, `${result.name} replaced a rendered PDF canvas`);
@@ -254,7 +264,7 @@ try {
       }
       assert.equal(result.wrapperIdentityPreserved, true, `${result.name} replaced a PDF wrapper`);
       assert.equal(result.zoomStable, true, `${result.name} changed zoom`);
-      if (result.viewerWidthChanged) {
+      if (result.pdfLayoutChanged) {
         assert.equal(result.readingAnchor.page, result.readingAnchorBefore.page,
           `${result.name} moved to a different PDF page`);
         assert.ok(Math.abs(result.readingAnchor.y - result.readingAnchorBefore.y) < .015,
@@ -299,7 +309,7 @@ try {
     console.error(JSON.stringify({ status: 'FAIL', realPages: 348, measurements: results }, null, 2));
     throw error;
   }
-  console.log(JSON.stringify({ status: 'PASS', scope: functionalSmoke ? 'functional-smoke; performance not assessed' : 'performance', realPages: 348, measurements: results }, null, 2));
+  console.log(JSON.stringify({ status: 'PASS', scope: functionalSmoke ? 'functional-smoke; performance not assessed' : layoutSmoke ? 'layout-smoke; performance not assessed' : 'performance', realPages: 348, measurements: results }, null, 2));
 } finally {
   if (browser) await browser.close();
   await stopService(service?.child);
@@ -338,6 +348,7 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       name, clickStart: null, firstFrame: null, stateChange: null, longTasks: [], removedPdfNodes: 0,
       canvases, wrappers, scrollTop: viewer.scrollTop, scrollLeft: viewer.scrollLeft,
       viewerWidth: viewer.clientWidth,
+      inlineReserve: document.querySelector('#reader').classList.contains('inline-open') ? 332 : 0,
       readingAnchorBefore: window.__readerAnchor(),
       zoom: document.querySelector('#zoom-value').textContent,
       canvasSizes: canvases.map(canvas => {
@@ -416,6 +427,14 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       maxLongTaskMs: Math.max(0, ...longTasks),
       removedPdfNodes: metric.removedPdfNodes,
       viewerWidthChanged: Math.abs(viewer.clientWidth - metric.viewerWidth) > 1,
+      pdfLayoutChanged: Math.abs(viewer.clientWidth - metric.viewerWidth) > 1
+        || metric.inlineReserve !== (document.querySelector('#reader').classList.contains('inline-open') ? 332 : 0),
+      renderedWidthsMatchLayout: (() => {
+        const reserve = document.querySelector('#reader').classList.contains('inline-open') ? 332 : 0;
+        const zoom = Number(document.querySelector('#zoom-value').textContent.replace('%', '')) / 100;
+        const expected = Math.max(240, Math.min(920, viewer.clientWidth - reserve - 72)) * zoom;
+        return currentCanvases.every(canvas => Math.abs(canvas.getBoundingClientRect().width - expected) <= 1);
+      })(),
       renderedWidthsUniform: (() => {
         const widths = currentCanvases.map(canvas => canvas.getBoundingClientRect().width);
         return !widths.length || Math.max(...widths) - Math.min(...widths) < 1;
@@ -477,15 +496,17 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       })(),
       closedLayout: (() => {
         const reader = document.querySelector('#reader');
-        if (reader.classList.contains('assistant-dock-open') || reader.classList.contains('guide-open')) return null;
+        if (reader.classList.contains('assistant-dock-open') || reader.classList.contains('guide-open')
+            || reader.classList.contains('knowledge-dock-open')) return null;
         const readerRect = reader.getBoundingClientRect();
         const viewerRect = viewer.getBoundingClientRect();
         const pageIndex = Number(document.querySelector('#page-number').value) - 1;
         const pageRect = document.querySelector(`.page[data-index="${pageIndex}"]`).getBoundingClientRect();
+        const reserve = reader.classList.contains('inline-open') ? 332 : 0;
         return {
           readerRight: readerRect.right, viewerRight: viewerRect.right,
-          pageFits: pageRect.width <= viewerRect.width - 64,
-          centerError: Math.abs((pageRect.left + pageRect.right - viewerRect.left - viewerRect.right) / 2),
+          pageFits: pageRect.width <= viewerRect.width - reserve - 64,
+          centerError: Math.abs((pageRect.left + pageRect.right - viewerRect.left - viewerRect.right + reserve) / 2),
         };
       })(),
     };

@@ -5,7 +5,7 @@ from reader_service.agent_runtime import ProviderFailure
 from reader_service.jobs.repository import now
 from . import evidence, inline_evidence as sources, inline_contracts as contract
 from .contracts import encoded, strict_json
-from .service import TeachingService
+from .service import TeachingService, ReviewOutputInvalid, ReviewValidationFailed
 
 
 class InlineTeachingService(TeachingService):
@@ -15,12 +15,11 @@ class InlineTeachingService(TeachingService):
 
     def __init__(self, database, runtime):
         super().__init__(database, runtime)
-        # Guide may use its own latency-tuned provider; Inline Teaching keeps the
-        # established System provider and model routing.
-        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", "deepseek").strip().lower()
+        self._auto_provider = "GUIDED_READER_SYSTEM_PROVIDER" not in os.environ
+        preferred = runtime.preferred_provider() if hasattr(runtime, "preferred_provider") else "deepseek"
+        self.provider = os.environ.get("GUIDED_READER_SYSTEM_PROVIDER", preferred).strip().lower()
         self.generator_model = os.environ.get("GUIDED_READER_INLINE_MODEL") or (
             "google/gemini-3.8-flash" if self.provider == "openrouter" else None)
-        self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
         self.reviewer_model = "google/gemini-3.8-flash" if self.reviewer == "openrouter" else None
 
     def request(self, revision_id, section_id, intent_id, *, regenerate=False):
@@ -59,7 +58,7 @@ class InlineTeachingService(TeachingService):
                 FROM inline_teaching_assets WHERE book_source_revision_id=? AND section_node_id=?
                 ORDER BY version DESC LIMIT 1""", (revision_id, section_id)).fetchone()
             return {"section": {"id": section_id, "title": node["title"]}, "published": published,
-                    "task": dict(latest) if latest else None}
+                    "task": dict(latest) if latest else None, "provider_mode": self._provider_mode()}
 
     def selection_context(self, revision_id, section_id, asset_id, item_id, field, start, end):
         from reader_service.assistant.context import ScopeResolution
@@ -89,7 +88,7 @@ class InlineTeachingService(TeachingService):
 
     def _call(self, asset, role, system, payload, validator):
         generating = role == "GENERATE"
-        selected = self.provider if generating else self.reviewer
+        selected = self._role_provider(generating)
         provider, model = self.runtime.provider_identity(selected)
         metadata_key = "generator_json" if generating else "reviewer_json"
         self._update(asset["id"], **{metadata_key: encoded({"provider": provider,
@@ -97,20 +96,35 @@ class InlineTeachingService(TeachingService):
         feedback = ""
         for attempt in range(2):
             completion = self.runtime.complete_for_with_metadata(selected,
-                [{"role": "system", "content": system + feedback}, {"role": "user", "content": encoded(payload)}],
+                # Keep the full source first and actionable rework last. The
+                # canonical storage encoder sorts rework before a long source,
+                # burying feedback that should guide this specific attempt.
+                [{"role": "system", "content": system + feedback},
+                 {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}],
                 interaction_id=f"inline:{asset['id']}:{role}:{asset['semantic_rework_count']}:{attempt}",
                 max_tokens=8192, model=self.generator_model if generating else self.reviewer_model,
-                json_object=selected == "openrouter",
-                reasoning_effort="low" if (generating and selected == "openrouter")
-                    or (not generating and selected == "zhipu") else None,
-                timeout_seconds=120 if generating and selected == "openrouter" else None)
+                json_object=False,
+                retain_request_body=False,
+                thinking_mode="disabled" if selected == "deepseek" else None,
+                reasoning_effort="low" if selected == "zhipu" else None)
             self._update(asset["id"], **{metadata_key: encoded({
                 "effective_config": completion.effective_config, "latency_ms": completion.latency_ms,
                 "usage": completion.usage, "response_metadata": completion.response_metadata})})
             try:
                 if (completion.response_metadata or {}).get("finish_reason") == "length":
                     raise ValueError("输出被截断，未接受不完整教学。")
-                return validator(strict_json(completion.answer))
+                try:
+                    value = strict_json(completion.answer)
+                except ValueError as exc:
+                    if role == "REVIEW" and attempt:
+                        raise ReviewOutputInvalid("审查结果格式无效，请重试。") from exc
+                    raise
+                try:
+                    return validator(value)
+                except ValueError as exc:
+                    if role == "REVIEW" and attempt:
+                        raise ReviewValidationFailed("审查结果未通过来源校验，请重试。") from exc
+                    raise
             except ValueError as exc:
                 feedback = "\n上次格式或来源验证失败：" + str(exc)
                 if attempt:
@@ -140,7 +154,7 @@ class InlineTeachingService(TeachingService):
                 count = asset["semantic_rework_count"] + 1
                 self._update(asset["id"], semantic_rework_count=count, review_verdict="FAIL", issues_json=encoded(verdict["issues"]),
                     state="FAILED" if count == 3 else "REJECTED", terminal=int(count == 3), stage="GENERATE",
-                    failure_code="SEMANTIC_EXHAUSTED" if count == 3 else None)
+                    failure_code="SEMANTIC_EXHAUSTED" if count == 3 else "REVIEW_RESULT_FAIL")
                 if count < 3:
                     with self.database.connect() as c:
                         c.execute("UPDATE jobs SET job_type='TEACHING_GENERATE',status='QUEUED',updated_at=? WHERE id=? AND status='RUNNING'", (now(), job["id"]))
@@ -153,8 +167,17 @@ class InlineTeachingService(TeachingService):
                     return
                 if not sources.current(c, json.loads(live["dependencies_json"])) or any(not sources.available(c, json.loads(live["sources_json"])[i["target_id"]]) for i in candidate["items"]):
                     raise ValueError("来源已变化或无法可靠定位，未发布候选。")
-                c.execute("UPDATE inline_teaching_assets SET state='PUBLISHED',stage='COMPLETE',review_verdict='PASS',published_at=? WHERE id=?", (now(), asset["id"]))
+                c.execute("UPDATE inline_teaching_assets SET state='PUBLISHED',stage='COMPLETE',review_verdict='PASS',failure_code=NULL,failure_detail=NULL,published_at=? WHERE id=?", (now(), asset["id"]))
                 c.execute("INSERT INTO section_inline_teaching VALUES (?,?,?) ON CONFLICT(book_source_revision_id,section_node_id) DO UPDATE SET asset_id=excluded.asset_id", (asset["book_source_revision_id"], asset["section_node_id"], asset["id"]))
         except Exception as exc:
-            code = exc.code if isinstance(exc, ProviderFailure) else "CONTRACT_OR_SOURCE_FAILURE" if isinstance(exc, ValueError) else "TECHNICAL_FAILURE"
-            self._update(asset["id"], state="FAILED", failure_code=code, failure_detail=str(exc) if isinstance(exc, ValueError) else "模型调用失败；原 PDF 和已发布教学仍可使用。")
+            reviewing = asset["stage"] == "REVIEW"
+            code = ("PROVIDER_CALL_FAILED" if reviewing else exc.code) if isinstance(exc, ProviderFailure) else (
+                "REVIEW_OUTPUT_INVALID" if isinstance(exc, ReviewOutputInvalid) else
+                "DETERMINISTIC_VALIDATION_FAILED" if reviewing and isinstance(exc, ValueError) else
+                "CONTRACT_OR_SOURCE_FAILURE" if isinstance(exc, ValueError) else "TECHNICAL_FAILURE")
+            detail = (exc.user_message if isinstance(exc, ProviderFailure) else
+                      str(exc) if isinstance(exc, (ReviewOutputInvalid, ReviewValidationFailed)) else
+                      "教学来源校验失败，请重试。" if reviewing and isinstance(exc, ValueError) else
+                      str(exc) if isinstance(exc, ValueError) else
+                      "审查服务暂时不可用，请稍后重试。" if reviewing else "模型调用失败；原 PDF 和已发布教学仍可使用。")
+            self._update(asset["id"], state="FAILED", failure_code=code, failure_detail=detail)

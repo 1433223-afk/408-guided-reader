@@ -668,7 +668,7 @@ class ProviderRuntimeSet:
             )
             for provider in PROVIDER_NAMES
         }
-        return cls(
+        result = cls(
             runtimes,
             active_provider=os.environ.get(
                 "GUIDED_READER_ASSISTANT_PROVIDER", "deepseek"
@@ -678,8 +678,26 @@ class ProviderRuntimeSet:
             ).strip() == "1",
             inspector=inspector,
         )
+        result.refresh_active_provider()
+        return result
+
+    def configured_providers(self) -> tuple[str, ...]:
+        return tuple(name for name in ("deepseek", "zhipu") if self.runtimes[name].status()["configured"])
+
+    def preferred_provider(self) -> str:
+        configured = self.configured_providers()
+        return configured[0] if configured else "deepseek"
+
+    def reviewer_provider(self, generator: str | None = None) -> str:
+        generator = generator or self.preferred_provider()
+        return next((name for name in self.configured_providers() if name != generator), generator)
+
+    def refresh_active_provider(self) -> None:
+        if self.active_provider in ("deepseek", "zhipu") and self.active_provider not in self.configured_providers():
+            self.active_provider = self.preferred_provider()
 
     def status(self) -> dict:
+        self.refresh_active_provider()
         provider_statuses = [self.runtimes[name].status() for name in PROVIDER_NAMES]
         active = next(
             (item for item in provider_statuses if item["provider"] == self.active_provider),
@@ -713,6 +731,7 @@ class ProviderRuntimeSet:
         }
 
     def complete(self, messages: list[dict], *, interaction_id: str | None = None) -> str:
+        self.refresh_active_provider()
         return self.complete_for(
             self.active_provider, messages, interaction_id=interaction_id
         )
@@ -783,6 +802,8 @@ class ProviderRuntimeSet:
         )
 
     def provider_identity(self, provider: str | None = None) -> tuple[str, str]:
+        if provider is None:
+            self.refresh_active_provider()
         selected = provider or self.active_provider
         runtime = self.runtimes.get(selected)
         if runtime is None:

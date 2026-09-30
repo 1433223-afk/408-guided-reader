@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from io import BytesIO
+import errno
+import os
+import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +15,74 @@ from conftest import make_pdf
 
 def import_bytes(service, data, filename="book.pdf", **kwargs):
     return service.intake(BytesIO(data), content_length=len(data), filename=filename, **kwargs)
+
+
+@pytest.mark.parametrize("stage", ["space", "create", "write", "fsync", "commit", "database"])
+def test_storage_full_does_not_publish_partial_book(service, monkeypatch, stage):
+    import sqlite3
+    def full(*args, **kwargs):
+        if stage == "database":
+            error = sqlite3.OperationalError("database or disk is full")
+            error.sqlite_errorcode = sqlite3.SQLITE_FULL
+            raise error
+        raise OSError(errno.ENOSPC, "disk full")
+    if stage == "space":
+        monkeypatch.setattr(shutil, "disk_usage", lambda _: SimpleNamespace(free=0))
+    elif stage == "create":
+        monkeypatch.setattr(service.paths, "new_upload", full)
+    elif stage == "write":
+        original = service.paths.new_upload
+        class PartialWrite:
+            def __init__(self, raw): self.raw = raw
+            def __enter__(self): return self
+            def __exit__(self, *args): self.raw.close()
+            def write(self, data):
+                self.raw.write(data[:64])
+                full()
+        def upload():
+            path, raw = original()
+            return path, PartialWrite(raw)
+        monkeypatch.setattr(service.paths, "new_upload", upload)
+    elif stage == "fsync":
+        monkeypatch.setattr(os, "fsync", full)
+    elif stage == "commit":
+        monkeypatch.setattr(service.blobs, "commit", full)
+    else:
+        monkeypatch.setattr(service.repository, "create_revision", full)
+    with pytest.raises(IntakeError) as failure:
+        import_bytes(service, make_pdf())
+    assert failure.value.code == "STORAGE_FULL"
+    assert service.list_books() == []
+    assert not list(service.paths.temp_root().iterdir())
+    assert not list(service.paths.blob_root().rglob("*.pdf"))
+
+
+def test_write_permission_is_not_reported_as_corrupt_pdf(service, monkeypatch):
+    def denied():
+        raise PermissionError(errno.EACCES, "denied")
+    monkeypatch.setattr(service.paths, "new_upload", denied)
+    with pytest.raises(IntakeError) as failure:
+        import_bytes(service, make_pdf())
+    assert failure.value.code == "STORAGE_WRITE_FAILED"
+
+
+def test_huge_pdf_page_is_rejected_without_rendering(service):
+    with pytest.raises(IntakeError) as failure:
+        import_bytes(service, make_pdf(((100000, 100000),)))
+    assert failure.value.code == "PDF_PAGE_RESOURCE_LIMIT"
+    assert service.list_books() == []
+
+
+def test_pdf_user_unit_cannot_bypass_render_budget(service):
+    from pypdf import PdfWriter
+    from pypdf.generic import NameObject, NumberObject
+    writer = PdfWriter()
+    writer.add_blank_page(width=612, height=792)[NameObject("/UserUnit")] = NumberObject(100)
+    stream = BytesIO()
+    writer.write(stream)
+    with pytest.raises(IntakeError) as failure:
+        import_bytes(service, stream.getvalue())
+    assert failure.value.code == "PDF_PAGE_RESOURCE_LIMIT"
 
 
 def test_import_deduplicate_new_revision_position_and_delete(service):

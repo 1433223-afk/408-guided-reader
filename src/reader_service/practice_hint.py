@@ -33,6 +33,8 @@ class PracticeHintService:
                 or any(not isinstance(value, str) or not 1 <= len(value.strip()) <= 1200 for value in previous)):
             raise ValueError("已有提示内容无效。")
         source = self.review.question_source(revision_id, number)
+        if hasattr(self.review.master, "refresh_provider_routes"):
+            self.review.master.refresh_provider_routes()
         provider, model = self.review._approved_provider(self.review.master.provider)
         messages = [
             {"role": "system", "content": HINT_SYSTEM},

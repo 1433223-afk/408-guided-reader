@@ -55,11 +55,23 @@ class LearningService:
         self.repository = LearningRepository(database)
         self.foundation = foundation
         self.runtime = runtime
-        self.provider = os.environ.get("GUIDED_READER_MASTER_PROVIDER", "deepseek").strip().lower()
-        self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", "zhipu").strip().lower()
+        self._auto_provider = "GUIDED_READER_MASTER_PROVIDER" not in os.environ
+        self._auto_reviewer = "GUIDED_READER_REVIEW_PROVIDER" not in os.environ
+        preferred = runtime.preferred_provider() if hasattr(runtime, "preferred_provider") else "deepseek"
+        self.provider = os.environ.get("GUIDED_READER_MASTER_PROVIDER", preferred).strip().lower()
+        review = runtime.reviewer_provider(self.provider) if hasattr(runtime, "reviewer_provider") else "zhipu"
+        self.reviewer = os.environ.get("GUIDED_READER_REVIEW_PROVIDER", review).strip().lower()
         self._lock = threading.RLock()
         self._inflight = set()
         self.repository.recover()
+
+    def refresh_provider_routes(self):
+        if not hasattr(self.runtime, "preferred_provider"):
+            return
+        if self._auto_provider:
+            self.provider = self.runtime.preferred_provider()
+        if self._auto_reviewer:
+            self.reviewer = self.runtime.reviewer_provider(self.provider)
 
     def snapshot(self, revision_id, kp_id):
         return self.repository.snapshot(revision_id, kp_id)
@@ -135,6 +147,7 @@ class LearningService:
         return selected_text, clean_spans
 
     def status(self):
+        self.refresh_provider_routes()
         runtime_status = self.runtime.status()
         providers = runtime_status.get("providers", [])
         answer_model = next(
@@ -156,6 +169,7 @@ class LearningService:
         }
 
     def send(self, revision_id, kp_id, payload, stream=None):
+        self.refresh_provider_routes()
         provider = payload.get("provider", self.provider)
         provider, model = self.runtime.provider_identity(provider)
         with self._lock:
@@ -338,16 +352,20 @@ class LearningService:
     def _review(self, revision_id, kp_id, answer, source):
         question = next(m for m in self.snapshot(revision_id, kp_id)["messages"]
                         if m["intent_id"] == answer["intent_id"] and m["role"] == "user")
-        provider, model = self.runtime.provider_identity(self.reviewer)
+        reviewer = (self.runtime.reviewer_provider(answer.get("provider") or self.provider)
+                    if self._auto_reviewer and hasattr(self.runtime, "reviewer_provider") else self.reviewer)
+        provider, model = self.runtime.provider_identity(reviewer)
         self.repository.update_message(answer["id"], reviewer_provider=provider, reviewer_model=model)
         self.grounding(answer["content"], source)
         for attempt in range(2):
-            completion = self.runtime.complete_for_with_metadata(self.reviewer, [
+            completion = self.runtime.complete_for_with_metadata(reviewer, [
                 {"role": "system", "content": REVIEW_SYSTEM + ("\n上次结构无效，请严格返回指定 JSON。" if attempt else "")},
                 {"role": "user", "content": json.dumps({"mode": answer["review_mode"], "source": source,
                     "question": question["content"], "candidate": answer["content"]}, ensure_ascii=False)}
             ], interaction_id=f"master-review:{answer['id']}",
-                **({"json_object": True} if self.reviewer == "openrouter" else {}))
+                **({"json_object": True} if reviewer == "openrouter" else
+                   {"thinking_mode": "disabled"} if reviewer == "deepseek"
+                   else {"reasoning_effort": "low"}))
             try:
                 verdict = SavedExplanationService._validate_verdict(completion.answer)
             except ValueError:
