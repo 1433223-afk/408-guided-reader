@@ -149,3 +149,24 @@ def test_ocr_row_overlap_does_not_create_ambiguous_choice_hit_areas():
     ]
     assert _separate_options(options)
     assert options[0]['rect'][3] < options[1]['rect'][1]
+
+
+def test_scoped_catalog_matches_full_section_without_deserializing_unrelated_ocr(tmp_path):
+    database = Database(tmp_path / 'state.sqlite3')
+    database.initialize()
+    _source(database, next_kind='SUBSECTION')
+    with database.connect() as connection:
+        full = build_catalog(connection, 'revision', SOURCE_SHA256)
+        assert build_catalog(connection, 'revision', SOURCE_SHA256, section_id='exercise') == full
+        assert build_catalog(connection, 'revision', SOURCE_SHA256, section_id='unknown') == []
+        connection.execute("UPDATE book_source_revisions SET page_count=101 WHERE id='revision'")
+        connection.execute(
+            """INSERT INTO ocr_pages(book_source_revision_id,pdf_page_index,status,route,foundation_version)
+               VALUES ('revision',100,'READY','OCR',1)""",
+        )
+        # An unrelated page's geometry need not even be readable by this task.
+        connection.execute(
+            """INSERT INTO ocr_lines(book_source_revision_id,pdf_page_index,line_ordinal,quad_json,
+               text,confidence,cells_json) VALUES ('revision',100,0,'not JSON','unrelated',1,'not JSON')""",
+        )
+        assert build_catalog(connection, 'revision', SOURCE_SHA256, section_id='exercise') == full

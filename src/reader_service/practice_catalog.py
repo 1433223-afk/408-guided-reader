@@ -155,7 +155,47 @@ def _question_group(group, number, section, source_sha256):
     }
 
 
-def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict]:
+def _section_id(node: dict) -> str:
+    number = node["title"].lstrip("*").split()[0]
+    return {"1.2.6": "126", "5.2.4": "524"}.get(number, node["outline_node_id"])
+
+
+def _section_page_range(connection, revision_id: str, exercise: dict, answer: dict, nodes: list[dict]):
+    """Locate the same answer boundary as the full catalog using only heading text.
+
+    Background KP polling must not deserialize an entire book's OCR cells. Read
+    candidate boundary pages' small text rows, then load geometry only in-range.
+    """
+    def lines(page):
+        return [{"page": page, "ordinal": row["line_ordinal"], "text": row["text"].strip()}
+                for row in connection.execute(
+                    """SELECT line.line_ordinal,line.text FROM ocr_lines line JOIN ocr_pages page
+                       ON page.book_source_revision_id=line.book_source_revision_id
+                      AND page.pdf_page_index=line.pdf_page_index
+                       WHERE line.book_source_revision_id=? AND line.pdf_page_index=? AND page.status='READY'
+                       ORDER BY line.line_ordinal""", (revision_id, page))]
+    answer_lines = lines(answer["start_page"])
+    answer_head = _heading({answer["start_page"]: answer_lines}, answer, "答案与解析")
+    if answer_head is None:
+        return None
+    candidates = [node for node in nodes if node["start_page"] >= answer["start_page"]
+                  and (node["kind"] in {"SECTION", "CHAPTER"} or SECTION_TITLE.match(node["title"]))]
+    for page in sorted({node["start_page"] for node in candidates}):
+        page_lines = answer_lines if page == answer["start_page"] else lines(page)
+        if any(head and _after(head, answer_head) for node in candidates if node["start_page"] == page
+               for head in [_heading({page: page_lines}, node, "")]):
+            return exercise["start_page"], page
+    # Same final-section fallback as the full catalog, including incomplete OCR.
+    last = connection.execute(
+        """SELECT MAX(line.pdf_page_index) FROM ocr_lines line JOIN ocr_pages page
+           ON page.book_source_revision_id=line.book_source_revision_id
+          AND page.pdf_page_index=line.pdf_page_index
+           WHERE line.book_source_revision_id=? AND page.status='READY'""", (revision_id,),
+    ).fetchone()[0]
+    return exercise["start_page"], last
+
+
+def build_catalog(connection, revision_id: str, source_sha256: str, *, section_id: str | None = None) -> list[dict]:
     """Return sections containing validated, uniquely answered A/B/C/D items."""
     nodes = [dict(row) for row in connection.execute(
         """SELECT outline_node_id,parent_id,kind,title,start_page,order_index
@@ -167,6 +207,8 @@ def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict
         # The printed title is sufficient here; no Outline rewrite is needed.
         if not EXERCISE_TITLE.search(node["title"]):
             continue
+        if section_id is not None and _section_id(node) != section_id:
+            continue
         answer = next((item for item in nodes if item["kind"] == "ANSWERS"
                        and item["parent_id"] == node["parent_id"]
                        and item["start_page"] >= node["start_page"]), None)
@@ -174,14 +216,23 @@ def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict
             pairs.append((node, answer))
     if not pairs:
         return []
+    page_filter, parameters = "", [revision_id]
+    if section_id is not None:
+        spans = [_section_page_range(connection, revision_id, exercise, answer, nodes)
+                 for exercise, answer in pairs]
+        spans = [span for span in spans if span is not None]
+        if not spans:
+            return []
+        page_filter = " AND (" + " OR ".join("lines.pdf_page_index BETWEEN ? AND ?" for _ in spans) + ")"
+        parameters.extend(value for span in spans for value in span)
     pages = defaultdict(list)
     for row in connection.execute(
         """SELECT lines.pdf_page_index,lines.line_ordinal,lines.text,lines.quad_json,lines.cells_json
            FROM ocr_lines lines JOIN ocr_pages page
              ON page.book_source_revision_id=lines.book_source_revision_id
             AND page.pdf_page_index=lines.pdf_page_index
-           WHERE lines.book_source_revision_id=? AND page.status='READY'
-           ORDER BY lines.pdf_page_index,lines.line_ordinal""", (revision_id,)):
+           WHERE lines.book_source_revision_id=? AND page.status='READY'""" + page_filter +
+        " ORDER BY lines.pdf_page_index,lines.line_ordinal", parameters):
         pages[row["pdf_page_index"]].append({
             "page": row["pdf_page_index"], "ordinal": row["line_ordinal"],
             "text": row["text"].strip(), "quad": json.loads(row["quad_json"]),
@@ -265,8 +316,7 @@ def build_catalog(connection, revision_id: str, source_sha256: str) -> list[dict
                                                for page in sorted({line["page"] for line in explanation})])
             items.append(question)
         if items:
-            sections.append({"id": {"1.2.6": "126", "5.2.4": "524"}.get(section_number,
-                                                                             exercise["outline_node_id"]),
+            sections.append({"id": _section_id(exercise),
                              "title": exercise["title"],
                              "entryPage": exercise_head["page"],
                              "entryTop": round(_bounds(exercise_head["quad"])[1], 4),

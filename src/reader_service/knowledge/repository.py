@@ -628,7 +628,9 @@ class KnowledgeRepository:
         ).fetchall()
         for row in tables:
             table = row["name"]
-            if table == "knowledge_points" or not table.replace("_", "").isalnum():
+            # Best-effort machine links can be discarded/rebuilt when KP changes;
+            # unlike a user's learning assets, they must not lock regeneration.
+            if table in {"knowledge_points", "practice_knowledge_matches"} or not table.replace("_", "").isalnum():
                 continue
             quoted = '"' + table.replace('"', '""') + '"'
             columns = connection.execute(f"PRAGMA table_info({quoted})").fetchall()

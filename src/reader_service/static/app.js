@@ -12,6 +12,7 @@ import { createGuideUI } from "/guide-ui.js";
 import { createInlineUI } from "/inline-ui.js";
 import { createAssistantNavigator } from "/assistant-navigator.js";
 import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
+import { createPracticeKnowledge } from "/practice-knowledge.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -64,8 +65,10 @@ const state = {
   practice: { active: false, sectionId: "126", index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
-    hints: [], hintLoading: false, hintEpoch: 0 },
+    hints: [], hintLoading: false, hintEpoch: 0, onKnowledgePage: false },
 };
+
+const practiceKnowledge = createPracticeKnowledge({api, onChange: renderPracticeKnowledge});
 
 const MASTER_WORKSPACE_MOTION = Object.freeze({
   workspace: 220,
@@ -1262,6 +1265,7 @@ function closeDirectory({ focusViewer = false } = {}) {
 }
 
 function resetPractice() {
+  practiceKnowledge.stop();
   replacePracticeSections(null);
   if (state.practice.restoreZoom !== null && state.zoom === 1) {
     state.zoom = state.practice.restoreZoom;
@@ -1270,7 +1274,7 @@ function resetPractice() {
   state.practice = { active: false, sectionId: null, index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
-    hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, pendingCatalog: null };
+    hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, pendingCatalog: null, onKnowledgePage: false };
   elements.reader.classList.remove("practice-active");
   elements["practice-panel"].hidden = true;
   elements["practice-hint"].hidden = true;
@@ -1328,11 +1332,34 @@ function renderPracticeNavigation() {
   elements["practice-question-list"].replaceChildren(...buttons);
 }
 
+function renderPracticeKnowledge() {
+  const question = state.practice.active && practiceCurrentQuestion();
+  const point = question && practiceKnowledge.point(question.number);
+  document.getElementById("practice-knowledge").hidden = !point;
+  document.getElementById("practice-knowledge-title").textContent = point?.title || "";
+}
+
+function goToKnowledgeSource(point) {
+  goToPage(point.start_page, point.start_y);
+  elements.viewer.focus({ preventScroll: true });
+}
+
+function showPracticeKnowledge() {
+  if (!state.practice.active) return;
+  const point = practiceKnowledge.point(practiceCurrentQuestion().number);
+  if (!point) return;
+  state.practice.onAnswerPage = false;
+  state.practice.onKnowledgePage = true;
+  updatePracticeRail();
+  goToKnowledgeSource(point);
+}
+
 function updatePracticeRail() {
   if (!state.practice.active || !practiceSection()) return;
   const question = practiceCurrentQuestion();
   const practice = state.practice;
-  const { selected, result, onAnswerPage } = practice;
+  const { selected, result, onAnswerPage, onKnowledgePage } = practice;
+  const awayFromQuestion = onAnswerPage || onKnowledgePage;
   const record = practiceRecord(question.number);
   elements["practice-section-title"].textContent = practiceSection().title;
   elements["practice-number"].textContent = String(practiceLabel(question)).padStart(2, "0");
@@ -1343,12 +1370,13 @@ function updatePracticeRail() {
     : result === "correct" ? "✓ 正确" : result === "incorrect" ? "✕ 不正确"
     : selected ? `已选 ${selected}` : record.attempt_count ? record.last_correct ? "上次做对" : "上次未做对" : "尚未作答";
   elements["practice-selection"].textContent = result ? `本次选了 ${selected}`
+    : onKnowledgePage ? "读完后，返回题目继续作答"
     : selected ? `再次点 ${selected} 或按 Enter 提交` : "在原书上点击 A / B / C / D";
   elements["practice-attempts"].textContent = record.attempt_count
     ? `作答 ${record.attempt_count} 次${record.ever_correct ? " · 做对过" : ""}${record.attempt_count > 1 ? " · 多次练习" : ""}` : "";
   const done = practiceQuestions().filter(question => practiceRecord(question.number).attempt_count > 0).length;
   elements["practice-progress"].textContent = `已做 ${done} / ${practiceQuestions().length}`;
-  document.getElementById("practice-page-note").hidden = !question.regions || question.regions.length < 2 || onAnswerPage || !!result;
+  document.getElementById("practice-page-note").hidden = !question.regions || question.regions.length < 2 || awayFromQuestion || !!result;
   const favorite = elements["practice-favorite"];
   favorite.textContent = record.favorite ? "★" : "☆";
   favorite.setAttribute("aria-pressed", String(record.favorite));
@@ -1370,19 +1398,20 @@ function updatePracticeRail() {
   elements["practice-retry"].hidden = result !== "incorrect" && !(record.attempt_count && record.last_correct === false && !selected);
   elements["practice-review"].hidden = !record.attempt_count;
   elements["practice-answer"].hidden = !record.attempt_count;
-  elements["practice-back"].hidden = !onAnswerPage;
+  elements["practice-back"].hidden = !awayFromQuestion;
   const lastQuestion = practice.index === practiceQuestions().length - 1;
   elements["practice-next"].hidden = false;
   elements["practice-next"].textContent = lastQuestion ? "结束练习" : "下一题 →";
-  elements["practice-next"].classList.toggle("primary", !onAnswerPage && result !== "incorrect");
-  elements["practice-retry"].classList.toggle("primary", !onAnswerPage && result === "incorrect");
-  elements["practice-back"].classList.toggle("primary", onAnswerPage);
+  elements["practice-next"].classList.toggle("primary", !awayFromQuestion && result !== "incorrect");
+  elements["practice-retry"].classList.toggle("primary", !awayFromQuestion && result === "incorrect");
+  elements["practice-back"].classList.toggle("primary", awayFromQuestion);
   elements["practice-review"].classList.toggle("emphasized", result === "incorrect");
   elements["practice-review-targets"].hidden = !practice.reviewOpen;
   for (const button of elements["practice-review-targets"].querySelectorAll("button")) {
     button.classList.toggle("active", button.dataset.reviewTarget === practice.reviewTarget);
     button.setAttribute("aria-pressed", String(button.dataset.reviewTarget === practice.reviewTarget));
   }
+  renderPracticeKnowledge();
   renderPracticeNavigation();
   for (const marker of elements.pages.querySelectorAll(".practice-choice-area")) {
     marker.classList.toggle("selected", marker.dataset.choice === selected);
@@ -1462,9 +1491,11 @@ function renderPracticePages() {
 function showPracticeQuestion() {
   const question = practiceCurrentQuestion();
   state.practice.onAnswerPage = false;
+  state.practice.onKnowledgePage = false;
   updatePracticeRail();
   renderPracticePages();
   goToPage(question.page, Math.max(0, question.promptY - .08));
+  elements.viewer.focus({ preventScroll: true });
 }
 
 function switchPracticeQuestion(index) {
@@ -1543,10 +1574,12 @@ function enterPractice(sectionId) {
   fitPracticePdfForDock();
   relayoutPages();
   showPracticeQuestion();
+  practiceKnowledge.start(state.revision.id, sectionId);
 }
 
 function leavePractice() {
   if (!state.practice.active) return;
+  practiceKnowledge.stop();
   closePracticeReview();
   state.practice.hintEpoch += 1;
   state.practice.hints = [];
@@ -1571,7 +1604,7 @@ function leavePractice() {
 }
 
 function selectPracticeChoice(choice) {
-  if (!state.practice.active || state.practice.result || state.practice.onAnswerPage || state.practice.submitting) return;
+  if (!state.practice.active || state.practice.result || state.practice.onAnswerPage || state.practice.onKnowledgePage || state.practice.submitting) return;
   if (state.practice.selected === choice) { submitPracticeChoice(); return; }
   state.practice.selected = choice;
   state.practice.submissionError = false;
@@ -1580,7 +1613,7 @@ function selectPracticeChoice(choice) {
 
 async function submitPracticeChoice() {
   const practice = state.practice;
-  if (!practice.active || !practice.selected || practice.result || practice.onAnswerPage || practice.submitting) return;
+  if (!practice.active || !practice.selected || practice.result || practice.onAnswerPage || practice.onKnowledgePage || practice.submitting) return;
   const revisionId = state.revision?.id;
   const number = practiceCurrentQuestion().number;
   const choice = practice.selected;
@@ -2007,8 +2040,7 @@ function renderKnowledgeMap(payload) {
       source.type = "button";
       source.textContent = `回到教材 · PDF 第 ${point.start_page + 1} 页`;
       source.addEventListener("click", () => {
-        goToPage(point.start_page, point.start_y);
-        elements.viewer.focus({ preventScroll: true });
+        goToKnowledgeSource(point);
       });
       item.append(heading, definition, source);
       master.decorateKnowledgeItem(item, point);
@@ -4496,10 +4528,12 @@ elements["practice-answer"].addEventListener("click", () => {
   closePracticeReview();
   const question = practiceCurrentQuestion();
   state.practice.onAnswerPage = true;
+  state.practice.onKnowledgePage = false;
   updatePracticeRail();
   goToPage(question.answerPage, Math.max(0, question.answerY - .04));
 });
 elements["practice-back"].addEventListener("click", showPracticeQuestion);
+document.getElementById("practice-knowledge-source").addEventListener("click", showPracticeKnowledge);
 elements["practice-next"].addEventListener("click", () => {
   if (state.practice.index === practiceQuestions().length - 1) leavePractice();
   else switchPracticeQuestion(state.practice.index + 1);

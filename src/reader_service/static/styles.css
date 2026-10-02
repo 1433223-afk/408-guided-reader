@@ -253,6 +253,13 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .practice-secondary-actions button { color: #5e685c; background: transparent; border-bottom: 1px solid #eeebe3; }
 .practice-secondary-actions button:hover { color: #365442; background: #f1f3ec; }
 .practice-secondary-actions button.emphasized { color: #365740; background: #f1f4ed; font-weight: 650; }
+.practice-knowledge { margin-top: 18px; padding-top: 13px; border-top: 1px solid #e9e4da; }
+.practice-knowledge-label { margin: 0 0 5px; color: #77786e; font-size: 11px; }
+.practice-knowledge button { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; width: 100%; min-height: 34px; padding: 4px 0; border: 0; border-radius: 0; background: transparent; color: #47604e; font: 500 13px/1.65 var(--font-ui); text-align: left; cursor: pointer; }
+.practice-knowledge button > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.practice-knowledge button > span:last-child { flex: none; }
+.practice-knowledge button:hover > span:first-child { text-decoration: underline; text-underline-offset: 4px; }
+.practice-knowledge button:focus-visible { outline: 2px solid #6c8c71; outline-offset: 3px; }
 .practice-main-actions button:focus-visible, .practice-secondary-actions button:focus-visible,
 .practice-question-link:focus-visible, .practice-review-targets button:focus-visible { outline: 2px solid #6c8c71; outline-offset: 2px; }
 .practice-review-targets { margin-top: 16px; padding-top: 13px; border-top: 1px solid #e9e4da; }

@@ -28,6 +28,7 @@ from reader_service.memory import LearningMemory
 from reader_service.practice_prototype import PracticePrototype
 from reader_service.practice_review import PracticeReviewService
 from reader_service.practice_hint import PracticeHintService
+from reader_service.practice_knowledge import PracticeKnowledgeService
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -77,6 +78,7 @@ _PRACTICE = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype(?:/(att
 _PRACTICE_CATALOG = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/catalog$")
 _PRACTICE_REVIEW = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/review/(\d+)(?:/(open|send|retry))?$")
 _PRACTICE_HINT = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/hint/(\d+)$")
+_PRACTICE_KNOWLEDGE = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/knowledge-links$")
 _SESSION_COOKIE = "reader_launch"
 
 
@@ -113,6 +115,7 @@ def handler_factory(
     practice = PracticePrototype(service.database)
     practice_review = PracticeReviewService(practice, learning) if learning is not None else None
     practice_hint = PracticeHintService(practice_review) if practice_review is not None else None
+    practice_knowledge = PracticeKnowledgeService(practice, getattr(learning, "runtime", None))
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
@@ -142,6 +145,20 @@ def handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            match = _PRACTICE_KNOWLEDGE.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                try:
+                    result = practice_knowledge.snapshot(match.group(1), _first(parse_qs(parsed.query), "section_id") or "")
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             catalog_match = _PRACTICE_CATALOG.fullmatch(parsed.path)
             if catalog_match:
                 if not self._authorized():
@@ -508,6 +525,20 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            match = _PRACTICE_KNOWLEDGE.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                try:
+                    result = practice_knowledge.request(match.group(1), self._read_json())
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except (TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             hint_match = _PRACTICE_HINT.fullmatch(parsed.path)
             if hint_match:
                 if not self._authorized():
@@ -1475,7 +1506,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:
