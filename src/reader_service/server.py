@@ -29,6 +29,7 @@ from reader_service.practice_prototype import PracticePrototype
 from reader_service.practice_review import PracticeReviewService
 from reader_service.practice_hint import PracticeHintService
 from reader_service.practice_knowledge import PracticeKnowledgeService
+from reader_service.visual_region import render_visual_region
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -64,6 +65,7 @@ _REVISION_ANNOTATION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)$"
 )
 _REVISION_ASSISTANT_ASK = re.compile(r"^/api/revisions/([0-9a-f-]+)/assistant/ask$")
+_REVISION_VISUAL_REGION = re.compile(r"^/api/revisions/([0-9a-f-]+)/visual-region$")
 _REVISION_ASSISTANT_BAKEOFF = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/assistant/bake-off$"
 )
@@ -525,6 +527,25 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            region_match = _REVISION_VISUAL_REGION.fullmatch(parsed.path)
+            if region_match:
+                if not self._authorized():
+                    return
+                try:
+                    payload = self._read_json()
+                    if set(payload) != {"pdf_page_index", "rect"}:
+                        raise ValueError("请选择当前 PDF 页中的一个区域。")
+                    result = render_visual_region(
+                        service, region_match.group(1), payload["pdf_page_index"], payload["rect"],
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"code": "INVALID_VISUAL_REGION", "error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"code": "VISUAL_SOURCE_NOT_FOUND", "error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             match = _PRACTICE_KNOWLEDGE.fullmatch(parsed.path)
             if match:
                 if not self._authorized():
@@ -858,7 +879,15 @@ def handler_factory(
                     streaming = self._wants_assistant_stream()
                     if streaming:
                         self._start_assistant_stream()
-                    if payload.get("source_kind") == "INLINE_GUIDANCE":
+                    if payload.get("source_kind") == "VISUAL_REGION":
+                        state = assistant.ask_visual(
+                            payload["reader_session_id"], ask_match.group(1), payload["pdf_page_index"],
+                            rect=payload["rect"], question=payload.get("question"),
+                            provider=payload.get("provider"),
+                            stream=self._assistant_stream_event if streaming else None,
+                            continuation=payload.get("continuation"),
+                        )
+                    elif payload.get("source_kind") == "INLINE_GUIDANCE":
                         if teaching is None:
                             raise ValueError("行间教学服务不可用。")
                         context = teaching.inline.selection_context(ask_match.group(1), payload["section_id"], payload["asset_id"], payload["item_id"], payload["field"], payload["start_offset"], payload["end_offset"])
@@ -1506,7 +1535,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

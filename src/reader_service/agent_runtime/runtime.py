@@ -47,6 +47,10 @@ PROVIDER_DEFAULTS = {
         "timeout_seconds": 45.0,
     },
 }
+# Current product models documented to accept image_url input.
+# https://api-docs.deepseek.com/guides/vision
+# https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash
+IMAGE_INPUT_MODELS = frozenset({("deepseek", "deepseek-flash"), ("zhipu", "GLM-5.3-Flash")})
 ANSWER_LENGTH_INTENT = "concise"
 REASONING_STRENGTH_INTENT = "balanced"
 
@@ -274,6 +278,14 @@ class AgentRuntime:
         self._cooling_until = 0.0
         self._lock = threading.Lock()
 
+    def supports_images(self, provider: str | None = None, *, model: str | None = None) -> bool:
+        """Check the exact route, including the model locked by an existing session."""
+        selected_provider = self.config.provider if provider is None else provider
+        selected_model = self.config.model if model is None else model
+        return (selected_provider == self.config.provider
+                and isinstance(selected_model, str)
+                and (selected_provider, selected_model) in IMAGE_INPUT_MODELS)
+
     def status(self) -> dict:
         credential = self._credential_read()
         endpoint_valid = self._endpoint_valid()
@@ -300,6 +312,7 @@ class AgentRuntime:
             "role": "ASSISTANT",
             "provider": self.config.provider,
             "model": self.config.model,
+            "supports_images": self.supports_images(),
             "endpoint": self.config.endpoint,
             "configured": configured,
             "configuration_valid": self._configuration_valid,
@@ -696,6 +709,11 @@ class ProviderRuntimeSet:
         if self.active_provider in ("deepseek", "zhipu") and self.active_provider not in self.configured_providers():
             self.active_provider = self.preferred_provider()
 
+    def supports_images(self, provider: str | None = None, *, model: str | None = None) -> bool:
+        selected = self.active_provider if provider is None else provider
+        runtime = self.runtimes.get(selected)
+        return runtime.supports_images(selected, model=model) if runtime is not None else False
+
     def status(self) -> dict:
         self.refresh_active_provider()
         provider_statuses = [self.runtimes[name].status() for name in PROVIDER_NAMES]
@@ -708,6 +726,7 @@ class ProviderRuntimeSet:
                 "role": "ASSISTANT",
                 "provider": self.active_provider,
                 "model": None,
+                "supports_images": False,
                 "endpoint": None,
                 "configured": False,
                 "configuration_valid": False,

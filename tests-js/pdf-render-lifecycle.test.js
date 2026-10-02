@@ -21,7 +21,7 @@ function fixture() {
   const context = vm.createContext({state, elements: {pages: {children: [wrapper]}},
     document: {createElement() {return {style: {}, dataset: {}, getContext() {return {};}};}},
     snappedPageSize: () => ({backingWidth: 600, backingHeight: 800, cssWidth: 600, cssHeight: 800, pixelRatio: 1}),
-    applyPageSize() {}, master: {renderPage() {}}, renderGuideEntries() {}, renderPracticeOverlay() {},
+    applyPageSize() {}, master: {renderPage() {}}, visualSelection: {render() {}}, renderGuideEntries() {}, renderPracticeOverlay() {},
     syncPagePreparationUi() {}, ensureOverlay() {}, clearSelection() {}, announce: message => errors.push(message)});
   vm.runInContext(lifecycle, context);
   const pdfPage = {getViewport: () => ({width: 600, height: 800}), render() {

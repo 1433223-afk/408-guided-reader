@@ -7,7 +7,10 @@ export function createAssistantNavigator(panel, focus) {
   const tree = document.createElement('div'); tree.setAttribute('role', 'tree');
   tree.setAttribute('aria-label', '解释主题层级'); sidebar.append(title, tree);
   const main = document.createElement('div'); main.className = 'assistant-conversation';
-  for (const id of ['assistant-context-bar','assistant-children','assistant-scope','assistant-first-turn','assistant-turns','assistant-empty','assistant-follow-up']) main.append(document.getElementById(id));
+  for (const id of ['assistant-context-bar','assistant-children','assistant-scope','assistant-region-preview','assistant-first-turn','assistant-turns','assistant-empty','assistant-follow-up']) {
+    const element = document.getElementById(id);
+    if (element) main.append(element);
+  }
   body.append(sidebar, main); panel.append(body);
   const trigger = document.createElement('button'); trigger.type = 'button';
   trigger.id = 'assistant-topic-trigger'; trigger.setAttribute('aria-expanded', 'false');

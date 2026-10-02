@@ -46,6 +46,7 @@ SYSTEM_MESSAGE = SYSTEM_BOUNDARY + "\n\n" + load_explanation_skill()
 
 class SelectionSourceKind(str, Enum):
     ORIGINAL_PDF = "ORIGINAL_PDF"
+    VISUAL_REGION = "VISUAL_REGION"
     READING_GUIDE = "READING_GUIDE"
     INLINE_GUIDANCE = "INLINE_GUIDANCE"
     MASTER_ANSWER = "MASTER_ANSWER"
@@ -71,6 +72,7 @@ class SelectionSource:
     foundation_version: int
     teaching_lineage: dict | None = None
     source_provenance: dict | None = None
+    visual_region: dict | None = None
 
     @property
     def label(self) -> str:
@@ -85,6 +87,7 @@ class SelectionSource:
             "foundation_version": self.foundation_version,
             **({"teaching_lineage": copy.deepcopy(self.teaching_lineage)} if self.teaching_lineage else {}),
             **({"source_provenance": copy.deepcopy(self.source_provenance)} if self.source_provenance else {}),
+            **({"visual_region": copy.deepcopy(self.visual_region)} if self.visual_region else {}),
         }
 
 
@@ -141,6 +144,7 @@ class AssistantRoot:
     focused_node_id: str | None = None
     pending_child_id: str | None = None
     pending_turn_id: str | None = None
+    image_data_url: str | None = field(default=None, repr=False)
 
     @property
     def label(self) -> str:
@@ -183,6 +187,7 @@ class ReaderAssistantState:
                 "selected_text_preview": root.label,
                 **({"teaching_lineage": copy.deepcopy(root.created_from.teaching_lineage)} if root.created_from.teaching_lineage else {}),
                 **({"source_provenance": copy.deepcopy(root.created_from.source_provenance)} if root.created_from.source_provenance else {}),
+                **({"visual_region": copy.deepcopy(root.created_from.visual_region)} if root.created_from.visual_region else {}),
             },
             "focused_node_id": root.focused_node_id,
             "active_child_id": root.active_child_id,
@@ -319,6 +324,18 @@ class AssistantService:
                                  context, SelectionSourceKind.READING_GUIDE, provider, stream,
                                  continuation)
 
+    def ask_visual(self, reader_session_id, revision_id, page_index, *, rect,
+                   question=None, provider=None, stream=None, continuation=None):
+        clean_question = ("请解释这个区域中的内容和关系。" if question is None or question == ""
+                          else self._validate_question(question))
+        context = lambda: self.contexts.build_visual(
+            revision_id, page_index, rect=rect, question=clean_question,
+        )
+        return self._ask_context(
+            reader_session_id, revision_id, page_index, context,
+            SelectionSourceKind.VISUAL_REGION, provider, stream, continuation,
+        )
+
     def ask_inline(self, reader_session_id, revision_id, context, provider=None, stream=None,
                    continuation=None):
         return self._ask_context(reader_session_id, revision_id, context["scope"].pdf_page_index,
@@ -360,6 +377,7 @@ class AssistantService:
             interaction_id=turn_id,
             stream=stream,
             completions=completions,
+            image_data_url=context.get("image_data_url"),
         )
         answer = self._join_continuation(partial_answer, answer)
         root_id = str(uuid4())
@@ -371,6 +389,7 @@ class AssistantService:
             int(context["foundation_version"]),
             copy.deepcopy(context.get("teaching_lineage")),
             copy.deepcopy(context.get("source_provenance")),
+            copy.deepcopy(context.get("visual_region")),
         )
         root = AssistantRoot(
             root_id,
@@ -381,7 +400,8 @@ class AssistantService:
             selected_model,
             copy.deepcopy(context["source_anchor"]),
             self._reference_context(context),
-            turns=[Turn(turn_id, context["selected_text"], answer, user_content)],
+            turns=[Turn(turn_id, context.get("visual_question", context["selected_text"]), answer, user_content)],
+            image_data_url=context.get("image_data_url"),
         )
         with self._state_lock:
             if self._sessions.get(session_id) is not slot:
@@ -488,7 +508,8 @@ class AssistantService:
                 state.state_version += 1
         return self._finish_child(session_id, slot, generation, clean_root_id,
                                   clean_node_id, requested_node_id, interaction_id,
-                                  provider, selected_text, user_content, stream)
+                                  provider, selected_text, user_content, stream,
+                                  image_data_url=root.image_data_url)
 
     def retry_child(
         self,
@@ -526,12 +547,12 @@ class AssistantService:
         return self._finish_child(session_id, slot, generation, clean_root_id,
                                   parent_id, clean_node_id, interaction_id,
                                   provider, selected_text, user_content, stream,
-                                  continuation)
+                                  continuation, image_data_url=root.image_data_url)
 
     def _finish_child(self, session_id, slot, generation, clean_root_id,
                       clean_node_id, requested_node_id, interaction_id,
                       provider, selected_text, user_content, stream=None,
-                      continuation=None):
+                      continuation=None, image_data_url=None):
         context_started = time.perf_counter()
         messages, partial_answer = self._continuation_messages(
             self._messages([], user_content), continuation
@@ -545,6 +566,7 @@ class AssistantService:
                 interaction_id=interaction_id,
                 stream=stream,
                 completions=completions,
+                image_data_url=image_data_url,
             )
             answer = self._join_continuation(partial_answer, answer)
         except Exception as exc:
@@ -628,6 +650,7 @@ class AssistantService:
                     self._messages(level.turns, clean_question), continuation
                 )
                 provider = root.provider
+                image_data_url = root.image_data_url
         context_started = time.perf_counter()
         self._emit_stage(stream, context_started)
         completions: list[ProviderCompletion] = []
@@ -638,6 +661,7 @@ class AssistantService:
                 interaction_id=turn_id,
                 stream=stream,
                 completions=completions,
+                image_data_url=image_data_url,
             )
             answer = self._join_continuation(partial_answer, answer)
         except Exception as exc:
@@ -789,6 +813,11 @@ class AssistantService:
                     raise AssistantStateError(
                         "ANSWER_NOT_COMPLETED",
                         "只能保存一条已经完成的 Assistant 回答。",
+                    )
+                if root.created_from.kind is SelectionSourceKind.VISUAL_REGION:
+                    raise AssistantStateError(
+                        "VISUAL_NOTE_SOURCE_UNAVAILABLE",
+                        "图片区域解释暂不支持保存为教材文字笔记。",
                     )
                 if root.created_from.kind in {
                     SelectionSourceKind.READING_GUIDE,
@@ -977,11 +1006,27 @@ class AssistantService:
         interaction_id: str,
         stream: StreamEmitter | None = None,
         completions: list[ProviderCompletion] | None = None,
+        image_data_url: str | None = None,
     ) -> str:
         provider_options = {
             "deepseek": {"thinking_mode": "disabled", "max_tokens": 8_192},
             "zhipu": {"reasoning_effort": "low", "max_tokens": 16_384},
         }.get(provider, {})
+        if image_data_url:
+            selected_provider, selected_model = self._provider_identity(provider)
+            supports_images = getattr(self.runtime, "supports_images", None)
+            if supports_images is None or not supports_images(selected_provider, model=selected_model):
+                raise ProviderFailure(
+                    ProviderFailureKind.UNCONFIGURED, "visual_model_unavailable",
+                    "当前模型不支持图片解释，请选择支持图片的 DeepSeek 或智谱模型。",
+                )
+            # Keep textual history bounded as before. Reattach this root's one image
+            # to the current user message for follow-ups, child questions and retries.
+            messages = [*messages[:-1], {**messages[-1], "content": [
+                {"type": "text", "text": messages[-1]["content"]},
+                {"type": "image_url", "image_url": {"url": image_data_url}},
+            ]}]
+            provider_options.update(model=selected_model, retain_request_body=False)
         if stream is not None:
             stream_for_with_metadata = getattr(
                 self.runtime, "stream_for_with_metadata", None

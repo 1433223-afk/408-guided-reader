@@ -13,6 +13,7 @@ import { createInlineUI } from "/inline-ui.js";
 import { createAssistantNavigator } from "/assistant-navigator.js";
 import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
 import { createPracticeKnowledge } from "/practice-knowledge.js";
+import { createVisualSelection } from "/visual-selection.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -69,6 +70,16 @@ const state = {
 };
 
 const practiceKnowledge = createPracticeKnowledge({api, onChange: renderPracticeKnowledge});
+const assistantRegionImages = new Map();
+let assistantRegionView = null;
+const visualSelection = createVisualSelection({
+  viewer: elements.viewer,
+  toggle: document.getElementById('visual-select-toggle'),
+  hint: document.getElementById('visual-select-hint'),
+  enabled: () => Boolean(state.pdf && state.readerSessionId && !state.assistantPending),
+  onEnter: () => { state.pinnedLanding = null; clearSelection(); hideAssistantAnswerActions(); },
+  onSelect: stageVisualAssistant,
+});
 
 const MASTER_WORKSPACE_MOTION = Object.freeze({
   workspace: 220,
@@ -326,6 +337,7 @@ async function removeBook(book) {
 
 async function openBook(book) {
   if (state.book?.id === book.id && state.pdf) return;
+  visualSelection.cancel({clear: true});
   state.generation += 1;
   const generation = state.generation;
   cancelRenders();
@@ -391,6 +403,7 @@ async function openBook(book) {
 }
 
 function closeReader() {
+  visualSelection.cancel({clear: true});
   resetPractice();
   applyDirectoryMode(null);
   abortAssistantStreams();
@@ -825,6 +838,7 @@ async function renderPage(index) {
       renderPracticeOverlay(index);
       syncPagePreparationUi(index);
       ensureOverlay(index);
+      visualSelection.render();
     }
   } catch (error) {
     if (ownsPage() && error?.name !== "RenderingCancelledException") announce(`第 ${index + 1} 页无法显示，请重试。`, true);
@@ -897,6 +911,7 @@ function adjacentZoom(direction) {
 
 function relayoutPages(anchor = captureZoomAnchor()) {
   if (!state.revision) return;
+  if (visualSelection.active) visualSelection.cancel();
   state.renderGeneration += 1;
   cancelRenders();
   state.pinnedLanding = null;
@@ -2253,7 +2268,7 @@ function updatePreparationLabel() {
     output.textContent = "正在读取已保存文字层…";
     output.className = "preparation-status";
   } else if (ready + failed === pages.length) {
-    output.textContent = failed ? `${ready} 页文字层 · ${failed} 页失败 · 原书为准` : "文字层已生成 · 原书为准";
+    output.textContent = failed ? `${ready} 页文字层 · ${failed} 页失败 · 原书为准` : "文字层已生成";
     output.title = "OCR 处理完成不代表全文识别无误；可能存在漏字、错字，请以原 PDF 为准。";
     output.className = `preparation-status ${failed ? "failed" : "ready"}`;
   } else {
@@ -2412,7 +2427,13 @@ function syncAskEligibility() {
 function syncFirstTurnEligibility() {
   if (!elements["assistant-start"]) return;
   const selected = selectedProviderStatus();
-  const callable = Boolean(selected?.configured && !selected.cooling);
+  const visual = state.assistantDraft?.request.source_kind === 'VISUAL_REGION';
+  const preparation = visual && (state.assistantDraft.preparing || state.assistantDraft.error);
+  const visionAvailable = !visual || selected?.supports_images === true;
+  const callable = Boolean(selected?.configured && !selected.cooling && visionAvailable && !preparation);
+  const unavailable = preparation
+    ? state.assistantDraft.error || '正在准备原 PDF 区域…'
+    : !visionAvailable ? '当前模型不支持图像，请选择支持图像的模型。' : selectedProviderUnavailableMessage(selected);
   const start = elements["assistant-start"];
   start.disabled = !state.assistantDraft || !callable || state.assistantPending;
   start.setAttribute("aria-disabled", String(start.disabled));
@@ -2420,10 +2441,10 @@ function syncFirstTurnEligibility() {
     ? "正在发送首条请求"
     : callable
       ? `使用 ${state.assistantActiveProvider} 发送首条请求`
-      : selectedProviderUnavailableMessage(selected);
+      : unavailable;
   const readiness = elements["assistant-readiness"];
   readiness.hidden = !state.assistantDraft || callable;
-  readiness.textContent = readiness.hidden ? "" : selectedProviderUnavailableMessage(selected);
+  readiness.textContent = readiness.hidden ? "" : unavailable;
 }
 
 function emptyAssistantState() {
@@ -2506,12 +2527,11 @@ function renderAssistantViewportMode() {
   const context = elements["assistant-context-bar"];
   if (expanded) {
     heading.prepend(elements["assistant-scope"]);
-    heading.querySelector('.assistant-heading-actions').prepend(elements["assistant-close-root"]);
   } else {
     context.before(elements["assistant-scope"]);
-    context.append(elements["assistant-close-root"]);
+    closeAssistantRegionImage();
   }
-  context.hidden = !state.assistantState.roots.length || (expanded && (state.assistantState.current?.depth || 1) < 4);
+  context.hidden = !state.assistantState.current || state.assistantState.current.depth < 4;
   elements.reader.classList.toggle("assistant-expanded", expanded);
   const masterExpand = document.getElementById('master-expand');
   if (masterExpand) {
@@ -2983,6 +3003,8 @@ function finishAssistantResize(event) {
 }
 
 function resetAssistantPanel() {
+  assistantRegionImages.clear();
+  renderAssistantRegion(null);
   elements["assistant-title"].textContent = "问 AI";
   elements["assistant-scope"].textContent = state.assistantConfigured
     ? "等待教材选区" : "当前 AI provider 未配置，Reader 其余功能仍可使用";
@@ -3034,6 +3056,10 @@ function applyAssistantState(nextState) {
   if (!state.assistantDraft && state.assistantState.current?.root_id === nextState.current?.root_id
       && state.assistantState.current?.node_id === nextState.current?.node_id) rememberAssistantScroll();
   state.assistantState = nextState;
+  const liveRoots = new Set(nextState.roots.map(root => root.root_id));
+  for (const rootId of assistantRegionImages.keys()) {
+    if (!liveRoots.has(rootId)) assistantRegionImages.delete(rootId);
+  }
   if (nextState.current?.provider) state.assistantActiveProvider = nextState.current.provider;
   renderAssistantWorkspace();
 }
@@ -3044,7 +3070,7 @@ function renderAssistantNavigation(current) {
   entry.hidden = !state.assistantDraft && !state.assistantState.roots.length;
   entry.title = state.assistantDraft ? "继续当前选区的临时解释" : `继续临时解释：${current?.label || "已有解释主题"}`;
   const roots = state.assistantState.roots || [];
-  elements["assistant-context-bar"].hidden = roots.length === 0;
+  elements["assistant-context-bar"].hidden = !current || current.depth < 4;
   elements["assistant-root-switcher"].replaceChildren(...roots.map((root) => {
     const option = document.createElement("option");
     option.value = root.root_id;
@@ -3057,7 +3083,7 @@ function renderAssistantNavigation(current) {
   elements["assistant-back"].hidden = !current?.parent_ref;
   elements["assistant-depth"].textContent = current ? `递归深度：第 ${current.depth} 层，最多 5 层` : "";
   elements["assistant-depth"].hidden = !current || current.depth < 4;
-  if (state.assistantExpanded) elements["assistant-context-bar"].hidden = !current || current.depth < 4;
+  elements["assistant-close-root"].hidden = !current || Boolean(state.assistantDraft);
   elements["assistant-close-root"].disabled = !current;
   elements["assistant-close-root"].textContent = current?.depth > 1
     ? "关闭本层解释" : "关闭此主题";
@@ -3099,6 +3125,10 @@ function renderAssistantWorkspace() {
     return;
   }
   const current = state.assistantState.current;
+  const root = state.assistantState.roots.find(root => root.root_id === current?.root_id);
+  const visual = root?.created_from.kind === 'VISUAL_REGION';
+  const regionPreview = assistantRegionImages.get(current?.root_id);
+  renderAssistantRegion(regionPreview, current?.scope, current?.root_id);
   renderAssistantNavigation(current);
   elements["assistant-title"].textContent = current?.label || "问 AI";
   elements["assistant-first-turn"].hidden = true;
@@ -3112,7 +3142,10 @@ function renderAssistantWorkspace() {
     syncModelSelector();
     return;
   }
-  elements["assistant-scope"].textContent = assistantScopeText(current.scope);
+  elements["assistant-scope"].textContent = visual
+    ? assistantRegionSourceText(current.scope, root.created_from.visual_region)
+    : assistantScopeText(current.scope);
+  elements["assistant-scope"].title = elements["assistant-scope"].textContent;
   elements["assistant-follow-up"].append(modelControl);
   const renderKey = JSON.stringify([current.root_id, current.node_id, current.turns, current.pending, current.error, current.can_retry,
     [...state.assistantSavedTurns.keys()]]);
@@ -3151,9 +3184,13 @@ function renderAssistantWorkspace() {
     const saved = state.assistantSavedTurns.has(saveKey);
     save.textContent = saved ? "已保存" : "保存到笔记";
     save.disabled = saved;
-    save.hidden = ["READING_GUIDE", "INLINE_GUIDANCE"].includes(state.assistantState.roots.find((root) => root.root_id === current.root_id)?.created_from.kind);
+    save.hidden = ["READING_GUIDE", "INLINE_GUIDANCE", "VISUAL_REGION"].includes(state.assistantState.roots.find((root) => root.root_id === current.root_id)?.created_from.kind);
     turnActions.append(save);
-    article.append(question, answer, turnActions);
+    // The implicit visual prompt is transport context, not a user-authored message.
+    const implicitVisualQuestion = visual && !current.node_id && index === 0
+      && turn.question.trim() === '请解释这个区域中的内容和关系。';
+    if (!implicitVisualQuestion) article.append(question);
+    article.append(answer, turnActions);
     return article;
   });
   if (current.pending) {
@@ -3202,10 +3239,17 @@ function renderAssistantDraft() {
     return;
   }
   elements["assistant-title"].textContent = "问 AI";
+  const visual = draft.request.source_kind === 'VISUAL_REGION';
+  elements['assistant-first-turn'].classList.toggle('visual-draft', visual);
+  document.getElementById('assistant-region-question-label').hidden = !visual;
+  elements['assistant-draft-text'].parentElement.hidden = visual;
+  renderAssistantRegion(visual ? draft.preview : null, draft.sourceScope, draft);
   elements["assistant-scope"].textContent = draft.request.source_kind === "READING_GUIDE"
     ? "正在解释：导读选区" : draft.request.source_kind === "INLINE_GUIDANCE" ? "正在解释：行间教学"
     : draft.request.source_kind === "MASTER_ANSWER" ? "正在解释：Master 回答选区"
+    : visual ? assistantRegionSourceText(draft.sourceScope, draft.request)
     : `PDF ${draft.request.pdf_page_index + 1} · 教材选区`;
+  elements["assistant-scope"].title = elements["assistant-scope"].textContent;
   elements["assistant-draft-text"].textContent = draft.selectedText;
   elements["assistant-first-turn"].hidden = false;
   elements["assistant-follow-up"].hidden = true;
@@ -3215,6 +3259,78 @@ function renderAssistantDraft() {
     ? "已有解释仍保留；发送后会新增一个主题。" : "";
   elements["assistant-empty"].hidden = !state.assistantState.roots.length;
   syncModelSelector();
+}
+
+function assistantRegionSourceText(scope, region) {
+  return [scope?.section_title || scope?.chapter_title,
+    Number.isInteger(region?.pdf_page_index) ? `PDF ${region.pdf_page_index + 1}` : null]
+    .filter(Boolean).join(' · ');
+}
+
+function closeAssistantRegionImage() {
+  const dialog = document.getElementById('assistant-region-dialog');
+  if (dialog.open) dialog.close();
+  document.getElementById('assistant-region-full-image').removeAttribute('src');
+}
+
+function openAssistantRegionImage() {
+  if (!state.assistantExpanded || !assistantRegionView?.preview?.image?.data_url) return;
+  const {preview, scope} = assistantRegionView;
+  document.getElementById('assistant-region-full-image').src = preview.image.data_url;
+  document.getElementById('assistant-region-dialog-title').textContent = assistantRegionSourceText(scope, preview);
+  document.getElementById('assistant-region-dialog').showModal();
+}
+
+function renderAssistantRegion(preview, scope, topic) {
+  if (assistantRegionView?.topic !== topic || assistantRegionView?.preview !== preview) closeAssistantRegionImage();
+  assistantRegionView = preview ? {preview, scope, topic} : null;
+  const row = document.getElementById('assistant-region-preview');
+  const image = document.getElementById('assistant-region-image');
+  row.hidden = !preview?.image?.data_url;
+  elements['assistant-panel'].classList.toggle('has-visual-region', !row.hidden);
+  if (row.hidden) { image.removeAttribute('src'); return; }
+  image.src = preview.image.data_url;
+  const title = document.getElementById('assistant-region-title');
+  title.textContent = scope?.section_title || scope?.chapter_title || '框选区域';
+  title.title = title.textContent;
+  document.getElementById('assistant-region-caption').textContent = `PDF ${preview.pdf_page_index + 1}`;
+}
+
+async function stageVisualAssistant({pageIndex, rect}) {
+  if (!state.revision?.id || !state.readerSessionId || state.assistantPending) return;
+  rememberAssistantScroll();
+  const draft = {readerSessionId: state.readerSessionId, revisionId: state.revision.id,
+    selectedText: `PDF ${pageIndex + 1} 的框选区域`, preparing: true,
+    request: {source_kind: 'VISUAL_REGION', pdf_page_index: pageIndex, rect}};
+  // Display-only source label; the server still builds all model context.
+  const y = (rect[1] + rect[3]) / 2;
+  const containing = state.outlineNodes.filter(node => node.resolution_state === 'RESOLVED'
+    && (node.start_page < pageIndex || node.start_page === pageIndex && node.start_y <= y)
+    && (node.end_page > pageIndex || node.end_page === pageIndex && node.end_y > y))
+    .sort((a, b) => b.depth - a.depth);
+  draft.sourceScope = {section_title: containing[0]?.title};
+  state.assistantDraft = draft;
+  document.getElementById('assistant-region-question').value = '';
+  openAssistantPanel({overlay: true});
+  renderAssistantDraft();
+  refreshAssistantStatus();
+  try {
+    const preview = await api(`/api/revisions/${draft.revisionId}/visual-region`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pdf_page_index: pageIndex, rect}),
+    });
+    if (state.assistantDraft !== draft || state.readerSessionId !== draft.readerSessionId) return;
+    draft.preview = preview;
+  } catch (error) {
+    if (state.assistantDraft !== draft) return;
+    draft.error = `区域准备失败：${error.message}。请重新框选。`;
+  } finally {
+    if (state.assistantDraft === draft) {
+      draft.preparing = false;
+      renderAssistantDraft();
+      if (!draft.error) document.getElementById('assistant-region-question').focus({preventScroll: true});
+    }
+  }
 }
 
 function showAssistantPending(question, phase = "answering") {
@@ -3393,10 +3509,26 @@ function openAssistantDraftFromVisibleSelection(selectedText, request) {
   refreshAssistantStatus();
 }
 
+function cacheAssistantRegion(preview, previousRootIds, nextState) {
+  if (!preview) return;
+  const root = nextState.roots.find(root => {
+    const region = root.created_from.visual_region;
+    return !previousRootIds.has(root.root_id) && root.created_from.kind === 'VISUAL_REGION'
+      && region?.pdf_page_index === preview.pdf_page_index
+      && JSON.stringify(region.rect) === JSON.stringify(preview.rect);
+  });
+  if (root) assistantRegionImages.set(root.root_id, preview);
+}
+
 async function sendAssistantFirstTurn(continuationText = "") {
   const draft = state.assistantDraft;
   if (!draft || state.assistantPending || !state.assistantConfigured || state.assistantCooling) return;
+  if (draft.request.source_kind === 'VISUAL_REGION') {
+    if (draft.preparing || draft.error || !draft.preview || !selectedProviderStatus()?.supports_images) return;
+    draft.request.question = document.getElementById('assistant-region-question').value.trim();
+  }
   state.assistantPending = true;
+  const previousRootIds = new Set(state.assistantState.roots.map(root => root.root_id));
   syncModelSelector();
   try {
     const payload = await runAssistantStream({
@@ -3415,6 +3547,7 @@ async function sendAssistantFirstTurn(continuationText = "") {
       },
     });
     if (state.readerSessionId !== draft.readerSessionId) return;
+    cacheAssistantRegion(draft.preview, previousRootIds, payload.assistant);
     state.assistantDraft = null;
     applyAssistantState(payload.assistant);
   } catch (error) {
@@ -4704,6 +4837,19 @@ elements["assistant-breadcrumb"].addEventListener("click", (event) => {
   if (button && !button.disabled) focusAssistant(button.dataset.rootId, button.dataset.nodeId || null);
 });
 elements["assistant-close-root"].addEventListener("click", closeFocusedAssistantLevel);
+document.getElementById('assistant-region-thumbnail').addEventListener('click', openAssistantRegionImage);
+document.getElementById('assistant-region-open').addEventListener('click', openAssistantRegionImage);
+document.getElementById('assistant-region-dialog-close').addEventListener('click', closeAssistantRegionImage);
+document.getElementById('assistant-region-dialog').addEventListener('close', () => {
+  document.getElementById('assistant-region-full-image').removeAttribute('src');
+});
+document.getElementById('assistant-region-dialog').addEventListener('click', event => {
+  if (event.target === event.currentTarget) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right
+        || event.clientY < bounds.top || event.clientY > bounds.bottom) closeAssistantRegionImage();
+  }
+});
 elements["assistant-close"].addEventListener("click", () => {
   setAssistantPanelOpen(false, { focusViewer: true });
 });
@@ -4768,6 +4914,7 @@ elements.viewer.addEventListener("wheel", (event) => {
   setZoom(adjacentZoom(direction), captureZoomAnchor(event.clientX, event.clientY));
 }, { passive: false });
 elements.viewer.addEventListener("keydown", (event) => {
+  if (visualSelection.active) return;
   if (!event.ctrlKey) state.pinnedLanding = null;
   if (state.practice.active && !event.ctrlKey && !event.altKey && !event.metaKey) {
     if (event.key === "Enter") { event.preventDefault(); submitPracticeChoice(); return; }

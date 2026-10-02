@@ -8,6 +8,7 @@ from typing import Callable
 
 from reader_service.library import LibraryService
 from reader_service.pdf_limits import validate_render_size
+from reader_service.visual_region import PDFIUM_RENDER_LOCK
 
 from .contracts import OcrEngine, PagePreparationError
 from .embedded import probe_embedded_text
@@ -30,7 +31,7 @@ class FoundationService:
         self._local = threading.local()
         # PDFium has process-wide mutable state; OCR may run on two workers,
         # but page opening, text probing, and rendering must be serialized.
-        self._pdfium_lock = threading.Lock()
+        self._pdfium_lock = PDFIUM_RENDER_LOCK
 
     def ensure_revision(self, revision_id: str) -> dict:
         revision = self.library.revision(revision_id)
