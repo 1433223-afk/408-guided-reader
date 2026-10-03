@@ -386,6 +386,11 @@ async function openBook(book) {
       url: `/api/revisions/${state.revision.id}/pdf`,
       httpHeaders: { "X-Reader-Token": launchToken },
       withCredentials: true,
+      wasmUrl: "/vendor/pdfjs/wasm/",
+      cMapUrl: "/vendor/pdfjs/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
+      iccUrl: "/vendor/pdfjs/iccs/",
     });
     const pdf = await loading.promise;
     if (generation !== state.generation) return;

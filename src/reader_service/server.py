@@ -508,6 +508,28 @@ def handler_factory(
                     "/vendor/katex.mjs": katex_root.joinpath("katex.mjs"),
                     "/vendor/katex.css": katex_root.joinpath("katex.css"),
                 }.get(parsed.path)
+                if parsed.path.startswith("/vendor/pdfjs/"):
+                    # Expose only flat PDF.js asset directories from this installed
+                    # version, including decoder JS fallbacks. Never arbitrary paths.
+                    resource = re.fullmatch(
+                        r"/vendor/pdfjs/(wasm|cmaps|standard_fonts|iccs)/([A-Za-z0-9][A-Za-z0-9_.-]*)",
+                        parsed.path,
+                    )
+                    extensions = {
+                        "wasm": {".wasm", ".js"},
+                        "cmaps": {".bcmap"},
+                        "standard_fonts": {".pfb", ".ttf"},
+                        "iccs": {".icc"},
+                    }
+                    if resource:
+                        folder, name = resource.groups()
+                        resource_root = pdfjs_root.parent.joinpath(folder).resolve()
+                        candidate = resource_root.joinpath(name).resolve()
+                        if candidate.parent == resource_root and candidate.suffix in extensions[folder]:
+                            vendor_target = candidate
+                    if vendor_target is None:
+                        self._json(HTTPStatus.NOT_FOUND, {"error": "PDF.js resource not found"})
+                        return
                 if parsed.path.startswith("/vendor/fonts/"):
                     font_name = parsed.path.removeprefix("/vendor/fonts/")
                     if font_name and Path(font_name).name == font_name:
@@ -521,6 +543,8 @@ def handler_factory(
                 content_type = mimetypes.guess_type(vendor_target.name)[0]
                 if vendor_target.suffix in (".js", ".mjs"):
                     content_type = "text/javascript; charset=utf-8"
+                elif vendor_target.suffix == ".wasm":
+                    content_type = "application/wasm"
                 self._file(vendor_target, content_type or "application/octet-stream")
                 return
             self._static(parsed.path, static_root)
