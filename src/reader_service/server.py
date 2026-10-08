@@ -78,6 +78,7 @@ _REVISION_ANNOTATION_REVIEW = re.compile(
 _BOOK = re.compile(r"^/api/books/([0-9a-f-]+)$")
 _PRACTICE = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype(?:/(attempt|favorite))?$")
 _PRACTICE_CATALOG = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/catalog$")
+_PRACTICE_POSITION = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/position$")
 _PRACTICE_REVIEW = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/review/(\d+)(?:/(open|send|retry))?$")
 _PRACTICE_HINT = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/hint/(\d+)$")
 _PRACTICE_KNOWLEDGE = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/knowledge-links$")
@@ -115,7 +116,7 @@ def handler_factory(
     katex_root = root.joinpath("node_modules", "katex", "dist")
     memory = LearningMemory(service.database)
     practice = PracticePrototype(service.database)
-    practice_review = PracticeReviewService(practice, learning) if learning is not None else None
+    practice_review = PracticeReviewService(practice, learning, service) if learning is not None else None
     practice_hint = PracticeHintService(practice_review) if practice_review is not None else None
     practice_knowledge = PracticeKnowledgeService(practice, getattr(learning, "runtime", None))
 
@@ -203,10 +204,11 @@ def handler_factory(
                     return
                 try:
                     records = practice.list(practice_match.group(1))
+                    positions = practice.positions(practice_match.group(1))
                 except LookupError as exc:
                     self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                     return
-                self._json(HTTPStatus.OK, {"questions": records})
+                self._json(HTTPStatus.OK, {"questions": records, "positions": positions})
                 return
             if self._reading_request(parsed.path, 'GET'):
                 return
@@ -551,6 +553,23 @@ def handler_factory(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            position_match = _PRACTICE_POSITION.fullmatch(parsed.path)
+            if position_match:
+                if not self._authorized():
+                    return
+                try:
+                    payload = self._read_json()
+                    if not isinstance(payload, dict) or set(payload) != {"section_id", "question_number"}:
+                        raise ValueError("练习位置无效。")
+                    result = practice.set_position(position_match.group(1), payload["section_id"], payload["question_number"])
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except (TypeError, ValueError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             region_match = _REVISION_VISUAL_REGION.fullmatch(parsed.path)
             if region_match:
                 if not self._authorized():

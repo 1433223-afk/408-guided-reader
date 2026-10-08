@@ -110,6 +110,13 @@ def _identity(source_sha256, section_number, printed_number):
 
 
 def _question_group(group, number, section, source_sha256):
+    prompt = group[0]
+    prompt_y = _bounds(prompt["quad"])[1]
+    # OCR ordinal order can place cells from a preceding table after the
+    # question heading. They remain outside this Exercise's spatial boundary.
+    # A small tolerance preserves a heading split into number and text quads.
+    group = [line for line in group if line["page"] != prompt["page"]
+             or _bounds(line["quad"])[1] >= prompt_y - .004]
     hits = []
     option_parts = defaultdict(list)
     current_choice = None
@@ -134,14 +141,16 @@ def _question_group(group, number, section, source_sha256):
         regions[line["page"]].append({"choice": choice, "rect": rect})
     if any(not _separate_options(options) for options in regions.values()):
         return None
-    prompt = group[0]
-    prompt_y = _bounds(prompt["quad"])[1]
     title = section["title"]
     section_number = title.lstrip("*").split()[0]
     source_lines = [line for line in group if .075 <= _bounds(line["quad"])[1] < .95]
     page_text = defaultdict(list)
+    page_top = defaultdict(lambda: 1.0)
+    page_bottom = defaultdict(float)
     for line in source_lines:
         page_text[line["page"]].append(line["text"])
+        page_top[line["page"]] = min(page_top[line["page"]], _bounds(line["quad"])[1])
+        page_bottom[line["page"]] = max(page_bottom[line["page"]], _bounds(line["quad"])[3])
     return {
         "number": _identity(source_sha256, section_number, number),
         "label": number, "sectionId": section["outline_node_id"],
@@ -151,6 +160,8 @@ def _question_group(group, number, section, source_sha256):
         "question_ocr": "\n".join(line["text"] for line in source_lines),
         "pages": [{"pdf_page_number": page + 1, "ocr_text": "\n".join(texts)}
                   for page, texts in sorted(page_text.items())],
+        "sourceRegions": [{"page": page, "top": round(page_top[page], 4),
+                           "bottom": round(page_bottom[page], 4)} for page in sorted(page_text)],
         "options_text": {choice: " ".join(option_parts[choice]) for choice in "ABCD"},
     }
 
@@ -328,7 +339,7 @@ def build_catalog(connection, revision_id: str, source_sha256: str, *, section_i
 
 def public_sections(sections: list[dict]) -> list[dict]:
     """The solve UI receives geometry and answer navigation, never answer text."""
-    question_keys = ("number", "label", "page", "promptY", "answerPage", "answerY", "regions")
+    question_keys = ("number", "label", "page", "promptY", "answerPage", "answerY", "regions", "sourceRegions")
     return [{"id": section["id"], "title": section["title"],
              "entryPage": section["entryPage"], "entryTop": section["entryTop"],
              "entryBottom": section["entryBottom"],

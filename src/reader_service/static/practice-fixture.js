@@ -80,3 +80,28 @@ export function practiceQuestionForPage(page, question) {
 export function practiceChoiceAt(region, x, y) {
   return region?.options.find(({rect: [x0,y0,x1,y1]}) => x >= x0 && x <= x1 && y >= y0 && y <= y1)?.choice || null;
 }
+
+// Exercise coverage includes prompt-only pages and diagrams after the options.
+// Option hit regions describe where to click; they do not define the Exercise.
+export function practiceSourceRegions(question) {
+  if (!question) return [];
+  if (question.sourceRegions?.length) return question.sourceRegions;
+  const regions = question.regions || [{page: question.page,
+    options: question.options.map((rect, index) => ({choice: "ABCD"[index], rect}))}];
+  return [...new Set([question.page, ...regions.map(region => region.page)])].sort((a, b) => a - b).map(page => {
+    const options = regions.find(region => region.page === page)?.options || [];
+    const top = page === question.page ? question.promptY : Math.min(...options.map(option => option.rect[1]));
+    return {page, top, bottom: Math.max(top + .02, ...options.map(option => option.rect[3]))};
+  });
+}
+
+export function practiceGuideForPage(page, question) {
+  if (!question) return null;
+  const source = practiceSourceRegions(question).find(region => region.page === page);
+  if (!source) return null;
+  const options = practiceQuestionForPage(page, question)?.options || [];
+  const promptPage = question.page === page;
+  const top = promptPage ? Math.min(question.promptY, source.top) : source.top;
+  const bottom = Math.max(source.bottom, ...options.map(option => option.rect[3]));
+  return {top, bottom, label: promptPage ? "当前" : "续"};
+}

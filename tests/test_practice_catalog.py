@@ -85,6 +85,9 @@ def test_cross_page_catalog_is_generated_and_keeps_answer_out_of_solve_ui(tmp_pa
     assert question['options_text']['B'] == '乙 乙的续行'
     public_question = public_sections(sections)[0]['questions'][0]
     assert 'answer' not in public_question and 'explanation' not in public_question
+    assert [region['page'] for region in public_question['sourceRegions']] == [0, 1]
+    assert public_question['sourceRegions'][0]['top'] == question['promptY']
+    assert public_question['sourceRegions'][1]['bottom'] >= .166
     practice = PracticePrototype(database)
     assert practice.attempt('revision', question['number'], 'A')['last_correct'] is True
     practice.set_favorite('revision', question['number'], True)

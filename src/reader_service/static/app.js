@@ -11,7 +11,7 @@ import { createMemoryUI } from "/memory-ui.js";
 import { createGuideUI } from "/guide-ui.js";
 import { createInlineUI } from "/inline-ui.js";
 import { createAssistantNavigator } from "/assistant-navigator.js";
-import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt } from "/practice-fixture.js";
+import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt, practiceGuideForPage, practiceSourceRegions } from "/practice-fixture.js";
 import { createPracticeKnowledge } from "/practice-knowledge.js";
 import { createVisualSelection } from "/visual-selection.js";
 
@@ -63,7 +63,7 @@ const state = {
   pinnedLanding: null, navigationAnchorId: null,
   directoryCollapsed: null, directoryExpandedFor: null,
   leftPaneWidth: 304,
-  practice: { active: false, sectionId: "126", index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
+  practice: { active: false, sectionId: "126", index: 0, selected: null, result: null, records: new Map(), positions: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
     hints: [], hintLoading: false, hintEpoch: 0, onKnowledgePage: false },
@@ -1291,7 +1291,7 @@ function resetPractice() {
     state.zoom = state.practice.restoreZoom;
     elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
   }
-  state.practice = { active: false, sectionId: null, index: 0, selected: null, result: null, records: new Map(), onAnswerPage: false,
+  state.practice = { active: false, sectionId: null, index: 0, selected: null, result: null, records: new Map(), positions: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
     hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, pendingCatalog: null, onKnowledgePage: false };
@@ -1310,11 +1310,25 @@ function practiceRecord(number) {
   return state.practice.records.get(number) || {number, attempt_count: 0, last_correct: null, ever_correct: false, favorite: false};
 }
 
+let practicePositionSave = Promise.resolve();
+function savePracticePosition() {
+  const revisionId = state.revision?.id;
+  const sectionId = state.practice.sectionId;
+  const questionNumber = practiceCurrentQuestion()?.number;
+  if (!revisionId || !sectionId || !questionNumber) return;
+  state.practice.positions.set(sectionId, questionNumber);
+  practicePositionSave = practicePositionSave.then(() => api(`/api/revisions/${revisionId}/practice-prototype/position`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({section_id: sectionId, question_number: questionNumber}),
+  })).catch(error => announce(`练习位置未保存：${error.message}`, true));
+}
+
 async function loadPracticeRecords() {
   const revisionId = state.revision?.id;
   if (!revisionId) return;
   const loadEpoch = ++state.practice.catalogLoadEpoch;
   try {
+    await practicePositionSave;
     const [catalog, payload] = await Promise.all([
       api(`/api/revisions/${revisionId}/practice-prototype/catalog`),
       api(`/api/revisions/${revisionId}/practice-prototype`),
@@ -1323,6 +1337,8 @@ async function loadPracticeRecords() {
     if (state.practice.active) state.practice.pendingCatalog = catalog.sections;
     else replacePracticeSections(catalog.sections, state.revision.blob_sha256);
     state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
+    state.practice.positions = new Map(Object.entries(payload.positions || {}));
+    if (state.practice.active) state.practice.positions.set(state.practice.sectionId, practiceCurrentQuestion().number);
     updatePracticeRail();
     renderPracticePages();
   } catch (error) {
@@ -1396,7 +1412,7 @@ function updatePracticeRail() {
     ? `作答 ${record.attempt_count} 次${record.ever_correct ? " · 做对过" : ""}${record.attempt_count > 1 ? " · 多次练习" : ""}` : "";
   const done = practiceQuestions().filter(question => practiceRecord(question.number).attempt_count > 0).length;
   elements["practice-progress"].textContent = `已做 ${done} / ${practiceQuestions().length}`;
-  document.getElementById("practice-page-note").hidden = !question.regions || question.regions.length < 2 || awayFromQuestion || !!result;
+  document.getElementById("practice-page-note").hidden = practiceSourceRegions(question).length < 2 || awayFromQuestion || !!result;
   const favorite = elements["practice-favorite"];
   favorite.textContent = record.favorite ? "★" : "☆";
   favorite.setAttribute("aria-pressed", String(record.favorite));
@@ -1452,11 +1468,12 @@ function renderPracticeOverlay(index) {
     entry.style.cssText = `left:${section.entryLeft*100}%;top:${((section.entryTop + (section.entryBottom ?? section.entryTop)) / 2)*100}%`;
     entry.style.setProperty("--practice-entry-scale", String(Math.min(1, Math.max(.83, wrapper.clientWidth / 920))));
     const current = state.practice.active && state.practice.sectionId === section.id;
+    const continuing = state.practice.positions.has(section.id);
     entry.classList.toggle("is-current", current);
-    entry.textContent = current ? "做题中" : wrapper.clientWidth < 600 ? "做题" : "做题模式";
+    entry.textContent = current ? "做题中" : continuing ? "继续练习" : wrapper.clientWidth < 600 ? "做题" : "做题模式";
     entry.disabled = current;
-    entry.title = current ? "正在做题" : "进入做题模式";
-    entry.setAttribute("aria-label", current ? `${section.title} 正在做题` : `进入 ${section.title} 的做题模式`);
+    entry.title = current ? "正在做题" : continuing ? "从上次的题目继续练习" : "进入做题模式";
+    entry.setAttribute("aria-label", current ? `${section.title} 正在做题` : continuing ? `继续 ${section.title}` : `进入 ${section.title} 的做题模式`);
     entry.addEventListener("click", () => enterPractice(section.id));
     wrapper.append(entry);
   }
@@ -1483,17 +1500,16 @@ function renderPracticeOverlay(index) {
   if (!state.practice.active) return;
   const active = practiceCurrentQuestion();
   const region = practiceQuestionForPage(index, active);
-  if (!region) return;
-  const promptPage = active.page === index;
-  const top = promptPage ? active.promptY : Math.min(...region.options.map(({rect}) => rect[1]));
-  const bottom = Math.max(...region.options.map(({rect}) => rect[3]));
+  const guideRegion = practiceGuideForPage(index, active);
+  if (!guideRegion) return;
+  const {top, bottom, label} = guideRegion;
   const guide = document.createElement("span");
   guide.className = "practice-current-guide";
-  guide.textContent = promptPage ? "当前" : "续";
+  guide.textContent = label;
   guide.setAttribute("aria-hidden", "true");
   guide.style.cssText = `top:${(top - .006)*100}%;height:${(bottom - top + .009)*100}%`;
   wrapper.append(guide);
-  region.options.forEach(({choice, rect: [x0,y0,x1,y1]}) => {
+  (region?.options || []).forEach(({choice, rect: [x0,y0,x1,y1]}) => {
     const marker = document.createElement("span");
     marker.className = "practice-choice-area";
     marker.dataset.choice = choice;
@@ -1514,7 +1530,8 @@ function showPracticeQuestion() {
   state.practice.onKnowledgePage = false;
   updatePracticeRail();
   renderPracticePages();
-  goToPage(question.page, Math.max(0, question.promptY - .08));
+  const source = practiceSourceRegions(question).find(region => region.page === question.page);
+  goToPage(question.page, Math.max(0, (source?.top ?? question.promptY) - .08));
   elements.viewer.focus({ preventScroll: true });
 }
 
@@ -1529,6 +1546,7 @@ function switchPracticeQuestion(index) {
   state.practice.hints = [];
   state.practice.hintLoading = false;
   showPracticeQuestion();
+  savePracticePosition();
 }
 
 function closePracticeReview() {
@@ -1578,7 +1596,9 @@ function enterPractice(sectionId) {
   if (state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   state.practice.active = true;
   state.practice.sectionId = sectionId;
-  state.practice.index = 0;
+  const section = PRACTICE_SECTIONS.find(item => item.id === sectionId);
+  const previousNumber = state.practice.positions.get(sectionId);
+  state.practice.index = Math.max(0, section.questions.findIndex(question => question.number === previousNumber));
   state.practice.selected = null;
   state.practice.result = null;
   state.practice.hints = [];
@@ -1594,6 +1614,7 @@ function enterPractice(sectionId) {
   fitPracticePdfForDock();
   relayoutPages();
   showPracticeQuestion();
+  savePracticePosition();
   practiceKnowledge.start(state.revision.id, sectionId);
 }
 

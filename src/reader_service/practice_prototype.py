@@ -82,6 +82,32 @@ class PracticePrototype:
                 (revision_id,),
             )]
 
+    def positions(self, revision_id: str) -> dict[str, int]:
+        with self.database.connect() as connection:
+            self._require_source(connection, revision_id)
+            return {row["section_id"]: row["question_number"] for row in connection.execute(
+                "SELECT section_id,question_number FROM practice_section_positions WHERE book_source_revision_id = ?",
+                (revision_id,),
+            )}
+
+    def set_position(self, revision_id: str, section_id: object, number: object) -> dict:
+        number = self._number(number)
+        if not isinstance(section_id, str) or not section_id or len(section_id) > 120:
+            raise ValueError("习题节无效。")
+        section = next((item for item in self.catalog(revision_id) if item["id"] == section_id), None)
+        if section is None or number not in {item["number"] for item in section["questions"]}:
+            raise ValueError("这道题不属于当前习题节。")
+        with self.database.connect() as connection:
+            self._require_source(connection, revision_id)
+            connection.execute(
+                """INSERT INTO practice_section_positions
+                   (book_source_revision_id,section_id,question_number) VALUES (?,?,?)
+                   ON CONFLICT(book_source_revision_id,section_id) DO UPDATE SET
+                     question_number=excluded.question_number,updated_at=CURRENT_TIMESTAMP""",
+                (revision_id, section_id, number),
+            )
+        return {"section_id": section_id, "question_number": number}
+
     def list_favorites(self) -> list[dict]:
         """The favorite is the curation decision; no second memory copy is stored."""
         with self.database.connect() as connection:

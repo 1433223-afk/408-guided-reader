@@ -7,10 +7,11 @@ from uuid import uuid4
 
 from reader_service.learning.service import LearningService
 from reader_service.practice_review import PracticeReviewService
+from reader_service.practice_visual import with_question_visuals
 
 
 HINT_SYSTEM = """在 Guided Reader 的 Practice Solve Mode 中，用简体中文给尚未提交的用户一点思考方向。
-你收到的 source 只有原书题目与选项，没有官方答案或解析。不要猜测或直接宣布正确选项，
+你收到的 source 只有原书题目与选项；如附有原 PDF 图片，它也只包含题目区域，没有官方答案或解析。不要猜测或直接宣布正确选项，
 不要逐项判断对错、点名某个选项或具体部件的归属，也不要给出完整解法。只提出用户自己能执行的检查标准。
 previous_hints 是本题已给出的提示：必须承接它们，
 每次提供一个新的、稍具体的思考步骤，不能换句话重复。第 1 次聚焦概念，随后逐步指向需要比较的条件；
@@ -36,16 +37,19 @@ class PracticeHintService:
         if hasattr(self.review.master, "refresh_provider_routes"):
             self.review.master.refresh_provider_routes()
         provider, model = self.review._approved_provider(self.review.master.provider)
+        visuals = self.review.visual_context(revision_id, number, provider, model)
         messages = [
             {"role": "system", "content": HINT_SYSTEM},
-            {"role": "user", "content": json.dumps({
+            {"role": "user", "content": with_question_visuals(json.dumps({
                 "source": source, "selected": selected,
                 "previous_hints": previous, "next_hint_number": len(previous) + 1,
-            }, ensure_ascii=False)},
+            }, ensure_ascii=False), visuals)},
         ]
         options = LearningService._answer_runtime_options(
             {"provider": provider, "model": model, "reasoning_mode": "Quick"}
         )
+        if visuals:
+            options["retain_request_body"] = False
         completion = self.review.master.runtime.complete_for_with_metadata(
             provider, messages, interaction_id=f"practice-hint:{uuid4()}", max_tokens=350,
             **options,

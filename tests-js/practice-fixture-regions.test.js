@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {PRACTICE_BOOK_SHA256, PRACTICE_QUESTIONS, PRACTICE_QUESTIONS_524, PRACTICE_SECTIONS,
-  replacePracticeSections, practiceQuestionForPage, practiceChoiceAt} from '../src/reader_service/static/practice-fixture.js';
+  replacePracticeSections, practiceQuestionForPage, practiceChoiceAt, practiceGuideForPage, practiceSourceRegions} from '../src/reader_service/static/practice-fixture.js';
 
 test('one cross-page Exercise keeps four choices on their source pages', () => {
   const question = PRACTICE_QUESTIONS_524.find(item => item.number === 109);
@@ -18,6 +18,39 @@ test('existing single-page Exercise still uses the same hit regions', () => {
   const question = PRACTICE_QUESTIONS[0];
   assert.equal(practiceChoiceAt(practiceQuestionForPage(19, question), .3, .774), 'A');
   assert.equal(practiceQuestionForPage(20, question), null);
+});
+
+test('prompt-only first page and table continuation both retain the current Exercise guide', () => {
+  const question = {page: 28, promptY: .9042,
+    sourceRegions: [{page: 28, top: .9042, bottom: .9189}, {page: 29, top: .1018, bottom: .2303}],
+    regions: [{page: 29, options: [{choice: 'A', rect: [.18, .2132, .27, .2313]}]}]};
+  assert.equal(practiceQuestionForPage(28, question), null);
+  assert.deepEqual(practiceGuideForPage(28, question), {top: .9042, bottom: .9189, label: '当前'});
+  assert.deepEqual(practiceGuideForPage(29, question), {top: .1018, bottom: .2313, label: '续'});
+  assert.equal(practiceGuideForPage(30, question), null);
+  assert.equal(practiceChoiceAt(practiceQuestionForPage(28, question), .2, .91), null);
+  assert.equal(practiceSourceRegions(question).length, 2, 'cross-page notice includes prompt-only pages');
+});
+
+test('middle text pages and diagrams after all options remain part of the same Exercise', () => {
+  const question = {page: 8, promptY: .7,
+    sourceRegions: [{page: 8, top: .7, bottom: .9}, {page: 9, top: .1, bottom: .8}, {page: 10, top: .1, bottom: .6}],
+    regions: [{page: 8, options: [...'ABCD'].map(choice => ({choice, rect: [.2, .8, .4, .9]}))}]};
+  assert.equal(practiceSourceRegions(question).length, 3);
+  for (const [index, source] of question.sourceRegions.entries()) {
+    const guide = practiceGuideForPage(source.page, question);
+    assert.deepEqual(guide, {top: source.top, bottom: source.bottom, label: index ? '续' : '当前'});
+  }
+  assert.equal(practiceQuestionForPage(9, question), null);
+  assert.equal(practiceQuestionForPage(10, question), null);
+  assert.equal(practiceChoiceAt(practiceQuestionForPage(10, question), .3, .2), null);
+});
+
+test('legacy fixture coverage retains first page and split option pages', () => {
+  const question = PRACTICE_QUESTIONS_524.find(item => item.number === 109);
+  assert.deepEqual(practiceSourceRegions(question).map(region => region.page), [227, 228]);
+  assert.equal(practiceGuideForPage(227, question).label, '当前');
+  assert.equal(practiceGuideForPage(228, question).label, '续');
 });
 
 test('saved demo questions remain locatable while generated OCR is partial', () => {
