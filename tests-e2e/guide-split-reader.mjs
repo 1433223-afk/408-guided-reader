@@ -88,20 +88,20 @@ try {
  },section.outline_node_id);
  assert.ok(Math.abs(sourceOffset)<10, `Source offset ${sourceOffset}`);
  // Closing a dock after horizontal reading must center the current PDF page in the restored viewport.
- while(Number((await page.locator('#zoom-value').textContent()).replace('%',''))<250)await page.locator('#zoom-in').click();
+ while(Number((await page.locator('#zoom-value').inputValue()).replace('%',''))<250)await page.locator('#zoom-in').click();
  await page.waitForTimeout(300);
  const closeState=await page.evaluate(()=>{
   const viewer=document.querySelector('#viewer'),pageIndex=Number(document.querySelector('#page-number').value)-1;
   viewer.scrollLeft=viewer.scrollWidth-viewer.clientWidth;
   window.__guideCloseCanvas=document.querySelector(`.page[data-index="${pageIndex}"] canvas`);
-  return {pageIndex,zoom:document.querySelector('#zoom-value').textContent,scrollTop:viewer.scrollTop};
+  return {pageIndex,zoom:document.querySelector('#zoom-value').value,scrollTop:viewer.scrollTop};
  });
  await page.locator('#guide-close').click();await page.waitForTimeout(100);
  const centered=await page.evaluate(({pageIndex,zoom,scrollTop})=>{
   const viewer=document.querySelector('#viewer'),page=document.querySelector(`.page[data-index="${pageIndex}"]`);
   const vr=viewer.getBoundingClientRect(),pr=page.getBoundingClientRect();
   return {centerError:Math.abs((pr.left+pr.right-vr.left-vr.right)/2),canvasSame:page.querySelector('canvas')===window.__guideCloseCanvas,
-   pageSame:Number(document.querySelector('#page-number').value)-1===pageIndex,zoomSame:document.querySelector('#zoom-value').textContent===zoom,
+   pageSame:Number(document.querySelector('#page-number').value)-1===pageIndex,zoomSame:document.querySelector('#zoom-value').value===zoom,
    scrollTopDelta:viewer.scrollTop-scrollTop,scrollLeft:viewer.scrollLeft,scrollWidth:viewer.scrollWidth,clientWidth:viewer.clientWidth,
    pageLeft:pr.left,pageRight:pr.right,viewerLeft:vr.left,viewerRight:vr.right};
  },closeState);

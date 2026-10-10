@@ -350,7 +350,7 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
       viewerWidth: viewer.clientWidth,
       inlineReserve: document.querySelector('#reader').classList.contains('inline-open') ? 332 : 0,
       readingAnchorBefore: window.__readerAnchor(),
-      zoom: document.querySelector('#zoom-value').textContent,
+      zoom: document.querySelector('#zoom-value').value,
       canvasSizes: canvases.map(canvas => {
         const bounds = canvas.getBoundingClientRect();
         return { page: canvas.closest('.page').dataset.index, width: canvas.width, height: canvas.height,
@@ -431,7 +431,7 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
         || metric.inlineReserve !== (document.querySelector('#reader').classList.contains('inline-open') ? 332 : 0),
       renderedWidthsMatchLayout: (() => {
         const reserve = document.querySelector('#reader').classList.contains('inline-open') ? 332 : 0;
-        const zoom = Number(document.querySelector('#zoom-value').textContent.replace('%', '')) / 100;
+        const zoom = Number(document.querySelector('#zoom-value').value.replace('%', '')) / 100;
         const expected = Math.max(240, Math.min(920, viewer.clientWidth - reserve - 72)) * zoom;
         return currentCanvases.every(canvas => Math.abs(canvas.getBoundingClientRect().width - expected) <= 1);
       })(),
@@ -454,7 +454,7 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
           && Math.abs(bounds.width - saved.cssWidth) < .1 && Math.abs(bounds.height - saved.cssHeight) < .1;
       }),
       wrapperIdentityPreserved: metric.wrappers.every((wrapper, index) => document.querySelector('#pages').children[index] === wrapper),
-      zoomStable: document.querySelector('#zoom-value').textContent === metric.zoom,
+      zoomStable: document.querySelector('#zoom-value').value === metric.zoom,
       scrollTopDelta: viewer.scrollTop - metric.scrollTop,
       scrollLeftDelta: viewer.scrollLeft - metric.scrollLeft,
       currentPageStable: Number(document.querySelector('#page-number').value) === metric.currentPage,

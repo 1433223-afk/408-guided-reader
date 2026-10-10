@@ -59,12 +59,21 @@
             <div id="reader-more-menu" class="reader-more-menu" role="group" aria-label="更多阅读工具">
               <span class="control-divider"></span>
               <button id="zoom-out" class="icon-button" aria-label="缩小">−</button>
-              <output id="zoom-value">100%</output>
+              <span class="zoom-control">
+                <input id="zoom-value" type="text" inputmode="decimal" value="100%" aria-label="缩放百分比" title="缩放百分比" autocomplete="off" spellcheck="false">
+                <button id="reading-display-toggle" type="button" aria-label="阅读显示" title="阅读显示" aria-expanded="false" aria-haspopup="dialog" aria-controls="reading-display-menu"><svg aria-hidden="true" width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m4 6 4 4 4-4"/></svg></button>
+              </span>
               <button id="zoom-in" class="icon-button" aria-label="放大">＋</button>
             </div>
           </div>
         </div>
       </header>
+      <div id="reading-display-menu" class="reading-display-menu" role="dialog" aria-label="阅读显示" hidden>
+        <button type="button" data-reading-fit="width">适应宽度</button>
+        <button type="button" data-reading-fit="page">适应整页</button>
+        <button type="button" data-reading-fit="content" title="按本页内容放大，保留完整原页">适应正文</button>
+        <label><input id="reading-paper" type="checkbox">柔和纸色</label>
+      </div>
       <div id="viewer" class="viewer" tabindex="0" aria-label="PDF 页面">
         <div id="pages" class="pages"></div>
       </div>
@@ -129,7 +138,7 @@
       <aside id="marks-panel" class="marks-panel" aria-label="当前页标记" hidden>
         <div class="marks-panel-heading"><strong>第 <span id="marks-page">1</span> 页的标记</strong><button id="marks-close" type="button" aria-label="关闭标记面板">×</button></div>
         <div id="marks-list" class="marks-list"></div>
-        <p id="marks-empty" class="marks-empty">本页没有标记。</p>
+        <p id="marks-empty" class="marks-empty">本页没有笔记与标记。选中文字后右键，可高亮或加笔记。</p>
       </aside>
       <aside id="assistant-panel" class="assistant-panel" aria-label="问 AI" hidden>
         <div id="assistant-resize-handle" class="assistant-resize-handle" role="separator" tabindex="0"

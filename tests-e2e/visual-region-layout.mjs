@@ -107,7 +107,7 @@ try {
   await page.locator('#book-overview .overview-book-heading .primary-action').click();
   await page.locator('#reader').waitFor();
   for (let i = 0; i < 20; i++) {
-    const current = parseInt(await page.locator('#zoom-value').innerText(), 10);
+    const current = parseInt(await page.locator('#zoom-value').inputValue(), 10);
     if (current === 80) break;
     await page.locator(current > 80 ? '#zoom-out' : '#zoom-in').click();
   }

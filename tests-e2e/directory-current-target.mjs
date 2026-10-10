@@ -97,8 +97,8 @@ try {
   }
 
   const coa = await openBook(348);
-  while (Number.parseInt(await page.locator('#zoom-value').textContent(), 10) > 100) await page.locator('#zoom-out').click();
-  while (Number.parseInt(await page.locator('#zoom-value').textContent(), 10) < 100) await page.locator('#zoom-in').click();
+  while (Number.parseInt(await page.locator('#zoom-value').inputValue(), 10) > 100) await page.locator('#zoom-out').click();
+  while (Number.parseInt(await page.locator('#zoom-value').inputValue(), 10) < 100) await page.locator('#zoom-in').click();
   await page.setViewportSize({width: 1440, height: 1000});
   await page.waitForTimeout(350);
   const directoryGeometry = await page.evaluate(() => {

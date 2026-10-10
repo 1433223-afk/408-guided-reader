@@ -108,7 +108,7 @@
 #reader .toolbar .reader-more>#reader-more-toggle { display:none; }
 @media(max-width:1320px) {
   #reader .toolbar { gap:16px;padding-inline:16px; }
-  #reader .toolbar .preparation-status { display:none; }
+  #reader .toolbar button.preparation-status:not([hidden]) { display:none; }
   #reader .toolbar .reader-controls { gap:0; }
   #reader .toolbar .reader-controls .control-divider { margin-inline:2px; }
   #reader .toolbar #guide-reopen { padding-inline:4px; }

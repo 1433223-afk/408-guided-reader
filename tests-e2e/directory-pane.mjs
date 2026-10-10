@@ -63,8 +63,8 @@ try {
   await page.locator('.page canvas').first().waitFor({timeout: 30000});
   // The Library remembers zoom across sessions; geometry-mode assertions below
   // are calibrated at 100%, independent of the user's last saved reading zoom.
-  while (Number.parseInt(await page.locator('#zoom-value').textContent(), 10) > 100) await page.locator('#zoom-out').click();
-  while (Number.parseInt(await page.locator('#zoom-value').textContent(), 10) < 100) await page.locator('#zoom-in').click();
+  while (Number.parseInt(await page.locator('#zoom-value').inputValue(), 10) > 100) await page.locator('#zoom-out').click();
+  while (Number.parseInt(await page.locator('#zoom-value').inputValue(), 10) < 100) await page.locator('#zoom-in').click();
 
   const outline = await page.evaluate(async () => {
     const books = (await (await fetch('/api/books')).json()).books;
@@ -82,7 +82,7 @@ try {
     const rect = canvas.getBoundingClientRect();
     return {
       pageNumber: document.querySelector('#page-number').value,
-      zoom: document.querySelector('#zoom-value').textContent,
+      zoom: document.querySelector('#zoom-value').value,
       scrollTop: viewer.scrollTop, scrollLeft: viewer.scrollLeft,
       canvasWidth: canvas.width, canvasHeight: canvas.height,
       cssWidth: rect.width, cssHeight: rect.height, canvasX: rect.left,
@@ -320,7 +320,7 @@ try {
   // Zoom growth re-evaluates the mode: 150% at 1440 cannot sit beside the pane.
   await page.locator('#outline-toggle').click();
   await page.locator('#outline-tree .outline-target').first().waitFor();
-  while (Number((await page.locator('#zoom-value').textContent()).replace('%', '')) < 150) {
+  while (Number((await page.locator('#zoom-value').inputValue()).replace('%', '')) < 150) {
     await page.locator('#zoom-in').click();
     await page.waitForTimeout(120);
   }
@@ -328,7 +328,7 @@ try {
   assert.match(await readerClass(), /directory-nav/, 'high zoom must fall back to navigation mode');
   assert.equal(await page.locator('#viewer').evaluate(el => getComputedStyle(el).visibility), 'hidden',
     'navigation mode must not show the PDF next to the pane');
-  while (Number((await page.locator('#zoom-value').textContent()).replace('%', '')) > 100) {
+  while (Number((await page.locator('#zoom-value').inputValue()).replace('%', '')) > 100) {
     await page.locator('#zoom-out').click();
     await page.waitForTimeout(120);
   }

@@ -50,7 +50,7 @@ try {
   }
   async function assertRestored(expected) {
     assert.equal(await page.locator("#page-number").inputValue(), String(expected.pdf_page_index + 1));
-    assert.equal(await page.locator("#zoom-value").textContent(), `${Math.round(expected.zoom * 100)}%`);
+    assert.equal(await page.locator("#zoom-value").inputValue(), `${Math.round(expected.zoom * 100)}%`);
     const actual = await position();
     assert.equal(actual.pdf_page_index, expected.pdf_page_index);
     assert.equal(actual.zoom, expected.zoom);

@@ -96,7 +96,7 @@ try {
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
   const centerAfter = await viewportCenterAnchor(page);
   assertAnchorStable(centerBefore, centerAfter, "toolbar zoom");
-  assert.equal(await page.locator("#zoom-value").textContent(), "110%");
+  assert.equal(await page.locator("#zoom-value").inputValue(), "110%");
   const metrics110 = await captureRenderMetrics(page, "110%");
   assertPixelExact(metrics110);
   await page.screenshot({ path: path.join(artifacts, "r1-reader-page-12-110.png"), fullPage: false });
@@ -104,12 +104,12 @@ try {
   // Keyboard shortcuts are handled only while the Reader viewport has focus.
   await page.locator("#viewer").focus();
   await page.locator("#viewer").press("Control+=");
-  assert.equal(await page.locator("#zoom-value").textContent(), "125%");
+  assert.equal(await page.locator("#zoom-value").inputValue(), "125%");
   const metrics125 = await captureRenderMetrics(page, "125%");
   assertPixelExact(metrics125);
   await page.screenshot({ path: path.join(artifacts, "r1-reader-page-12-125.png"), fullPage: false });
   await page.locator("#viewer").press("Control+-");
-  assert.equal(await page.locator("#zoom-value").textContent(), "110%");
+  assert.equal(await page.locator("#zoom-value").inputValue(), "110%");
 
   // Ctrl+wheel preserves the PDF point under the pointer.
   const viewerBox = await page.locator("#viewer").boundingBox();
@@ -119,7 +119,7 @@ try {
   await page.mouse.move(pointer.x, pointer.y);
   await page.mouse.wheel(0, -100);
   await page.keyboard.up("Control");
-  assert.equal(await page.locator("#zoom-value").textContent(), "125%");
+  assert.equal(await page.locator("#zoom-value").inputValue(), "125%");
   const pointerAfter = await anchorAt(page, pointer.x, pointer.y);
   assertAnchorStable(pointerBefore, pointerAfter, "pointer zoom");
 
@@ -145,7 +145,7 @@ try {
   await page.getByRole("button", { name: /^继续 PDF/ }).click();
   await page.locator(".page canvas").first().waitFor({ state: "visible", timeout: 30_000 });
   assert.equal(await page.locator("#page-number").inputValue(), "12", "reopen did not restore the PDF page");
-  assert.equal(await page.locator("#zoom-value").textContent(), "125%", "reopen did not restore zoom");
+  assert.equal(await page.locator("#zoom-value").inputValue(), "125%", "reopen did not restore zoom");
 
   await page.locator("#back-to-library").click();
   await page.locator("#library-home").waitFor({ state: "visible" });
@@ -216,7 +216,7 @@ async function captureRenderMetrics(page, expectedZoom) {
     const wrapperRect = canvas.parentElement.getBoundingClientRect();
     return {
       dpr: window.devicePixelRatio,
-      zoom: document.querySelector("#zoom-value").textContent,
+      zoom: document.querySelector("#zoom-value").value,
       backingWidth: canvas.width,
       backingHeight: canvas.height,
       cssWidth: rect.width,

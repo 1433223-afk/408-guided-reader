@@ -43,7 +43,7 @@ try {
   await page.locator('#page-number').fill('20');
   await page.locator('#page-number').press('Enter');
   await page.locator('.page[data-index="19"] canvas').waitFor({timeout: 30000});
-  const initialZoom = await page.locator('#zoom-value').innerText();
+  const initialZoom = await page.locator('#zoom-value').inputValue();
   await page.locator('.page[data-index="19"] .practice-entry').click();
   assert.equal(await page.locator('#practice-panel').isVisible(), true);
   assert.equal(await page.locator('#practice-next').isVisible(), true);
@@ -75,7 +75,7 @@ try {
   await page.locator('#practice-review').click();
   await page.locator('#master-workspace').waitFor();
   await page.locator('#master-title').filter({hasText: /第 1 题/}).waitFor();
-  if (Number.parseInt(initialZoom, 10) > 100) assert.equal(await page.locator('#zoom-value').innerText(), '100%');
+  if (Number.parseInt(initialZoom, 10) > 100) assert.equal(await page.locator('#zoom-value').inputValue(), '100%');
   assert.match(await page.locator('#master-title').innerText(), /第 1 题/);
   assert.equal(await page.locator('#practice-review-targets').isVisible(), true);
   if (process.env.PRACTICE_REVIEW_LIVE === '1') {
@@ -226,7 +226,7 @@ try {
   await page.locator('#page-number').fill('20');
   await page.locator('#page-number').press('Enter');
   await page.locator('.page[data-index="19"] .practice-entry').waitFor({timeout: 30000});
-  assert.equal(await page.locator('#zoom-value').innerText(), initialZoom);
+  assert.equal(await page.locator('#zoom-value').inputValue(), initialZoom);
   await page.locator('.page[data-index="19"] .practice-question-mark').first().waitFor();
   await page.locator('.page[data-index="19"] .practice-entry').click();
   assert.equal(await page.locator('#practice-favorite').getAttribute('aria-pressed'), expectedFavorite);

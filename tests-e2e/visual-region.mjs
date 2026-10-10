@@ -89,7 +89,7 @@ try {
   };
   const setZoom = async target => {
     for (let attempt = 0; attempt < 20; attempt++) {
-      const current = parseInt(await page.locator('#zoom-value').innerText(), 10);
+      const current = parseInt(await page.locator('#zoom-value').inputValue(), 10);
       if (current === target) return;
       await page.locator(current < target ? '#zoom-in' : '#zoom-out').click();
     }

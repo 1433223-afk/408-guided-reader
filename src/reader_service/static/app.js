@@ -14,6 +14,7 @@ import { createAssistantNavigator } from "/assistant-navigator.js";
 import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt, practiceGuideForPage, practiceSourceRegions } from "/practice-fixture.js";
 import { createPracticeKnowledge } from "/practice-knowledge.js";
 import { createVisualSelection } from "/visual-selection.js";
+import { canvasContentBounds, createReadingDisplay, createZoomEditor } from "/reading-display.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -373,7 +374,7 @@ async function openBook(book) {
   elements.reader.hidden = false;
   elements["page-total"].textContent = `/ ${state.revision.page_count}`;
   elements["page-number"].max = String(state.revision.page_count);
-  elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
+  elements["zoom-value"].value = `${Math.round(state.zoom * 100)}%`;
   renderLibrary();
   elements.pages.replaceChildren();
   buildPlaceholders();
@@ -904,7 +905,7 @@ function setZoom(value, anchor = captureZoomAnchor()) {
   if (newZoom === state.zoom || !state.revision) return;
   state.practice.restoreZoom = null;
   state.zoom = newZoom;
-  elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
+  elements["zoom-value"].value = `${Math.round(state.zoom * 100)}%`;
   relayoutPages(anchor);
 }
 
@@ -913,6 +914,40 @@ function adjacentZoom(direction) {
   if (direction > 0) return ZOOM_LEVELS.find((level) => level > state.zoom + tolerance) ?? 4;
   return [...ZOOM_LEVELS].reverse().find((level) => level < state.zoom - tolerance) ?? 0.5;
 }
+
+function fitReadingDisplay(mode) {
+  if (!state.pdf) return;
+  const index = state.currentPage;
+  const wrapper = elements.pages.children[index];
+  const availableWidth = Math.max(240, elements.viewer.clientWidth - inlineReserve() - 64);
+  const width = wrapper.offsetWidth;
+  let targetWidth = availableWidth;
+  let bounds = [0, 1];
+  if (mode === "page") {
+    const ratio = displayedRatio(state.revision.page_geometry[index]);
+    targetWidth = Math.min(availableWidth, Math.max(100, elements.viewer.clientHeight - 40) / ratio);
+  } else if (mode === "content") {
+    const canvas = wrapper.querySelector("canvas");
+    if (!canvas || !state.rendered.has(index)) {announce("本页仍在显示，请稍后再试。"); return;}
+    bounds = canvasContentBounds(canvas, state.overlayData.get(index)?.lines);
+    if (!bounds) {announce("本页没有可识别的正文，保留原页显示。"); return;}
+    targetWidth /= bounds[1] - bounds[0];
+  }
+  const anchor = captureZoomAnchor();
+  if (anchor) {
+    anchor.pageIndex = index;
+    anchor.normalizedX = (bounds[0] + bounds[1]) / 2;
+    anchor.viewportX = (elements.viewer.clientWidth - inlineReserve()) / 2;
+    if (mode === "page") {anchor.normalizedY = 0; anchor.viewportY = 20;}
+  }
+  setZoom(state.zoom * targetWidth / width, anchor);
+  // Re-center even when rounding/clamping leaves the zoom unchanged.
+  restoreZoomAnchor(anchor);
+  elements.viewer.focus({preventScroll:true});
+}
+
+createZoomEditor({input:elements["zoom-value"], getZoom:() => state.zoom, applyZoom:setZoom, viewer:elements.viewer});
+const readingDisplay = createReadingDisplay({reader:elements.reader, zoomButton:document.getElementById("reading-display-toggle"), applyFit:fitReadingDisplay});
 
 function relayoutPages(anchor = captureZoomAnchor()) {
   if (!state.revision) return;
@@ -1289,7 +1324,7 @@ function resetPractice() {
   replacePracticeSections(null);
   if (state.practice.restoreZoom !== null && state.zoom === 1) {
     state.zoom = state.practice.restoreZoom;
-    elements["zoom-value"].textContent = `${Math.round(state.zoom * 100)}%`;
+    elements["zoom-value"].value = `${Math.round(state.zoom * 100)}%`;
   }
   state.practice = { active: false, sectionId: null, index: 0, selected: null, result: null, records: new Map(), positions: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
@@ -1634,7 +1669,7 @@ function leavePractice() {
   }
   if (restoreZoom !== null && state.zoom === 1) {
     state.zoom = restoreZoom;
-    elements["zoom-value"].textContent = `${Math.round(restoreZoom * 100)}%`;
+    elements["zoom-value"].value = `${Math.round(restoreZoom * 100)}%`;
   }
   elements.reader.classList.remove("practice-active");
   elements["practice-panel"].hidden = true;
@@ -1723,7 +1758,7 @@ function fitPracticePdfForDock() {
   if (pageWidth() <= elements.viewer.clientWidth - inlineReserve() - 24) return false;
   if (state.practice.restoreZoom === null) state.practice.restoreZoom = state.zoom;
   state.zoom = 1;
-  elements["zoom-value"].textContent = "100%";
+  elements["zoom-value"].value = "100%";
   return true;
 }
 
@@ -4159,7 +4194,7 @@ function updateMarksPanel() {
   elements["marks-count"].textContent = String(values.length);
   elements["marks-count"].hidden = values.length === 0;
   elements["marks-toggle"].setAttribute(
-    "aria-label", `本页标记${values.length ? `（${values.length}）` : ""}`,
+    "aria-label", `本页笔记与标记${values.length ? `（${values.length}）` : ""}`,
   );
   elements["marks-page"].textContent = String(state.currentPage + 1);
   const cards = values.map((annotation) => {
@@ -4981,7 +5016,8 @@ document.addEventListener("copy", (event) => {
   announce("已复制所选文字。");
 });
 document.addEventListener("pointerdown", (event) => {
-  if (elements["reader-more"].classList.contains("open") && !elements["reader-more"].contains(event.target)) {
+  if (elements["reader-more"].classList.contains("open") && !elements["reader-more"].contains(event.target)
+      && !document.getElementById("reading-display-menu").contains(event.target)) {
     elements["reader-more"].classList.remove("open");
     elements["reader-more-toggle"].setAttribute("aria-expanded", "false");
   }
