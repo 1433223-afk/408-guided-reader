@@ -14,7 +14,7 @@ import { createAssistantNavigator } from "/assistant-navigator.js";
 import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt, practiceGuideForPage, practiceSourceRegions } from "/practice-fixture.js";
 import { createPracticeKnowledge } from "/practice-knowledge.js";
 import { createVisualSelection } from "/visual-selection.js";
-import { canvasContentBounds, createReadingDisplay, createZoomEditor } from "/reading-display.js";
+import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPortraitLayout } from "/reading-display.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -1245,6 +1245,7 @@ function computeDirectoryMode({ viewerWidth, pageCssWidth, inlineReserve = 0, sp
 
 function evaluateDirectoryMode() {
   if (!state.revision || !elements.pages.children.length) return;
+  if (elements.reader.classList.contains("portrait-mode")) { applyDirectoryMode("portrait"); return; }
   if (state.practice.active) { applyDirectoryMode("split"); return; }
   if (elements["outline-panel"].hidden) return;
   applyDirectoryMode(computeDirectoryMode({
@@ -1312,10 +1313,14 @@ function openDirectory() {
 
 function closeDirectory({ focusViewer = false } = {}) {
   if (elements["outline-panel"].hidden) return;
+  const pinnedAnchor = elements.reader.classList.contains("portrait-mode") && elements.reader.classList.contains("portrait-directory-pinned")
+    ? capturePortraitAnchor() : null;
+  portraitLayout.directoryClosed();
   elements["outline-panel"].hidden = true;
   elements["outline-toggle"].setAttribute("aria-expanded", "false");
   if (state.practice.active) elements["practice-panel"].hidden = false;
   applyDirectoryMode(state.practice.active ? "split" : null);
+  if (pinnedAnchor && state.pdf) relayoutPages(pinnedAnchor);
   if (focusViewer) elements.viewer.focus({ preventScroll: true });
 }
 
@@ -1743,6 +1748,9 @@ function finishPracticePointer(event) {
 
 function practiceSplitLimits() {
   const available = elements.reader.clientWidth || window.innerWidth;
+  if (elements.reader.classList.contains("portrait-mode")) {
+    return {available, centerMin:Math.min(600, available - 210), leftMin:210, rightMin:320};
+  }
   const leftMin = Math.min(210, Math.max(140, Math.round(available * .20)));
   const rightMin = Math.min(240, Math.max(160, Math.round(available * .23)));
   return {
@@ -1754,6 +1762,7 @@ function practiceSplitLimits() {
 }
 
 function fitPracticePdfForDock() {
+  if (elements.reader.classList.contains("portrait-mode")) return false;
   if (!state.practice.active || !elements.reader.classList.contains("assistant-dock-open") || state.zoom <= 1) return false;
   if (pageWidth() <= elements.viewer.clientWidth - inlineReserve() - 24) return false;
   if (state.practice.restoreZoom === null) state.practice.restoreZoom = state.zoom;
@@ -1765,7 +1774,7 @@ function fitPracticePdfForDock() {
 function normalizePracticeSplit() {
   if (!state.practice.active) return;
   const { available, centerMin, leftMin, rightMin } = practiceSplitLimits();
-  const rightOpen = elements.reader.classList.contains("assistant-dock-open") && !elements["assistant-panel"].hidden;
+  const rightOpen = !elements.reader.classList.contains("portrait-mode") && elements.reader.classList.contains("assistant-dock-open") && !elements["assistant-panel"].hidden;
   state.assistantDockWidth = Math.min(PRACTICE_PANE_MAX_WIDTH, state.assistantDockWidth);
   let excess = Math.max(0, state.leftPaneWidth + (rightOpen ? state.assistantDockWidth : 0) + centerMin - available);
   if (rightOpen) state.assistantDockWidth = Math.max(rightMin, state.assistantDockWidth - excess);
@@ -1788,7 +1797,7 @@ function updateLeftPaneWidth(width, settle = false) {
   if (!state.practice.active) return;
   normalizePracticeSplit();
   const { available, centerMin, leftMin } = practiceSplitLimits();
-  const rightSpace = elements.reader.classList.contains("assistant-dock-open") ? state.assistantDockWidth : 0;
+  const rightSpace = !elements.reader.classList.contains("portrait-mode") && elements.reader.classList.contains("assistant-dock-open") ? state.assistantDockWidth : 0;
   const maximum = Math.max(leftMin, Math.min(PRACTICE_PANE_MAX_WIDTH, available - rightSpace - centerMin));
   state.leftPaneWidth = Math.round(Math.max(leftMin, Math.min(maximum, width)));
   normalizePracticeSplit();
@@ -2556,6 +2565,7 @@ function forgetAssistantScroll(rootId, removedNodeIds = null) {
 }
 
 function assistantDockLimits() {
+  if (elements.reader.classList.contains("portrait-mode")) return {minimum:ASSISTANT_DOCK_MIN_WIDTH, maximum:ASSISTANT_DOCK_MAX_WIDTH};
   if (state.practice.active) {
     const { available, centerMin, rightMin } = practiceSplitLimits();
     return { minimum: rightMin,
@@ -3017,7 +3027,7 @@ function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = 
   if (open) claimRightDock("ai");
   if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   elements["assistant-panel"].hidden = !open;
-  const overlayOpen = open && overlay && elements.reader.clientWidth <= 850 && !state.practice.active;
+  const overlayOpen = open && overlay && elements.reader.clientWidth <= 850 && !state.practice.active && !elements.reader.classList.contains("portrait-mode");
   elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
   if (open && !overlayOpen) applyAssistantDockWidth(state.assistantDockWidth);
   const fittedPracticePdf = fitPracticePdfForDock();
@@ -5038,6 +5048,29 @@ window.addEventListener("pagehide", () => {
   clearAssistantSession({ keepalive: true }).catch(() => {});
 });
 
+function capturePortraitAnchor() {
+  const rect = elements.viewer.getBoundingClientRect();
+  // A tall window can show several pages. Keep the upper reading point when
+  // opening a lower workspace instead of following a different page at center.
+  return captureZoomAnchor(undefined, rect.top + Math.min(100, rect.height * .1));
+}
+function changePortraitLayout(enabled, pinned = null) {
+  const anchor = capturePortraitAnchor();
+  if (enabled && state.assistantExpanded) setAssistantExpanded(false, {animate:false});
+  if (pinned === null && !elements["outline-panel"].hidden) closeDirectory();
+  elements.reader.classList.toggle("portrait-mode", enabled);
+  if (pinned !== null) elements.reader.classList.toggle("portrait-directory-pinned", pinned);
+  if (enabled && !elements["assistant-panel"].hidden) {
+    elements["assistant-panel"].classList.remove("assistant-overlay-open");
+    elements.reader.classList.add("assistant-dock-open");
+  }
+  applyAssistantDockWidth(state.assistantDockWidth);
+  evaluateDirectoryMode();
+  if (state.pdf) relayoutPages(anchor);
+}
+const portraitLayout = createPortraitLayout({reader:elements.reader, openDirectory, closeDirectory, onChange:changePortraitLayout,
+  available:() => !!state.pdf && !elements.reader.hidden});
+if (portraitLayout.enabled()) changePortraitLayout(true);
 applyAssistantDockWidth(state.assistantDockWidth);
 renderAssistantViewportMode();
 // Async in-flow reservations (learning footers, panels) shift pages after a

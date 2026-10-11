@@ -99,3 +99,54 @@ export function createReadingDisplay({reader, zoomButton, applyFit}) {
   window.addEventListener('resize', close);
   return {close};
 }
+
+export function createPortraitLayout({reader, openDirectory, closeDirectory, onChange, available}) {
+  const toggle = document.getElementById('reading-portrait');
+  const edge = document.getElementById('portrait-directory-edge');
+  const pin = document.getElementById('portrait-directory-pin');
+  const panel = document.getElementById('outline-panel');
+  const key = 'guided-reader-portrait';
+  let opening, closing, hovered = false, keyboard = false;
+  try {toggle.checked = localStorage.getItem(key) === '1';} catch (_) { /* optional preference */ }
+  const clear = () => {clearTimeout(opening); clearTimeout(closing);};
+  const sync = () => {edge.hidden = pin.hidden = !toggle.checked;};
+  function unpin() {
+    clear();
+    reader.classList.remove('portrait-directory-pinned');
+    pin.textContent = '固定'; pin.setAttribute('aria-pressed','false');
+  }
+  function leave() {
+    clear();
+    closing = setTimeout(() => {
+      if (toggle.checked && !hovered && !reader.classList.contains('portrait-directory-pinned')
+          && !(keyboard && panel.contains(document.activeElement))) closeDirectory();
+    }, 400);
+  }
+  function enter() {
+    clear(); hovered = true;
+    opening = setTimeout(() => {if (toggle.checked && available()) openDirectory();}, 180);
+  }
+  toggle.addEventListener('change', () => {
+    clear(); onChange(toggle.checked); unpin(); sync();
+    try {localStorage.setItem(key,toggle.checked ? '1' : '0');} catch (_) { /* optional preference */ }
+  });
+  edge.addEventListener('pointerenter', enter);
+  edge.addEventListener('pointerleave', () => {hovered = false; leave();});
+  edge.addEventListener('click', () => {clear(); if (available()) openDirectory();});
+  panel.addEventListener('pointerenter', () => {clear(); hovered = true;});
+  panel.addEventListener('pointerleave', () => {hovered = false; leave();});
+  panel.addEventListener('focusout', leave);
+  document.addEventListener('keydown', event => {if (event.key === 'Tab') keyboard = true;});
+  document.addEventListener('pointerdown', () => {keyboard = false;});
+  pin.addEventListener('click', () => {
+    clear();
+    const pinned = !reader.classList.contains('portrait-directory-pinned');
+    // Capture/restore PDF position around the column change in the existing app.
+    onChange(toggle.checked, pinned);
+    pin.textContent = pinned ? '取消固定' : '固定';
+    pin.setAttribute('aria-pressed',String(pinned));
+    if (!pinned && !hovered) leave();
+  });
+  sync();
+  return {enabled:() => toggle.checked, directoryClosed:unpin};
+}

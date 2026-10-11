@@ -86,6 +86,28 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .reading-display-menu input { accent-color: var(--green); }
 .reading-display-menu label:hover { background: #dfe6dd; }
 .reader.soft-paper .page canvas { filter: brightness(.96) sepia(.13); }
+/* Optional portrait layout: the original page keeps the horizontal space. */
+#reader.portrait-mode { grid-template-columns: minmax(0, 1fr); grid-template-rows: 68px minmax(0, 1fr); }
+#reader.portrait-mode:is(.assistant-dock-open,.guide-open,.knowledge-dock-open) { grid-template-rows: 68px minmax(0, 1fr) clamp(300px, 32vh, 540px); }
+#reader.portrait-mode .viewer { grid-column: 1; grid-row: 2; visibility: visible; }
+#reader.portrait-mode.practice-active { grid-template-columns: var(--left-pane-width, 304px) minmax(0, 1fr); }
+#reader.portrait-mode.portrait-directory-pinned:has(#outline-panel:not([hidden])) { grid-template-columns: 304px minmax(0, 1fr); }
+#reader.portrait-mode.practice-active .viewer,
+#reader.portrait-mode.portrait-directory-pinned:has(#outline-panel:not([hidden])) .viewer { grid-column: 2; }
+#reader.portrait-mode #practice-panel { position: relative; inset: auto; grid-column: 1; grid-row: 2 / 4; width: 100%; min-height: 0; }
+#reader.portrait-mode #outline-panel { position: absolute; z-index: 27; inset: 68px auto 0 0; width: 304px; border: 0; box-shadow: 4px 0 12px rgb(38 51 43 / 8%); }
+#reader.portrait-mode.portrait-directory-pinned #outline-panel { position: relative; z-index: auto; inset: auto; grid-column: 1; grid-row: 2 / 4; box-shadow: none; }
+#reader.portrait-mode :is(#assistant-panel,#guide-panel,.reader-kp-list) { position: relative; inset: auto; grid-column: 1 / -1; grid-row: 3; width: 100%; max-height: none; min-height: 0; box-shadow: none; border: 0; border-top: 1px solid var(--line); }
+#reader.portrait-mode.practice-active :is(#assistant-panel,#guide-panel,.reader-kp-list),
+#reader.portrait-mode.portrait-directory-pinned:has(#outline-panel:not([hidden])) :is(#assistant-panel,#guide-panel,.reader-kp-list) { grid-column: 2; }
+#reader.portrait-mode :is(#assistant-resize-handle,#assistant-expand,#master-expand) { display: none; }
+#portrait-directory-edge { position: absolute; z-index: 26; top: 68px; left: 0; bottom: 0; width: 10px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+#portrait-directory-edge:hover, #portrait-directory-edge:focus-visible { background: rgb(59 88 72 / 8%); }
+#portrait-directory-pin { margin-left: auto; padding: 4px 6px; border: 0; background: transparent; color: var(--green); font: 11px var(--font-ui); cursor: pointer; }
+#portrait-directory-pin[aria-pressed="true"] { background: var(--reader-active, #e3e8df); }
+.outline-heading:has(#portrait-directory-pin:not([hidden])) #outline-close { margin-left: 3px; }
+/* The compact toolbar popup must remain reachable above an open learning pane. */
+#reader .toolbar:has(.reader-more.open) { z-index: 30; }
 .preparation-status { min-width: 72px; color: #777166; font-size: 10px; text-align: center; }
 .preparation-status.ready { color: #34704f; }
 .preparation-status.failed { color: #9a3f37; }
