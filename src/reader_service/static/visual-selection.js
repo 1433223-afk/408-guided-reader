@@ -34,7 +34,7 @@ export function createVisualSelection({viewer, toggle, hint, enabled, onSelect, 
   }
 
   function render() {
-    viewer.querySelectorAll('.visual-region-outline').forEach(node => node.remove());
+    viewer.querySelectorAll('.visual-region-shade, .visual-region-outline').forEach(node => node.remove());
     syncHint();
     const region = drag || selected;
     if (!active || !region) return;
@@ -42,6 +42,12 @@ export function createVisualSelection({viewer, toggle, hint, enabled, onSelect, 
     const canvas = page?.querySelector('canvas');
     if (!canvas) return;
     const rect = region.rect;
+    // Shade only this PDF canvas; the selection and other Reader surfaces stay clear.
+    const shade = document.createElement('div');
+    shade.className = 'visual-region-shade';
+    shade.setAttribute('aria-hidden', 'true');
+    const [left, top, right, bottom] = rect.map(value => `${value * 100}%`);
+    shade.style.cssText = `left:${canvas.offsetLeft}px;top:${canvas.offsetTop}px;width:${canvas.clientWidth}px;height:${canvas.clientHeight}px;clip-path:polygon(evenodd, 0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, ${left} ${top}, ${left} ${bottom}, ${right} ${bottom}, ${right} ${top}, ${left} ${top})`;
     const outline = document.createElement('div');
     outline.className = 'visual-region-outline';
     outline.setAttribute('aria-hidden', 'true');
@@ -54,7 +60,7 @@ export function createVisualSelection({viewer, toggle, hint, enabled, onSelect, 
         outline.append(handle);
       }
     }
-    page.append(outline);
+    page.append(shade, outline);
   }
 
   function setActive(value) {

@@ -79,7 +79,10 @@
       <div id="viewer" class="viewer" tabindex="0" aria-label="PDF 页面">
         <div id="pages" class="pages"></div>
       </div>
-      <div id="visual-select-hint" class="visual-select-hint" role="group" aria-label="选区操作" hidden><button data-region-confirm type="button" hidden>解释</button><button data-region-cancel type="button" aria-label="取消区域选择">×</button></div>
+      <div id="visual-select-hint" class="visual-select-hint" role="group" aria-label="选区操作" hidden>
+        <button data-region-confirm type="button" aria-keyshortcuts="Enter" title="解释（Enter）" hidden><span>解释</span><span class="visual-action-key" aria-hidden="true">Enter</span></button>
+        <button data-region-cancel type="button" aria-label="取消区域选择" aria-keyshortcuts="Escape" title="取消（Esc）"><span>取消</span><span class="visual-action-key" aria-hidden="true">Esc</span></button>
+      </div>
       <aside id="outline-panel" class="outline-panel" aria-label="目录" hidden>
         <div class="outline-heading"><strong>目录</strong><button id="portrait-directory-pin" type="button" aria-label="固定目录" aria-pressed="false" hidden>固定</button><button id="outline-close" type="button" aria-label="关闭目录">×</button></div>
         <p id="outline-status" class="outline-status">正在读取教材目录…</p>
