@@ -1,3 +1,4 @@
+import { createId } from "./id.js";
 import { renderAssistantAnswer, renderedSelectionToRaw } from "./assistant-render.js";
 
 const GUIDE_DOCK_DEFAULT_WIDTH = 410;
@@ -273,7 +274,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
     if (pending) return;
     pending = true; render();
     const stamp = epoch;
-    if (!intent || intent.action !== action) intent = { action, id: crypto.randomUUID() };
+    if (!intent || intent.action !== action) intent = { action, id: createId() };
     try {
       const result = await api(`${base()}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(action === "retry" ? { asset_id: snapshot.task.id } : { intent_id: intent.id }) });

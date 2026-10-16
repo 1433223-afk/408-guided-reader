@@ -1,3 +1,4 @@
+import { createId } from "./id.js";
 import { renderAssistantAnswer } from "/assistant-render.js";
 import { createComposerChoice, createMessageRail } from "/screens.js";
 
@@ -415,7 +416,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     const reasoningMode=el('reasoning').value;
     if (!sendIntent || sendIntent.question !== question || sendIntent.review_mode !== mode
         || sendIntent.provider !== answerProvider || sendIntent.reasoning_mode !== reasoningMode) {
-      sendIntent = { intent_id: crypto.randomUUID(), question, review_mode: mode,
+      sendIntent = { intent_id: createId(), question, review_mode: mode,
         provider:answerProvider, reasoning_mode:reasoningMode };
     }
     await runMasterStream('send',sendIntent);
@@ -635,7 +636,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     }
     openDock(true);
     select(true);
-    await runMasterStream('send', {intent_id:crypto.randomUUID(),target,review_mode:'Fast',
+    await runMasterStream('send', {intent_id:createId(),target,review_mode:'Fast',
       provider:answerProvider,reasoning_mode:el('reasoning').value});
     return true;
   }

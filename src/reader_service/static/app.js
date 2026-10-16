@@ -1,3 +1,5 @@
+import { copyText } from "./clipboard.js";
+import { createId } from "./id.js";
 import {createScreens, createChapterEntry, createAssistantModelMenu, createMessageRail, header, action} from "/screens.js";
 import { streamAssistantResponse } from "/assistant-stream.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
@@ -15,6 +17,11 @@ import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, pr
 import { createPracticeKnowledge } from "/practice-knowledge.js";
 import { createVisualSelection } from "/visual-selection.js";
 import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPortraitLayout } from "/reading-display.js";
+import { createTabletLayout } from "/tablet-layout.js";
+import { createTabletTouch } from "/tablet-touch.js";
+
+const tabletMode = new URLSearchParams(location.search).get("tablet") === "1";
+document.documentElement.classList.toggle("tablet", tabletMode);
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -32,7 +39,7 @@ const query = new URLSearchParams(location.search);
 const launchToken = query.get("token") || sessionStorage.getItem("reader-token") || "";
 if (launchToken) {
   sessionStorage.setItem("reader-token", launchToken);
-  if (query.has("token")) history.replaceState(null, "", location.pathname);
+  if (query.has("token")) history.replaceState(null, "", location.pathname + (tabletMode ? "?tablet=1" : ""));
 }
 
 const state = {
@@ -348,7 +355,7 @@ async function openBook(book) {
   state.book = book;
   state.revision = book.active_revision;
   loadPracticeRecords();
-  state.readerSessionId = crypto.randomUUID();
+  state.readerSessionId = createId();
   state.assistantState = emptyAssistantState();
   state.navigationAnchorId = null;
   state.pinnedLanding = null;
@@ -480,7 +487,7 @@ function displayedRatio(geometry) {
 function inlineReserve() { return elements.reader.classList.contains("inline-open") ? 332 : 0; }
 
 function pageWidth() {
-  const horizontalRoom = state.practice.active ? 32 : 72;
+  const horizontalRoom = tabletMode ? 32 : state.practice.active ? 32 : 72;
   return Math.max(240, Math.min(920, elements.viewer.clientWidth - inlineReserve() - horizontalRoom)) * state.zoom;
 }
 
@@ -519,7 +526,7 @@ function alignedCssDimension(target, pixelRatio) {
 
 function pageLeftMargin(size) {
   const available = elements.viewer.clientWidth - inlineReserve();
-  const inset = state.practice.active ? 12 : 32;
+  const inset = tabletMode ? 16 : state.practice.active ? 12 : 32;
   const fits = size.cssWidth <= available - inset * 2;
   const naturalLeft = fits ? (available - size.cssWidth) / 2 : inset;
   return Math.max(0, alignedCssDimension(naturalLeft, size.pixelRatio).css - inset);
@@ -782,7 +789,7 @@ function updateViewport() {
     const distance = Math.abs((pageTop + pageBottom) / 2 - viewportCenter);
     if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
   }
-  setCurrentPage(bestIndex);
+  setCurrentPage(tabletMode ? (captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1)?.pageIndex ?? bestIndex) : bestIndex);
   renderReaderSectionHint();
   const keepStart = Math.max(0, (first ?? 0) - 2);
   const keepEnd = Math.min(state.pdf.numPages - 1, last + 2);
@@ -919,7 +926,7 @@ function fitReadingDisplay(mode) {
   if (!state.pdf) return;
   const index = state.currentPage;
   const wrapper = elements.pages.children[index];
-  const availableWidth = Math.max(240, elements.viewer.clientWidth - inlineReserve() - 64);
+  const availableWidth = Math.max(240, elements.viewer.clientWidth - inlineReserve() - (tabletMode ? 32 : 64));
   const width = wrapper.offsetWidth;
   let targetWidth = availableWidth;
   let bounds = [0, 1];
@@ -1037,19 +1044,26 @@ function scheduleSave() {
 
 function readingZoomForSave() { return state.practice.restoreZoom ?? state.zoom; }
 
+function readingPositionForSave() {
+  if (tabletMode) {
+    const anchor = captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top);
+    if (anchor) return {pdf_page_index:anchor.pageIndex, normalized_offset:anchor.normalizedY, zoom:readingZoomForSave()};
+  }
+  const page = elements.pages.children[state.currentPage];
+  return page ? {pdf_page_index:state.currentPage, normalized_offset:currentNormalizedOffset(page), zoom:readingZoomForSave()} : null;
+}
+
 async function savePosition() {
   if (!state.revision || !state.pdf) return;
-  const page = elements.pages.children[state.currentPage];
-  if (!page) return;
-  const normalizedOffset = currentNormalizedOffset(page);
-  const zoom = readingZoomForSave();
+  const position = readingPositionForSave();
+  if (!position) return;
   try {
     await api(`/api/revisions/${state.revision.id}/position`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom }),
+      body: JSON.stringify(position),
     });
-    state.revision.position = { pdf_page_index: state.currentPage, normalized_offset: normalizedOffset, zoom, updated_at: new Date().toISOString() };
+    state.revision.position = { ...position, updated_at: new Date().toISOString() };
   } catch (error) {
     announce("阅读位置未保存，请稍后重试。", true);
   }
@@ -1057,13 +1071,13 @@ async function savePosition() {
 
 function savePositionKeepalive() {
   if (!state.revision || !state.pdf) return;
-  const page = elements.pages.children[state.currentPage];
-  if (!page) return;
+  const position = readingPositionForSave();
+  if (!position) return;
   fetch(`/api/revisions/${state.revision.id}/position`, {
     method: "PUT",
     credentials: "same-origin",
     headers: { "X-Reader-Token": launchToken, "Content-Type": "application/json" },
-    body: JSON.stringify({ pdf_page_index: state.currentPage, normalized_offset: currentNormalizedOffset(page), zoom: readingZoomForSave() }),
+    body: JSON.stringify(position),
     keepalive: true,
   }).catch(() => {});
 }
@@ -1245,6 +1259,7 @@ function computeDirectoryMode({ viewerWidth, pageCssWidth, inlineReserve = 0, sp
 
 function evaluateDirectoryMode() {
   if (!state.revision || !elements.pages.children.length) return;
+  if (tabletMode) { applyDirectoryMode("navigation"); return; }
   if (elements.reader.classList.contains("portrait-mode")) { applyDirectoryMode("portrait"); return; }
   if (state.practice.active) { applyDirectoryMode("split"); return; }
   if (elements["outline-panel"].hidden) return;
@@ -2996,6 +3011,7 @@ function animateAssistantWorkspace(expanded) {
 }
 
 function setAssistantExpanded(expanded, { animate = true } = {}) {
+  if (tabletMode) return;
   if (expanded && state.practice.active) return;
   if (elements["assistant-panel"].hidden && expanded) return;
   if (expanded === state.assistantExpanded) return;
@@ -3027,7 +3043,7 @@ function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = 
   if (open) claimRightDock("ai");
   if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
   elements["assistant-panel"].hidden = !open;
-  const overlayOpen = open && overlay && elements.reader.clientWidth <= 850 && !state.practice.active && !elements.reader.classList.contains("portrait-mode");
+  const overlayOpen = !tabletMode && open && overlay && elements.reader.clientWidth <= 850 && !state.practice.active && !elements.reader.classList.contains("portrait-mode");
   elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
   if (open && !overlayOpen) applyAssistantDockWidth(state.assistantDockWidth);
   const fittedPracticePdf = fitPracticePdfForDock();
@@ -3081,7 +3097,7 @@ function resetAssistantPanel() {
     ? "等待教材选区" : "当前 AI provider 未配置，Reader 其余功能仍可使用";
   elements["assistant-turns"].replaceChildren();
   elements["assistant-empty"].hidden = false;
-  elements["assistant-empty"].textContent = "在原始 PDF 中选择文字，右键选择「问 AI」。";
+  elements["assistant-empty"].textContent = tabletMode ? "长按原文，选择「问 AI」。" : "在原始 PDF 中选择文字，右键选择「问 AI」。";
   elements["assistant-first-turn"].hidden = true;
   elements["assistant-follow-up"].hidden = true;
   elements["assistant-context-bar"].hidden = true;
@@ -3959,7 +3975,7 @@ async function sendAssistantChild() {
   if (!childSelection || !readerSessionId || state.assistantPending) return;
   const requestKey = assistantLocationKey(childSelection.rootId, childSelection.nodeId);
   if (state.assistantChildRequests.has(requestKey)) return;
-  const nodeId = crypto.randomUUID();
+  const nodeId = createId();
   rememberAssistantScroll();
   hideAssistantAnswerActions(true);
   if (!optimisticChildState(childSelection, nodeId)) return;
@@ -4005,7 +4021,7 @@ async function saveAssistantTurn(button) {
   const turnId = button.dataset.turnId;
   if (!readerSessionId || !revisionId || !rootId || !turnId) return;
   const turnKey = assistantTurnKey(rootId, nodeId, turnId);
-  const saveIntentId = state.assistantSaveIntents.get(turnKey) || crypto.randomUUID();
+  const saveIntentId = state.assistantSaveIntents.get(turnKey) || createId();
   state.assistantSaveIntents.set(turnKey, saveIntentId);
   button.dataset.saving = "true";
   button.disabled = true;
@@ -4360,6 +4376,7 @@ function selectionPoint(event, overlay) {
 }
 
 function beginSelection(event) {
+  if (tabletMode && event.pointerType === "touch") return;
   if (event.button !== 0) return;
   const point = selectionPoint(event, event.currentTarget);
   if (!point) return;
@@ -4372,6 +4389,7 @@ function beginSelection(event) {
 }
 
 function extendSelection(event) {
+  if (tabletMode && event.pointerType === "touch") return;
   if (!state.selecting || state.selection?.pageIndex !== Number(event.currentTarget.dataset.pageIndex)) return;
   const point = selectionPoint(event, event.currentTarget);
   if (!point) return;
@@ -4380,6 +4398,7 @@ function extendSelection(event) {
 }
 
 function finishSelection(event) {
+  if (tabletMode && event.pointerType === "touch") return;
   if (!state.selecting) return;
   extendSelection(event);
   state.selecting = false;
@@ -4478,6 +4497,7 @@ function hideSelectionActions({ animate = false } = {}) {
 }
 
 function syncNativeSelection(overlay) {
+  if (tabletMode) return;
   const nativeSelection = window.getSelection();
   nativeSelection.removeAllRanges();
   if (!state.selection?.resolved.length) return;
@@ -4583,7 +4603,7 @@ async function copySelection() {
   const text = state.guideSelection?.text || resolvedText(state.selection?.resolved || []);
   if (!text) return;
   try {
-    await navigator.clipboard.writeText(text);
+    await copyText(text);
     hideSelectionActions();
     announce("已复制所选文字。");
   } catch (_error) {
@@ -5068,9 +5088,72 @@ function changePortraitLayout(enabled, pinned = null) {
   evaluateDirectoryMode();
   if (state.pdf) relayoutPages(anchor);
 }
-const portraitLayout = createPortraitLayout({reader:elements.reader, openDirectory, closeDirectory, onChange:changePortraitLayout,
-  available:() => !!state.pdf && !elements.reader.hidden});
-if (portraitLayout.enabled()) changePortraitLayout(true);
+const portraitLayout = tabletMode ? {enabled:() => false, directoryClosed:() => {}}
+  : createPortraitLayout({reader:elements.reader, openDirectory, closeDirectory, onChange:changePortraitLayout,
+    available:() => !!state.pdf && !elements.reader.hidden});
+if (!tabletMode && portraitLayout.enabled()) changePortraitLayout(true);
+if (tabletMode) {
+  createTabletLayout({reader:elements.reader, viewer:elements.viewer, panel:elements['outline-panel'], closeDirectory,
+    captureAnchor:() => state.pdf ? {...captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1), revisionId:state.revision?.id} : null,
+    restoreAnchor:anchor => {
+      if (state.pdf && !elements.reader.hidden && anchor.revisionId === state.revision?.id) restoreZoomAnchor(anchor);
+    },
+    onResize:() => {
+      if (state.pdf && !elements.reader.hidden && Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) >= 1) relayoutPages();
+    },
+  });
+  let pinchOrigin = null;
+  createTabletTouch({viewer:elements.viewer,
+    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active),
+    getZoom:() => state.zoom, captureAnchor:(x,y) => {
+      const rect = elements.pages.getBoundingClientRect();
+      pinchOrigin = {x:x - rect.left, y:y - rect.top};
+      clearSelection();
+      return captureZoomAnchor(x,y);
+    }, commitZoom:setZoom,
+    canSelect:point => Boolean(point.target.closest('.text-overlay')),
+    onSelectionStart:point => {
+      const overlay = point.target.closest('.text-overlay');
+      if (!overlay) return false;
+      const start = selectionPoint(point, overlay);
+      if (!start) return false;
+      clearSelection();
+      const line = state.overlayData.get(start.pageIndex)?.lines.find(line => line.line_ordinal === start.lineOrdinal);
+      const boundary = Math.min(start.boundary, Math.max(0, line.cells.length - 1));
+      // Start with the touched word, then allow a held finger to extend the range.
+      let from = boundary, to = boundary + 1;
+      if (typeof Intl.Segmenter === 'function') {
+        const offset = line.cells[boundary]?.[2] ?? 0;
+        const word = [...new Intl.Segmenter('zh', {granularity:'word'}).segment(line.text)]
+          .find(part => part.isWordLike && part.index <= offset && part.index + part.segment.length > offset);
+        if (word) {
+          from = line.cells.findIndex(cell => cell[3] > word.index);
+          const end = line.cells.findIndex(cell => cell[2] >= word.index + word.segment.length);
+          to = end < 0 ? line.cells.length : end;
+        }
+      }
+      state.selection = {pageIndex:start.pageIndex, anchor:{...start,boundary:from}, focus:{...start,boundary:to}, resolved:[]};
+      state.selecting = true;
+      renderSelection();
+      return true;
+    },
+    onSelectionMove:point => {
+      const overlay = elements.pages.children[state.selection?.pageIndex]?.querySelector('.text-overlay');
+      if (overlay) extendSelection({...point,currentTarget:overlay});
+    },
+    onSelectionEnd:point => {
+      state.selecting = false;
+      if (state.selection?.resolved.length) showSelectionActions(point.clientX, point.clientY - 64);
+    },
+    onSelectionCancel:() => {state.selecting = false; clearSelection();},
+    onPinchPreview:preview => {
+      elements.pages.style.transformOrigin = `${pinchOrigin.x}px ${pinchOrigin.y}px`;
+      elements.pages.style.transform = `translate(${preview.deltaX}px, ${preview.deltaY}px) scale(${preview.scale})`;
+      hideSelectionActions();
+    },
+    onPinchClear:() => {elements.pages.style.removeProperty('transform'); elements.pages.style.removeProperty('transform-origin');},
+  });
+}
 applyAssistantDockWidth(state.assistantDockWidth);
 renderAssistantViewportMode();
 // Async in-flow reservations (learning footers, panels) shift pages after a
@@ -5080,6 +5163,7 @@ new ResizeObserver(() => { if (state.pinnedLanding) scheduleViewportUpdate(); })
 // Rebuild only after its width settles, so pages rendered before and after the
 // change use the same scale and their text/interaction layers stay aligned.
 new ResizeObserver(() => {
+  if (tabletMode) return;
   if (!state.pdf || elements.reader.hidden) return;
   if (Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) < 1) return;
   clearTimeout(state.resizeTimer);

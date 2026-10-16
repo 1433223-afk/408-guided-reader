@@ -30,6 +30,7 @@ from reader_service.practice_review import PracticeReviewService
 from reader_service.practice_hint import PracticeHintService
 from reader_service.practice_knowledge import PracticeKnowledgeService
 from reader_service.visual_region import render_visual_region
+from reader_service.tablet_network import is_private_ipv4
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -107,6 +108,7 @@ def handler_factory(
     saved_explanations: SavedExplanationService | None = None,
     learning=None,
     teaching=None,
+    tablet_lan: bool = False,
 ) -> Callable[..., BaseHTTPRequestHandler]:
     static_root = Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
@@ -130,9 +132,21 @@ def handler_factory(
             # write entry point. A local cookie must never authorize another
             # website's request to the loopback service.
             port = self.server.server_port
-            hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
-            if port == 80:
-                hosts.update({"127.0.0.1", "localhost"})
+            if tablet_lan:
+                bind_address = self.server.server_address[0]
+                if not is_private_ipv4(bind_address) or not is_private_ipv4(self.client_address[0]):
+                    self.close_connection = True
+                    self._json(HTTPStatus.FORBIDDEN, {
+                        "code": "UNTRUSTED_TABLET_CLIENT", "error": "Tablet Demo 仅接受私有局域网设备。"
+                    })
+                    return False
+                hosts = {f"{bind_address}:{port}"}
+                if port == 80:
+                    hosts.add(bind_address)
+            else:
+                hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+                if port == 80:
+                    hosts.update({"127.0.0.1", "localhost"})
             supplied_hosts = self.headers.get_all("Host", [])
             host = supplied_hosts[0].lower() if len(supplied_hosts) == 1 else ""
             origins = self.headers.get_all("Origin", [])
@@ -1578,7 +1592,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js", "/tablet.css", "/tablet-layout.js", "/tablet-touch.js", "/id.js", "/clipboard.js"
             ):
                 filename = path[1:]
             if filename is None:

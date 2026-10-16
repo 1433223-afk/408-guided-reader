@@ -1,0 +1,89 @@
+# Android Tablet Reader Demo
+
+第一轮目标设备：联想拯救者 Y900 13（2026），13 英寸、3:2、Android。此 Demo 复用现有 Web Reader 和电脑上的 Python Core，通过同一可信局域网在平板 Chrome 中打开。它是独立实验分支，不是正式 Android 安装包。
+
+## 启动与连接
+
+在本实验工作区打开 PowerShell。依赖同现有开发入口：Python 3.11+、Node.js 20+，已安装项目 Python 依赖与 `npm ci` 的浏览器依赖。
+
+先确认电脑 Wi-Fi 的 IPv4；使用物理 WLAN 连接，避开 VMware、VPN 等虚拟网卡。可执行：
+
+```powershell
+Get-NetIPAddress -AddressFamily IPv4 | Select-Object IPAddress, InterfaceAlias
+```
+
+本次准备的独立数据目录为 `%LOCALAPPDATA%\408GuidedReaderAndroidTabletDemo`，包含王道《2026计算机组成原理》的 348 页原 PDF、已有 OCR 与目录。启动时复用此副本，不会重新复制或改写原书库。将下列地址换成电脑**当前**的 WLAN IPv4：
+
+```powershell
+& .\tools\start-tablet-demo.ps1 -BindAddress 192.168.43.65 -NoOpen
+```
+
+保持窗口打开。在平板上连接同一 Wi-Fi，用 Chrome 打开该窗口显示的**完整 READY 地址**，其中包含 `tablet=1` 和本次启动凭证。网页会清理地址栏里的凭证，并建立 HttpOnly 会话。复制完整地址即可，不要把它写进日志、报告、共享书签或聊天群。
+
+常用参数：
+
+```powershell
+& .\tools\start-tablet-demo.ps1 -BindAddress 192.168.43.65 -Port 8876 -DataDir 'D:\reader-tablet-demo' -NoOpen
+```
+
+稳定入口的形式为 `http://电脑私网IPv4:8876/?tablet=1`。此裸地址**不能创建会话**；仅在当前浏览器已有本次服务会话时可直接打开。服务重启后，重新使用新 READY 地址。Wi-Fi 地址变化时，按新地址重新启动。
+
+默认桌面入口 `python -m reader_service` 仍只监听 `127.0.0.1:8765`，不会开启平板访问。启动脚本固定从当前实验工作区加载代码，避免本机 Python 的 editable 安装仍指向主线工作区。
+
+## 第一次建立独立样本
+
+若使用另一个尚未准备的目录，可以从平板书库上传自己的 PDF；这会在 Demo 副本中导入和 OCR。要复用已有 OCR/目录，先只读列出源书库的书 ID，再明确挑选一本或数本：
+
+```powershell
+$env:PYTHONPATH = Join-Path (Get-Location) 'src'
+python -m reader_service.tablet_demo list-books --source-data-dir 'D:\已有Reader数据目录'
+
+& .\tools\start-tablet-demo.ps1 `
+  -BindAddress 192.168.43.65 `
+  -DataDir 'D:\reader-tablet-demo-new' `
+  -SourceDataDir 'D:\已有Reader数据目录' `
+  -BookId '从list-books输出中复制的书ID' `
+  -NoOpen
+```
+
+源目录应为包含 `state.sqlite3` 和 `blobs/` 的实际数据目录。准备程序通过 SQLite backup API 取得包含已提交 WAL 的一致快照，在**副本**中仅保留所选书和关联数据，复制其所需 PDF，检查数据库与引用，然后写入 Demo 标记。不会复制密钥、日志、整个巨型书库，也不使用与原书共用内容或属性的硬链接。源数据库以只读连接访问。
+
+副本不会继承原库未完成的 AI 生成意图：在途 KP/重生成和 Guide/Inline 任务在副本中标为中断/失败，对应排队任务取消，防止服务启动恢复时自行重跑；已有发布内容保留。需要生成时由 Demo 中的新操作明确触发。未准备页面仍可在打开书后恢复本机 OCR，这不向模型发送内容。
+
+Demo 的阅读位置和学习改动只保存在副本。准备程序拒绝覆盖非空目录；对已有 Demo，启动脚本只复用。需要另一批样本时另选新目录，不覆盖正在验收的数据。LAN 模式拒绝直接使用没有 Demo 标记的普通学习库。
+
+## 网络与密钥边界
+
+- 仅显式 `-BindAddress` 开启 LAN；必须为本机网卡实际拥有的 RFC1918 IPv4，即 `10.*`、`172.16.*`–`172.31.*` 或 `192.168.*`。拒绝 `0.0.0.0`、公网、回环、链路本地和 IPv6 地址。
+- 服务仅监听该一个地址。Host/Origin 必须对应实际绑定的 IP 和端口；TCP 客户端地址也必须为 RFC1918，不信任代理转发头。现有 API 继续要求每次启动 token 或已认证 cookie。
+- 不设置路由器端口映射、公网隧道或公网发布。脚本不修改系统防火墙。HTTP 用于受信任的同一局域网；不在公共 Wi-Fi 使用。
+- 若 Windows 防火墙提示，按需只允许**专用网络**；不要勾选公用网络。先确认 Windows 当前 Wi-Fi 是自己信任的专用网络。连不上时先核对 WLAN 地址、两端同网段、AP/访客网络隔离、电脑防火墙和 8876 是否被占用。
+- Key 沿用电脑当前 Windows 用户凭据管理器，留在服务器端，不发送给浏览器、不复制到 Demo 目录。Demo 将 Assistant/Master/生成路由限定为 DeepSeek，Review 为智谱，禁用 OpenRouter。未配置 Key 时仍能读 PDF；AI 按现有错误状态报告。实际提问会向对应 Provider 发送选区、问题和必要上下文。
+
+本次电脑实际网络状况（2026-10-16，只读检查）：WLAN `192.168.43.65` 是用户手机热点，Windows 将其分类为 **Public**。现有已启用的 Python TCP 入站规则已允许 `D:\python\python.exe` 在 Public 配置下接收连接，程序路径与本次服务一致，端口范围为 Any。因此无需由本 Demo 新增防火墙规则即可先尝试平板访问；这些是既有系统设置，开发过程未修改网络类别或防火墙。该放行不证明热点允许设备互访，仍需 Y900 真机验证。若规则、Python 路径或网络发生变化，按上面的连接检查处理；不要通过关闭防火墙或新增公用网络全端口放行解决。
+
+## 停止和人工验收
+
+在运行窗口按 `Ctrl+C`，等服务退出。若使用本轮 Codex 已启动的后台 Demo，可从实验工作区执行 `& .\tools\stop-tablet-demo.ps1`；脚本只停止 8876 上明确带 `--tablet-lan` 的 Reader 进程，遇到其他程序会拒绝。关闭平板网页不会停止电脑服务。下次启动沿用独立 Demo 里的阅读位置；重启后的登录使用新的 READY 地址。
+
+用真实平板验收：
+
+1. 横屏打开教材，单指连续阅读，双指缩放，确认原 PDF、页码与阅读位置。
+2. 点击 Directory，展开节点并跳转，确认无需 hover、跳转后目录及时退出阅读空间。
+3. 长按有 OCR 的正文约半秒，保持按住并拖动扩展选区，松手后点「问 AI」再发送；连续追问。当前原文选区使用 Reader 自己的选择逻辑，尚未提供 Android 系统式的可拖动选区手柄；回答里的系统选区与「再问一层」仍需真机检查。
+4. 旋转至竖屏，确认原阅读位置与缩放保留、Assistant 在底部工作区；再转回横屏。
+5. 弹出/收起虚拟键盘，确认输入框可见、PDF 仍有可用阅读空间；重载同一页面验证恢复位置。
+
+浏览器中的 dp/CSS viewport 会受 Android 显示大小、字体和 Chrome 工具栏影响；布局依据实际可用空间，不把面板物理像素当作控件尺寸。开发机模拟截图只能验证布局，触控手感、键盘与系统选区仍以 Y900 真机人工结果为准。
+
+当前不交付：完整离线 APK、Android 本机 Python Core、手写笔批注、云同步、正式发布包、全套 Practice 触控或复杂 Master Review。关闭电脑服务或离开局域网后，Demo 不可用。未准备 OCR 的扫描页仍需等待电脑后台 OCR 才能选中文字。
+
+## 本轮定向验证
+
+网络/副本测试覆盖：RFC1918 与本机绑定限制、LAN Host/Origin、非私网真实 peer 拒绝、token/cookie 会话、桌面默认启动不变、SQLite 已提交 WAL 一致快照、明确单书筛选、PDF 物理副本及拒绝覆盖现有数据。原 API 的相关授权回归一并执行；未跑全量测试。
+
+本机已在实际 WLAN `192.168.43.65` 上绑定临时端口实测：完整地址建立 cookie、认证 API 返回所选单书、原 PDF Range 返回 206、错误 Host/Origin 返回 403。公网客户端拒绝使用模拟 socket peer 的定向测试验证，未开放公网来测试。独立样本检查得到 348 页 READY OCR、211 个目录节点、无外键错误；DeepSeek/智谱凭据可读但本次准备过程未发起模型请求。
+
+前端在 Edge Chromium 的真实 LAN HTTP 页面，以 `1200×800` / `800×1200` CSS viewport、DPR 1.5、触控事件验证了真实教材显示、单指滚动、长按后拖动选字、目录展开与跳转、双指缩放、旋转保持锚点、两页交界刷新恢复，以及不带 `tablet=1` 时恢复 Desktop 布局。真实 DeepSeek / `deepseek-flash` 的解释与一次追问已完整返回；未把模型样本当作教材内容质量验收。截图在工作区 `test-results/tablet/`，不入 Git。入口为 `tests-e2e/tablet-reader.mjs`，默认不发模型请求，显式 `READER_TABLET_REAL_AI=1` 才测真实多轮。
+
+必要 JS 定向检查 19 项通过，Tablet 后端检查 34 项通过；相关 API 授权与 PDF 资源检查通过。未跑全量测试。真实 Y900、Android 输入法、浏览器顶部栏和热点设备互访仍待人工验收。

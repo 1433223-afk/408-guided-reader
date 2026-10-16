@@ -1,3 +1,4 @@
+import { createId } from "./id.js";
 import { placeInline } from "./inline-placement.js";
 
 const labels = { lead_in: "为什么这里重要", bridge: "接着这样看", warning: "这里注意", connection: "和前面连起来看", recall: "先想一想" };
@@ -199,7 +200,7 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     const stamp = epoch;
     if (!id || pending.has(id) || ["DRAFT", "IN_REVIEW", "REJECTED"].includes(cache.get(id)?.task?.state)) return;
     pending.add(id); requestErrors.delete(id); refresh();
-    if (!intents.has(id) || intents.get(id).action !== action) intents.set(id, { action, id: crypto.randomUUID() });
+    if (!intents.has(id) || intents.get(id).action !== action) intents.set(id, { action, id: createId() });
     try {
       const result = await api(`${base(id)}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(action === "retry" ? { asset_id: cache.get(id).task.id } : { intent_id: intents.get(id).id }) });

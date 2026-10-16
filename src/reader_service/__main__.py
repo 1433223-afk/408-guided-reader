@@ -27,6 +27,7 @@ from reader_service.saved_explanations import SavedExplanationService
 from reader_service.storage import ManagedPaths
 from reader_service.learning.service import LearningService
 from reader_service.teaching.service import TeachingService
+from reader_service.tablet_network import validate_tablet_address
 
 
 def default_data_dir() -> Path:
@@ -45,6 +46,7 @@ def default_prepare_workers() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Start the 408 Guided Reader")
     parser.add_argument("--host", default="127.0.0.1", choices=("127.0.0.1", "localhost"))
+    parser.add_argument("--tablet-lan", metavar="PRIVATE_IPV4", help="Opt in to tablet access on one local RFC1918 IPv4 address")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--data-dir", type=Path, default=default_data_dir())
     parser.add_argument("--no-open", action="store_true", help="Do not launch the browser")
@@ -54,8 +56,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
-    args = build_parser().parse_args()
+def main(argv: list[str] | None = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.tablet_lan:
+        try:
+            args.host = validate_tablet_address(args.tablet_lan)
+            from reader_service.tablet_demo import require_demo_data, configure_demo_providers
+            require_demo_data(args.data_dir)
+            configure_demo_providers()
+        except ValueError as exc:
+            parser.error(str(exc))
     token = args.token or secrets.token_urlsafe(32)
     service = LibraryService(ManagedPaths(args.data_dir))
     foundation = FoundationService(
@@ -109,10 +120,12 @@ def main() -> None:
             saved_explanations=saved_explanations,
             learning=learning,
             teaching=teaching,
+            tablet_lan=bool(args.tablet_lan),
         ),
     )
     host, port = server.server_address[:2]
-    url = f"http://{host}:{port}/?{urlencode({'token': token})}"
+    query = {"tablet": "1", "token": token} if args.tablet_lan else {"token": token}
+    url = f"http://{host}:{port}/?{urlencode(query)}"
     print(f"READY {url}", flush=True)
     print(
         "Keep this terminal open while reading. Copy the READY URL into Chrome or Edge if no browser opens.",

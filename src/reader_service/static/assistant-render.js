@@ -1,3 +1,4 @@
+import { createId } from "./id.js";
 import { marked } from "/vendor/marked.esm.js";
 import createDOMPurify from "/vendor/purify.es.mjs";
 import katex from "/vendor/katex.mjs";
@@ -73,7 +74,7 @@ export function renderedSelectionToRaw(range, answerElement) {
 }
 
 export function prepareMarkdownAndMath(raw) {
-  const nonce = `ASSISTANT_${crypto.randomUUID().replaceAll("-", "")}`;
+  const nonce = `ASSISTANT_${createId().replaceAll("-", "")}`;
   const code = [];
   const math = [];
   let protectedText = "";
