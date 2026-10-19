@@ -68,7 +68,9 @@ try {
   await page.locator('#outline-toggle').tap();
   await page.locator('#outline-tree .outline-target').first().waitFor();
   await page.screenshot({path:path.join(artifacts,'portrait-directory.png')});
-  assert.equal(await page.locator('#tablet-directory-scrim').isVisible(),true);
+  const directory = await page.locator('#outline-panel').boundingBox();
+  const pdf = await page.locator('#viewer').boundingBox();
+  assert.ok(directory.y >= pdf.y + pdf.height - 1, 'Portrait directory occupies its own lower workspace');
   const fold=page.locator('#outline-tree .outline-fold').first();
   const expanded=await fold.getAttribute('aria-expanded');
   if(expanded==='false') {await fold.tap();assert.equal(await fold.getAttribute('aria-expanded'),'true');}

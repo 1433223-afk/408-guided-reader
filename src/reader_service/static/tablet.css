@@ -1,8 +1,10 @@
 /* All tablet rules are opt-in. The Windows Reader keeps its existing layout. */
-html.tablet { --tablet-toolbar:64px; --tablet-dock:clamp(336px, 32vw, 440px); }
+html.tablet { --tablet-toolbar:64px; --tablet-dock:clamp(336px, 32vw, 440px); --tablet-directory:clamp(304px, 27vw, 344px); --tablet-workspace:min(40%, 460px); }
 html.tablet body { position:fixed; top:var(--tablet-top, 0px); height:var(--tablet-height, 100dvh); }
 html.tablet #reader { grid-template-columns:minmax(0,1fr); grid-template-rows:var(--tablet-toolbar) minmax(0,1fr); height:100%; }
 html.tablet #reader.assistant-dock-open { grid-template-columns:minmax(0,1fr) var(--tablet-dock); }
+html.tablet #reader.tablet-directory-open { grid-template-columns:var(--tablet-directory) minmax(0,1fr); }
+html.tablet #reader.tablet-directory-open .viewer { grid-column:2; }
 html.tablet #reader .toolbar { gap:8px; padding:0 max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left)); box-shadow:none; z-index:31; }
 html.tablet #reader .book-heading { flex:1; gap:8px; min-width:0; }
 html.tablet #reader .book-heading > div { min-width:0; }
@@ -31,14 +33,19 @@ html.tablet #reader.assistant-dock-open .page { margin-left:0 !important; }
 html.tablet #reader .text-overlay { touch-action:pan-x pan-y; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
 html.tablet #reader .ocr-line { user-select:none; -webkit-user-select:none; }
 html.tablet #reader .viewer.tablet-selecting { touch-action:none; }
-html.tablet #reader #outline-panel { position:absolute; z-index:35; inset:var(--tablet-toolbar) auto 0 0; width:min(376px, 82vw); grid-area:auto; border-right:1px solid var(--line); box-shadow:6px 0 24px #24352c15; padding-bottom:env(safe-area-inset-bottom); }
-html.tablet #reader #tablet-directory-scrim { position:absolute; z-index:34; inset:var(--tablet-toolbar) 0 0; border:0; background:#24352c24; width:100%; }
-html.tablet #reader .outline-heading { min-height:64px; padding:8px 16px; }
+html.tablet #reader #outline-panel { position:relative; z-index:auto; inset:auto; grid-column:1; grid-row:2; width:auto; min-width:0; min-height:0; margin:0; border:0; border-right:1px solid var(--line); box-shadow:none; padding-bottom:env(safe-area-inset-bottom); overflow:hidden; }
+html.tablet #reader .outline-heading { flex:none; min-height:56px; padding:4px 12px 4px 20px; }
+html.tablet #reader .outline-heading strong { font-size:15px; font-weight:600; letter-spacing:0; }
 html.tablet #reader #outline-close { min-height:48px; min-width:48px; font-size:24px; }
-html.tablet #reader #outline-tree { padding:8px 16px 24px; }
-html.tablet #reader .outline-row { display:flex; align-items:stretch; min-height:52px; }
-html.tablet #reader .outline-target { min-width:0; min-height:52px; padding:12px 8px; font-size:15px; line-height:1.6; }
-html.tablet #reader .outline-fold { opacity:1; visibility:visible; flex:none; min-width:48px; min-height:48px; padding:8px; font-size:12px; }
+html.tablet #reader #outline-tree { padding:4px 12px 20px; overscroll-behavior:contain; }
+html.tablet #reader .outline-row { display:grid; grid-template-columns:minmax(0,1fr) auto; min-height:52px; }
+html.tablet #reader .outline-target { min-width:0; min-height:52px; margin:0; padding:12px 8px; }
+html.tablet #reader .outline-target span { font-size:15px; line-height:1.6; white-space:normal; overflow-wrap:anywhere; text-overflow:clip; overflow:visible; }
+html.tablet #reader .outline-target small { font-size:12px; }
+html.tablet #reader .outline-level-0 > li + li { margin-top:4px; padding-top:4px; }
+html.tablet #reader .outline-tree ul:not(.outline-level-0) { margin-left:12px; }
+html.tablet #reader .outline-fold { opacity:1; visibility:visible; margin-left:0; min-width:48px; min-height:48px; padding:8px; font-size:12px; }
+html.tablet #reader .outline-status { flex:none; font-size:12px; }
 html.tablet #reader .outline-other-toggle { min-height:48px; font-size:14px; }
 html.tablet #reader :is(#portrait-directory-pin,#portrait-directory-edge,#assistant-resize-handle,#assistant-expand,#master-expand,.dock-tabs,.learning-gutter,.learning-marker,.practice-open) { display:none !important; }
 html.tablet #reader #assistant-panel { position:relative; inset:auto; grid-column:2; grid-row:2; width:100%; min-width:0; min-height:0; max-height:none; padding:16px; border:0; border-left:1px solid var(--line); box-shadow:none; overflow:hidden; }
@@ -62,7 +69,11 @@ html.tablet :is(button,.import-button):active { background-color:var(--reader-ac
 html.tablet :is(button,input,select,textarea):focus-visible { outline:2px solid var(--green); outline-offset:2px; }
 html.tablet .book-action { min-height:48px; min-width:48px; font-size:14px; }
 html.tablet :is(.primary-action,.import-button) { min-height:48px; }
-html.tablet.tablet-portrait #reader.assistant-dock-open { grid-template-columns:minmax(0,1fr); grid-template-rows:var(--tablet-toolbar) minmax(0,1fr) clamp(280px, 36%, 460px); }
+html.tablet.tablet-portrait #reader:is(.assistant-dock-open,.tablet-directory-open) { grid-template-columns:minmax(0,1fr); grid-template-rows:var(--tablet-toolbar) minmax(0,1fr) var(--tablet-workspace); }
+html.tablet.tablet-portrait #reader.tablet-directory-open .viewer { grid-column:1; }
+html.tablet.tablet-portrait #reader #outline-panel { grid-column:1; grid-row:3; border-right:0; border-top:1px solid var(--line); }
+html.tablet.tablet-portrait #reader #outline-tree { padding-inline:20px; }
+html.tablet.tablet-portrait #reader .outline-heading { padding-left:28px; }
 html.tablet.tablet-portrait #reader #assistant-panel { grid-column:1; grid-row:3; border-left:0; border-top:1px solid var(--line); padding:8px 20px max(8px,env(safe-area-inset-bottom)); }
 html.tablet.tablet-portrait #reader #assistant-panel .assistant-heading { margin-bottom:0; }
 html.tablet.tablet-portrait #reader #assistant-panel #assistant-scope { margin-bottom:6px; padding-bottom:6px; }

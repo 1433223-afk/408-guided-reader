@@ -24,6 +24,8 @@ import { preparePdfUpload, uploadPdf } from "/pdf-upload.js";
 
 const tabletMode = new URLSearchParams(location.search).get("tablet") === "1";
 document.documentElement.classList.toggle("tablet", tabletMode);
+let tabletLayout = null, tabletAssistantSuspended = false;
+const changeTabletWorkspace = update => tabletLayout ? tabletLayout.change(update) : update();
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
 
@@ -948,6 +950,7 @@ function goToPage(index, offset = 0) {
   setCurrentPage(bounded);
   scheduleViewportUpdate();
   scheduleSave();
+  tabletLayout?.navigated();
 }
 
 function setZoom(value, anchor = captureZoomAnchor()) {
@@ -1302,7 +1305,7 @@ function computeDirectoryMode({ viewerWidth, pageCssWidth, inlineReserve = 0, sp
 
 function evaluateDirectoryMode() {
   if (!state.revision || !elements.pages.children.length) return;
-  if (tabletMode) { applyDirectoryMode("navigation"); return; }
+  if (tabletMode) { applyDirectoryMode(null); return; }
   if (elements.reader.classList.contains("portrait-mode")) { applyDirectoryMode("portrait"); return; }
   if (state.practice.active) { applyDirectoryMode("split"); return; }
   if (elements["outline-panel"].hidden) return;
@@ -1351,35 +1354,50 @@ function syncDirectoryActive({ reveal = false } = {}) {
 }
 
 function openDirectory() {
-  if (elements["outline-panel"].hidden) {
-    elements["practice-panel"].hidden = true;
-    elements["outline-panel"].hidden = false;
-    elements["outline-toggle"].setAttribute("aria-expanded", "true");
-    chapterEntry.close();
-    elements["search-panel"].hidden = true;
-    elements["marks-panel"].hidden = true;
-    elements["knowledge-panel"].hidden = true;
-    elements["search-toggle"].setAttribute("aria-expanded", "false");
-    elements["marks-toggle"].setAttribute("aria-expanded", "false");
-    state.searchRequest += 1;
-    clearSearchMatch();
-    evaluateDirectoryMode();
-  }
-  loadBookMap();
-  syncDirectoryActive({ reveal: true });
+  changeTabletWorkspace(() => {
+    if (elements["outline-panel"].hidden) {
+      if (tabletMode) {
+        tabletAssistantSuspended = !elements["assistant-panel"].hidden;
+        if (elements["assistant-panel"].contains(document.activeElement)) document.activeElement.blur();
+        setAssistantPanelOpen(false);
+        elements.reader.classList.add("tablet-directory-open");
+      }
+      elements["practice-panel"].hidden = true;
+      elements["outline-panel"].hidden = false;
+      elements["outline-toggle"].setAttribute("aria-expanded", "true");
+      chapterEntry.close();
+      elements["search-panel"].hidden = true;
+      elements["marks-panel"].hidden = true;
+      elements["knowledge-panel"].hidden = true;
+      elements["search-toggle"].setAttribute("aria-expanded", "false");
+      elements["marks-toggle"].setAttribute("aria-expanded", "false");
+      state.searchRequest += 1;
+      clearSearchMatch();
+      evaluateDirectoryMode();
+    }
+    loadBookMap();
+    syncDirectoryActive({ reveal: true });
+  });
 }
 
-function closeDirectory({ focusViewer = false } = {}) {
+function closeDirectory({ focusViewer = false, resumeAssistant = true } = {}) {
   if (elements["outline-panel"].hidden) return;
-  const pinnedAnchor = elements.reader.classList.contains("portrait-mode") && elements.reader.classList.contains("portrait-directory-pinned")
-    ? capturePortraitAnchor() : null;
-  portraitLayout.directoryClosed();
-  elements["outline-panel"].hidden = true;
-  elements["outline-toggle"].setAttribute("aria-expanded", "false");
-  if (state.practice.active) elements["practice-panel"].hidden = false;
-  applyDirectoryMode(state.practice.active ? "split" : null);
-  if (pinnedAnchor && state.pdf) relayoutPages(pinnedAnchor);
-  if (focusViewer) elements.viewer.focus({ preventScroll: true });
+  changeTabletWorkspace(() => {
+    const pinnedAnchor = elements.reader.classList.contains("portrait-mode") && elements.reader.classList.contains("portrait-directory-pinned")
+      ? capturePortraitAnchor() : null;
+    portraitLayout.directoryClosed();
+    elements["outline-panel"].hidden = true;
+    elements.reader.classList.remove("tablet-directory-open");
+    elements["outline-toggle"].setAttribute("aria-expanded", "false");
+    if (state.practice.active) elements["practice-panel"].hidden = false;
+    applyDirectoryMode(state.practice.active ? "split" : null);
+    if (pinnedAnchor && state.pdf) relayoutPages(pinnedAnchor);
+    if (tabletMode && tabletAssistantSuspended) {
+      tabletAssistantSuspended = false;
+      if (resumeAssistant && !elements.reader.hidden) setAssistantPanelOpen(true);
+    }
+    if (focusViewer) elements.viewer.focus({ preventScroll: true });
+  });
 }
 
 function resetPractice() {
@@ -1955,6 +1973,7 @@ function renderOutline(payload) {
         // authoritative current item for as long as the reading anchor is in its range.
         state.navigationAnchorId = node.outline_node_id;
         const destination = outlineNavigationTarget(node, state.outlineKinship);
+        if (tabletMode) closeDirectory({ focusViewer:true });
         goToPage(destination.page, destination.y);
         renderReaderSectionHint();
         if (state.directoryMode === "navigation") closeDirectory({ focusViewer: true });
@@ -3082,22 +3101,25 @@ function claimRightDock(owner) {
 }
 
 function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = {}) {
-  const previousDock = elements.reader.classList.contains("assistant-dock-open");
-  if (open) claimRightDock("ai");
-  if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
-  elements["assistant-panel"].hidden = !open;
-  const overlayOpen = !tabletMode && open && overlay && elements.reader.clientWidth <= 850 && !state.practice.active && !elements.reader.classList.contains("portrait-mode");
-  elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
-  if (open && !overlayOpen) applyAssistantDockWidth(state.assistantDockWidth);
-  const fittedPracticePdf = fitPracticePdfForDock();
-  elements["assistant-panel"].classList.toggle("assistant-overlay-open", overlayOpen);
-  elements["assistant-toggle"].setAttribute("aria-expanded", String(open));
-  renderAssistantViewportMode();
-  hideAssistantAnswerActions(true);
-  if (focusViewer) elements.viewer.focus({ preventScroll: true });
-  evaluateDirectoryMode();
-  if (state.practice.active && state.pdf
-      && (fittedPracticePdf || previousDock !== elements.reader.classList.contains("assistant-dock-open"))) relayoutPages();
+  changeTabletWorkspace(() => {
+    if (tabletMode && open) closeDirectory({resumeAssistant:false});
+    const previousDock = elements.reader.classList.contains("assistant-dock-open");
+    if (open) claimRightDock("ai");
+    if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
+    elements["assistant-panel"].hidden = !open;
+    const overlayOpen = !tabletMode && open && overlay && elements.reader.clientWidth <= 850 && !state.practice.active && !elements.reader.classList.contains("portrait-mode");
+    elements.reader.classList.toggle("assistant-dock-open", open && !overlayOpen);
+    if (open && !overlayOpen) applyAssistantDockWidth(state.assistantDockWidth);
+    const fittedPracticePdf = fitPracticePdfForDock();
+    elements["assistant-panel"].classList.toggle("assistant-overlay-open", overlayOpen);
+    elements["assistant-toggle"].setAttribute("aria-expanded", String(open));
+    renderAssistantViewportMode();
+    hideAssistantAnswerActions(true);
+    if (focusViewer) elements.viewer.focus({ preventScroll: true });
+    evaluateDirectoryMode();
+    if (state.practice.active && state.pdf
+        && (fittedPracticePdf || previousDock !== elements.reader.classList.contains("assistant-dock-open"))) relayoutPages();
+  });
 }
 
 function updateAssistantDockFromPointer(clientX) {
@@ -5141,13 +5163,17 @@ const portraitLayout = tabletMode ? {enabled:() => false, directoryClosed:() => 
     available:() => !!state.pdf && !elements.reader.hidden});
 if (!tabletMode && portraitLayout.enabled()) changePortraitLayout(true);
 if (tabletMode) {
-  createTabletLayout({reader:elements.reader, viewer:elements.viewer, panel:elements['outline-panel'], closeDirectory,
+  tabletLayout = createTabletLayout({reader:elements.reader, viewer:elements.viewer, panel:elements['outline-panel'], closeDirectory,
     captureAnchor:() => state.pdf ? {...captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1), revisionId:state.revision?.id} : null,
     restoreAnchor:anchor => {
       if (state.pdf && !elements.reader.hidden && anchor.revisionId === state.revision?.id) restoreZoomAnchor(anchor);
     },
-    onResize:() => {
-      if (state.pdf && !elements.reader.hidden && Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) >= 1) relayoutPages();
+    onResize:anchor => {
+      if (state.pdf && !elements.reader.hidden && Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) >= 1) {
+        const saved = anchor?.revisionId === state.revision?.id ? anchor
+          : captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1);
+        relayoutPages(saved);
+      }
     },
   });
   let pinchOrigin = null, tabletPen = null, penSeed = null;
