@@ -22,6 +22,9 @@
         <input id="import-input" type="file" accept="application/pdf,.pdf" hidden>
       </header>
       <main class="home-content">
+        <div id="import-feedback" class="import-feedback" role="status" aria-live="polite" hidden>
+          <span id="import-message"></span><progress id="import-progress" max="100" aria-label="PDF 导入进度" hidden></progress>
+        </div>
         <section id="home-continue" hidden></section>
         <section class="library-shelf">
           <div class="library-heading"><span><small class="eyebrow">LIBRARY</small>　你的教材</span><span><span id="book-count">0</span> 本教材 · 本地保存</span></div>
@@ -237,6 +240,7 @@
       </form>
     </div>
     <div id="status" class="status" role="status" aria-live="polite"></div>
-    <script type="module" src="/app.js"></script>
+    <script src="/import-bootstrap.js"></script>
+    <script type="module" src="/app.js" onerror="window.readerIntakeBootFailed()"></script>
   </body>
 </html>

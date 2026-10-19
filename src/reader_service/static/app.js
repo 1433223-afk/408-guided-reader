@@ -19,6 +19,7 @@ import { createVisualSelection } from "/visual-selection.js";
 import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPortraitLayout } from "/reading-display.js";
 import { createTabletLayout } from "/tablet-layout.js";
 import { createTabletTouch } from "/tablet-touch.js";
+import { preparePdfUpload, uploadPdf } from "/pdf-upload.js";
 
 const tabletMode = new URLSearchParams(location.search).get("tablet") === "1";
 document.documentElement.classList.toggle("tablet", tabletMode);
@@ -210,10 +211,17 @@ const teachingUiOptions = { state, api, goToPage,
 const guide = createGuideUI(teachingUiOptions);
 const inline = createInlineUI(teachingUiOptions);
 
+function requestTimeout(milliseconds) {
+  if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(milliseconds);
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), milliseconds);
+  return controller.signal;
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
-    signal: options.signal || ((!options.method || options.method === "GET") ? AbortSignal.timeout(15000) : undefined),
+    signal: options.signal || ((!options.method || options.method === "GET") ? requestTimeout(15000) : undefined),
     credentials: "same-origin",
     headers: { "X-Reader-Token": launchToken, "X-Assistant-View": "current", ...(options.headers || {}) },
   });
@@ -283,7 +291,8 @@ const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.re
     await savePosition(); closeReader(); await loadBooks();
     await screens.open(state.books.find(b => b.id === book.id) || book, chapterId);
   }});
-const homeHeader = header('home', showHome, () => memory.open(), action('＋ 导入教材', () => elements['import-input'].click(), 'primary-action'));
+const importAction = action('＋ 导入教材', () => elements['import-input'].click(), 'primary-action');
+const homeHeader = header('home', showHome, () => memory.open(), importAction);
 elements['library-home'].querySelector('.home-toolbar').replaceWith(homeHeader);
 homeHeader.querySelector('.space-navigation button:last-child').classList.add('memory-open');
 // The hidden file input remains owned by the intake flow.
@@ -297,35 +306,67 @@ function chooseRevision(book) {
   input.click();
 }
 
+let importingPdf = false;
+function showImportFeedback(message, {phase, ratio, error = false} = {}) {
+  const feedback = document.getElementById('import-feedback');
+  feedback.hidden = false;
+  feedback.classList.toggle('error', error);
+  feedback.setAttribute('role', error ? 'alert' : 'status');
+  feedback.dataset.phase = phase || (error ? 'error' : 'done');
+  document.getElementById('import-message').textContent = message;
+  const progress = document.getElementById('import-progress');
+  progress.hidden = error || !phase;
+  if (Number.isFinite(ratio)) progress.value = Math.round(ratio * 100);
+  else progress.removeAttribute('value');
+}
+
 async function importPdf(file, bookId = null) {
-  if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
-    announce("请选择 PDF 文件。", true);
-    return;
-  }
-  document.getElementById('import-status')?.remove();
-  announce(bookId ? "正在验证新来源版本……" : "正在验证并导入 PDF……");
-  const parameters = new URLSearchParams();
-  if (bookId) parameters.set("book_id", bookId);
+  if (importingPdf) return;
+  importingPdf = true;
+  importAction.disabled = elements['import-input'].disabled = true;
+  const onProgress = ({phase, loaded, total}) => {
+    const ratio = total ? Math.min(1, loaded / total) : undefined;
+    const percent = Number.isFinite(ratio) ? ` ${Math.floor(ratio * 100)}%` : '';
+    const label = phase === 'reading' ? '正在读取 PDF' : phase === 'uploading' ? '正在上传 PDF' : '上传完成，正在验证并入库…';
+    showImportFeedback(`${label}${percent}`, {phase,ratio});
+  };
+  let result;
   try {
-    const result = await api(`/api/books?${parameters}`, {
-      method: "POST",
-      headers: { "X-File-Name": encodeURIComponent(file.name), "Content-Type": "application/pdf" },
-      body: file,
-    });
-    state.book = null;
-    await loadBooks();
-    const refreshed = state.books.find((book) => book.id === result.book.id) || result.book;
-    await openBook(refreshed);
-    announce(result.duplicate ? "书库中已有这份文件，没有重复导入。" : (bookId ? "已添加新来源版本。" : "PDF 已导入，可以开始阅读。"));
-  } catch (_error) {
-    const message = _error.message || "导入失败，请检查 PDF 后重试。";
-    let status = document.getElementById('import-status');
-    if(!status) { status = document.createElement('p'); status.id = 'import-status'; status.className = 'local-error'; elements['library-home'].querySelector('main').prepend(status); }
-    status.textContent = message;
+    const body = await preparePdfUpload(file, onProgress);
+    result = await uploadPdf({body, filename:file.name, bookId, token:launchToken, onProgress});
+  } catch (error) {
+    const stage = document.getElementById('import-feedback').dataset.phase;
+    const message = error.message || '导入失败，请重新选择 PDF 后重试。';
+    showImportFeedback(message, {error:true});
     announce(message, true);
+    console.error('[pdf-import]', {stage, code:error.code, status:error.status, uploadId:error.uploadId});
+    return;
   } finally {
+    importingPdf = false;
+    importAction.disabled = elements['import-input'].disabled = false;
     elements["import-input"].value = "";
   }
+  const message = result.duplicate ? '书库中已有这份文件，没有重复导入。' : bookId ? '已添加新来源版本。' : 'PDF 已导入，可以开始阅读。';
+  showImportFeedback(message);
+  state.book = null;
+  // Upload success is final even if the subsequent list refresh or viewer
+  // fails. The returned book is sufficient to keep the library entry visible.
+  const at = state.books.findIndex(book => book.id === result.book.id);
+  if (at < 0) state.books.unshift(result.book); else state.books[at] = result.book;
+  elements['book-count'].textContent = String(state.books.length);
+  elements['library-empty'].hidden = true;
+  renderLibrary();
+  try {await openBook(result.book);} catch (_) {
+    elements['library-home'].hidden = false;
+    elements.reader.hidden = true;
+    showImportFeedback('PDF 已入库，但暂未能打开。请从书库重试打开。', {error:true});
+    return;
+  }
+  if (!state.pdf) {
+    elements['library-home'].hidden = false;
+    elements.reader.hidden = true;
+    showImportFeedback('PDF 已入库，但暂未能打开。请从书库重试打开。', {error:true});
+  } else announce(message);
 }
 
 async function removeBook(book) {
@@ -1119,7 +1160,7 @@ async function startPreparation(schedule = true) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ current_page: state.currentPage, visible_pages: [state.currentPage] }),
-      signal: AbortSignal.timeout(15000),
+      signal: requestTimeout(15000),
     });
   } catch (error) {
     if (!current()) return;
@@ -2381,7 +2422,7 @@ function schedulePreparationPriority(first, last) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ current_page: state.currentPage, visible_pages: visiblePages }),
-      signal: AbortSignal.timeout(10000),
+      signal: requestTimeout(10000),
     }).catch(() => {});
   }, 180);
 }
@@ -4657,6 +4698,7 @@ elements["import-input"].addEventListener("change", () => {
   const file = elements["import-input"].files[0];
   if (file) importPdf(file);
 });
+window.readerIntakeDidStart?.();
 elements.viewer.addEventListener("scroll", scheduleViewportUpdate, { passive: true });
 elements["previous-page"].addEventListener("click", () => goToPage(state.currentPage - 1));
 elements["next-page"].addEventListener("click", () => goToPage(state.currentPage + 1));

@@ -69,9 +69,23 @@ class LibraryService:
             temporary, output = self.paths.new_upload()
             with output:
                 while remaining:
-                    chunk = stream.read(min(1024 * 1024, remaining))
+                    try:
+                        chunk = stream.read(min(1024 * 1024, remaining))
+                    except TimeoutError as exc:
+                        raise IntakeError(
+                            "接收 PDF 超过 90 秒没有新数据，请检查连接后重试。",
+                            code="PDF_UPLOAD_TIMEOUT",
+                        ) from exc
+                    except OSError as exc:
+                        raise IntakeError(
+                            "PDF 上传连接中断，请保持页面打开并重新选择文件。",
+                            code="PDF_UPLOAD_INTERRUPTED",
+                        ) from exc
                     if not chunk:
-                        raise IntakeError("The upload ended before the complete PDF arrived")
+                        raise IntakeError(
+                            "PDF 未上传完整，请保持页面打开并重新选择文件。",
+                            code="PDF_UPLOAD_INTERRUPTED",
+                        )
                     output.write(chunk)
                     digest.update(chunk)
                     remaining -= len(chunk)

@@ -10,6 +10,9 @@
 .home-toolbar .space-navigation button[aria-current=page] { color:var(--ink); border-bottom-color:var(--green); }
 .primary-action,.import-button { border:0; border-radius:2px; min-height:36px; padding:0 17px; background:var(--green); color:white; font-size:13px; font-weight:400; }
 .primary-action:hover,.import-button:hover { background:#2d493a; }
+.import-feedback { display:flex; align-items:center; gap:16px; margin:0 0 24px; padding:0 0 16px; border-bottom:1px solid var(--line); color:var(--green); font-size:14px; line-height:1.7; overflow-wrap:anywhere; }
+.import-feedback.error { color:#965b36; }
+.import-feedback progress { flex:none; width:96px; height:4px; accent-color:var(--green); }
 .home-content,.overview-content { width:min(1200px,calc(100% - 96px)); margin:0 auto; padding:54px 0 70px; }
 #home-continue { border-block:1px solid var(--line); padding:22px 0 36px; }
 #home-continue>.eyebrow { margin:0 0 8px; }

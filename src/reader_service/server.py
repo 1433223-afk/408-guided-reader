@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, unquote, urlparse
+from uuid import uuid4
 
 from reader_service.agent_runtime import ProviderFailure, StreamConsumerDisconnected
 from reader_service.annotation import AnnotationService
@@ -84,6 +85,25 @@ _PRACTICE_REVIEW = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/
 _PRACTICE_HINT = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/hint/(\d+)$")
 _PRACTICE_KNOWLEDGE = re.compile(r"^/api/revisions/([0-9a-f-]+)/practice-prototype/knowledge-links$")
 _SESSION_COOKIE = "reader_launch"
+_PDF_UPLOAD_IDLE_TIMEOUT_SECONDS = 90.0
+
+
+class _UploadBody:
+    """Bound socket inactivity only while receiving the PDF body."""
+
+    def __init__(self, connection, stream):
+        self.connection = connection
+        self.stream = stream
+
+    def read(self, size: int) -> bytes:
+        previous = self.connection.gettimeout()
+        self.connection.settimeout(_PDF_UPLOAD_IDLE_TIMEOUT_SECONDS)
+        try:
+            # BufferedReader may receive many packets for one read. The socket
+            # timeout resets on each receive; this is not a total upload limit.
+            return self.stream.read(size)
+        finally:
+            self.connection.settimeout(previous)
 
 
 class ReaderServer(ThreadingHTTPServer):
@@ -126,8 +146,11 @@ def handler_factory(
         server_version = "GuidedReader/0.1"
 
         def parse_request(self) -> bool:
+            self._pdf_upload = None
             if not super().parse_request():
                 return False
+            if self.command == "POST" and urlparse(self.path).path == "/api/books":
+                self._begin_pdf_upload()
             # Validate before dispatch, including static bootstrap and every
             # write entry point. A local cookie must never authorize another
             # website's request to the loopback service.
@@ -159,6 +182,39 @@ def handler_factory(
                 })
                 return False
             return True
+
+        def _begin_pdf_upload(self) -> None:
+            lengths = self.headers.get_all("Content-Length", [])
+            length: int | str = "missing"
+            if lengths:
+                length = "invalid"
+                raw = lengths[0].strip()
+                if len(lengths) == 1 and re.fullmatch(r"[0-9]+", raw):
+                    try:
+                        length = int(raw)
+                    except ValueError:
+                        pass
+            encodings = self.headers.get_all("Transfer-Encoding", [])
+            encoding = "missing"
+            if encodings:
+                value = encodings[0].strip().lower()
+                # Never log an arbitrary header value: a malformed client can
+                # place credentials, filenames or line breaks in any header.
+                encoding = value if len(encodings) == 1 and value in {
+                    "chunked", "identity", "gzip", "compress", "deflate",
+                } else "other"
+            self._pdf_upload = {
+                "request_id": uuid4().hex, "peer": self.client_address[0],
+                "content_length": length, "transfer_encoding_present": bool(encodings),
+                "transfer_encoding": encoding, "started_at": time.monotonic(),
+            }
+            self._pdf_upload_log("received")
+
+        def _pdf_upload_log(self, event: str, **fields) -> None:
+            upload = self._pdf_upload
+            record = {key: value for key, value in upload.items() if key != "started_at"}
+            record.update(event=event, **fields)
+            print("PDF_UPLOAD " + json.dumps(record, ensure_ascii=True, separators=(",", ":")), flush=True)
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -1304,15 +1360,29 @@ def handler_factory(
                 return
             if not self._authorized():
                 return
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except ValueError:
-                self._json(HTTPStatus.BAD_REQUEST, {"error": "Invalid Content-Length"})
+            # Authentication stays ahead of framing errors; a missing token
+            # must never be disguised as a missing upload length.
+            upload = self._pdf_upload
+            if upload["transfer_encoding_present"]:
+                self.close_connection = True
+                self._json(HTTPStatus.NOT_IMPLEMENTED, {
+                    "code": "PDF_UPLOAD_TRANSFER_ENCODING_UNSUPPORTED",
+                    "error": "此上传方式暂不支持，请重选本机 PDF 后重试。",
+                })
+                return
+            length = upload["content_length"]
+            if not isinstance(length, int):
+                self.close_connection = True
+                missing = length == "missing"
+                self._json(HTTPStatus.LENGTH_REQUIRED if missing else HTTPStatus.BAD_REQUEST, {
+                    "code": "PDF_UPLOAD_LENGTH_REQUIRED" if missing else "PDF_UPLOAD_INVALID_LENGTH",
+                    "error": "未收到 PDF 文件大小，请重选本机 PDF 后重试。" if missing else "PDF 上传大小无效，请重新选择文件。",
+                })
                 return
             parameters = parse_qs(parsed.query)
             try:
                 result = service.intake(
-                    self.rfile,
+                    _UploadBody(self.connection, self.rfile),
                     content_length=length,
                     filename=unquote(self.headers.get("X-File-Name", "book.pdf")),
                     book_id=_first(parameters, "book_id"),
@@ -1320,15 +1390,34 @@ def handler_factory(
                     label=_first(parameters, "label"),
                 )
             except IntakeError as exc:
-                status = HTTPStatus.INSUFFICIENT_STORAGE if exc.code == "STORAGE_FULL" else HTTPStatus.UNPROCESSABLE_ENTITY
+                status = {
+                    "STORAGE_FULL": HTTPStatus.INSUFFICIENT_STORAGE,
+                    "PDF_UPLOAD_TIMEOUT": HTTPStatus.REQUEST_TIMEOUT,
+                    "PDF_UPLOAD_INTERRUPTED": HTTPStatus.BAD_REQUEST,
+                }.get(exc.code, HTTPStatus.UNPROCESSABLE_ENTITY)
                 self.close_connection = True
                 self._json(status, {"code": exc.code, "error": str(exc)})
                 return
             except LookupError as exc:
-                self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                self._json(HTTPStatus.NOT_FOUND, {"code": "PDF_UPLOAD_BOOK_NOT_FOUND", "error": str(exc)})
+                return
+            except Exception as exc:
+                self.close_connection = True
+                self._pdf_upload_log("failure", error_type=type(exc).__name__)
+                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                    "code": "PDF_UPLOAD_FAILED", "error": "PDF 导入未能完成，请刷新书库后重试。",
+                })
                 return
             if preparation is not None:
-                preparation.schedule_revision(result["book"]["active_revision"]["id"])
+                try:
+                    preparation.schedule_revision(result["book"]["active_revision"]["id"])
+                except Exception as exc:
+                    self._pdf_upload_log("failure", error_type=type(exc).__name__)
+                    self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                        "code": "PDF_UPLOAD_PREPARATION_FAILED",
+                        "error": "PDF 已保存，但文字准备暂未启动；请从书库重新打开。",
+                    })
+                    return
             self._json(HTTPStatus.OK if result["duplicate"] else HTTPStatus.CREATED, result)
 
         def do_PUT(self) -> None:  # noqa: N802
@@ -1592,7 +1681,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js", "/tablet.css", "/tablet-layout.js", "/tablet-touch.js", "/id.js", "/clipboard.js"
+                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js", "/tablet.css", "/tablet-layout.js", "/tablet-touch.js", "/id.js", "/clipboard.js", "/pdf-upload.js", "/import-bootstrap.js"
             ):
                 filename = path[1:]
             if filename is None:
@@ -1672,11 +1761,22 @@ def handler_factory(
             # Browser tree navigation needs summaries plus the focused conversation only.
             # Full service state stays in memory; a focus request lazily restores its turns.
             self._project_assistant_view(payload)
+            upload = getattr(self, "_pdf_upload", None)
+            if upload:
+                code = payload.get("code") or (
+                    "PDF_UPLOAD_DUPLICATE" if status == HTTPStatus.OK else
+                    "PDF_UPLOAD_IMPORTED" if status == HTTPStatus.CREATED else
+                    "UNAUTHORIZED" if status == HTTPStatus.UNAUTHORIZED else f"HTTP_{int(status)}"
+                )
+                self._pdf_upload_log("result", status=int(status), code=code,
+                                     elapsed_ms=round((time.monotonic() - upload["started_at"]) * 1000))
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Cache-Control", "no-store")
+            if upload:
+                self.send_header("X-Reader-Upload-Id", upload["request_id"])
             self.end_headers()
             try:
                 self.wfile.write(encoded)
