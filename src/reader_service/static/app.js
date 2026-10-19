@@ -4,7 +4,7 @@ import {createScreens, createChapterEntry, createAssistantModelMenu, createMessa
 import { streamAssistantResponse } from "/assistant-stream.js";
 import * as pdfjsLib from "/vendor/pdf.mjs";
 import {
-  lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
+  cellIndexAt, lineBounds, nearestCellBoundary, nearestLine, resolveSelection, resolvedText,
   selectionPresentationQuads,
 } from "/selection.js";
 import { renderAssistantAnswer, renderedSelectionToRaw } from "/assistant-render.js";
@@ -19,6 +19,7 @@ import { createVisualSelection } from "/visual-selection.js";
 import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPortraitLayout } from "/reading-display.js";
 import { createTabletLayout } from "/tablet-layout.js";
 import { createTabletTouch } from "/tablet-touch.js";
+import { createTabletPen } from "/tablet-pen.js";
 import { preparePdfUpload, uploadPdf } from "/pdf-upload.js";
 
 const tabletMode = new URLSearchParams(location.search).get("tablet") === "1";
@@ -440,6 +441,7 @@ async function openBook(book) {
       cMapPacked: true,
       standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
       iccUrl: "/vendor/pdfjs/iccs/",
+      ...(tabletMode ? {disableStream:true, disableAutoFetch:true, rangeChunkSize:16384} : {}),
     });
     const pdf = await loading.promise;
     if (generation !== state.generation) return;
@@ -4401,7 +4403,7 @@ async function deleteAnnotation(annotation) {
   }
 }
 
-function selectionPoint(event, overlay) {
+function selectionPoint(event, overlay, seedCell = false) {
   const index = Number(overlay.dataset.pageIndex);
   const data = state.overlayData.get(index);
   if (!data?.lines.length) return null;
@@ -4412,34 +4414,38 @@ function selectionPoint(event, overlay) {
   return {
     pageIndex: index,
     lineOrdinal: line.line_ordinal,
-    boundary: nearestCellBoundary(line, x, y),
+    boundary: seedCell ? cellIndexAt(line, x, y) : nearestCellBoundary(line, x, y),
   };
 }
 
 function beginSelection(event) {
-  if (tabletMode && event.pointerType === "touch") return;
+  if (tabletMode && (event.pointerType === "touch" || event.pointerType === "pen")) return;
+  if (tabletMode && state.selecting && state.selection?.input !== 'mouse') return;
   if (event.button !== 0) return;
   const point = selectionPoint(event, event.currentTarget);
   if (!point) return;
   event.preventDefault();
   clearSelection();
-  state.selection = { pageIndex: point.pageIndex, anchor: point, focus: point, resolved: [] };
+  state.selection = { pageIndex: point.pageIndex, anchor: point, focus: point, resolved: [], input:'mouse' };
   state.selecting = true;
   event.currentTarget.setPointerCapture(event.pointerId);
   elements.viewer.focus({ preventScroll: true });
 }
 
 function extendSelection(event) {
-  if (tabletMode && event.pointerType === "touch") return;
+  if (tabletMode && (event.pointerType === "touch" || event.pointerType === "pen")) return;
+  if (tabletMode && event.pointerType && state.selection?.input !== 'mouse') return;
   if (!state.selecting || state.selection?.pageIndex !== Number(event.currentTarget.dataset.pageIndex)) return;
   const point = selectionPoint(event, event.currentTarget);
   if (!point) return;
+  if (state.selection.focus.lineOrdinal === point.lineOrdinal && state.selection.focus.boundary === point.boundary) return;
   state.selection.focus = point;
   renderSelection();
 }
 
 function finishSelection(event) {
-  if (tabletMode && event.pointerType === "touch") return;
+  if (tabletMode && (event.pointerType === "touch" || event.pointerType === "pen")) return;
+  if (tabletMode && event.pointerType && state.selection?.input !== 'mouse') return;
   if (!state.selecting) return;
   extendSelection(event);
   state.selecting = false;
@@ -5144,9 +5150,9 @@ if (tabletMode) {
       if (state.pdf && !elements.reader.hidden && Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) >= 1) relayoutPages();
     },
   });
-  let pinchOrigin = null;
-  createTabletTouch({viewer:elements.viewer,
-    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active),
+  let pinchOrigin = null, tabletPen = null, penSeed = null;
+  const tabletTouch = createTabletTouch({viewer:elements.viewer,
+    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active && !tabletPen?.active),
     getZoom:() => state.zoom, captureAnchor:(x,y) => {
       const rect = elements.pages.getBoundingClientRect();
       pinchOrigin = {x:x - rect.left, y:y - rect.top};
@@ -5174,7 +5180,7 @@ if (tabletMode) {
           to = end < 0 ? line.cells.length : end;
         }
       }
-      state.selection = {pageIndex:start.pageIndex, anchor:{...start,boundary:from}, focus:{...start,boundary:to}, resolved:[]};
+      state.selection = {pageIndex:start.pageIndex, anchor:{...start,boundary:from}, focus:{...start,boundary:to}, resolved:[], input:'touch'};
       state.selecting = true;
       renderSelection();
       return true;
@@ -5194,6 +5200,45 @@ if (tabletMode) {
       hideSelectionActions();
     },
     onPinchClear:() => {elements.pages.style.removeProperty('transform'); elements.pages.style.removeProperty('transform-origin');},
+  });
+  tabletPen = createTabletPen({viewer:elements.viewer,
+    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active),
+    onSelectionStart:point => {
+      const overlay = point.target.closest('.text-overlay');
+      const seed = overlay && selectionPoint(point, overlay, true);
+      if (!seed || seed.boundary < 0) return false;
+      tabletTouch.cancel();
+      clearSelection();
+      state.pinnedLanding = null;
+      penSeed = seed;
+      state.selection = {pageIndex:seed.pageIndex, anchor:{...seed}, focus:{...seed,boundary:seed.boundary+1}, resolved:[], input:'pen'};
+      state.selecting = true;
+      elements.viewer.focus({preventScroll:true});
+      renderSelection();
+      return true;
+    },
+    onSelectionMove:point => {
+      if (!penSeed || !state.selection || state.selection.pageIndex !== penSeed.pageIndex) return;
+      const overlay = elements.pages.children[penSeed.pageIndex]?.querySelector('.text-overlay');
+      const focus = overlay && selectionPoint(point, overlay);
+      if (!focus) return;
+      const backwards = focus.lineOrdinal < penSeed.lineOrdinal
+        || (focus.lineOrdinal === penSeed.lineOrdinal && focus.boundary <= penSeed.boundary);
+      const anchor = {...penSeed, boundary:penSeed.boundary + (backwards ? 1 : 0)};
+      // Keep the initial cell included, including taps on either half and
+      // reversed drags; the pen may release without crossing a boundary.
+      if (state.selection.anchor.lineOrdinal === anchor.lineOrdinal && state.selection.anchor.boundary === anchor.boundary
+          && state.selection.focus.lineOrdinal === focus.lineOrdinal && state.selection.focus.boundary === focus.boundary) return;
+      state.selection.anchor = anchor;
+      state.selection.focus = focus;
+      renderSelection();
+    },
+    onSelectionEnd:point => {
+      penSeed = null;
+      state.selecting = false;
+      if (state.selection?.resolved.length) showSelectionActions(point.clientX, point.clientY - 64);
+    },
+    onSelectionCancel:() => {penSeed = null; state.selecting = false; clearSelection();},
   });
 }
 applyAssistantDockWidth(state.assistantDockWidth);

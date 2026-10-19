@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  nearestCellBoundary, nearestLine, resolveSelection, resolvedText, selectionPresentationQuads,
+  cellIndexAt, nearestCellBoundary, nearestLine, resolveSelection, resolvedText, selectionPresentationQuads,
   selectionRanges,
 } from "../src/reader_service/static/selection.js";
 
@@ -29,6 +29,27 @@ const lines = [
 test("hit testing snaps to a line and anonymous cell boundary", () => {
   assert.equal(nearestLine(lines, 0.3, 0.35).line_ordinal, 1);
   assert.equal(nearestCellBoundary(lines[0], 0.49), 4);
+});
+
+test('cell hit testing selects both halves of the touched cell rather than the next insertion boundary', () => {
+  assert.equal(cellIndexAt(lines[0], .11, .15), 0);
+  assert.equal(cellIndexAt(lines[0], .19, .15), 0);
+  assert.equal(nearestCellBoundary(lines[0], .19, .15), 1);
+  assert.equal(cellIndexAt(lines[0], .21, .15), 1);
+  assert.equal(cellIndexAt(lines[0], .29, .15), 1);
+  assert.equal(cellIndexAt(lines[0], 0, .15), 0);
+  assert.equal(cellIndexAt(lines[0], 1, .15), 4);
+});
+
+test('cell hit testing uses the nearest OCR cell through gaps and keeps grouped characters intact', () => {
+  const fragmented = {quad: [[.1,.1],[.5,.1],[.5,.2],[.1,.2]], text: 'CacheAB',
+    cells: [[.1,.2,0,5],[.3,.4,5,6],[.42,.5,6,7]]};
+  assert.equal(cellIndexAt(fragmented, .18, .15), 0);
+  assert.equal(cellIndexAt(fragmented, .23, .15), 0);
+  assert.equal(cellIndexAt(fragmented, .28, .15), 1);
+  assert.equal(cellIndexAt(fragmented, .41, .15), 1);
+  assert.equal(cellIndexAt({...fragmented,cells:[]}, .2, .15), -1);
+  assert.equal(cellIndexAt(fragmented, NaN, .15), -1);
 });
 
 test("hit testing distinguishes OCR fragments on the same visual row", () => {
@@ -64,6 +85,11 @@ test("vertical OCR lines use pointer Y for precise anonymous-cell boundaries", (
   assert.equal(nearestCellBoundary(vertical, 0.87, 0.09), 0);
   assert.equal(nearestCellBoundary(vertical, 0.87, 0.318), 4);
   assert.equal(nearestCellBoundary(vertical, 0.87, 0.546), 8);
+  assert.equal(cellIndexAt(vertical, .87, .10), 0);
+  assert.equal(cellIndexAt(vertical, .87, .14), 0);
+  assert.equal(cellIndexAt(vertical, .87, .17), 1);
+  assert.equal(cellIndexAt(vertical, .87, .31), 3);
+  assert.equal(cellIndexAt(vertical, .87, .55), 7);
 
   const selected = resolveSelection(
     [vertical],
@@ -84,6 +110,7 @@ test("tall horizontal fragments keep X-based hit testing", () => {
     cells: [[0.1, 0.15, 0, 1], [0.15, 0.2, 1, 2]],
   };
   assert.equal(nearestCellBoundary(narrowHorizontal, 0.2, 0.1), 2);
+  assert.equal(cellIndexAt(narrowHorizontal, .19, .1), 1);
 });
 
 test("cross-line selection is represented as per-line ranges", () => {

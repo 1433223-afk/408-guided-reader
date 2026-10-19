@@ -75,6 +75,27 @@ export function nearestCellBoundary(line, normalizedX, normalizedY) {
   return best;
 }
 
+// A tap selects the cell under the tip, rather than the character after the
+// closest insertion boundary. Keep persisted cells intact, including OCR units
+// containing several characters; source anchors still refer to those units.
+export function cellIndexAt(line, normalizedX, normalizedY) {
+  if (!line.cells.length) return -1;
+  const vertical = usesVerticalSelectionAxis(line) && Number.isFinite(normalizedY);
+  const coordinate = vertical ? normalizedY : normalizedX;
+  if (!Number.isFinite(coordinate)) return -1;
+  const boundaries = vertical ? cellBoundaryPositions(line) : null;
+  let best = 0, distance = Infinity, centerDistance = Infinity;
+  for (let index = 0; index < line.cells.length; index++) {
+    const [start, end] = vertical ? [boundaries[index], boundaries[index + 1]] : line.cells[index];
+    const candidateDistance = axisDistance(coordinate, start, end);
+    const candidateCenter = Math.abs(coordinate - (start + end) / 2);
+    if (candidateDistance < distance || (candidateDistance === distance && candidateCenter < centerDistance)) {
+      best = index; distance = candidateDistance; centerDistance = candidateCenter;
+    }
+  }
+  return best;
+}
+
 export function selectionRanges(lines, anchor, focus) {
   if (!anchor || !focus || !lines.length) return [];
   let start = anchor;
