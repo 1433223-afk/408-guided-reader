@@ -20,9 +20,11 @@ import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPort
 import { createTabletLayout } from "/tablet-layout.js";
 import { createTabletTouch } from "/tablet-touch.js";
 import { createTabletPen } from "/tablet-pen.js";
+import { createTabletPdfPages } from "/tablet-pdf-pages.js";
 import { preparePdfUpload, uploadPdf } from "/pdf-upload.js";
 
 const tabletMode = new URLSearchParams(location.search).get("tablet") === "1";
+const useTabletPageImages = tabletMode;
 document.documentElement.classList.toggle("tablet", tabletMode);
 let tabletLayout = null, tabletAssistantSuspended = false;
 const changeTabletWorkspace = update => tabletLayout ? tabletLayout.change(update) : update();
@@ -48,6 +50,7 @@ if (launchToken) {
 
 const state = {
   books: [], book: null, revision: null, pdf: null, zoom: 1,
+  tabletBackgroundPending: false,
   currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), pageRenderRequests: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, viewerLayoutWidth: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
@@ -167,7 +170,7 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
   if (!state.pdf || state.revision?.id !== item.book_source_revision_id) throw new Error('请重新打开原教材。');
   elements['library-home'].hidden = true;
   elements.reader.hidden = false;
-  await loadPracticeRecords();
+  await loadPracticeRecords({force: true});
   const section = PRACTICE_SECTIONS.find(candidate => candidate.questions.some(question => question.number === item.source.number));
   if (!section) throw new Error('这道题的原书练习暂不可用。');
   if (!state.practice.active || state.practice.sectionId !== section.id) enterPractice(section.id);
@@ -393,6 +396,7 @@ async function openBook(book) {
   state.generation += 1;
   const generation = state.generation;
   cancelRenders();
+  if (useTabletPageImages) state.pdf?.destroy?.();
   closePreparationStream();
   resetPractice();
   applyDirectoryMode(null);
@@ -426,41 +430,63 @@ async function openBook(book) {
   elements["page-total"].textContent = `/ ${state.revision.page_count}`;
   elements["page-number"].max = String(state.revision.page_count);
   elements["zoom-value"].value = `${Math.round(state.zoom * 100)}%`;
-  renderLibrary();
+  if (!tabletMode) renderLibrary();
   elements.pages.replaceChildren();
   buildPlaceholders();
   resetAssistantPanel();
   master.reset();
-  master.refreshEntries().catch((error) => announce(error.message, true));
+  if (!tabletMode) master.refreshEntries().catch((error) => announce(error.message, true));
   refreshAssistantStatus();
   try {
-    const loading = pdfjsLib.getDocument({
-      url: `/api/revisions/${state.revision.id}/pdf${tabletMode ? '?tablet=1' : ''}`,
-      httpHeaders: { "X-Reader-Token": launchToken },
-      withCredentials: true,
-      wasmUrl: "/vendor/pdfjs/wasm/",
-      cMapUrl: "/vendor/pdfjs/cmaps/",
-      cMapPacked: true,
-      standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
-      iccUrl: "/vendor/pdfjs/iccs/",
-      ...(tabletMode ? {disableStream:true, disableAutoFetch:true, rangeChunkSize:16384} : {}),
-    });
-    const pdf = await loading.promise;
+    const revision = state.revision;
+    const loadFallback = async () => {
+      const loading = pdfjsLib.getDocument({
+        url: `/api/revisions/${revision.id}/pdf${tabletMode ? '?tablet=1' : ''}`,
+        httpHeaders: { "X-Reader-Token": launchToken },
+        withCredentials: true,
+        wasmUrl: "/vendor/pdfjs/wasm/",
+        cMapUrl: "/vendor/pdfjs/cmaps/",
+        cMapPacked: true,
+        standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
+        iccUrl: "/vendor/pdfjs/iccs/",
+        ...(tabletMode ? {disableStream:true, disableAutoFetch:true, rangeChunkSize:16384} : {}),
+      });
+      const pdf = await loading.promise;
+      if (pdf.numPages !== revision.page_count) {
+        await pdf.destroy();
+        throw new Error("保存的 PDF 元数据与来源文件不再一致");
+      }
+      return pdf;
+    };
+    const pdf = useTabletPageImages ? createTabletPdfPages({revision, token:launchToken,
+      getWidth:() => snappedPageSize(1).backingWidth, loadFallback}) : await loadFallback();
     if (generation !== state.generation) return;
     if (pdf.numPages !== state.revision.page_count) throw new Error("保存的 PDF 元数据与来源文件不再一致");
     await nextFrame();
     if (generation !== state.generation) return;
     applyRestoredPosition();
     state.pdf = pdf;
+    state.tabletBackgroundPending = tabletMode;
     scheduleViewportUpdate();
-    startPreparation().catch(error => { elements['preparation-status'].textContent = '文字准备暂时不可用'; announce(error.message, true); });
-    loadBookMap();
+    if (!tabletMode) startReaderBackground();
   } catch (_error) {
     announce("无法打开这份 PDF，请重试。", true);
   }
 }
 
+function startReaderBackground() {
+  state.tabletBackgroundPending = false;
+  if (tabletMode) {
+    master.refreshEntries().catch((error) => announce(error.message, true));
+    loadPracticeRecords({force: true});
+  }
+  startPreparation().catch(error => { elements['preparation-status'].textContent = '文字准备暂时不可用'; announce(error.message, true); });
+  loadBookMap();
+}
+
 function closeReader() {
+  state.tabletBackgroundPending = false;
+  if (useTabletPageImages) state.pdf?.destroy?.();
   visualSelection.cancel({clear: true});
   resetPractice();
   applyDirectoryMode(null);
@@ -910,6 +936,7 @@ async function renderPage(index) {
       wrapper.classList.remove("loading");
       if (tabletMode) await ensureOverlay(index);
       else ensureOverlay(index);
+      if (ownsPage() && state.tabletBackgroundPending) startReaderBackground();
       visualSelection.render();
     }
   } catch (error) {
@@ -926,6 +953,7 @@ async function renderPage(index) {
 
 function clearPage(index) {
   state.pageRenderRequests.delete(index);
+  state.pdf?.cancelPage?.(index + 1);
   const task = state.renderTasks.get(index);
   if (task) task.cancel();
   state.renderTasks.delete(index);
@@ -940,6 +968,7 @@ function clearPage(index) {
 
 function cancelRenders() {
   state.pageRenderRequests.clear();
+  state.pdf?.cancelAll?.();
   for (const task of state.renderTasks.values()) task.cancel();
   state.renderTasks.clear();
   state.rendered.clear();
@@ -1202,7 +1231,7 @@ async function startPreparation(schedule = true) {
     if (preparationFinished(payload.pages, payload.active_jobs)) {
       stream.close();
       if (state.eventSource === stream) state.eventSource = null;
-      if (payload.pages.every(p => p.status === "READY")) loadPracticeRecords();
+      if (payload.pages.every(p => p.status === "READY")) loadPracticeRecords({force: true});
     }
   });
   stream.onerror = () => {
@@ -1454,7 +1483,8 @@ function savePracticePosition() {
   })).catch(error => announce(`练习位置未保存：${error.message}`, true));
 }
 
-async function loadPracticeRecords() {
+async function loadPracticeRecords({force = false} = {}) {
+  if (tabletMode && !state.practice.active && !force) return;
   const revisionId = state.revision?.id;
   if (!revisionId) return;
   const loadEpoch = ++state.practice.catalogLoadEpoch;

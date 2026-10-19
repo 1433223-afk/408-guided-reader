@@ -34,9 +34,11 @@ from reader_service.visual_region import render_visual_region
 from reader_service.tablet_network import is_private_ipv4
 from reader_service.tablet_assets import asset_response
 from reader_service.tablet_pdf import TabletPdfIndex
+from reader_service.tablet_page_images import TabletPageImages, PageImageUnavailable
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
+_REVISION_PAGE_IMAGE = re.compile(r"^/api/revisions/([0-9a-f-]+)/page-image$")
 _REVISION_POSITION = re.compile(r"^/api/revisions/([0-9a-f-]+)/position$")
 _REVISION_PREPARATION = re.compile(r"^/api/revisions/([0-9a-f-]+)/preparation$")
 _REVISION_PREPARATION_EVENTS = re.compile(
@@ -144,6 +146,7 @@ def handler_factory(
     practice_hint = PracticeHintService(practice_review) if practice_review is not None else None
     practice_knowledge = PracticeKnowledgeService(practice, getattr(learning, "runtime", None))
     tablet_pdf = TabletPdfIndex(service) if tablet_lan else None
+    tablet_page_images = TabletPageImages(service) if tablet_lan else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
@@ -564,6 +567,49 @@ def handler_factory(
                     self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                     return
                 self._json(HTTPStatus.OK, {"page": overlay})
+                return
+            match = _REVISION_PAGE_IMAGE.fullmatch(parsed.path)
+            if match:
+                if not self._authorized():
+                    return
+                if tablet_page_images is None:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                    return
+                try:
+                    parameters = parse_qs(parsed.query)
+                    page_index = int(_first(parameters, "page") or "")
+                    width = int(_first(parameters, "width") or "")
+                    started = time.monotonic()
+                    page_image = tablet_page_images.render(match.group(1), page_index, width)
+                except PageImageUnavailable as exc:
+                    self._json(HTTPStatus.UNPROCESSABLE_ENTITY, {
+                        "code": "TABLET_PAGE_IMAGE_UNSUPPORTED", "error": str(exc),
+                    })
+                    return
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                except OSError:
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "原页暂时无法读取，请重试。"})
+                    return
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(page_image.body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Reader-Page-Width", str(page_image.pdf_width))
+                self.send_header("X-Reader-Page-Height", str(page_image.pdf_height))
+                self.send_header("X-Reader-Image-Width", str(page_image.width))
+                self.send_header("X-Reader-Image-Height", str(page_image.height))
+                self.send_header("X-Reader-Image-Cache", "hit" if page_image.cache_hit else "miss")
+                self.send_header("Server-Timing", f"page-image;dur={(time.monotonic() - started) * 1000:.1f}")
+                self.end_headers()
+                try:
+                    self.wfile.write(page_image.body)
+                except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                    pass
                 return
             match = _REVISION_PDF.fullmatch(parsed.path)
             if match:
@@ -1693,7 +1739,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js", "/tablet.css", "/tablet-layout.js", "/tablet-touch.js", "/tablet-pen.js", "/id.js", "/clipboard.js", "/pdf-upload.js", "/import-bootstrap.js"
+                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js", "/tablet.css", "/tablet-layout.js", "/tablet-touch.js", "/tablet-pen.js", "/tablet-pdf-pages.js", "/id.js", "/clipboard.js", "/pdf-upload.js", "/import-bootstrap.js"
             ):
                 filename = path[1:]
             if filename is None:

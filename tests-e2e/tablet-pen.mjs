@@ -90,6 +90,15 @@ try {
     }
   });
   page = await context.newPage();
+  // Exercise PDF.js fallback at the far-page destination. Ordinary pen reading
+  // uses lossless page images and the same original OCR coordinates.
+  await page.route('**/api/revisions/*/page-image?*', route => {
+    if (new URL(route.request().url()).searchParams.get('page') === '347') {
+      return route.fulfill({status:422, contentType:'application/json',
+        body:JSON.stringify({code:'TABLET_PAGE_IMAGE_UNSUPPORTED',error:'Regression fixture: use original PDF'})});
+    }
+    return route.continue();
+  });
   const pageErrors = [], prohibited = [], rangeChecks = [];
   page.on('pageerror', error => pageErrors.push(error.message));
   page.on('request', request => {
@@ -235,7 +244,7 @@ try {
   console.log(JSON.stringify({result: 'PASS', checks: ['isolated real 348-page textbook snapshot',
     'existing OCR cells', 'CDP trusted pen left/right cell tap', 'forward/reverse exact copied text',
     'pen up action menu', 'hover ignored', 'capture cancellation', 'first finger after pen scrolls',
-    'finger long hold', 'touch directory jump', 'far page 348 rendering', 'partial PDF response byte lengths'],
+    'finger long hold', 'touch directory jump', 'far page 348 PDF.js fallback rendering', 'partial PDF response byte lengths'],
     rangeResponses: checkedRanges.filter(range => !range.cancelled).length, modelCalls: 0, newOcrCalls: 0,
     limitation: 'Desktop Chrome CDP pen events; physical Android Lenovo pen remains for manual acceptance'}));
 } catch (error) {
