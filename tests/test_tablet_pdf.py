@@ -273,4 +273,3 @@ def test_compact_ranges_cross_source_tail_and_keep_auth_and_desktop_boundaries(s
             assert response.getheader('X-Reader-PDF-View') != 'compact'
         finally:
             connection.close()
-
