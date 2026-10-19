@@ -435,7 +435,7 @@ async function openBook(book) {
   refreshAssistantStatus();
   try {
     const loading = pdfjsLib.getDocument({
-      url: `/api/revisions/${state.revision.id}/pdf`,
+      url: `/api/revisions/${state.revision.id}/pdf${tabletMode ? '?tablet=1' : ''}`,
       httpHeaders: { "X-Reader-Token": launchToken },
       withCredentials: true,
       wasmUrl: "/vendor/pdfjs/wasm/",
@@ -838,7 +838,19 @@ function updateViewport() {
   renderReaderSectionHint();
   const keepStart = Math.max(0, (first ?? 0) - 2);
   const keepEnd = Math.min(state.pdf.numPages - 1, last + 2);
-  for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
+  if (tabletMode) {
+    // Put the actual reading surface and its selectable text ahead of offscreen
+    // images. On LAN, four neighbouring scans used to compete with the first page.
+    const visibleStart = first ?? 0;
+    for (let index = visibleStart; index <= last; index += 1) renderPage(index);
+    const visibleReady = Array.from({length:last - visibleStart + 1}, (_, at) => visibleStart + at)
+      .every(index => state.rendered.has(index) && !state.pageRenderRequests.has(index));
+    if (visibleReady) {
+      for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
+    }
+  } else {
+    for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
+  }
   for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys()])) {
     if (index < keepStart || index > keepEnd) clearPage(index);
   }
@@ -895,7 +907,9 @@ async function renderPage(index) {
       renderGuideEntries(index);
       renderPracticeOverlay(index);
       syncPagePreparationUi(index);
-      ensureOverlay(index);
+      wrapper.classList.remove("loading");
+      if (tabletMode) await ensureOverlay(index);
+      else ensureOverlay(index);
       visualSelection.render();
     }
   } catch (error) {
@@ -905,6 +919,7 @@ async function renderPage(index) {
       state.pageRenderRequests.delete(index);
       state.renderTasks.delete(index);
       wrapper?.classList.remove("loading");
+      if (tabletMode && state.rendered.has(index)) scheduleViewportUpdate();
     }
   }
 }
@@ -4188,15 +4203,13 @@ async function retrySavedExplanationReview(annotation, button) {
   }
 }
 
-const overlayRequests = new WeakSet();
-async function ensureOverlay(index) {
+const overlayRequests = new WeakMap();
+function ensureOverlay(index) {
   const wrapper = elements.pages.children[index];
-  if (!wrapper?.querySelector("canvas") || wrapper.querySelector(".text-overlay") || overlayRequests.has(wrapper)) return;
+  if (!wrapper?.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
+  if (overlayRequests.has(wrapper)) return overlayRequests.get(wrapper);
   const generation = state.generation;
-  overlayRequests.add(wrapper);
-  try {
-    await loadOverlay(index, generation);
-  } catch (_error) {
+  const request = loadOverlay(index, generation).catch(() => {
     if (generation !== state.generation || !wrapper.isConnected) return;
     if (!wrapper.querySelector(".overlay-retry")) {
       const retry = document.createElement("button");
@@ -4205,9 +4218,11 @@ async function ensureOverlay(index) {
       retry.onclick = () => { retry.remove(); ensureOverlay(index); };
       wrapper.append(retry);
     }
-  } finally {
+  }).finally(() => {
     overlayRequests.delete(wrapper);
-  }
+  });
+  overlayRequests.set(wrapper, request);
+  return request;
 }
 
 async function loadOverlay(index, generation) {

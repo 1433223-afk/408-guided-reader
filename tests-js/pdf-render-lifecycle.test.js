@@ -18,7 +18,7 @@ function fixture() {
   const wrapper = {classList: {add() {}, remove() {}}, replaceChildren(...nodes) {mounts.push(nodes);}};
   const state = {pdf: {getPage() {const read = deferred(); reads.push(read); return read.promise;}},
     generation: 1, renderGeneration: 1, rendered: new Set(), renderTasks: new Map(), pageRenderRequests: new Map()};
-  const context = vm.createContext({state, elements: {pages: {children: [wrapper]}},
+  const context = vm.createContext({state, tabletMode: false, elements: {pages: {children: [wrapper]}},
     document: {createElement() {return {style: {}, dataset: {}, getContext() {return {};}};}},
     snappedPageSize: () => ({backingWidth: 600, backingHeight: 800, cssWidth: 600, cssHeight: 800, pixelRatio: 1}),
     applyPageSize() {}, master: {renderPage() {}}, visualSelection: {render() {}}, renderGuideEntries() {}, renderPracticeOverlay() {},
@@ -44,6 +44,28 @@ test('duplicate viewport updates share one pending page read', async () => {
   assert.equal(f.mounts.length, 1);
   assert.equal(f.state.rendered.has(0), true);
   assert.equal(f.state.pageRenderRequests.size, 0);
+});
+
+test('tablet visible page stays pending until selectable text is ready before resuming prefetch', async () => {
+  const f = fixture();
+  const textReady = deferred();
+  let viewportUpdates = 0;
+  f.context.tabletMode = true;
+  f.context.ensureOverlay = () => textReady.promise;
+  f.context.scheduleViewportUpdate = () => {viewportUpdates += 1;};
+  const pending = f.context.renderPage(0);
+  f.reads[0].resolve(f.pdfPage);
+  await setImmediate();
+  f.renders[0].resolve();
+  await setImmediate();
+  assert.equal(f.state.rendered.has(0), true, 'PDF is visible while its text loads');
+  assert.equal(f.state.pageRenderRequests.has(0), true, 'viewport prefetch remains gated');
+  assert.equal(viewportUpdates, 0);
+  textReady.resolve();
+  await pending;
+  assert.equal(f.state.pageRenderRequests.has(0), false);
+  assert.equal(viewportUpdates, 1);
+  assert.deepEqual(f.errors, []);
 });
 
 test('virtualized page cannot be resurrected by an old read', async () => {

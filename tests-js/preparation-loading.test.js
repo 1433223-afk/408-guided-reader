@@ -26,7 +26,7 @@ test('OCR stream reconnect refreshes progress after the bounded stream closes wi
   }
   const state={revision:{id:'r'},generation:1,eventSource:null,preparationRetryTimer:0,preparationRetryDelay:1000};
   const context={state,EventSource,elements:{'preparation-status':{}},
-    AbortSignal:{timeout:()=>null},
+    requestTimeout:()=>null,
     api:async(_path,options)=>{calls.push(options?.method||'GET');return options?{}:{pages:pages(ready),jobs:{QUEUED:20,RUNNING:1}};},
     applyPreparationStatuses:rows=>labels.push(rows.filter(p=>p.status==='READY').length),
     updatePreparationLabel:()=>{},loadPracticeRecords:()=>{},

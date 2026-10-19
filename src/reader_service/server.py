@@ -32,6 +32,8 @@ from reader_service.practice_hint import PracticeHintService
 from reader_service.practice_knowledge import PracticeKnowledgeService
 from reader_service.visual_region import render_visual_region
 from reader_service.tablet_network import is_private_ipv4
+from reader_service.tablet_assets import asset_response
+from reader_service.tablet_pdf import TabletPdfIndex
 
 
 _REVISION_PDF = re.compile(r"^/api/revisions/([0-9a-f-]+)/pdf$")
@@ -141,6 +143,7 @@ def handler_factory(
     practice_review = PracticeReviewService(practice, learning, service) if learning is not None else None
     practice_hint = PracticeHintService(practice_review) if practice_review is not None else None
     practice_knowledge = PracticeKnowledgeService(practice, getattr(learning, "runtime", None))
+    tablet_pdf = TabletPdfIndex(service) if tablet_lan else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
@@ -567,7 +570,16 @@ def handler_factory(
                 if not self._authorized():
                     return
                 try:
-                    self._file(service.pdf_path(match.group(1)), "application/pdf", ranged=True)
+                    tail, pdf_headers = None, None
+                    if tablet_pdf is not None and _first(parse_qs(parsed.query), "tablet") == "1":
+                        started = time.monotonic()
+                        tail = tablet_pdf.tail_for(match.group(1))
+                        pdf_headers = {
+                            "X-Reader-PDF-View": "compact" if tail is not None else "source",
+                            "Server-Timing": f"tablet-index;dur={(time.monotonic() - started) * 1000:.1f}",
+                        }
+                    self._file(service.pdf_path(match.group(1)), "application/pdf", ranged=True,
+                               headers=pdf_headers, tail=tail)
                 except LookupError as exc:
                     self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
                 return
@@ -1711,8 +1723,31 @@ def handler_factory(
             content_type: str,
             ranged: bool = False,
             headers: dict[str, str] | None = None,
+            tail: Path | None = None,
         ) -> None:
-            size = path.stat().st_size
+            if (tablet_lan and not ranged and headers is None
+                    and path.suffix in {".js", ".mjs", ".css", ".wasm"}
+                    and path.stat().st_size <= 10 * 1024 * 1024):
+                body, etag, compressed = asset_response(path, self.headers.get("Accept-Encoding", ""))
+                unchanged = self.headers.get("If-None-Match") == etag
+                self.send_response(HTTPStatus.NOT_MODIFIED if unchanged else HTTPStatus.OK)
+                self.send_header("Cache-Control", "private, no-cache")
+                self.send_header("ETag", etag)
+                self.send_header("Vary", "Accept-Encoding")
+                if not unchanged:
+                    self.send_header("Content-Type", content_type)
+                    self.send_header("Content-Length", str(len(body)))
+                    if compressed:
+                        self.send_header("Content-Encoding", "gzip")
+                self.end_headers()
+                if not unchanged:
+                    try:
+                        self.wfile.write(body)
+                    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                        pass
+                return
+            source_size = path.stat().st_size
+            size = source_size + (tail.stat().st_size if tail is not None else 0)
             start, end = 0, size - 1
             status = HTTPStatus.OK
             if ranged and self.headers.get("Range"):
@@ -1744,18 +1779,30 @@ def handler_factory(
                 if status == HTTPStatus.PARTIAL_CONTENT:
                     self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.end_headers()
-            with path.open("rb") as source:
-                source.seek(start)
-                remaining = end - start + 1
-                while remaining:
-                    chunk = source.read(min(256 * 1024, remaining))
-                    if not chunk:
-                        break
-                    try:
-                        self.wfile.write(chunk)
-                    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
-                        break
-                    remaining -= len(chunk)
+            remaining, offset = end - start + 1, start
+            segments = [(path, source_size)]
+            if tail is not None:
+                segments.append((tail, size - source_size))
+            for segment, length in segments:
+                if offset >= length:
+                    offset -= length
+                    continue
+                with segment.open("rb") as source:
+                    source.seek(offset)
+                    available = min(remaining, length - offset)
+                    while available:
+                        chunk = source.read(min(256 * 1024, available))
+                        if not chunk:
+                            return
+                        try:
+                            self.wfile.write(chunk)
+                        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                            return
+                        available -= len(chunk)
+                        remaining -= len(chunk)
+                if not remaining:
+                    break
+                offset = 0
 
         def _json(self, status: HTTPStatus, payload: dict) -> None:
             # Browser tree navigation needs summaries plus the focused conversation only.
