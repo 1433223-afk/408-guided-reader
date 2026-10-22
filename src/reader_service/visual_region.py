@@ -37,7 +37,7 @@ def _region_rect(rect) -> list[float]:
     return [x0, y0, x1, y1]
 
 
-def render_visual_region(library, revision_id: str, page_index: int, rect) -> dict:
+def render_visual_region(library, revision_id: str, page_index: int, rect, *, renderer=None) -> dict:
     """Return a PNG and immutable source coordinates, without OCR or stored assets.
 
     ``rect`` is [left, top, right, bottom] normalized against the *displayed*
@@ -53,12 +53,45 @@ def render_visual_region(library, revision_id: str, page_index: int, rect) -> di
         raise ValueError("PDF 页码无效。")
     pdf_path = library.pdf_path(revision_id)
 
+    # Android supplies a renderer at the library boundary so internal Assistant
+    # and Practice callers use the same native PDF engine as the HTTP route.
+    renderer = renderer or getattr(library, "region_renderer", None)
+    if renderer is None:
+        png, image_width, image_height = _render_pdfium_region(
+            pdf_path, page_index, normalized, revision["page_count"]
+        )
+    else:
+        png, image_width, image_height = renderer(
+            pdf_path, page_index, normalized, revision["page_count"]
+        )
+        if (type(image_width) is not int or type(image_height) is not int
+                or min(image_width, image_height) < MIN_IMAGE_SIDE
+                or max(image_width, image_height) > MAX_IMAGE_SIDE
+                or image_width * image_height > MAX_IMAGE_PIXELS
+                or not isinstance(png, bytes) or not png.startswith(b"\x89PNG\r\n\x1a\n")):
+            raise ValueError("教材选区图像无效或超过图像预算。")
+
+    return {
+        "pdf_page_index": page_index,
+        "rect": normalized,
+        "source_sha256": revision["blob_sha256"],
+        "image": {
+            "data_url": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
+            "width": image_width,
+            "height": image_height,
+            "mime_type": "image/png",
+        },
+    }
+
+
+def _render_pdfium_region(pdf_path, page_index, normalized, page_count):
+
     import pypdfium2 as pdfium
 
     with PDFIUM_RENDER_LOCK:
         try:
             with closing(pdfium.PdfDocument(pdf_path)) as document:
-                if len(document) != revision["page_count"]:
+                if len(document) != page_count:
                     raise ValueError("原 PDF 页数与书库记录不一致，请重新打开教材。")
                 with closing(document[page_index]) as page:
                     width, height = page.get_size()
@@ -87,14 +120,4 @@ def render_visual_region(library, revision_id: str, page_index: int, rect) -> di
         except pdfium.PdfiumError as exc:
             raise ValueError("无法读取这块 PDF 区域，请重新打开教材后再试。") from exc
 
-    return {
-        "pdf_page_index": page_index,
-        "rect": normalized,
-        "source_sha256": revision["blob_sha256"],
-        "image": {
-            "data_url": "data:image/png;base64," + base64.b64encode(png).decode("ascii"),
-            "width": image_width,
-            "height": image_height,
-            "mime_type": "image/png",
-        },
-    }
+    return png, image_width, image_height

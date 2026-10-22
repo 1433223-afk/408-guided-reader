@@ -4,13 +4,57 @@ import { createComposerChoice, createMessageRail } from "/screens.js";
 
 const STATUS = { UNCONFIRMED: "待确认", NOT_FULLY_CLEAR: "未完全清楚", UNDERSTOOD: "已弄懂", AVAILABLE: "本节待确认", ANSWERED_CLEAR: "本节都清楚了", ANSWERED_HAS_UNCLEAR: "本节还有未完全清楚的地方" };
 
-export function createMasterUI({ api, stream, revision, chapter, pages, dock, openDock, goToPage, announce, memoryControl, toggleExpanded }) {
+export function createMasterUI({ api, stream, revision, chapter, pages, dock, openDock, goToPage, announce, memoryControl, toggleExpanded, tablet = false, local = false }) {
+  const viewer = pages.closest('.viewer');
+  function closeTabletMarkers() {
+    if (!tablet) return;
+    for (const marker of pages.querySelectorAll('.kp-learning-marker[open], .learning-scope-marker[open]')) marker.open = false;
+  }
+  function positionTabletMarker(marker) {
+    if (!tablet || !marker.open || !marker.isConnected || !viewer) return;
+    const popover = marker.querySelector('.learning-marker-content');
+    const summary = marker.querySelector('summary');
+    if (!popover || !summary) return;
+    const view = viewer.getBoundingClientRect(), viewport = window.visualViewport;
+    const gap = 8, viewportLeft = viewport?.offsetLeft || 0, viewportTop = viewport?.offsetTop || 0;
+    const left = Math.max(view.left, viewportLeft) + gap;
+    const right = Math.min(view.right, viewportLeft + (viewport?.width || window.innerWidth)) - gap;
+    const top = Math.max(view.top, viewportTop) + gap;
+    const bottom = Math.min(view.bottom, viewportTop + (viewport?.height || window.innerHeight)) - gap;
+    if (right <= left || bottom <= top) { marker.open = false; return; }
+    // Fixed placement escapes the page edge. Bound it to the actual PDF pane,
+    // which already excludes the toolbar and a lower or side AI workspace.
+    popover.style.position = 'fixed';
+    popover.style.right = popover.style.bottom = 'auto';
+    popover.style.maxWidth = '';
+    popover.style.maxHeight = '';
+    const maximumHeight = parseFloat(getComputedStyle(popover).maxHeight);
+    popover.style.maxWidth = `${right - left}px`;
+    const availableHeight = Math.min(bottom - top, Number.isFinite(maximumHeight) ? maximumHeight : Infinity);
+    popover.style.maxHeight = `${availableHeight}px`;
+    popover.style.overflow = 'auto';
+    const box = popover.getBoundingClientRect(), anchor = summary.getBoundingClientRect();
+    const above = anchor.top - box.height - 6, below = anchor.bottom + 6;
+    const preferredTop = above >= top ? above : below + box.height <= bottom ? below : above;
+    popover.style.left = `${Math.max(left, Math.min(anchor.right - box.width, right - box.width))}px`;
+    const placedTop = Math.max(top, Math.min(preferredTop, bottom - box.height));
+    popover.style.top = `${placedTop}px`;
+    popover.style.maxHeight = `${Math.min(availableHeight, bottom - placedTop)}px`;
+  }
+  if (tablet) {
+    viewer?.addEventListener('scroll', closeTabletMarkers, {passive:true});
+    window.addEventListener('resize', closeTabletMarkers);
+    window.visualViewport?.addEventListener('resize', closeTabletMarkers);
+    window.visualViewport?.addEventListener('scroll', closeTabletMarkers);
+    if (viewer) new ResizeObserver(closeTabletMarkers).observe(viewer);
+  }
   document.addEventListener("pointerdown", event => {
-    for (const marker of pages.querySelectorAll(".kp-learning-marker[open]")) {
+    for (const marker of pages.querySelectorAll(".kp-learning-marker[open], .learning-scope-marker[open]")) {
       if (!marker.contains(event.target)) marker.open = false;
     }
   });
   let entries = { points: [], sections: [] };
+  const tabletMarkerPages = new WeakMap();
   let current = null;
   let practiceNumber = null;
   let poll = 0;
@@ -27,6 +71,9 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
   let streamView = null;
   let providerReadinessMessage = '';
   let entriesChapterId = undefined;
+  let entriesOwner = undefined;
+  let entriesReadSequence = 0;
+  let entriesInFlight = null;
   const topicDrafts = new Map();
   const recentReasoning = new Map();
   const tabs = document.createElement("nav");
@@ -140,12 +187,14 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     if(!status.configuration_valid) return `${label} 的 provider 配置无效；Reader 其余功能不受影响。`;
     if(status.cooling) return `${label} 正在短暂冷却；不会改用其他模型。`;
     if(status.ai_off_reason==='DEVELOPMENT_DISABLED') return `${label} 当前已停用；不会影响其他模型。`;
+    if(status.credential_reason==='OFFLINE') return '当前离线；联网后可以继续使用 AI，已有内容仍可阅读。';
     if(!status.credential_available) return `${label} 尚未配置可读取的凭据；不会影响其他模型。`;
     return `${label} 当前不可调用；不会自动切换模型。`;
   }
 
   function syncComposer() {
     for(const option of el('provider').options) {
+      if (local && option.value === 'openrouter') {option.hidden = true; option.disabled = true;}
       const status=providerStatuses.find(item=>item.provider===option.value);
       if(status?.model) option.textContent=`${{deepseek:'DeepSeek',zhipu:'智谱',openrouter:'OpenRouter'}[option.value]} · ${status.model}`;
     }
@@ -179,6 +228,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
   el('provider').addEventListener('change',()=>{answerProvider=el('provider').value;syncComposer();});
 
   function select(master) {
+    if (master) closeTabletMarkers();
     if(!master) actionsPopover.hidePopover();
     dock.classList.toggle("master-active", master);
     panel.hidden = !master;
@@ -204,25 +254,63 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     control.addEventListener("click", action);
     return control;
   }
-  async function refreshEntries() {
+  async function refreshEntries({background = false, publication = null} = {}) {
     const owner = revision();
     if (!owner) return;
     const chapterId = chapter?.() || null;
+    // A navigation read may share an in-flight read of the same projection.
+    // A write/publication refresh always starts later and supersedes older data.
+    const pending = tablet && background && entriesInFlight;
+    if (pending && pending.owner === owner && pending.chapterId === chapterId) {
+      const result = await pending.promise;
+      if (publication && pending.sequence === entriesReadSequence
+          && !publicationMatches(result, publication)) return refreshEntries();
+      return result;
+    }
+    // If the navigation read already finished, the first READY projection can
+    // certify its exact published KP set/version without transferring it again.
+    if (tablet && background && Array.isArray(publication?.knowledgePointIds)
+        && entriesOwner === owner && entriesChapterId === chapterId
+        && publicationMatches(entries, publication)) return entries;
+    const sequence = ++entriesReadSequence;
     const query = chapterId ? `?chapter_id=${encodeURIComponent(chapterId)}` : '';
-    const result = await api(`/api/revisions/${owner}/learning${query}`);
-    if (owner !== revision() || chapterId !== (chapter?.() || null)) return;
-    entriesChapterId = chapterId;
-    entries = result;
-    renderTopicList();
-    const hasControls = entries.points.length > 0;
-    if (pages.classList.contains("has-learning-controls") !== hasControls) {
-      pages.classList.toggle("has-learning-controls", hasControls);
+    const request = {owner, chapterId, sequence, promise:null};
+    request.promise = (async () => {
+      const result = await api(`/api/revisions/${owner}/learning${query}`);
+      if (owner !== revision() || chapterId !== (chapter?.() || null)
+          || (tablet && sequence !== entriesReadSequence)) return result;
+      entriesChapterId = chapterId;
+      entriesOwner = owner;
+      entries = result;
+      renderTopicList();
+      const hasControls = entries.points.length > 0;
+      if (pages.classList.contains("has-learning-controls") !== hasControls) {
+        pages.classList.toggle("has-learning-controls", hasControls);
+      }
+      for (const label of document.querySelectorAll("[data-learning-status]")) {
+        const point = entries.points.find((p) => p.knowledge_point_id === label.dataset.learningStatus);
+        if (point) label.textContent = STATUS[point.status];
+      }
+      for (const page of pages.children) if (page.querySelector("canvas")) renderPage(Number(page.dataset.index));
+      return result;
+    })();
+    if (tablet) entriesInFlight = request;
+    try {
+      const result = await request.promise;
+      if (tablet && background && publication && sequence === entriesReadSequence
+          && !publicationMatches(result, publication)) return refreshEntries();
+      return result;
+    } finally {
+      if (entriesInFlight === request) entriesInFlight = null;
     }
-    for (const label of document.querySelectorAll("[data-learning-status]")) {
-      const point = entries.points.find((p) => p.knowledge_point_id === label.dataset.learningStatus);
-      if (point) label.textContent = STATUS[point.status];
-    }
-    for (const page of pages.children) if (page.querySelector("canvas")) renderPage(Number(page.dataset.index));
+  }
+  function publicationMatches(result, publication) {
+    const expected = publication.knowledgePointIds;
+    if (!Array.isArray(expected)) return true;
+    const points = result?.points?.filter(point => point.chapter_outline_node_id === publication.chapterId) || [];
+    const ids = new Set(expected);
+    return points.length === ids.size && points.every(point => ids.has(point.knowledge_point_id)
+      && (publication.structureVersion === undefined || point.chapter_structure_version === publication.structureVersion));
   }
   async function open(point, unclear = false, topicId = null) {
     if(practiceNumber !== null) leavePracticeReview();
@@ -436,7 +524,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     } catch (error) {
       output.textContent = error.message;
       const footer = output.closest(".learning-footer");
-      if (footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
+      if (!tablet && footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
     }
   }
   async function clearWholeSection(section, output) {
@@ -451,7 +539,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     } catch (error) {
       output.textContent = error.message;
       const footer = output.closest(".learning-footer");
-      if (footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
+      if (!tablet && footer?.parentElement) footer.parentElement.style.marginBottom = `${footer.offsetHeight + 24}px`;
     }
   }
   async function understandPoint(point, control) {
@@ -470,9 +558,33 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
   function renderPage(index) {
     const page = pages.children[index];
     if (!page) return;
+    const pagePoints = entries.points.filter((point) => point.display_end_page === index);
+    const footerSections = [];
+    for (const section of [...entries.sections].sort((a, b) => a.end_page - b.end_page
+      || a.end_y - b.end_y || Number(b.kind === "SUBSECTION") - Number(a.kind === "SUBSECTION"))) {
+      const points = entries.points.filter((point) => section.knowledge_point_ids.includes(point.knowledge_point_id));
+      if (!points.length) continue;
+      const lastPoint = points.reduce((last, point) => point.display_end_page > last.display_end_page
+        || (point.display_end_page === last.display_end_page && point.display_end_y > last.display_end_y) ? point : last);
+      if (lastPoint.display_end_page === index) footerSections.push({section, points});
+    }
+    // Keep the live controls connected through unrelated PDF repaint/status
+    // refreshes. Include complete source/status/thread projections for both the
+    // page points and its section endings; a real change still rebuilds them.
+    const signature = tablet ? JSON.stringify([revision(), pagePoints, footerSections]) : null;
+    if (tablet) {
+      const previous = tabletMarkerPages.get(page);
+      const nodes = [...page.querySelectorAll('.learning-marker, .learning-footer, .learning-scope-marker')];
+      if (previous?.signature === signature && previous.nodes.length === nodes.length
+          && previous.nodes.every((node, i) => node === nodes[i])) {
+        previous.layout();
+        for (const marker of page.querySelectorAll('.kp-learning-marker[open], .learning-scope-marker[open]')) positionTabletMarker(marker);
+        return;
+      }
+    }
     page.querySelectorAll(".learning-marker, .learning-footer").forEach((n) => n.remove());
     const groups = new Map();
-    for (const point of entries.points.filter((p) => p.display_end_page === index)) {
+    for (const point of pagePoints) {
       const key = point.display_end_y;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(point);
@@ -482,9 +594,9 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       marker.className = "learning-marker kp-learning-marker";
       marker.dataset.sourceY = String(y);
       const summary = document.createElement("summary");
-      summary.textContent = "学习";
+      summary.textContent = tablet ? "知识点" : "学习";
       summary.title = "知识点 · 学习";
-      summary.setAttribute("aria-label", "知识点 · 学习");
+      summary.setAttribute("aria-label", tablet ? points.map(point => point.title).join('、') : "知识点 · 学习");
       marker.append(summary);
       const popover = document.createElement("div");
       popover.className = "learning-marker-content";
@@ -500,7 +612,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       }
       marker.append(popover);
       marker.addEventListener("toggle", () => {
-        if (marker.open) for (const other of pages.querySelectorAll(".kp-learning-marker[open]")) {
+        if (marker.open) for (const other of pages.querySelectorAll(".kp-learning-marker[open], .learning-scope-marker[open]")) {
           if (other !== marker) other.open = false;
         }
       });
@@ -511,13 +623,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     }
     const footer = document.createElement("div");
     footer.className = "learning-footer";
-    for (const section of [...entries.sections].sort((a, b) => a.end_page - b.end_page
-      || a.end_y - b.end_y || Number(b.kind === "SUBSECTION") - Number(a.kind === "SUBSECTION"))) {
-      const points = entries.points.filter((p) => section.knowledge_point_ids.includes(p.knowledge_point_id));
-      if (!points.length) continue;
-      const lastPoint = points.reduce((last, point) => point.display_end_page > last.display_end_page
-        || (point.display_end_page === last.display_end_page && point.display_end_y > last.display_end_y) ? point : last);
-      if (lastPoint.display_end_page !== index) continue;
+    for (const {section, points} of footerSections) {
       const subsection = section.kind === "SUBSECTION";
       const label = subsection ? "本小节" : "本节";
       const marker = document.createElement("section");
@@ -548,13 +654,52 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
         if (section.thread_id) marker.append(button("继续本节 Master 对话", () => open(section)));
         marker.append(hint, output);
       }
-      footer.append(marker);
+      if (tablet) {
+        // A scope is a separate learning action, never another ordinary KP.
+        // Keep only its compact entry after the PDF; open the existing controls
+        // in the same viewport-bounded popover used by point markers.
+        const entry = document.createElement("details");
+        entry.className = `learning-scope-marker ${subsection ? "subsection" : "section"}-confirmation`;
+        entry.dataset.outlineNodeId = section.outline_node_id;
+        const summary = document.createElement("summary");
+        summary.setAttribute("aria-label", `${label}确认 · ${section.title} · 已确认 ${understood}/${points.length}`);
+        const kind = document.createElement("span");
+        kind.className = "learning-scope-kind";
+        kind.textContent = subsection ? "小节确认" : "本节确认";
+        const name = document.createElement("span");
+        name.className = "learning-scope-title";
+        name.textContent = section.title;
+        const progress = document.createElement("span");
+        progress.className = "learning-scope-progress";
+        progress.textContent = `${understood}/${points.length}`;
+        const chevron = document.createElement("span");
+        chevron.className = "learning-scope-chevron";
+        chevron.setAttribute("aria-hidden", "true");
+        chevron.textContent = "›";
+        summary.append(kind, name, progress, chevron);
+        const popover = document.createElement("div");
+        popover.className = "learning-marker-content learning-scope-content";
+        popover.append(marker);
+        entry.append(summary, popover);
+        entry.addEventListener("toggle", () => {
+          if (!entry.open) return;
+          for (const other of pages.querySelectorAll(".kp-learning-marker[open], .learning-scope-marker[open]")) {
+            if (other !== entry) other.open = false;
+          }
+          positionTabletMarker(entry);
+        });
+        entry.addEventListener("keydown", event => {
+          if (event.key === "Escape") { entry.open = false; summary.focus(); }
+        });
+        footer.append(entry);
+      } else footer.append(marker);
     }
     if (footer.children.length) page.append(footer);
-    page.style.marginBottom = `${footer.children.length ? footer.offsetHeight + 24 : 20}px`;
     const markers = [...page.querySelectorAll(".learning-marker")]
       .sort((a, b) => Number(a.dataset.sourceY) - Number(b.dataset.sourceY));
     const layout = () => {
+      if (tablet && markers.some(marker => marker.parentElement !== page)) return;
+      page.style.marginBottom = `${footer.children.length ? footer.offsetHeight + 24 : 20}px`;
       let nextTop = Infinity;
       for (const marker of [...markers].reverse()) {
         const bottom = Math.min(Number(marker.dataset.sourceY) * page.clientHeight, nextTop - 6);
@@ -564,8 +709,13 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       }
       page.style.marginTop = `${Math.max(20, 20 - nextTop)}px`;
     };
-    markers.forEach((marker) => marker.addEventListener("toggle", layout));
+    markers.forEach((marker) => marker.addEventListener("toggle", () => {
+      layout();
+      if (tablet && marker.open) positionTabletMarker(marker);
+    }));
     layout();
+    if (tablet) tabletMarkerPages.set(page, {signature, layout,
+      nodes:[...page.querySelectorAll('.learning-marker, .learning-footer, .learning-scope-marker')]});
   }
   function decorateKnowledgeItem(item, point) {
     const saved = entries.points.find((p) => p.knowledge_point_id === point.knowledge_point_id);
@@ -653,7 +803,8 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     selectedTopicId=null; composingNew=false; topicDrafts.clear();
     canConfirm=false; composerMore.hidden=true; memorySlot.replaceChildren(); menuMessageId=null;
     entries = { points: [], sections: [], topics: [] };
-    entriesChapterId = undefined;
+    entriesChapterId = entriesOwner = undefined;
+    ++entriesReadSequence; entriesInFlight = null;
     if (pages.classList.contains("has-learning-controls")) {
       pages.classList.remove("has-learning-controls");
     }
@@ -666,10 +817,10 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     el("confirm").hidden = true;
     resume.hidden=true; renderTopicList();
   }
-  return { refreshEntries, renderPage, decorateKnowledgeItem, reset,
+  return { refreshEntries, refreshStatus:refreshMasterStatus, renderPage, decorateKnowledgeItem, reset,
     openPracticeReview, leavePracticeReview, sendPracticeTarget, viewportChanged: () => {
       if(current) render();
-      if(entriesChapterId !== (chapter?.() || null)) refreshEntries().catch(error => announce(error.message, true));
+      if(entriesChapterId !== (chapter?.() || null)) refreshEntries({background:true}).catch(error => announce(error.message, true));
     }, selectAssistant: () => select(false),
     openMemory: async (scope, messageId) => {
       await open({ scope_id: scope, title: 'Master 学习上下文' });

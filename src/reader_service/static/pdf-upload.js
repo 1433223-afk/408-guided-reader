@@ -33,12 +33,14 @@ export async function preparePdfUpload(file, onProgress = () => {}) {
   return new Blob(parts, {type:'application/pdf'});
 }
 
-function responseError(xhr, payload) {
+function responseError(xhr, payload, local = false) {
   const status = xhr.status;
   const id = xhr.getResponseHeader('X-Reader-Upload-Id');
   let reason = payload?.error || `服务返回 HTTP ${status}`;
-  if (status === 401) reason = '当前启动凭证已失效，请使用电脑本次启动的完整地址重新打开后再导入。';
-  else if (status === 403) reason = '服务拒绝了上传，请使用电脑提供的本次局域网启动地址重新打开。';
+  if (status === 401) reason = local ? '本机阅读会话已失效，请从应用菜单重新打开书库后再导入。'
+    : '当前启动凭证已失效，请使用电脑本次启动的完整地址重新打开后再导入。';
+  else if (status === 403) reason = local ? '本机 Reader 拒绝了导入，请从应用菜单重新打开后重试。'
+    : '服务拒绝了上传，请使用电脑提供的本次局域网启动地址重新打开。';
   else if (payload?.code === 'INVALID_PDF') {
     if (reason === 'The selected file does not have a PDF header') reason = '所选文件不是有效 PDF，未找到 PDF 文件头。';
     else if (reason === 'The PDF is incomplete (missing end marker)') reason = 'PDF 文件不完整，请重新下载完整文件后再导入。';
@@ -51,7 +53,7 @@ function responseError(xhr, payload) {
   return error;
 }
 
-export function uploadPdf({body, filename, bookId = null, token, onProgress = () => {}}) {
+export function uploadPdf({body, filename, bookId = null, token, onProgress = () => {}, local = false}) {
   return new Promise((resolve, reject) => {
     const parameters = new URLSearchParams();
     if (bookId) parameters.set('book_id', bookId);
@@ -69,13 +71,16 @@ export function uploadPdf({body, filename, bookId = null, token, onProgress = ()
     xhr.onload = () => {
       let payload;
       try {payload = JSON.parse(xhr.responseText);} catch (_) { /* Report the actual HTTP status below. */ }
-      if (xhr.status < 200 || xhr.status >= 300) {reject(responseError(xhr, payload)); return;}
+      if (xhr.status < 200 || xhr.status >= 300) {reject(responseError(xhr, payload, local)); return;}
       if (!payload?.book?.active_revision) {reject(new Error('服务已响应，但未返回完整书籍信息；请刷新书库确认后重试。')); return;}
       resolve(payload);
     };
-    xhr.onerror = () => reject(new Error('上传连接中断，未收到 Reader Core 响应。请确认电脑服务仍在运行、两端仍连接同一 Wi-Fi，再重新选择 PDF。'));
-    xhr.ontimeout = () => reject(new Error('上传等待超过 15 分钟，请先刷新书库确认是否已入库，再重试。'));
-    xhr.onabort = () => reject(new Error('PDF 上传已中断，请重新选择文件。'));
+    xhr.onerror = () => reject(new Error(local
+      ? '本机导入中断，未收到 Reader 响应。请从应用菜单重新打开书库后重试。'
+      : '上传连接中断，未收到 Reader Core 响应。请确认电脑服务仍在运行、两端仍连接同一 Wi-Fi，再重新选择 PDF。'));
+    xhr.ontimeout = () => reject(new Error(local ? '导入等待超过 15 分钟，请先重新打开书库确认是否已入库，再重试。'
+      : '上传等待超过 15 分钟，请先刷新书库确认是否已入库，再重试。'));
+    xhr.onabort = () => reject(new Error(local ? 'PDF 导入已中断，请重新选择文件。' : 'PDF 上传已中断，请重新选择文件。'));
     // The browser supplies Content-Length for this known-size Blob. Keep the
     // existing raw-PDF contract; FormData would corrupt that request body.
     xhr.send(body);

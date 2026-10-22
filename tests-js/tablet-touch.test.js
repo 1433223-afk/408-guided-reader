@@ -137,13 +137,31 @@ test('third-finger interruption waits for every finger to lift before accepting 
   f.emit('touchstart', [touch(1, 100), touch(2, 200)]);
   f.emit('touchstart', [touch(1, 100), touch(2, 200), touch(3, 300)]);
   f.emit('touchend', [touch(1, 100)]);
-  f.emit('touchstart', [touch(1, 100)]);
+  f.emit('touchstart', [touch(1, 100), touch(4, 200)]);
   await waitForHold();
   assert.equal(f.calls.start.length, 0);
   f.emit('touchend', []);
-  f.emit('touchstart', [touch(4, 100)]);
+  f.emit('touchstart', [touch(5, 100)]);
   await waitForHold();
   assert.equal(f.calls.start.length, 1);
   assert.equal(f.calls.zoom.length, 0);
+  f.control.destroy();
+});
+
+test('a new one-finger stream recovers when replacing the OCR target swallowed the final touchend', async () => {
+  const f = fixture();
+  f.emit('touchstart', [touch(1, 100), touch(2, 200)]);
+  f.emit('touchmove', [touch(1, 50), touch(2, 250)]);
+  f.emit('touchend', [touch(2, 250)], [touch(1, 50)]);
+  assert.equal(f.calls.zoom.length, 1);
+  // No zero-finger touchend reaches the viewer: the old OCR target detached.
+  assert.equal(f.emit('touchstart', [touch(3, 100)]).defaultPrevented, false);
+  f.emit('touchstart', [touch(3, 100), touch(4, 200)]);
+  f.emit('touchmove', [touch(3, 75), touch(4, 225)]);
+  f.emit('touchend', []);
+  assert.equal(f.calls.zoom.length, 2, 'The very next pinch must work');
+  f.emit('touchstart', [touch(5, 100)]);
+  await waitForHold();
+  assert.equal(f.calls.start.length, 1, 'Finger selection is usable after recovery');
   f.control.destroy();
 });

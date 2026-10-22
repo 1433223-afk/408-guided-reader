@@ -1,0 +1,81 @@
+plugins {
+    id 'com.android.application'
+    id 'com.chaquo.python'
+}
+
+def signingDir = providers.gradleProperty('readerSigningDirectory').orElse(
+        new File(System.getenv('LOCALAPPDATA') ?: System.getProperty('user.home'),
+                '408GuidedReaderAndroidTabletBuild/signing').path).get()
+
+android {
+    namespace 'com.guidedreader.tablet'
+    compileSdk { version = release(37) { minorApiLevel = 0 } }
+
+    defaultConfig {
+        applicationId 'com.guidedreader.tablet'
+        minSdk 26
+        targetSdk 36
+        versionCode 2
+        versionName '0.2.0'
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+    }
+    signingConfigs {
+        tablet {
+            storeFile file(new File(signingDir, 'tablet-demo.keystore'))
+            storePassword 'android'
+            keyAlias 'tablet-demo'
+            keyPassword 'android'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.tablet }
+        release {
+            signingConfig signingConfigs.tablet
+            minifyEnabled false
+            debuggable false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('reader-assets').get().asFile
+    packaging { resources.excludes += ['META-INF/DEPENDENCIES', 'META-INF/NOTICE*', 'META-INF/LICENSE*'] }
+}
+
+chaquopy {
+    defaultConfig {
+        version = '3.13'
+        if (providers.gradleProperty('readerBuildPython').isPresent()) {
+            buildPython(providers.gradleProperty('readerBuildPython').get())
+        }
+        extractPackages('reader_service')
+        pip {
+            install('pypdf==6.15.0')
+        }
+    }
+    sourceSets {
+        main { srcDir '../../src' }
+    }
+}
+
+// Bundle the same Reader and PDF.js used on desktop. No book, key or database
+// is an input to this task. Data always remains in Android's private storage.
+tasks.register('bundleReaderWeb', Zip) {
+    archiveFileName = 'reader-web.zip'
+    destinationDirectory = layout.buildDirectory.dir('reader-assets')
+    from('../../src/reader_service/static') { into 'static' }
+    ['pdfjs-dist/build', 'pdfjs-dist/wasm', 'pdfjs-dist/cmaps',
+     'pdfjs-dist/standard_fonts', 'pdfjs-dist/iccs', 'marked/lib',
+     'dompurify/dist', 'katex/dist'].each { directory ->
+        from("../../node_modules/${directory}") { into "node_modules/${directory}" }
+    }
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+tasks.named('preBuild').configure { dependsOn 'bundleReaderWeb' }
+
+dependencies {
+    // Bundled model: Chinese recognition works on first launch in airplane mode.
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+}

@@ -13,7 +13,9 @@
     feedback.classList.add('error');
     feedback.setAttribute('role', 'alert');
     feedback.setAttribute('data-phase', 'startup-error');
-    message.textContent = '阅读器尚未启动，无法上传。请刷新；若仍出现此提示，请使用最新版 Chrome 或联想浏览器重新打开本次启动地址。';
+    message.textContent = new URLSearchParams(location.search).get('local') === '1'
+      ? '本机阅读器尚未就绪，暂时无法导入。请从应用菜单重新打开书库后重试。'
+      : '阅读器尚未启动，无法上传。请刷新；若仍出现此提示，请使用最新版 Chrome 或联想浏览器重新打开本次启动地址。';
     progress.hidden = true;
   }
   var timer = setTimeout(failed, 15000);

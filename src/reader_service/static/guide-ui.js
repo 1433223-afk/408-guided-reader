@@ -66,7 +66,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
   }
   function savePosition() { if (renderedId && !panel.hidden) positions.set(locationKey(), readingPosition()); }
   function limits() {
-    const available = reader.clientWidth;
+    const available = reader.clientWidth - (parseFloat(getComputedStyle(reader).paddingRight) || 0);
     const min = Math.min(GUIDE_DOCK_MIN_WIDTH, Math.max(240, available - 24));
     const max = Math.max(min, Math.min(GUIDE_DOCK_MAX_WIDTH, available - GUIDE_READER_MIN_WIDTH));
     return { min, max };
@@ -107,7 +107,7 @@ export function createGuideUI({ state, api, streamGuide, goToPage, explain, layo
   };
   divider.onpointermove = event => {
     if (!dragging) return;
-    setWidth(reader.getBoundingClientRect().right - event.clientX);
+    setWidth(reader.getBoundingClientRect().right - (parseFloat(getComputedStyle(reader).paddingRight) || 0) - event.clientX);
   };
   const finishDrag = () => { dragging = false; panel.classList.remove("resizing"); savePosition(); };
   divider.onpointerup = finishDrag; divider.onpointercancel = finishDrag; divider.onlostpointercapture = finishDrag;

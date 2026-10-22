@@ -51,13 +51,13 @@ def test_tablet_address_must_belong_to_a_local_interface(monkeypatch):
 
 
 @contextmanager
-def lan_request_server(service, peer="192.168.43.22"):
+def lan_request_server(service, peer="192.168.43.22", project_root=None):
     class SimulatedPeerServer(ReaderServer):
         def get_request(self):
             request, address = super().get_request()
             return request, (peer, address[1])
 
-    server = SimulatedPeerServer(("127.0.0.1", 0), handler_factory(service, "test-tablet-token", tablet_lan=True))
+    server = SimulatedPeerServer(("127.0.0.1", 0), handler_factory(service, "test-tablet-token", tablet_lan=True, project_root=project_root))
     port = server.server_port
     # TCP transport is loopback so tests run without a particular LAN adapter.
     # Only the bind identity and peer passed into the access policy are simulated.
@@ -91,6 +91,53 @@ def test_lan_same_origin_cookie_bootstrap_and_api_auth(service):
         assert lan_get(port, host, "/api/books")[0] == 401
         status, _, body = lan_get(port, host, "/api/books", {"Cookie": cookie, "Origin": f"http://{host}"})
         assert status == 200 and json.loads(body) == {"books": []}
+
+
+def test_tablet_root_unauthorized_is_fixed_chinese_html_without_cookie_or_reflection(service):
+    with lan_request_server(service) as (port, host):
+        for target in ("/", "/index.html?token=private-rejected-credential",
+                       "/?token=test-tablet-token&token=private-rejected-credential"):
+            status, headers, body = lan_get(port, host, target)
+            assert status == 401 and headers["Content-Type"] == "text/html; charset=utf-8"
+            assert headers["Content-Length"] == str(len(body))
+            assert headers["Cache-Control"] == "no-store"
+            assert "Set-Cookie" not in headers
+            assert "请打开本次连接地址" in body.decode("utf-8")
+            assert b"private-rejected-credential" not in body and b"test-tablet-token" not in body
+            assert b"<script" not in body and b"src=" not in body
+        status, headers, body = lan_get(port, host, "/api/health")
+        assert status == 401 and headers["Content-Type"].startswith("application/json")
+        assert json.loads(body) == {"error": "Missing or invalid launch token"}
+
+
+def test_tablet_new_launch_or_current_cookie_authorizes_despite_stale_other_credential(service):
+    with lan_request_server(service) as (port, host):
+        status, headers, _ = lan_get(port, host, "/?tablet=1&token=test-tablet-token", {
+            "Cookie": "reader_launch=old-launch", "X-Reader-Token": "old-launch",
+        })
+        assert status == 200
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        assert lan_get(port, host, "/index.html", {"Cookie": cookie})[0] == 200
+        assert lan_get(port, host, "/api/health", {"Cookie": cookie, "X-Reader-Token": "old-launch"})[0] == 200
+        assert lan_get(port, host, "/api/health", {
+            "Cookie": "reader_launch=old-launch", "X-Reader-Token": "test-tablet-token",
+        })[0] == 200
+
+
+def test_desktop_unauthorized_root_keeps_existing_json(service):
+    server = ReaderServer(("127.0.0.1", 0), handler_factory(service, "desktop-test-token"))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        for target in ("/", "/index.html?token=old-launch"):
+            status, headers, body = lan_get(server.server_port, f"127.0.0.1:{server.server_port}", target)
+            assert status == 401 and headers["Content-Type"].startswith("application/json")
+            assert json.loads(body) == {"error": "Missing or invalid launch token"}
+            assert "Set-Cookie" not in headers
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 @pytest.mark.parametrize("headers", [

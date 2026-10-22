@@ -3,7 +3,7 @@ import { placeInline } from "./inline-placement.js";
 
 const labels = { lead_in: "为什么这里重要", bridge: "接着这样看", warning: "这里注意", connection: "和前面连起来看", recall: "先想一想" };
 
-export function createInlineUI({ state, api, goToPage, readingAnchor, layout, explain, contextMenu, hideContextMenu }) {
+export function createInlineUI({ state, api, goToPage, readingAnchor, layout, explain, contextMenu, hideContextMenu, card = false, onCardOpen = () => {} }) {
   const reader = document.getElementById("reader"), viewer = document.getElementById("viewer");
   const controls = document.createElement("div"); controls.className = "inline-toolbar";
   controls.innerHTML = `<button id="inline-open" type="button" aria-pressed="false" aria-describedby="inline-status">✦ 行间教学</button><button id="inline-more" type="button" aria-label="行间教学更多操作" aria-expanded="false" aria-controls="inline-menu" hidden>···</button><span id="inline-status" class="sr-only" role="status"></span>`;
@@ -15,11 +15,17 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
   reader.append(menu);
   const panel = document.createElement("aside");
   panel.id = "inline-panel"; panel.hidden = true; panel.setAttribute("aria-label", "行间教学批注");
+  const shade = document.createElement('div'); shade.className = 'inline-card-shade'; shade.hidden = true;
+  if (card) {reader.append(shade); panel.classList.add('inline-card'); panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','true');}
   panel.innerHTML = `<button id="inline-close" type="button" aria-label="关闭 Guidance">×</button><div id="inline-content"></div>`;
   const status = controls.querySelector("#inline-status"), content = panel.querySelector("#inline-content");
   const generate = menu.querySelector("#inline-generate");
+  if (card) {
+    const tools = document.createElement('div'); tools.className = 'inline-card-tools';
+    tools.append(generate); panel.querySelector('#inline-close').after(tools);
+  }
   let menuOwner = null;
-  let revision = null, epoch = 0, selected = null, active = null, timer = 0;
+  let revision = null, epoch = 0, selected = null, active = null, summarySection = null, timer = 0;
   const activating = new Set();
   const cache = new Map(), loading = new Map(), intents = new Map(), pending = new Set(), visible = new Map();
   const requestErrors = new Map();
@@ -46,7 +52,8 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     refresh();
   }
   function close(repaintPages = true) {
-    hideContextMenu(); active = null; panel.hidden = true; panel.remove();
+    hideContextMenu(); active = null; summarySection = null; panel.hidden = true; panel.remove();
+    shade.hidden = true;
     content.replaceChildren(); content.dataset.identity = "";
     if (reader.classList.contains("inline-open")) layout(() => reader.classList.remove("inline-open"));
     if (repaintPages) repaint();
@@ -59,10 +66,18 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
   }
   function closeMenu() { menu.hidden = true; menuOwner = null; more.setAttribute("aria-expanded", "false"); }
   function open(id, itemId) {
-    closeMenu(); selected = id; active = itemId;
+    if (card) onCardOpen();
+    closeMenu(); selected = id; active = itemId; summarySection = null;
     refresh();
     if (!reader.classList.contains("inline-open")) layout(() => reader.classList.add("inline-open"));
     repaintActive();
+    if (card) panel.querySelector('#inline-close').focus({preventScroll:true});
+  }
+  function openSummary(id) {
+    onCardOpen(); closeMenu(); selected = summarySection = id; active = null;
+    if (!reader.classList.contains('inline-open')) layout(() => reader.classList.add('inline-open'));
+    refresh(); reader.append(panel); panel.hidden = false; shade.hidden = false;
+    panel.querySelector('#inline-close').focus({preventScroll:true});
   }
   toggle.onclick = async () => {
     const id = currentSection(), stamp = epoch;
@@ -79,6 +94,7 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
         visibility(id, !on(id));
         if (!on(id) && selected === id) close();
         repaint();
+        if (card && on(id) && ![...reader.querySelectorAll('.inline-marker')].some(marker => marker.dataset.sectionId === id)) openSummary(id);
       } else await send("generate", id);
     } finally { if (stamp === epoch) { activating.delete(id); refresh(); } }
   };
@@ -102,16 +118,16 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     else if (!panel.hidden) { e.preventDefault(); panel.querySelector("#inline-close").click(); }
   });
   document.addEventListener("pointerdown", e => {
-    if (!menu.hidden && !menu.contains(e.target) && !controls.contains(e.target)) closeMenu();
+    if (!menu.hidden && !menu.contains(e.target) && !controls.contains(e.target) && !more.contains(e.target)) closeMenu();
     if (!panel.hidden && !panel.contains(e.target)
         && !e.target.closest(".inline-marker, #selection-actions")) close();
   });
   controls.parentElement.addEventListener("scroll", closeMenu, {passive:true});
   window.addEventListener("resize", closeMenu);
   generate.onclick = () => {
-    const id = menuOwner;
-    if (!id || id !== currentSection() || more.hidden || generate.disabled) { closeMenu(); return; }
-    closeMenu(); toggle.focus(); send("regenerate", id);
+    const id = card ? selected : menuOwner;
+    if (!id || (!card && (id !== currentSection() || more.hidden)) || generate.disabled) { closeMenu(); return; }
+    closeMenu(); (card ? panel.querySelector('#inline-close') : toggle).focus({preventScroll:true}); send("regenerate", id);
   };
   function refresh() {
     const id = currentSection(), node = state.outlineNodes.find(n => n.outline_node_id === id);
@@ -125,10 +141,15 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     toggle.dataset.sectionId = id || "";
     toggle.textContent = busy ? (task.stage === "REVIEW" ? "✦ 审查中…" : "✦ 生成中…")
       : waiting ? "✦ 处理中…" : task?.state === "FAILED" || requestErrors.has(id) ? "✦ 行间教学 · 重试" : "✦ 行间教学";
+    if (card) toggle.textContent = toggle.textContent.replace(/^✦ /, '').replace('行间教学 · 重试', '教学重试');
     const ready = Boolean(pub) && !busy && !waiting && task?.state !== "FAILED" && !requestErrors.has(id);
-    more.hidden = !ready;
+    more.hidden = card || !ready;
     more.title = `${node?.title || "当前节"} · 更多操作`;
-    generate.disabled = !ready;
+    const selectedSnapshot = cache.get(selected), selectedTask = selectedSnapshot?.task;
+    generate.disabled = card
+      ? !selectedSnapshot?.published || ['DRAFT','IN_REVIEW','REJECTED','FAILED'].includes(selectedTask?.state)
+        || pending.has(selected) || activating.has(selected) || requestErrors.has(selected)
+      : !ready;
     if (!ready || menuOwner !== id) {
       const focused = menu.contains(document.activeElement);
       closeMenu();
@@ -145,6 +166,20 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
     if (requestErrors.has(id)) status.textContent += ` ${requestErrors.get(id)}`;
     toggle.title = `${node?.title || "行间教学"}：${status.textContent}`;
     const selectedPub = cache.get(selected)?.published;
+    if (card && summarySection === selected && selected) {
+      const message = selected === id ? status.textContent : '本节已发布的教学仍保留。';
+      const identity = `section:${selected}:${selectedPub?.id || ''}:${message}`;
+      if (content.dataset.identity !== identity) {
+        content.dataset.identity = identity; content.replaceChildren();
+        const heading = document.createElement('strong');
+        heading.textContent = state.outlineNodes.find(section => section.outline_node_id === selected)?.title || '本节行间教学';
+        const explanation = document.createElement('p');
+        explanation.textContent = selectedPub?.no_intervention ? '本节暂不需要额外提示。' : '当前页没有可展示的教学提示。';
+        const detail = document.createElement('p'); detail.textContent = message;
+        content.append(heading, explanation, detail);
+      }
+      return;
+    }
     const item = on(selected) && selectedPub?.content.items.find(i => i.id === active && selectedPub.sources[i.target_id]?.available);
     const identity = item ? `${selectedPub.id}:${item.id}` : "";
     if (content.dataset.identity === identity) return;
@@ -165,8 +200,12 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       content.append(reveal, skip);
     }
     const ask = document.createElement("button"); ask.type = "button"; ask.className = "inline-assistant-action"; ask.textContent = "继续问AI";
-    ask.onclick = () => explain(item.text, { source_kind: "INLINE_GUIDANCE", section_id: selected,
-      asset_id: selectedPub.id, item_id: item.id, field: "text", start_offset: 0, end_offset: Array.from(item.text).length });
+    ask.onclick = () => {
+      const source = { source_kind: "INLINE_GUIDANCE", section_id: selected,
+        asset_id: selectedPub.id, item_id: item.id, field: "text", start_offset: 0, end_offset: Array.from(item.text).length };
+      if (card) close();
+      explain(item.text, source);
+    };
     const actions = document.createElement("div"); actions.className = "inline-actions";
     actions.append(ask); content.append(actions);
   }
@@ -239,9 +278,11 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
         const target = pub.sources[item.target_id];
         if (target?.pdf_page_index !== index) continue;
         if (target.available && active === item.id && selected === id) {
-          if (panel.parentElement !== page) page.append(panel);
+          const host = card ? reader : page;
+          if (panel.parentElement !== host) host.append(panel);
           panel.hidden = false;
-          panel.style.top = `${Math.max(0, Math.min(target.quad.reduce((sum, p) => sum + p[1], 0) / 4 * bounds.height - 12, bounds.height - panel.offsetHeight - 8))}px`;
+          if (card) {shade.hidden = false; panel.style.removeProperty('top');}
+          else panel.style.top = `${Math.max(0, Math.min(target.quad.reduce((sum, p) => sum + p[1], 0) / 4 * bounds.height - 12, bounds.height - panel.offsetHeight - 8))}px`;
           attached = true;
         }
         const placement = placeInline(target, bounds, viewport, obstacles, occupied);
@@ -275,6 +316,15 @@ export function createInlineUI({ state, api, goToPage, readingAnchor, layout, ex
       item_id: active, field: p.dataset.field, start_offset: start, end_offset: end };
     const text = range.toString();
     contextMenu(event.clientX, event.clientY, text, () => explain(text, request));
+  });
+  if (card) panel.addEventListener('keydown', event => {
+    if (event.key === 'Escape') return;
+    event.stopPropagation();
+    if (event.key !== 'Tab') return;
+    const buttons = [...panel.querySelectorAll('button')].filter(button => !button.hidden && !button.disabled);
+    const first = buttons[0], last = buttons.at(-1);
+    if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last?.focus();}
+    else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus();}
   });
   new ResizeObserver(scheduleRepaint).observe(viewer);
   new ResizeObserver(() => { if (active) scheduleRepaint(); }).observe(panel);

@@ -35,4 +35,10 @@ __pycache__/
 .venv/
 node_modules/
 test-results/
+dist/
+android/.gradle/
+android/local.properties
+android/**/build/
+*.keystore
+*.jks
 playwright-report/

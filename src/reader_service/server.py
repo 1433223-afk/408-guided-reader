@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import gzip
 import json
 import mimetypes
 import re
@@ -16,6 +17,7 @@ from uuid import uuid4
 
 from reader_service.agent_runtime import ProviderFailure, StreamConsumerDisconnected
 from reader_service.annotation import AnnotationService
+from reader_service.ink import InkService, InkConflictError
 from reader_service.assistant import AssistantService, AssistantStateError
 from reader_service.library import IntakeError, LibraryService
 from reader_service.jobs import PreparationCoordinator
@@ -32,7 +34,8 @@ from reader_service.practice_hint import PracticeHintService
 from reader_service.practice_knowledge import PracticeKnowledgeService
 from reader_service.visual_region import render_visual_region
 from reader_service.tablet_network import is_private_ipv4
-from reader_service.tablet_assets import asset_response
+from reader_service.tablet_diagnostics import tablet_request_diagnostic
+from reader_service.tablet_assets import accepts_gzip, asset_response
 from reader_service.tablet_pdf import TabletPdfIndex
 from reader_service.tablet_page_images import TabletPageImages, PageImageUnavailable
 
@@ -67,6 +70,7 @@ _CHAPTER_KNOWLEDGE_INSPECTION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/chapters/([0-9a-f-]+)/knowledge-map/inspection$"
 )
 _REVISION_ANNOTATIONS = re.compile(r"^/api/revisions/([0-9a-f-]+)/annotations$")
+_REVISION_INK = re.compile(r"^/api/revisions/([0-9a-f-]+)/ink$")
 _REVISION_ANNOTATION = re.compile(
     r"^/api/revisions/([0-9a-f-]+)/annotations/([0-9a-f-]+)$"
 )
@@ -133,8 +137,14 @@ def handler_factory(
     learning=None,
     teaching=None,
     tablet_lan: bool = False,
+    tablet_local: bool = False,
+    page_renderer=None,
+    static_directory: Path | None = None,
 ) -> Callable[..., BaseHTTPRequestHandler]:
-    static_root = Path(__file__).with_name("static")
+    if tablet_lan and tablet_local:
+        raise ValueError("Tablet local and LAN modes are mutually exclusive")
+    tablet_client = tablet_lan or tablet_local
+    static_root = static_directory or Path(__file__).with_name("static")
     root = project_root or Path(__file__).resolve().parents[2]
     pdfjs_root = root.joinpath("node_modules", "pdfjs-dist", "build")
     marked_root = root.joinpath("node_modules", "marked", "lib")
@@ -145,13 +155,37 @@ def handler_factory(
     practice_review = PracticeReviewService(practice, learning, service) if learning is not None else None
     practice_hint = PracticeHintService(practice_review) if practice_review is not None else None
     practice_knowledge = PracticeKnowledgeService(practice, getattr(learning, "runtime", None))
-    tablet_pdf = TabletPdfIndex(service) if tablet_lan else None
-    tablet_page_images = TabletPageImages(service) if tablet_lan else None
+    tablet_pdf = TabletPdfIndex(service) if tablet_client else None
+    tablet_page_images = TabletPageImages(service, renderer=page_renderer,
+                                         encoded_renderer=tablet_local and page_renderer is not None) if tablet_client else None
+    ink = InkService(service.paths) if tablet_client else None
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "GuidedReader/0.1"
 
+        def handle_one_request(self) -> None:
+            # Log only opt-in Tablet requests, after their body/stream completes.
+            # Query strings and source identifiers never enter the record.
+            self._tablet_response_status = None
+            self._tablet_request_seen = False
+            started = time.monotonic()
+            try:
+                super().handle_one_request()
+            finally:
+                if tablet_lan and self._tablet_request_seen:
+                    record = tablet_request_diagnostic(
+                        getattr(self, "command", ""), getattr(self, "path", ""),
+                        self._tablet_response_status, (time.monotonic() - started) * 1000,
+                    )
+                    print("TABLET_HTTP " + json.dumps(record, ensure_ascii=True, separators=(",", ":")), flush=True)
+
+        def send_response(self, code: int, message: str | None = None) -> None:
+            if tablet_lan:
+                self._tablet_response_status = int(code)
+            super().send_response(code, message)
+
         def parse_request(self) -> bool:
+            self._tablet_request_seen = True
             self._pdf_upload = None
             if not super().parse_request():
                 return False
@@ -161,6 +195,13 @@ def handler_factory(
             # write entry point. A local cookie must never authorize another
             # website's request to the loopback service.
             port = self.server.server_port
+            if tablet_local and (self.server.server_address[0] != "127.0.0.1"
+                                 or self.client_address[0] != "127.0.0.1"):
+                self.close_connection = True
+                self._json(HTTPStatus.FORBIDDEN, {
+                    "code": "UNTRUSTED_LOCAL_CLIENT", "error": "平板本机 Reader 仅接受应用内本机请求。"
+                })
+                return False
             if tablet_lan:
                 bind_address = self.server.server_address[0]
                 if not is_private_ipv4(bind_address) or not is_private_ipv4(self.client_address[0]):
@@ -224,6 +265,22 @@ def handler_factory(
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if tablet_lan and parsed.path in {"/tablet-app.apk", "/tablet-library.grlibrary"}:
+                supplied = parse_qs(parsed.query, keep_blank_values=True).get("token", [])
+                if not (len(supplied) == 1 and self._token_matches(supplied[0])):
+                    if not self._authorized():
+                        return
+                library_download = parsed.path == "/tablet-library.grlibrary"
+                filename = "GuidedReader-Tablet-Library.grlibrary" if library_download else "GuidedReader-Tablet.apk"
+                package = root.joinpath("dist", "android", filename)
+                if not package.is_file():
+                    self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "书库迁移包尚未就绪。" if library_download else "Android 安装包尚未就绪。"})
+                    return
+                self._file(package, "application/octet-stream" if library_download else "application/vnd.android.package-archive", headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                    "Referrer-Policy": "no-referrer",
+                })
+                return
             match = _PRACTICE_KNOWLEDGE.fullmatch(parsed.path)
             if match:
                 if not self._authorized():
@@ -500,6 +557,21 @@ def handler_factory(
                 try:
                     query_text = _first(parse_qs(parsed.query, keep_blank_values=True), "q") or ""
                     result = preparation.foundation.search(match.group(1), query_text)
+                except ValueError as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
+            match = _REVISION_INK.fullmatch(parsed.path)
+            if match and ink is not None:
+                if not self._authorized():
+                    return
+                try:
+                    page_index = int(_first(parse_qs(parsed.query), "page") or "")
+                    result = ink.list_strokes(match.group(1), page_index)
                 except ValueError as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                     return
@@ -1343,6 +1415,23 @@ def handler_factory(
                 self.send_response(HTTPStatus.NO_CONTENT)
                 self.end_headers()
                 return
+            ink_match = _REVISION_INK.fullmatch(parsed.path)
+            if ink_match and ink is not None:
+                if not self._authorized():
+                    return
+                try:
+                    result = ink.apply_operation(ink_match.group(1), self._read_json())
+                except InkConflictError as exc:
+                    self._json(HTTPStatus.CONFLICT, {"code": exc.code, "error": str(exc)})
+                    return
+                except (ValueError, TypeError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+                    return
+                except LookupError as exc:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+                    return
+                self._json(HTTPStatus.OK, result)
+                return
             annotation_match = _REVISION_ANNOTATIONS.fullmatch(parsed.path)
             if annotation_match:
                 if not self._authorized():
@@ -1628,7 +1717,7 @@ def handler_factory(
                 self._json(HTTPStatus.NOT_FOUND, {'error': str(exc)})
             return True
 
-        def _authorized(self) -> bool:
+        def _authorized(self, *, root_html: bool = False) -> bool:
             supplied = self.headers.get("X-Reader-Token", "")
             cookie = SimpleCookie()
             try:
@@ -1640,8 +1729,38 @@ def handler_factory(
                 cookie_token is not None and self._token_matches(cookie_token.value)
             ):
                 return True
-            self._json(HTTPStatus.UNAUTHORIZED, {"error": "Missing or invalid launch token"})
+            if tablet_lan and root_html:
+                self._tablet_connection_page()
+            else:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": "Missing or invalid launch token"})
             return False
+
+        def _tablet_connection_page(self) -> None:
+            # Fixed copy only: never reflect a rejected address or credential,
+            # issue a cookie, or load the Reader before authorization succeeds.
+            body = """<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>重新连接 Reader</title>
+<style>html{background:#f6f5ee;color:#273b32;font-family:system-ui,sans-serif}
+body{margin:0;min-height:100vh;display:grid;place-items:center}
+main{max-width:30rem;padding:32px}h1{font-size:24px;font-weight:550;line-height:1.5}
+p{font-size:17px;line-height:1.9;color:#516358}</style>
+<main><h1>请打开本次连接地址</h1>
+<p>请在电脑的 Tablet Reader 连接页扫描二维码，或将完整地址复制到平板浏览器。</p>
+<p>服务重新启动后，需要使用新的连接地址。</p></main></html>""".encode("utf-8")
+            self.send_response(HTTPStatus.UNAUTHORIZED)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                pass
 
         @staticmethod
         def _token_matches(supplied: str) -> bool:
@@ -1739,7 +1858,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js", "/tablet.css", "/tablet-layout.js", "/tablet-touch.js", "/tablet-pen.js", "/tablet-pdf-pages.js", "/id.js", "/clipboard.js", "/pdf-upload.js", "/import-bootstrap.js"
+                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js", "/tablet.css", "/tablet-section-confirm.css", "/tablet-layout.js", "/tablet-reader-ui.js", "/tablet-tool-rail.js", "/tablet-ink.js", "/tablet-ink-store.js", "/tablet-pen-check.html", "/tablet-pen-check.css", "/tablet-pen-check.js", "/tablet-touch.js", "/tablet-pen.js", "/tablet-pdf-pages.js", "/tablet-connection.js", "/id.js", "/clipboard.js", "/pdf-upload.js", "/import-bootstrap.js"
             ):
                 filename = path[1:]
             if filename is None:
@@ -1750,10 +1869,17 @@ def handler_factory(
             if target.suffix in (".js", ".mjs"):
                 content_type = "text/javascript; charset=utf-8"
             headers = None
+            if filename == "tablet-pen-check.html":
+                if not tablet_client:
+                    self._json(HTTPStatus.NOT_FOUND, {"error": "Not found"})
+                    return
+                if not self._authorized():
+                    return
+                headers = {"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
             if filename == "index.html":
                 supplied = parse_qs(urlparse(self.path).query).get("token", [])
                 if not (len(supplied) == 1 and self._token_matches(supplied[0])):
-                    if not self._authorized():
+                    if not self._authorized(root_html=tablet_lan):
                         return
                 headers = {
                     "Set-Cookie": (
@@ -1771,7 +1897,7 @@ def handler_factory(
             headers: dict[str, str] | None = None,
             tail: Path | None = None,
         ) -> None:
-            if (tablet_lan and not ranged and headers is None
+            if (tablet_client and not ranged and headers is None
                     and path.suffix in {".js", ".mjs", ".css", ".wasm"}
                     and path.stat().st_size <= 10 * 1024 * 1024):
                 body, etag, compressed = asset_response(path, self.headers.get("Accept-Encoding", ""))
@@ -1864,8 +1990,19 @@ def handler_factory(
                 self._pdf_upload_log("result", status=int(status), code=code,
                                      elapsed_ms=round((time.monotonic() - upload["started_at"]) * 1000))
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            tablet_json = tablet_client and self.command == "GET" and urlparse(self.path).path.startswith("/api/")
+            compressed = False
+            if tablet_json and len(encoded) >= 1024 and accepts_gzip(self.headers.get("Accept-Encoding", "")):
+                packed = gzip.compress(encoded, compresslevel=3, mtime=0)
+                if len(packed) < len(encoded):
+                    encoded = packed
+                    compressed = True
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            if tablet_json:
+                self.send_header("Vary", "Accept-Encoding")
+            if compressed:
+                self.send_header("Content-Encoding", "gzip")
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Cache-Control", "no-store")
             if upload:
@@ -1909,7 +2046,7 @@ def handler_factory(
                 return
             previous = None
             deadline = time.monotonic() + 25
-            while time.monotonic() < deadline:
+            while time.monotonic() < deadline and not getattr(self.server, "stopping", False):
                 try:
                     pages = coordinator.foundation.statuses(revision_id)
                 except LookupError:
@@ -1941,8 +2078,13 @@ def handler_factory(
 
         def log_message(self, format: str, *args: object) -> None:
             # Deliberately omit URLs so the per-launch token never enters logs.
+            if tablet_client:
+                return  # The structured, sanitized completion event is emitted above.
             print(f"{self.client_address[0]} {args[1] if len(args) > 1 else '-'}")
 
+    # The Android owner uses this to await existing background writes before an
+    # explicit library restore. Normal desktop request handling is unchanged.
+    Handler.background_services = (practice_knowledge,)
     return Handler
 
 

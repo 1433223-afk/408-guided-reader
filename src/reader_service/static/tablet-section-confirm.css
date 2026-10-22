@@ -1,0 +1,58 @@
+/* Scope confirmation is separate from the small, in-text KP controls. */
+html.tablet #reader .page > .learning-footer {
+  padding:12px 0 0;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));
+  gap:0 12px;
+  color:var(--reader-ink);
+}
+html.tablet #reader .learning-scope-marker {
+  position:relative;
+  min-width:0;
+  border-top:1px solid var(--reader-line);
+  font-size:13px;
+}
+html.tablet #reader .learning-scope-marker > summary {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-height:52px;
+  padding:0 14px;
+  list-style:none;
+  cursor:pointer;
+  color:var(--reader-muted);
+  background:var(--reader-paper);
+}
+html.tablet #reader .learning-scope-marker > summary::-webkit-details-marker { display:none; }
+html.tablet #reader .learning-scope-marker > summary:hover,
+html.tablet #reader .learning-scope-marker[open] > summary { background:var(--reader-soft); }
+html.tablet #reader .learning-scope-marker > summary:focus-visible {
+  outline:2px solid var(--reader-green);
+  outline-offset:2px;
+}
+html.tablet #reader .learning-scope-kind {
+  flex:none;
+  color:var(--reader-green);
+  font-weight:600;
+  white-space:nowrap;
+}
+html.tablet #reader .section-confirmation .learning-scope-kind {
+  padding-left:9px;
+  border-left:3px solid var(--reader-green);
+}
+html.tablet #reader .learning-scope-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+html.tablet #reader .learning-scope-progress { margin-left:auto; flex:none; font-variant-numeric:tabular-nums; font-size:12px; }
+html.tablet #reader .learning-scope-chevron { flex:none; margin-left:4px; font-size:24px; line-height:1; }
+html.tablet #reader .learning-scope-content {
+  width:min(390px,calc(100vw - 48px));
+  z-index:8;
+  text-align:left;
+}
+html.tablet #reader .learning-scope-content .learning-batch-card {
+  padding:0;
+  border:0;
+  background:transparent;
+}
+html.tablet #reader .learning-scope-content .learning-batch-card h3 { font-size:15px; line-height:1.6; margin:0 0 10px; }
+html.tablet #reader .learning-scope-content .learning-batch-stats { font-size:13px; line-height:1.7; }
+html.tablet #reader .learning-scope-content .learning-batch-card button { min-height:48px; padding:10px 14px; margin:4px 8px 4px 0; }
+html.tablet #reader .learning-scope-content .learning-batch-hint { margin-top:10px; font-size:12px; line-height:1.7; }

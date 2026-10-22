@@ -18,15 +18,22 @@ import { createPracticeKnowledge } from "/practice-knowledge.js";
 import { createVisualSelection } from "/visual-selection.js";
 import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPortraitLayout } from "/reading-display.js";
 import { createTabletLayout } from "/tablet-layout.js";
+import { installTabletReaderUI } from "/tablet-reader-ui.js";
 import { createTabletTouch } from "/tablet-touch.js";
 import { createTabletPen } from "/tablet-pen.js";
 import { createTabletPdfPages } from "/tablet-pdf-pages.js";
+import { createTabletConnection } from "/tablet-connection.js";
+import { createTabletInk } from "/tablet-ink.js";
 import { preparePdfUpload, uploadPdf } from "/pdf-upload.js";
 
 const tabletMode = new URLSearchParams(location.search).get("tablet") === "1";
+const tabletLocalMode = tabletMode && new URLSearchParams(location.search).get("local") === "1";
 const useTabletPageImages = tabletMode;
 document.documentElement.classList.toggle("tablet", tabletMode);
-let tabletLayout = null, tabletAssistantSuspended = false;
+let tabletLayout = null;
+let tabletReaderUI = null;
+let tabletConnection = null;
+let tabletInk = null;
 const changeTabletWorkspace = update => tabletLayout ? tabletLayout.change(update) : update();
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
@@ -36,6 +43,10 @@ const elements = Object.fromEntries(
     .map((id) => [id, document.getElementById(id)]),
 );
 
+if (tabletLocalMode) {
+  const unsupported = elements['assistant-model'].querySelector('option[value="openrouter"]');
+  if (unsupported) {unsupported.hidden = true; unsupported.disabled = true;}
+}
 const assistantModelMenu = createAssistantModelMenu(elements["assistant-model"]);
 const assistantNavigator = createAssistantNavigator(elements["assistant-panel"], (...args) => focusAssistant(...args));
 createMessageRail(elements['assistant-turns']);
@@ -45,12 +56,12 @@ const query = new URLSearchParams(location.search);
 const launchToken = query.get("token") || sessionStorage.getItem("reader-token") || "";
 if (launchToken) {
   sessionStorage.setItem("reader-token", launchToken);
-  if (query.has("token")) history.replaceState(null, "", location.pathname + (tabletMode ? "?tablet=1" : ""));
+  if (query.has("token")) history.replaceState(null, "", location.pathname + (tabletMode ? `?tablet=1${tabletLocalMode ? '&local=1' : ''}` : ""));
 }
 
 const state = {
   books: [], book: null, revision: null, pdf: null, zoom: 1,
-  tabletBackgroundPending: false,
+  tabletBackgroundPending: false, tabletRetained: new Set(), tabletVisibleRange: null,
   currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), pageRenderRequests: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, viewerLayoutWidth: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
@@ -91,9 +102,10 @@ const visualSelection = createVisualSelection({
   viewer: elements.viewer,
   toggle: document.getElementById('visual-select-toggle'),
   hint: document.getElementById('visual-select-hint'),
-  enabled: () => Boolean(state.pdf && state.readerSessionId && !state.assistantPending),
+  enabled: () => Boolean(state.pdf && state.readerSessionId && !state.assistantPending && !tabletInk?.enabled),
   onEnter: () => { state.pinnedLanding = null; clearSelection(); hideAssistantAnswerActions(); },
   onSelect: stageVisualAssistant,
+  touchActions: tabletMode,
 });
 
 const MASTER_WORKSPACE_MOTION = Object.freeze({
@@ -113,6 +125,8 @@ let assistantSidebarScrollPosition = 0;
 let selectionActionsDismissal = null;
 
 const master = createMasterUI({ api, revision: () => state.revision?.id,
+  tablet: tabletMode,
+  local:tabletLocalMode,
   chapter: () => state.learningChapterId,
   stream: streamMasterResponse,
   toggleExpanded: () => setAssistantExpanded(!state.assistantExpanded),
@@ -204,9 +218,9 @@ const teachingUiOptions = { state, api, goToPage,
     const anchor = captureZoomAnchor();
     const previousReserve = inlineReserve();
     change();
-    // Inline cards consume space inside the viewer without changing its width,
-    // so the viewer ResizeObserver cannot detect this layout change.
-    if (state.practice.active || inlineReserve() !== previousReserve) relayoutPages(anchor);
+    // Desktop teaching can reserve PDF space. Tablet cards need no re-render;
+    // actual workspace resizing is handled by the Tablet ResizeObserver.
+    if (!tabletMode && (state.practice.active || inlineReserve() !== previousReserve)) relayoutPages(anchor);
     else evaluateDirectoryMode();
   },
   closeDock: () => claimRightDock("guide"),
@@ -215,7 +229,7 @@ const teachingUiOptions = { state, api, goToPage,
   dockWidth: () => state.assistantDockWidth,
   explain: openAssistantDraftFromVisibleSelection };
 const guide = createGuideUI(teachingUiOptions);
-const inline = createInlineUI(teachingUiOptions);
+const inline = createInlineUI({...teachingUiOptions, card:tabletMode, onCardOpen:() => claimRightDock('inline')});
 
 function requestTimeout(milliseconds) {
   if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(milliseconds);
@@ -225,6 +239,7 @@ function requestTimeout(milliseconds) {
 }
 
 async function api(path, options = {}) {
+  if (tabletMode && tabletConnection) return tabletConnection.json(path, options);
   const response = await fetch(path, {
     ...options,
     signal: options.signal || ((!options.method || options.method === "GET") ? requestTimeout(15000) : undefined),
@@ -279,8 +294,10 @@ async function showHome() {
 const screens = createScreens({api, home: showHome, memory: () => memory.open(), read: enterReader,
   remove: removeBook, revision: chooseRevision, announce, isAuxiliary:isAuxiliaryOutlineRoot});
 const chapterEntry = createChapterEntry({api, goToPage, revision: () => state.revision?.id,
+  compact: tabletMode,
   outlineSnapshot: () => state.outlineNodes,
-  published: () => master.refreshEntries().catch(() => {}),
+  published: publication => master.refreshEntries(tabletMode && publication?.initial
+    ? {background:true, publication} : {}).catch(() => {}),
   closePeers: () => {
     claimRightDock("knowledge");
     closeDirectory();
@@ -333,13 +350,15 @@ async function importPdf(file, bookId = null) {
   const onProgress = ({phase, loaded, total}) => {
     const ratio = total ? Math.min(1, loaded / total) : undefined;
     const percent = Number.isFinite(ratio) ? ` ${Math.floor(ratio * 100)}%` : '';
-    const label = phase === 'reading' ? '正在读取 PDF' : phase === 'uploading' ? '正在上传 PDF' : '上传完成，正在验证并入库…';
+    const label = phase === 'reading' ? '正在读取 PDF' : phase === 'uploading'
+      ? (tabletLocalMode ? '正在导入 PDF' : '正在上传 PDF')
+      : (tabletLocalMode ? '正在验证并入库…' : '上传完成，正在验证并入库…');
     showImportFeedback(`${label}${percent}`, {phase,ratio});
   };
   let result;
   try {
     const body = await preparePdfUpload(file, onProgress);
-    result = await uploadPdf({body, filename:file.name, bookId, token:launchToken, onProgress});
+    result = await uploadPdf({body, filename:file.name, bookId, token:launchToken, onProgress, local:tabletLocalMode});
   } catch (error) {
     const stage = document.getElementById('import-feedback').dataset.phase;
     const message = error.message || '导入失败，请重新选择 PDF 后重试。';
@@ -376,7 +395,12 @@ async function importPdf(file, bookId = null) {
 }
 
 async function removeBook(book) {
-  const confirmed = window.confirm(`删除《${book.title}》？\n\n这会永久删除本应用中保存的 PDF 版本、阅读位置、学习地图、高亮和笔记，且无法撤销。`);
+  if (tabletInk && await tabletInk.hasPending()) {
+    announce('请等待手写笔迹保存完成后再删除教材；若有待保存提示，请先重试。', true);
+    return;
+  }
+  const annotationLabel = tabletMode ? '高亮、笔记和手写批注' : '高亮和笔记';
+  const confirmed = window.confirm(`删除《${book.title}》？\n\n这会永久删除本应用中保存的 PDF 版本、阅读位置、学习地图、${annotationLabel}，且无法撤销。`);
   if (!confirmed) return;
   try {
     await api(`/api/books/${book.id}`, { method: "DELETE" });
@@ -392,10 +416,13 @@ async function removeBook(book) {
 
 async function openBook(book) {
   if (state.book?.id === book.id && state.pdf) return;
+  tabletInk?.reset();
   visualSelection.cancel({clear: true});
   state.generation += 1;
   const generation = state.generation;
   cancelRenders();
+  state.tabletRetained.clear();
+  state.tabletVisibleRange = null;
   if (useTabletPageImages) state.pdf?.destroy?.();
   closePreparationStream();
   resetPractice();
@@ -406,6 +433,7 @@ async function openBook(book) {
   state.readerSessionId = createId();
   state.assistantState = emptyAssistantState();
   state.navigationAnchorId = null;
+  state.currentSectionId = null;
   state.pinnedLanding = null;
   state.directoryCollapsed = null;
   state.directoryExpandedFor = null;
@@ -427,12 +455,15 @@ async function openBook(book) {
   elements["reader-title"].textContent = book.title;
   elements["library-home"].hidden = true;
   elements.reader.hidden = false;
+  tabletReaderUI?.syncContext();
+  tabletReaderUI?.refresh();
   elements["page-total"].textContent = `/ ${state.revision.page_count}`;
   elements["page-number"].max = String(state.revision.page_count);
   elements["zoom-value"].value = `${Math.round(state.zoom * 100)}%`;
   if (!tabletMode) renderLibrary();
   elements.pages.replaceChildren();
   buildPlaceholders();
+  tabletInk?.openRevision();
   resetAssistantPanel();
   master.reset();
   if (!tabletMode) master.refreshEntries().catch((error) => announce(error.message, true));
@@ -459,6 +490,7 @@ async function openBook(book) {
       return pdf;
     };
     const pdf = useTabletPageImages ? createTabletPdfPages({revision, token:launchToken,
+      fetchPage: tabletConnection?.page,
       getWidth:() => snappedPageSize(1).backingWidth, loadFallback}) : await loadFallback();
     if (generation !== state.generation) return;
     if (pdf.numPages !== state.revision.page_count) throw new Error("保存的 PDF 元数据与来源文件不再一致");
@@ -485,7 +517,10 @@ function startReaderBackground() {
 }
 
 function closeReader() {
+  tabletInk?.reset();
   state.tabletBackgroundPending = false;
+  state.tabletRetained.clear();
+  state.tabletVisibleRange = null;
   if (useTabletPageImages) state.pdf?.destroy?.();
   visualSelection.cancel({clear: true});
   resetPractice();
@@ -555,7 +590,7 @@ function displayedRatio(geometry) {
   return geometry.rotation % 180 === 0 ? height / width : width / height;
 }
 
-function inlineReserve() { return elements.reader.classList.contains("inline-open") ? 332 : 0; }
+function inlineReserve() { return !tabletMode && elements.reader.classList.contains("inline-open") ? 332 : 0; }
 
 function pageWidth() {
   const horizontalRoom = tabletMode ? 32 : state.practice.active ? 32 : 72;
@@ -794,6 +829,7 @@ function renderReaderSectionHint() {
   // item; the Directory never re-derives it on its own. Section/chapter identity
   // for Knowledge Points keeps its resolved-range-only semantics.
   state.currentSectionId = section?.outline_node_id ?? null;
+  tabletReaderUI?.syncContext();
   state.currentOutlineId = deepest?.outline_node_id ?? null;
   let chapter = section;
   while (chapter && chapter.kind !== "CHAPTER") chapter = state.outlineNodes.find(n => n.outline_node_id === chapter.parent_id);
@@ -832,6 +868,27 @@ function renderReaderSectionHint() {
   }
 }
 
+function tabletVisiblePageRange(top, bottom) {
+  const pages = elements.pages.children;
+  // Page gaps are not page content. A landing exactly at the next page's top
+  // must not download its previous scan before the page the reader requested.
+  let low = 0, high = pages.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const page = pages[middle];
+    if (page.offsetTop + page.offsetHeight <= top) low = middle + 1;
+    else high = middle;
+  }
+  const first = Math.min(low, pages.length - 1);
+  low = first; high = pages.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (pages[middle].offsetTop < bottom) low = middle + 1;
+    else high = middle;
+  }
+  return {first, last: Math.max(first, low - 1)};
+}
+
 function updateViewport() {
   if (!state.pdf) return;
   if (state.pinnedLanding) {
@@ -851,33 +908,48 @@ function updateViewport() {
   let bestIndex = 0;
   let bestDistance = Infinity;
   const viewportCenter = top + elements.viewer.clientHeight / 2;
-  for (const page of elements.pages.children) {
-    const index = Number(page.dataset.index);
-    const pageTop = page.offsetTop;
-    const pageBottom = pageTop + page.offsetHeight + parseFloat(page.style.marginBottom || "20");
-    if (pageBottom >= top && first === null) first = index;
-    if (pageTop <= bottom) last = index;
-    const distance = Math.abs((pageTop + pageBottom) / 2 - viewportCenter);
-    if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
-  }
+  if (tabletMode) ({first, last} = tabletVisiblePageRange(top, bottom));
+  else for (const page of elements.pages.children) {
+      const index = Number(page.dataset.index);
+      const pageTop = page.offsetTop;
+      const pageBottom = pageTop + page.offsetHeight + parseFloat(page.style.marginBottom || "20");
+      if (pageBottom >= top && first === null) first = index;
+      if (pageTop <= bottom) last = index;
+      const distance = Math.abs((pageTop + pageBottom) / 2 - viewportCenter);
+      if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
+    }
   setCurrentPage(tabletMode ? (captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1)?.pageIndex ?? bestIndex) : bestIndex);
   renderReaderSectionHint();
   const keepStart = Math.max(0, (first ?? 0) - 2);
   const keepEnd = Math.min(state.pdf.numPages - 1, last + 2);
+  if (tabletMode) for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys(), ...(state.tabletRetained || [])])) {
+    if (index < keepStart || index > keepEnd) clearPage(index);
+  }
   if (tabletMode) {
-    // Put the actual reading surface and its selectable text ahead of offscreen
-    // images. On LAN, four neighbouring scans used to compete with the first page.
+    // Only one offscreen scan follows the visible image. Its transfer can overlap
+    // the small OCR response instead of starting a full round trip after it.
     const visibleStart = first ?? 0;
+    const previousRange = state.tabletVisibleRange;
+    if (previousRange?.first !== visibleStart || previousRange?.last !== last) {
+      for (const index of [...state.pageRenderRequests.keys()]) {
+        if (index < visibleStart || index > last) pauseTabletUpgrade(index);
+      }
+      state.tabletVisibleRange = {first: visibleStart, last};
+    }
     for (let index = visibleStart; index <= last; index += 1) renderPage(index);
     const visibleReady = Array.from({length:last - visibleStart + 1}, (_, at) => visibleStart + at)
-      .every(index => state.rendered.has(index) && !state.pageRenderRequests.has(index));
+      .every(index => state.rendered.has(index));
     if (visibleReady) {
-      for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
+      if (![...state.pageRenderRequests.values()].some(request => !request.imageReady)) {
+        const next = [last + 1, visibleStart - 1, last + 2, visibleStart - 2]
+          .find(index => index >= keepStart && index <= keepEnd && !state.rendered.has(index));
+        if (next !== undefined) renderPage(next);
+      }
     }
   } else {
     for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
   }
-  for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys()])) {
+  for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys(), ...(state.tabletRetained || [])])) {
     if (index < keepStart || index > keepEnd) clearPage(index);
   }
   scheduleSave();
@@ -894,9 +966,10 @@ async function renderPage(index) {
   const ownsPage = () => generation === state.generation && renderGeneration === state.renderGeneration
     && state.pageRenderRequests.get(index) === request && elements.pages.children[index] === wrapper;
   let task = null;
-  wrapper.classList.add("loading");
+  const previousCanvas = tabletMode ? wrapper.querySelector?.('canvas') : null;
+  if (!previousCanvas) wrapper.classList.add("loading");
   try {
-    const page = await state.pdf.getPage(index + 1);
+    const page = await state.pdf.getPage(index + 1, {preview: tabletMode && !previousCanvas});
     if (!ownsPage()) return;
     const base = page.getViewport({ scale: 1 });
     const size = snappedPageSize(base.height / base.width);
@@ -909,13 +982,25 @@ async function renderPage(index) {
     canvas.dataset.outputScaleX = String(size.pixelRatio);
     canvas.dataset.outputScaleY = String(size.pixelRatio);
     applyPageSize(wrapper, size);
-    wrapper.replaceChildren(canvas);
+    if (!tabletMode) wrapper.replaceChildren(canvas);
     const canvasContext = canvas.getContext("2d", { alpha: false });
     canvasContext.imageSmoothingEnabled = true;
     canvasContext.imageSmoothingQuality = "high";
+    const mountTabletCanvas = () => {
+      if (!ownsPage() || canvas.parentElement === wrapper) return;
+      if (previousCanvas?.parentElement === wrapper) previousCanvas.replaceWith(canvas);
+      else wrapper.replaceChildren(canvas);
+      tabletInk?.mountPage(index);
+    };
     task = page.render({
       canvasContext,
       viewport,
+      ...(tabletMode ? {onPreview: () => {
+        mountTabletCanvas();
+        if (!ownsPage()) return;
+        wrapper.classList.remove("loading");
+        ensureOverlay(index);
+      }} : {}),
       transform: [
         canvas.width / viewport.width,
         0,
@@ -928,12 +1013,18 @@ async function renderPage(index) {
     state.renderTasks.set(index, task);
     await task.promise;
     if (ownsPage()) {
+      if (tabletMode) {
+        mountTabletCanvas();
+        state.tabletRetained?.delete(index);
+      }
       state.rendered.add(index);
+      request.imageReady = true;
       master.renderPage(index);
       renderGuideEntries(index);
       renderPracticeOverlay(index);
       syncPagePreparationUi(index);
       wrapper.classList.remove("loading");
+      if (tabletMode) scheduleViewportUpdate();
       if (tabletMode) await ensureOverlay(index);
       else ensureOverlay(index);
       if (ownsPage() && state.tabletBackgroundPending) startReaderBackground();
@@ -952,6 +1043,7 @@ async function renderPage(index) {
 }
 
 function clearPage(index) {
+  state.tabletRetained?.delete(index);
   state.pageRenderRequests.delete(index);
   state.pdf?.cancelPage?.(index + 1);
   const task = state.renderTasks.get(index);
@@ -966,6 +1058,18 @@ function clearPage(index) {
   if (state.selection?.pageIndex === index) clearSelection();
 }
 
+function pauseTabletUpgrade(index) {
+  const wrapper = elements.pages.children[index];
+  if (state.rendered.has(index) || wrapper?.querySelector('canvas')?.dataset.readerPreview !== 'true') return;
+  // Rapidly turning past a preview means its HD transfer is no longer urgent.
+  // Keep its pixels and OCR for Back, but give the new visible page the network.
+  state.pageRenderRequests.delete(index);
+  state.pdf?.cancelPage?.(index + 1);
+  state.renderTasks.get(index)?.cancel();
+  state.renderTasks.delete(index);
+  state.tabletRetained.add(index);
+}
+
 function cancelRenders() {
   state.pageRenderRequests.clear();
   state.pdf?.cancelAll?.();
@@ -975,7 +1079,9 @@ function cancelRenders() {
 }
 
 function setCurrentPage(index) {
+  const changed = state.currentPage !== index;
   state.currentPage = Math.max(0, Math.min(index, (state.revision?.page_count || 1) - 1));
+  if (changed) tabletInk?.mountPage(state.currentPage);
   if (document.activeElement !== elements['page-number']) {
     elements["page-number"].value = String(state.currentPage + 1);
   }
@@ -985,6 +1091,7 @@ function setCurrentPage(index) {
 }
 
 function goToPage(index, offset = 0) {
+  tabletInk?.finish();
   const bounded = Math.max(0, Math.min(index, state.revision.page_count - 1));
   const page = elements.pages.children[bounded];
   // Learning footers and other async in-flow reservations shift pages after the
@@ -1047,10 +1154,12 @@ createZoomEditor({input:elements["zoom-value"], getZoom:() => state.zoom, applyZ
 const readingDisplay = createReadingDisplay({reader:elements.reader, zoomButton:document.getElementById("reading-display-toggle"), applyFit:fitReadingDisplay});
 
 function relayoutPages(anchor = captureZoomAnchor()) {
+  tabletInk?.finish();
   if (!state.revision) return;
   if (visualSelection.active) visualSelection.cancel();
   state.renderGeneration += 1;
   cancelRenders();
+  if (tabletMode) state.tabletRetained = new Set();
   state.pinnedLanding = null;
   const sizes = new Map();
   const margins = new Map();
@@ -1059,7 +1168,14 @@ function relayoutPages(anchor = captureZoomAnchor()) {
     if (!sizes.has(ratio)) sizes.set(ratio, snappedPageSize(ratio));
     const size = sizes.get(ratio);
     if (!margins.has(size.cssWidth)) margins.set(size.cssWidth, pageLeftMargin(size));
-    if (wrapper.firstChild) wrapper.replaceChildren();
+    const canvas = tabletMode ? wrapper.querySelector('canvas') : null;
+    if (canvas) {
+      // Keep the original canvas and OCR target connected throughout the touch
+      // stream. A detached replacement is painted at full size, then swapped in.
+      canvas.style.width = `${size.cssWidth}px`;
+      canvas.style.height = `${size.cssHeight}px`;
+      state.tabletRetained.add(index);
+    } else if (wrapper.firstChild) wrapper.replaceChildren();
     wrapper.classList.remove("loading");
     applyPageSize(wrapper, size, margins.get(size.cssWidth));
   });
@@ -1155,6 +1271,7 @@ async function savePosition() {
     });
     state.revision.position = { ...position, updated_at: new Date().toISOString() };
   } catch (error) {
+    if (tabletMode && ['ReaderConnectionError','ReaderAuthenticationError'].includes(error.name)) return;
     announce("阅读位置未保存，请稍后重试。", true);
   }
 }
@@ -1231,7 +1348,7 @@ async function startPreparation(schedule = true) {
     if (preparationFinished(payload.pages, payload.active_jobs)) {
       stream.close();
       if (state.eventSource === stream) state.eventSource = null;
-      if (payload.pages.every(p => p.status === "READY")) loadPracticeRecords({force: true});
+      if (payload.pages.every(p => p.status === "READY")) loadPracticeRecords({force: true, refresh: true});
     }
   });
   stream.onerror = () => {
@@ -1349,7 +1466,6 @@ function computeDirectoryMode({ viewerWidth, pageCssWidth, inlineReserve = 0, sp
 
 function evaluateDirectoryMode() {
   if (!state.revision || !elements.pages.children.length) return;
-  if (tabletMode) { applyDirectoryMode(null); return; }
   if (elements.reader.classList.contains("portrait-mode")) { applyDirectoryMode("portrait"); return; }
   if (state.practice.active) { applyDirectoryMode("split"); return; }
   if (elements["outline-panel"].hidden) return;
@@ -1400,12 +1516,6 @@ function syncDirectoryActive({ reveal = false } = {}) {
 function openDirectory() {
   changeTabletWorkspace(() => {
     if (elements["outline-panel"].hidden) {
-      if (tabletMode) {
-        tabletAssistantSuspended = !elements["assistant-panel"].hidden;
-        if (elements["assistant-panel"].contains(document.activeElement)) document.activeElement.blur();
-        setAssistantPanelOpen(false);
-        elements.reader.classList.add("tablet-directory-open");
-      }
       elements["practice-panel"].hidden = true;
       elements["outline-panel"].hidden = false;
       elements["outline-toggle"].setAttribute("aria-expanded", "true");
@@ -1424,22 +1534,17 @@ function openDirectory() {
   });
 }
 
-function closeDirectory({ focusViewer = false, resumeAssistant = true } = {}) {
+function closeDirectory({ focusViewer = false } = {}) {
   if (elements["outline-panel"].hidden) return;
   changeTabletWorkspace(() => {
     const pinnedAnchor = elements.reader.classList.contains("portrait-mode") && elements.reader.classList.contains("portrait-directory-pinned")
       ? capturePortraitAnchor() : null;
     portraitLayout.directoryClosed();
     elements["outline-panel"].hidden = true;
-    elements.reader.classList.remove("tablet-directory-open");
     elements["outline-toggle"].setAttribute("aria-expanded", "false");
     if (state.practice.active) elements["practice-panel"].hidden = false;
     applyDirectoryMode(state.practice.active ? "split" : null);
     if (pinnedAnchor && state.pdf) relayoutPages(pinnedAnchor);
-    if (tabletMode && tabletAssistantSuspended) {
-      tabletAssistantSuspended = false;
-      if (resumeAssistant && !elements.reader.hidden) setAssistantPanelOpen(true);
-    }
     if (focusViewer) elements.viewer.focus({ preventScroll: true });
   });
 }
@@ -1483,28 +1588,42 @@ function savePracticePosition() {
   })).catch(error => announce(`练习位置未保存：${error.message}`, true));
 }
 
-async function loadPracticeRecords({force = false} = {}) {
+let practiceCatalogLoad = null;
+async function loadPracticeRecords({force = false, refresh = false} = {}) {
   if (tabletMode && !state.practice.active && !force) return;
   const revisionId = state.revision?.id;
   if (!revisionId) return;
-  const loadEpoch = ++state.practice.catalogLoadEpoch;
-  try {
-    await practicePositionSave;
-    const [catalog, payload] = await Promise.all([
-      api(`/api/revisions/${revisionId}/practice-prototype/catalog`),
-      api(`/api/revisions/${revisionId}/practice-prototype`),
-    ]);
-    if (state.revision?.id !== revisionId || state.practice.catalogLoadEpoch !== loadEpoch) return;
-    if (state.practice.active) state.practice.pendingCatalog = catalog.sections;
-    else replacePracticeSections(catalog.sections, state.revision.blob_sha256);
-    state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
-    state.practice.positions = new Map(Object.entries(payload.positions || {}));
-    if (state.practice.active) state.practice.positions.set(state.practice.sectionId, practiceCurrentQuestion().number);
-    updatePracticeRail();
-    renderPracticePages();
-  } catch (error) {
-    if (state.revision?.id === revisionId) announce(`练习状态暂时无法读取：${error.message}`, true);
+  const generation = state.generation;
+  if (tabletMode && practiceCatalogLoad?.revisionId === revisionId && practiceCatalogLoad.generation === generation) {
+    await practiceCatalogLoad.promise;
+    if (refresh && state.revision?.id === revisionId && state.generation === generation) {
+      return loadPracticeRecords({force});
+    }
+    return;
   }
+  const loadEpoch = ++state.practice.catalogLoadEpoch;
+  const request = {revisionId, generation};
+  request.promise = (async () => {
+    try {
+      await practicePositionSave;
+      const [catalog, payload] = await Promise.all([
+        api(`/api/revisions/${revisionId}/practice-prototype/catalog`),
+        api(`/api/revisions/${revisionId}/practice-prototype`),
+      ]);
+      if (state.revision?.id !== revisionId || state.generation !== generation || state.practice.catalogLoadEpoch !== loadEpoch) return;
+      if (state.practice.active) state.practice.pendingCatalog = catalog.sections;
+      else replacePracticeSections(catalog.sections, state.revision.blob_sha256);
+      state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
+      state.practice.positions = new Map(Object.entries(payload.positions || {}));
+      if (state.practice.active) state.practice.positions.set(state.practice.sectionId, practiceCurrentQuestion().number);
+      updatePracticeRail();
+      renderPracticePages();
+    } catch (error) {
+      if (state.revision?.id === revisionId && state.generation === generation) announce(`练习状态暂时无法读取：${error.message}`, true);
+    }
+  })();
+  if (tabletMode) practiceCatalogLoad = request;
+  try {await request.promise;} finally {if (practiceCatalogLoad === request) practiceCatalogLoad = null;}
 }
 
 function renderPracticeNavigation() {
@@ -1838,6 +1957,15 @@ async function submitPracticeChoice() {
 }
 
 let practicePointer = null;
+function practiceChoiceAtPoint(point) {
+  if (tabletInk?.enabled) return null;
+  if (!state.practice.active || state.practice.onAnswerPage) return null;
+  const overlay = point.target.closest?.('.text-overlay');
+  if (!overlay) return null;
+  const question = practiceQuestionForPage(Number(overlay.dataset.pageIndex), practiceCurrentQuestion());
+  const rect = overlay.getBoundingClientRect();
+  return practiceChoiceAt(question, (point.clientX - rect.left) / rect.width, (point.clientY - rect.top) / rect.height);
+}
 function updatePracticeHover(event) {
   const overlay = event.currentTarget;
   const question = state.practice.active && !state.practice.onAnswerPage && !state.practice.result && !event.buttons
@@ -1850,6 +1978,7 @@ function updatePracticeHover(event) {
   }
 }
 function beginPracticePointer(event) {
+  if (tabletInk?.enabled) return;
   if (!state.practice.active || event.button !== 0 || state.practice.onAnswerPage) return;
   const rect = event.currentTarget.getBoundingClientRect();
   const question = practiceQuestionForPage(Number(event.currentTarget.dataset.pageIndex), practiceCurrentQuestion());
@@ -1857,6 +1986,7 @@ function beginPracticePointer(event) {
   practicePointer = choice ? { choice, x: event.clientX, y: event.clientY } : null;
 }
 function finishPracticePointer(event) {
+  if (tabletInk?.enabled) { practicePointer = null; return; }
   const pointer = practicePointer;
   practicePointer = null;
   if (!pointer || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 6) return;
@@ -1867,8 +1997,13 @@ function finishPracticePointer(event) {
   selectPracticeChoice(pointer.choice);
 }
 
+function readerWorkspaceWidth() {
+  const width = elements.reader.clientWidth || window.innerWidth;
+  return width - (tabletMode ? parseFloat(getComputedStyle(elements.reader).paddingRight) || 0 : 0);
+}
+
 function practiceSplitLimits() {
-  const available = elements.reader.clientWidth || window.innerWidth;
+  const available = readerWorkspaceWidth();
   if (elements.reader.classList.contains("portrait-mode")) {
     return {available, centerMin:Math.min(600, available - 210), leftMin:210, rightMin:320};
   }
@@ -2532,7 +2667,7 @@ function providerSelectable(provider) {
     provider
     && Object.hasOwn(ASSISTANT_PROVIDER_LABELS, provider.provider)
     && provider.configuration_valid
-    && provider.ai_off_reason !== "DEVELOPMENT_DISABLED"
+    && !["DEVELOPMENT_DISABLED", "PROVIDER_DISABLED"].includes(provider.ai_off_reason)
   );
 }
 
@@ -2583,6 +2718,11 @@ function selectedProviderUnavailableMessage(selected) {
     return `${label} 连续失败，正在短暂冷却（约 ${seconds} 秒）；不会切换到其他模型。`;
   }
   if (!selected.credential_available) {
+    if (tabletLocalMode) {
+      if (selected.credential_reason === 'OFFLINE') return '当前离线；联网后可以继续使用 AI，已有内容仍可阅读。';
+      if (selected.credential_reason === 'CREDENTIAL_READ_FAILED') return `无法读取 ${label} 的本机 Key，请在应用菜单的 AI 设置中重新配置。`;
+      return `请在应用菜单的 AI 设置中配置 ${label} 的 Key；教材仍可离线阅读。`;
+    }
     const target = selected.credential_target ? `“${selected.credential_target}”` : "对应 target";
     if (selected.credential_reason === "CREDENTIAL_READ_FAILED") {
       return `无法读取 ${label} 的 Windows 凭据 ${target}；请检查当前 Core Service 的 Windows 用户身份。`;
@@ -3118,7 +3258,6 @@ function animateAssistantWorkspace(expanded) {
 }
 
 function setAssistantExpanded(expanded, { animate = true } = {}) {
-  if (tabletMode) return;
   if (expanded && state.practice.active) return;
   if (elements["assistant-panel"].hidden && expanded) return;
   if (expanded === state.assistantExpanded) return;
@@ -3147,7 +3286,6 @@ function claimRightDock(owner) {
 
 function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = {}) {
   changeTabletWorkspace(() => {
-    if (tabletMode && open) closeDirectory({resumeAssistant:false});
     const previousDock = elements.reader.classList.contains("assistant-dock-open");
     if (open) claimRightDock("ai");
     if (!open && state.assistantExpanded) setAssistantExpanded(false, { animate: false });
@@ -3168,7 +3306,7 @@ function setAssistantPanelOpen(open, { focusViewer = false, overlay = false } = 
 }
 
 function updateAssistantDockFromPointer(clientX) {
-  applyAssistantDockWidth(elements.reader.getBoundingClientRect().right - clientX);
+  applyAssistantDockWidth(elements.reader.getBoundingClientRect().left + readerWorkspaceWidth() - clientX);
 }
 
 function beginAssistantResize(event) {
@@ -3264,8 +3402,13 @@ function applyAssistantState(nextState) {
 function renderAssistantNavigation(current) {
   assistantNavigator.render(state.assistantState);
   const entry = elements["assistant-toggle"];
-  entry.hidden = !state.assistantDraft && !state.assistantState.roots.length;
-  entry.title = state.assistantDraft ? "继续当前选区的临时解释" : `继续临时解释：${current?.label || "已有解释主题"}`;
+  const hasExplanation = Boolean(state.assistantDraft || state.assistantState.roots.length);
+  entry.hidden = !tabletMode && !hasExplanation;
+  if (tabletMode) {
+    entry.textContent = hasExplanation ? '继续解释' : '问 AI';
+    entry.setAttribute('aria-label', entry.textContent);
+  }
+  entry.title = !hasExplanation ? '打开 AI 工作区，长按原文后提问' : state.assistantDraft ? "继续当前选区的临时解释" : `继续临时解释：${current?.label || "已有解释主题"}`;
   const roots = state.assistantState.roots || [];
   elements["assistant-context-bar"].hidden = !current || current.depth < 4;
   elements["assistant-root-switcher"].replaceChildren(...roots.map((root) => {
@@ -4486,6 +4629,7 @@ function selectionPoint(event, overlay, seedCell = false) {
 }
 
 function beginSelection(event) {
+  if (tabletInk?.enabled) return;
   if (tabletMode && (event.pointerType === "touch" || event.pointerType === "pen")) return;
   if (tabletMode && state.selecting && state.selection?.input !== 'mouse') return;
   if (event.button !== 0) return;
@@ -4981,7 +5125,7 @@ elements["marks-close"].addEventListener("click", () => {
 elements["copy-selection"].addEventListener("click", copySelection);
 elements["ask-selection"].addEventListener("click", stageAssistantSelection);
 elements["assistant-toggle"].addEventListener("click", () => {
-  if (!state.assistantDraft && !state.assistantState.roots.length) return;
+  if (!tabletMode && !state.assistantDraft && !state.assistantState.roots.length) return;
   const opening = elements["assistant-panel"].hidden || elements["assistant-panel"].classList.contains("master-active");
   if (opening) {
     openAssistantPanel();
@@ -5203,18 +5347,41 @@ function changePortraitLayout(enabled, pinned = null) {
   evaluateDirectoryMode();
   if (state.pdf) relayoutPages(anchor);
 }
-const portraitLayout = tabletMode ? {enabled:() => false, directoryClosed:() => {}}
-  : createPortraitLayout({reader:elements.reader, openDirectory, closeDirectory, onChange:changePortraitLayout,
-    available:() => !!state.pdf && !elements.reader.hidden});
+const portraitLayout = createPortraitLayout({reader:elements.reader, openDirectory, closeDirectory, onChange:changePortraitLayout,
+  available:() => !!state.pdf && !elements.reader.hidden, automatic:tabletMode, hover:!tabletMode});
 if (!tabletMode && portraitLayout.enabled()) changePortraitLayout(true);
 if (tabletMode) {
+  tabletReaderUI = installTabletReaderUI(elements.reader, {
+    inkAction:(action, value) => {
+      if (!tabletInk || !state.pdf) return;
+      if (action === 'enabled') {
+        tabletTouch.cancel(); tabletPen?.cancel();
+        clearSelection(); practicePointer = null;
+        visualSelection.cancel({clear:true});
+        tabletInk.setEnabled(value);
+      } else if (action === 'tool') tabletInk.setTool(value);
+      else if (action === 'color') tabletInk.setColor(value);
+      else if (action === 'width') tabletInk.setWidth(value);
+      else tabletInk[action]?.()?.catch?.(error => announce(error.message, true));
+    },
+    layout:update => tabletLayout ? tabletLayout.change(update, {recenter:true}) : update(),
+    section:() => state.outlineNodes.find(node => node.outline_node_id === state.currentSectionId),
+    openGuide:() => {
+      if (!document.getElementById('guide-panel').hidden) guide.close(true, true);
+      else if (state.currentSectionId) guide.open(state.currentSectionId);
+    },
+  });
   tabletLayout = createTabletLayout({reader:elements.reader, viewer:elements.viewer, panel:elements['outline-panel'], closeDirectory,
+    local:tabletLocalMode,
+    beforeChange:() => tabletInk?.finish(),
+    setPortrait:enabled => portraitLayout.setEnabled(enabled),
     captureAnchor:() => state.pdf ? {...captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1), revisionId:state.revision?.id} : null,
     restoreAnchor:anchor => {
       if (state.pdf && !elements.reader.hidden && anchor.revisionId === state.revision?.id) restoreZoomAnchor(anchor);
     },
     onResize:anchor => {
       if (state.pdf && !elements.reader.hidden && Math.abs(elements.viewer.clientWidth - state.viewerLayoutWidth) >= 1) {
+        fitPracticePdfForDock();
         const saved = anchor?.revisionId === state.revision?.id ? anchor
           : captureZoomAnchor(undefined, elements.viewer.getBoundingClientRect().top + 1);
         relayoutPages(saved);
@@ -5223,14 +5390,15 @@ if (tabletMode) {
   });
   let pinchOrigin = null, tabletPen = null, penSeed = null;
   const tabletTouch = createTabletTouch({viewer:elements.viewer,
-    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active && !tabletPen?.active),
+    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active && !tabletPen?.active && !tabletInk?.drawing),
     getZoom:() => state.zoom, captureAnchor:(x,y) => {
+      practicePointer = null;
       const rect = elements.pages.getBoundingClientRect();
       pinchOrigin = {x:x - rect.left, y:y - rect.top};
       clearSelection();
       return captureZoomAnchor(x,y);
     }, commitZoom:setZoom,
-    canSelect:point => Boolean(point.target.closest('.text-overlay')),
+    canSelect:point => !tabletInk?.enabled && Boolean(point.target.closest('.text-overlay')) && !practiceChoiceAtPoint(point),
     onSelectionStart:point => {
       const overlay = point.target.closest('.text-overlay');
       if (!overlay) return false;
@@ -5273,7 +5441,8 @@ if (tabletMode) {
     onPinchClear:() => {elements.pages.style.removeProperty('transform'); elements.pages.style.removeProperty('transform-origin');},
   });
   tabletPen = createTabletPen({viewer:elements.viewer,
-    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active),
+    enabled:() => Boolean(state.pdf && !elements.reader.hidden && !visualSelection.active && !tabletInk?.enabled),
+    canSelect:point => !practiceChoiceAtPoint(point),
     onSelectionStart:point => {
       const overlay = point.target.closest('.text-overlay');
       const seed = overlay && selectionPoint(point, overlay, true);
@@ -5311,6 +5480,17 @@ if (tabletMode) {
     },
     onSelectionCancel:() => {penSeed = null; state.selecting = false; clearSelection();},
   });
+  tabletInk = createTabletInk({reader:elements.reader, viewer:elements.viewer, pages:elements.pages, api,
+    getRevision:() => state.revision, getPageIndex:() => state.currentPage,
+    beforeContact:() => {
+      tabletTouch.cancel(); tabletPen.cancel();
+      clearSelection(); practicePointer = null; state.pinnedLanding = null;
+    },
+    onState:inkState => {
+      elements.reader.classList.toggle('tablet-ink-drawing', inkState.drawing);
+      tabletReaderUI.syncInk(inkState);
+    },
+  });
 }
 applyAssistantDockWidth(state.assistantDockWidth);
 renderAssistantViewportMode();
@@ -5332,6 +5512,39 @@ new ResizeObserver(() => {
     relayoutPages();
   }, 120);
 }).observe(elements.viewer);
+if (tabletMode) {
+  const notice = document.createElement('div');
+  notice.className = 'tablet-connection-notice'; notice.setAttribute('role','status'); notice.hidden = true;
+  document.body.append(notice);
+  tabletConnection = createTabletConnection({
+    local:tabletLocalMode,
+    headers:{'X-Reader-Token':launchToken,'X-Assistant-View':'current'},
+    onState:({state:connectionState,message}) => {
+      notice.hidden = connectionState === 'connected';
+      notice.textContent = message;
+      notice.dataset.state = connectionState;
+      if (connectionState === 'unauthorized') {
+        state.eventSource?.close(); state.eventSource = null;
+        clearTimeout(state.preparationRetryTimer); state.preparationRetryTimer = 0;
+      }
+    },
+    onRecovered:() => {
+      tabletInk?.retry().catch(() => {});
+      if (state.pdf && !elements.reader.hidden) {
+        scheduleViewportUpdate();
+        for (const index of state.rendered) ensureOverlay(index);
+        startPreparation(false);
+      } else if (!elements['library-home'].hidden) loadBooks().catch(() => {});
+    },
+  });
+}
+if (tabletLocalMode) {
+  const refreshLocalAiStatus = () => {
+    refreshAssistantStatus();
+    master.refreshStatus().catch(() => {});
+  };
+  for (const event of ['reader-native-ai-settings', 'online', 'offline']) window.addEventListener(event, refreshLocalAiStatus);
+}
 loadBooks().catch(() => announce("书库加载失败，请刷新后重试。", true));
 
 let readingTargets = [], readingOwner = null, readingTimer, readingBusy = false;

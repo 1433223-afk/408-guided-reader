@@ -100,14 +100,16 @@ export function createReadingDisplay({reader, zoomButton, applyFit}) {
   return {close};
 }
 
-export function createPortraitLayout({reader, openDirectory, closeDirectory, onChange, available}) {
+export function createPortraitLayout({reader, openDirectory, closeDirectory, onChange, available, automatic = false, hover = true}) {
   const toggle = document.getElementById('reading-portrait');
   const edge = document.getElementById('portrait-directory-edge');
   const pin = document.getElementById('portrait-directory-pin');
   const panel = document.getElementById('outline-panel');
   const key = 'guided-reader-portrait';
   let opening, closing, hovered = false, keyboard = false;
-  try {toggle.checked = localStorage.getItem(key) === '1';} catch (_) { /* optional preference */ }
+  if (!automatic) {
+    try {toggle.checked = localStorage.getItem(key) === '1';} catch (_) { /* optional preference */ }
+  }
   const clear = () => {clearTimeout(opening); clearTimeout(closing);};
   const sync = () => {edge.hidden = pin.hidden = !toggle.checked;};
   function unpin() {
@@ -116,6 +118,7 @@ export function createPortraitLayout({reader, openDirectory, closeDirectory, onC
     pin.textContent = '固定'; pin.setAttribute('aria-pressed','false');
   }
   function leave() {
+    if (!hover) return;
     clear();
     closing = setTimeout(() => {
       if (toggle.checked && !hovered && !reader.classList.contains('portrait-directory-pinned')
@@ -123,12 +126,15 @@ export function createPortraitLayout({reader, openDirectory, closeDirectory, onC
     }, 400);
   }
   function enter() {
+    if (!hover) return;
     clear(); hovered = true;
     opening = setTimeout(() => {if (toggle.checked && available()) openDirectory();}, 180);
   }
   toggle.addEventListener('change', () => {
     clear(); onChange(toggle.checked); unpin(); sync();
-    try {localStorage.setItem(key,toggle.checked ? '1' : '0');} catch (_) { /* optional preference */ }
+    if (!automatic) {
+      try {localStorage.setItem(key,toggle.checked ? '1' : '0');} catch (_) { /* optional preference */ }
+    }
   });
   edge.addEventListener('pointerenter', enter);
   edge.addEventListener('pointerleave', () => {hovered = false; leave();});
@@ -148,5 +154,8 @@ export function createPortraitLayout({reader, openDirectory, closeDirectory, onC
     if (!pinned && !hovered) leave();
   });
   sync();
-  return {enabled:() => toggle.checked, directoryClosed:unpin};
+  return {enabled:() => toggle.checked, directoryClosed:unpin, setEnabled(value) {
+    if (toggle.checked === value) return;
+    clear(); unpin(); toggle.checked = value; onChange(value); sync();
+  }};
 }

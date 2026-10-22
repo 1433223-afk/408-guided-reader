@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Fixed endpoint QA only. This source set is absent from release builds. -->
+    <instrumentation
+        android:name="com.guidedreader.tablet.debug.ProviderTlsCheck"
+        android:targetPackage="com.guidedreader.tablet"
+        android:functionalTest="true"
+        android:handleProfiling="false" />
+</manifest>

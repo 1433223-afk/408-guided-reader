@@ -49,6 +49,11 @@ export function createTabletTouch({viewer, enabled = () => true, getZoom, captur
 
   function start(event) {
     if (!enabled()) return;
+    // A zoom can replace the original OCR target after the first finger lifts.
+    // Android then dispatches the last touchend to that detached target, so it
+    // never reaches this viewer. A new touchstart containing exactly one finger
+    // proves the previous stream has ended; an added finger would make >= 2.
+    if (blocked && event.touches.length === 1) blocked = false;
     if (event.touches.length > 2) {cancel(); blocked = true; suppress(event); return;}
     if (blocked) {suppress(event); return;}
     if (event.touches.length === 2) {startPinch(event); return;}

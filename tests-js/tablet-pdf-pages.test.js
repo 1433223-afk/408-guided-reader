@@ -82,6 +82,57 @@ test('headers resolve the real viewport before the image body, then paint with t
   assert.equal(canvasContext.canvas.dataset.readerRenderer, 'page-image');
 });
 
+test('a cold tablet page paints its original-source preview before full detail on the same canvas', async t => {
+  const fullBody = deferred(), requests = [], closed = [];
+  install(t, {fetch: async url => {
+    const width = Number(new URL(url, 'http://reader.invalid').searchParams.get('width'));
+    requests.push(width);
+    return response({width, body: width === 1024 ? fullBody.promise : blob(width)});
+  }, createImageBitmap: bitmapDecoder(closed)});
+  const document = create({getWidth: () => 1024});
+  const page = await document.getPage(1, {preview: true}), canvasContext = context();
+  let previews = 0;
+  const pending = page.render({canvasContext, viewport: page.getViewport({scale: 1024 / 200}),
+    onPreview() {previews += 1; assert.equal(canvasContext.canvas.dataset.readerImageWidth, '512');}}).promise;
+  await tick();
+  assert.equal(previews, 1);
+  assert.equal(canvasContext.canvas.dataset.readerPreview, 'true');
+  assert.equal(canvasContext.calls.filter(row => row[0] === 'draw').length, 1);
+  assert.deepEqual(requests, [512, 1024]);
+  fullBody.resolve(blob(1024));
+  await pending;
+  assert.equal(canvasContext.canvas.dataset.readerImageWidth, '1024', 'Full detail is mandatory even after a usable first paint');
+  assert.equal(canvasContext.canvas.dataset.readerPreview, undefined);
+  assert.equal(canvasContext.calls.filter(row => row[0] === 'draw').length, 2);
+  assert.equal(closed.length, 2);
+  const cachedPage = await document.getPage(1, {preview: true});
+  const cachedCanvas = context();
+  await cachedPage.render({canvasContext: cachedCanvas, viewport: cachedPage.getViewport({scale: 1024 / 200}),
+    onPreview() {previews += 1;}}).promise;
+  assert.deepEqual(requests, [512, 1024], 'An already cached full page bypasses the thumbnail request');
+  assert.equal(previews, 1);
+});
+
+test('cancelling during a cold preview aborts the pending full image without painting stale detail', async t => {
+  const fullBody = deferred(), requests = [];
+  install(t, {fetch: async (url, options) => {
+    const width = Number(new URL(url, 'http://reader.invalid').searchParams.get('width'));
+    requests.push({width, signal: options.signal});
+    return response({width, body: width === 1024 ? fullBody.promise : blob(width)});
+  }, createImageBitmap: bitmapDecoder()});
+  const document = create({getWidth: () => 1024});
+  const page = await document.getPage(1, {preview: true}), canvasContext = context();
+  const pending = page.render({canvasContext, viewport: page.getViewport({scale: 1024 / 200})}).promise;
+  await tick();
+  assert.equal(canvasContext.calls.filter(row => row[0] === 'draw').length, 1);
+  document.cancelPage(1);
+  await assert.rejects(pending, isCancelled);
+  assert.equal(requests.every(row => row.signal.aborted), true);
+  fullBody.resolve(blob(1024));
+  await tick();
+  assert.equal(canvasContext.calls.filter(row => row[0] === 'draw').length, 1);
+});
+
 test('completed blobs and exact geometry survive document destruction, keyed by source/page/current pixel width', async t => {
   let width = 400;
   const requests = [], closed = [];
@@ -99,6 +150,50 @@ test('completed blobs and exact geometry survive document destruction, keyed by 
   await paint(create({revision: {...revision, blob_sha256: 'b'.repeat(64)}, getWidth: () => width}));
   assert.equal(requests.length, 3, 'another source cannot reuse the image');
   assert.equal(closed.length, 4);
+});
+
+test('zooming out reuses the closest larger original image but zooming in never uses fewer source pixels', async t => {
+  let width = 800;
+  const requests = [];
+  install(t, {fetch: async url => {requests.push(url); return response({width});}, createImageBitmap: bitmapDecoder()});
+  const document = create({getWidth: () => width});
+  await paint(document);
+  width = 300; // More than a 2x decode penalty: fetch the right-sized original.
+  await paint(document);
+  width = 600;
+  const smaller = await paint(document);
+  assert.equal(requests.length, 2);
+  assert.equal(smaller.canvas.dataset.readerImageWidth, '800');
+  width = 900;
+  await paint(document);
+  assert.equal(requests.length, 3, 'A smaller cached PNG must never be the final zoomed-in image');
+  width = 700;
+  const closest = await paint(document);
+  assert.equal(requests.length, 3);
+  assert.equal(closest.canvas.dataset.readerImageWidth, '800', 'Avoid decoding the larger 900px image unnecessarily');
+  await paint(document, 2);
+  assert.equal(requests.length, 4, 'Neighbouring pages cannot reuse the source pixels');
+});
+
+test('a completed body remains reusable when zoom cancels only its pending decode', async t => {
+  const pending = deferred();
+  let requests = 0, decodes = 0;
+  install(t, {fetch: async () => {requests += 1; return response();}, createImageBitmap: body => {
+    decodes += 1;
+    return decodes === 1 ? pending.promise : bitmapDecoder()(body);
+  }});
+  const document = create(), page = await document.getPage(1), canvasContext = context();
+  const render = page.render({canvasContext, viewport: page.getViewport({scale: 2})});
+  await tick();
+  render.cancel();
+  await assert.rejects(render.promise, isCancelled);
+  await paint(document);
+  assert.equal(requests, 1, 'The complete source image must not be requested twice');
+  let released = 0;
+  pending.resolve({width: 400, height: 800, close() {released += 1;}});
+  await tick();
+  assert.equal(released, 1);
+  assert.equal(canvasContext.calls.length, 0, 'Cancelled decode never paints the old target');
 });
 
 test('cancelPage aborts an awaited response header without loading fallback', async t => {
@@ -166,29 +261,56 @@ test('cancelAll covers multiple header requests and destroy is idempotent', asyn
   document.destroy();
 });
 
-for (const status of [401, 403, 404, 409]) test(`HTTP ${status} never enters fallback`, async t => {
+for (const status of [401, 403, 404, 409, 500, 502, 503, 504]) test(`HTTP ${status} never enters fallback`, async t => {
   let fallbacks = 0;
   install(t, {fetch: async () => response({status})});
   await assert.rejects(create({loadFallback: () => {fallbacks += 1;}}).getPage(1), error => error.status === status);
   assert.equal(fallbacks, 0);
 });
 
-test('unsupported/server/network failures share one lazy PDF.js document and proxy the requested page', async t => {
-  let requests = 0, fallbacks = 0;
+test('unsupported page images share one lazy PDF.js document and proxy the requested page', async t => {
+  let fallbacks = 0;
   const pages = [], renders = [];
   const native = {numPages: 3, async getPage(number) {pages.push(number); return {
     getViewport({scale}) {return {width: 200 * scale, height: 400 * scale, native: true};},
     render(options) {renders.push(options); return {promise: Promise.resolve(), cancel() {}};}};}};
-  install(t, {fetch: async () => {
-    requests += 1;
-    if (requests === 3) throw new TypeError('network unavailable');
-    return response({status: requests === 1 ? 422 : 503});
-  }});
+  install(t, {fetch: async () => response({status: 422})});
   const document = create({loadFallback: async () => {fallbacks += 1; return native;}});
   for (const number of [1, 2, 3]) await paint(document, number);
   assert.equal(fallbacks, 1);
   assert.deepEqual(pages, [1, 2, 3]);
   assert.equal(renders.every(options => options.viewport.native), true);
+});
+
+test('network and interrupted image bodies stay retryable without loading the full PDF', async t => {
+  let fallbacks = 0, requests = 0;
+  install(t, {fetch: async () => {
+    requests += 1;
+    if (requests === 1) throw new TypeError('network unavailable');
+    if (requests === 2) return response({body: Promise.reject(new TypeError('body interrupted'))});
+    return response();
+  }, createImageBitmap: bitmapDecoder()});
+  const document = create({loadFallback: () => {fallbacks += 1;}});
+  await assert.rejects(document.getPage(1), /network unavailable/);
+  await assert.rejects(paint(document), /body interrupted/);
+  await paint(document);
+  assert.equal(requests, 3);
+  assert.equal(fallbacks, 0);
+});
+
+test('a failed lazy PDF.js connection can be retried without refreshing the reader', async t => {
+  let fallbacks = 0;
+  install(t, {fetch: async () => response({status: 422})});
+  const native = {numPages: 3, getPage: async () => ({getViewport: ({scale}) => ({width: 200 * scale, height: 400 * scale}),
+    render: () => ({promise: Promise.resolve(), cancel() {}})})};
+  const document = create({loadFallback: async () => {
+    fallbacks += 1;
+    if (fallbacks === 1) throw new TypeError('temporary PDF connection failure');
+    return native;
+  }});
+  await assert.rejects(document.getPage(1), /temporary PDF connection failure/);
+  await paint(document, 2);
+  assert.equal(fallbacks, 2);
 });
 
 test('decode failure rebuilds a native viewport on the same canvas and remains cancellable', async t => {
@@ -225,7 +347,7 @@ test('different fallback page geometry is rejected instead of stretching it unde
 
 test('a mismatching fallback page count fails once without retrying the loader', async t => {
   let fallbacks = 0;
-  install(t, {fetch: async () => response({status: 500})});
+  install(t, {fetch: async () => response({status: 422})});
   const document = create({loadFallback: async () => {fallbacks += 1; return {numPages: 2};}});
   await assert.rejects(document.getPage(1), error => error.name === 'TabletPdfMetadataError');
   await assert.rejects(document.getPage(2), error => error.name === 'TabletPdfMetadataError');

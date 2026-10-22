@@ -480,7 +480,7 @@ export function createScreens({api, home, memory, read, remove, revision, announ
 }
 
 // Current-chapter preparation only; the full map remains owned by Book Overview.
-export function createChapterEntry({api, revision, openOverview, published, goToPage, closePeers = () => {}, outlineSnapshot = () => []}) {
+export function createChapterEntry({api, revision, openOverview, published, goToPage, closePeers = () => {}, outlineSnapshot = () => [], compact = false}) {
   const entry = document.createElement('button');
   entry.id = 'reader-kp-action'; entry.type = 'button'; entry.hidden = true;
   document.getElementById('outline-toggle').after(entry);
@@ -562,6 +562,10 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
       ? '上次准备因小节容量限制失败；调整容量后可点击重试本章，不会生成全书知识点。' : null;
     entry.title = error || failureReason || (snapshot?.status === 'READY' ? '查看本章知识点与学习状态'
       : `${snapshot?.chapter_title || '当前章'}：${entry.textContent}，PDF 阅读不受影响`);
+    if (compact) {
+      entry.setAttribute('aria-label', `知识点：${entry.textContent}`);
+      entry.textContent = '知识点';
+    }
   }
   async function load() {
     if (loading) return;
@@ -570,9 +574,13 @@ export function createChapterEntry({api, revision, openOverview, published, goTo
     try {
       const value = await api(base());
       if (stamp !== epoch) return;
-      const newlyReady = snapshot?.status !== 'READY' && value.status === 'READY';
+      const initial = !snapshot;
+      const newlyReady = value.status === 'READY' && (snapshot?.status !== 'READY'
+        || value.structure_version !== snapshot?.structure_version);
       snapshot = value; error = null; render();
-      if (newlyReady) published();
+      if (newlyReady) published({initial, chapterId:chapter,
+        knowledgePointIds:value.knowledge_points.map(point => point.knowledge_point_id),
+        structureVersion:value.structure_version});
       timer = setTimeout(load, value.status === 'PREPARING' || value.regeneration_state === 'RUNNING' ? 700 : 5000);
     } catch(e) { if (stamp === epoch) {error = '知识点状态读取失败，正在自动重试'; render(); timer = setTimeout(load, 3000);} }
     finally { if (stamp === epoch) loading = false; }
@@ -613,7 +621,7 @@ export function createComposerChoice(select, {id, label, names}) {
   function sync() {
     trigger.textContent = names[select.value] || label;
     trigger.disabled = false; trigger.title = select.title;
-    list.replaceChildren(...[...select.options].map(option => {
+    list.replaceChildren(...[...select.options].filter(option => !option.hidden).map(option => {
       const item = node('button', option.textContent); item.type = 'button'; item.tabIndex = -1;
       item.setAttribute('role','option'); item.setAttribute('aria-selected',String(option.selected));
       item.disabled = option.disabled || select.disabled; item.dataset.value = option.value;

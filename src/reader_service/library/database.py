@@ -848,7 +848,93 @@ CREATE TABLE practice_section_positions (
 );
 """
 
-MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA), (19, MASTER_REASONING_SCHEMA), (20, PRACTICE_PROTOTYPE_SCHEMA), (21, PRACTICE_REVIEW_SCHEMA), (22, PRACTICE_SECOND_SECTION_SCHEMA), (23, PRACTICE_CROSS_PAGE_SCHEMA), (24, PRACTICE_AUTOMATIC_CATALOG_SCHEMA), (25, PRACTICE_KNOWLEDGE_SCHEMA), (26, PRACTICE_POSITION_SCHEMA))
+INK_SCHEMA = """
+CREATE TABLE ink_strokes (
+    id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    pdf_page_index INTEGER NOT NULL CHECK (pdf_page_index >= 0),
+    coordinate_version INTEGER NOT NULL CHECK (coordinate_version = 1),
+    color TEXT NOT NULL CHECK (color IN ('#252923', '#ad3939', '#3d658f')),
+    width REAL NOT NULL CHECK (width BETWEEN 0.0003 AND 0.02),
+    points_json TEXT NOT NULL CHECK (length(points_json) < 65536),
+    deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (book_source_revision_id, id)
+);
+CREATE INDEX ix_ink_strokes_revision_page
+    ON ink_strokes(book_source_revision_id, pdf_page_index, deleted);
+
+CREATE TABLE ink_operations (
+    operation_id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    stroke_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('put', 'delete', 'restore')),
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (book_source_revision_id, stroke_id)
+        REFERENCES ink_strokes(book_source_revision_id, id) ON DELETE CASCADE
+);
+"""
+
+INK_PALETTE_SCHEMA = """
+-- Copy both tables before dropping either original. The new ledger references
+-- only the new strokes, so removing old strokes cannot cascade into that copy.
+-- Database.initialize wraps this entire script and its marker in one transaction.
+CREATE TABLE ink_strokes_v28 (
+    id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    pdf_page_index INTEGER NOT NULL CHECK (pdf_page_index >= 0),
+    coordinate_version INTEGER NOT NULL CHECK (coordinate_version = 1),
+    color TEXT NOT NULL CHECK (color IN (
+        '#252923', '#777b75', '#ad3939', '#b66a35',
+        '#9c7b27', '#477451', '#3d658f', '#785c91'
+    )),
+    width REAL NOT NULL CHECK (width BETWEEN 0.0003 AND 0.02),
+    points_json TEXT NOT NULL CHECK (length(points_json) < 65536),
+    deleted INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (book_source_revision_id, id)
+);
+CREATE TABLE ink_operations_v28 (
+    operation_id TEXT PRIMARY KEY,
+    book_source_revision_id TEXT NOT NULL REFERENCES book_source_revisions(id) ON DELETE CASCADE,
+    stroke_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('put', 'delete', 'restore')),
+    payload_sha256 TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (book_source_revision_id, stroke_id)
+        REFERENCES ink_strokes_v28(book_source_revision_id, id) ON DELETE CASCADE
+);
+INSERT INTO ink_strokes_v28(
+    rowid, id, book_source_revision_id, pdf_page_index, coordinate_version,
+    color, width, points_json, deleted, created_at, updated_at
+) SELECT rowid, id, book_source_revision_id, pdf_page_index, coordinate_version,
+         color, width, points_json, deleted, created_at, updated_at
+  FROM ink_strokes;
+INSERT INTO ink_operations_v28(
+    rowid, operation_id, book_source_revision_id, stroke_id, action, payload_sha256, created_at
+) SELECT rowid, operation_id, book_source_revision_id, stroke_id, action, payload_sha256, created_at
+  FROM ink_operations;
+DROP TABLE ink_operations;
+DROP TABLE ink_strokes;
+ALTER TABLE ink_strokes_v28 RENAME TO ink_strokes;
+ALTER TABLE ink_operations_v28 RENAME TO ink_operations;
+CREATE INDEX ix_ink_strokes_revision_page
+    ON ink_strokes(book_source_revision_id, pdf_page_index, deleted);
+"""
+
+# Reuse the tested copy/rebuild sequence without changing migration 28 for
+# databases that have already applied it. Existing colors retain their meaning.
+INK_BRIGHT_PALETTE_SCHEMA = INK_PALETTE_SCHEMA.replace("_v28", "_v29").replace(
+    "'#9c7b27', '#477451', '#3d658f', '#785c91'",
+    "'#9c7b27', '#477451', '#3d658f', '#785c91',\n"
+    "        '#8b9098', '#f04452', '#f58220', '#e4b400',\n"
+    "        '#24aa62', '#2f80ed', '#a259e6'",
+)
+
+MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEACHING_SCHEMA), (15, INLINE_TEACHING_SCHEMA), (16, MEMORY_SCHEMA), (17, READING_SCHEMA), (18, STABLE_TOPIC_SCHEMA), (19, MASTER_REASONING_SCHEMA), (20, PRACTICE_PROTOTYPE_SCHEMA), (21, PRACTICE_REVIEW_SCHEMA), (22, PRACTICE_SECOND_SECTION_SCHEMA), (23, PRACTICE_CROSS_PAGE_SCHEMA), (24, PRACTICE_AUTOMATIC_CATALOG_SCHEMA), (25, PRACTICE_KNOWLEDGE_SCHEMA), (26, PRACTICE_POSITION_SCHEMA), (27, INK_SCHEMA), (28, INK_PALETTE_SCHEMA), (29, INK_BRIGHT_PALETTE_SCHEMA))
 
 
 class Database:

@@ -3,6 +3,15 @@ import test from 'node:test';
 import fs from 'node:fs';
 import { chromium } from 'playwright-core';
 
+async function loadInlineModule(page) {
+  for (const name of ['inline-ui.js', 'id.js', 'inline-placement.js']) {
+    const source = fs.readFileSync(new URL(`../src/reader_service/static/${name}`, import.meta.url), 'utf8');
+    await page.route(`http://127.0.0.1/${name}`, route => route.fulfill({contentType:'text/javascript',body:source}));
+  }
+  await page.addScriptTag({type:'module',content:"import {createInlineUI} from '/inline-ui.js'; window.createInlineUI=createInlineUI;"});
+  await page.waitForFunction(() => typeof window.createInlineUI === 'function');
+}
+
 test('current-Section Inline entry guards async clicks and keeps local visibility independent', async () => {
   const browser = await chromium.launch({ executablePath: process.env.READER_CHROMIUM || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', headless: true });
   try {
@@ -10,9 +19,7 @@ test('current-Section Inline entry guards async clicks and keeps local visibilit
     await page.route('http://127.0.0.1/inline-test', route=>route.fulfill({contentType:'text/html',body:'<!doctype html>'}));
     await page.goto('http://127.0.0.1/inline-test');
     await page.setContent('<div id="reader"><button id="guide-reopen"></button><div id="viewer"></div></div>');
-    const source = fs.readFileSync(new URL('../src/reader_service/static/inline-ui.js', import.meta.url), 'utf8')
-      .replace(/^import .*;\r?\n/gm, '').replace('export function', 'function');
-    await page.addScriptTag({content: source + '\nwindow.createInlineUI=createInlineUI;'});
+    await loadInlineModule(page);
     await page.evaluate(() => {
       window.anchor = {pageIndex: 0, normalizedY: .5};
       window.posts = []; window.snapshots = {a: {task:null,published:null}, b: {task:null,published:null}};
@@ -71,7 +78,7 @@ test('failed Inline entry retries the owned stage or starts a new terminal candi
       const page = await browser.newPage();
       await page.route('http://127.0.0.1/inline-test', route=>route.fulfill({contentType:'text/html',body:'<div id="reader"><button id="guide-reopen"></button><div id="viewer"></div></div>'}));
       await page.goto('http://127.0.0.1/inline-test');
-      await page.addScriptTag({content: fs.readFileSync(new URL('../src/reader_service/static/inline-ui.js', import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export function','function')});
+      await loadInlineModule(page);
       await page.evaluate(terminal=>{
         window.posts=[];
         const ui=createInlineUI({state:{revision:{id:'r'},rendered:new Set(),outlineNodes:[{outline_node_id:'s',title:'当前节',kind:'SECTION',resolution_state:'RESOLVED',start_page:0,end_page:0,start_y:0,end_y:1}]},
@@ -89,5 +96,82 @@ test('failed Inline entry retries the owned stage or starts a new terminal candi
       if(terminal) assert.ok(post.body.intent_id); else assert.deepEqual(post.body,{asset_id:'owned-failure'});
       await page.close();
     }
+  } finally {await browser.close();}
+});
+
+test('tablet Inline without a usable marker opens its status card and requires explicit regeneration', async () => {
+  const browser = await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',headless:true});
+  try {
+    for (const noIntervention of [true,false]) {
+      const page = await browser.newPage();
+      await page.route('http://127.0.0.1/inline-test', route=>route.fulfill({contentType:'text/html',body:
+        '<div id="reader"><button id="guide-reopen"></button><div id="viewer"><div class="page" data-index="0" style="position:relative;width:600px;height:900px"><div class="text-overlay"></div></div></div></div>'}));
+      await page.goto('http://127.0.0.1/inline-test');
+      await loadInlineModule(page);
+      await page.evaluate(noIntervention => {
+        window.posts = [];
+        const published = {id:'published-s',no_intervention:noIntervention,
+          content:{items:noIntervention ? [] : [{id:'item',target_id:'source',kind:'bridge',text:'已有教学'}]},
+          sources:{source:{available:false,pdf_page_index:0,quad:[[.1,.2],[.8,.2],[.8,.22],[.1,.22]]}}};
+        window.ui = createInlineUI({card:true,
+          state:{revision:{id:'r'},rendered:new Set([0]),outlineNodes:[{outline_node_id:'s',title:'当前节',kind:'SECTION',resolution_state:'RESOLVED',start_page:0,end_page:0,start_y:0,end_y:1}]},
+          readingAnchor:()=>({pageIndex:0,normalizedY:.5}),layout:f=>f(),hideContextMenu:()=>{},
+          api:async(url,options={})=>{
+            if (options.method) window.posts.push({url,body:JSON.parse(options.body)});
+            return {task:{id:'candidate',state:options.method?'DRAFT':'PUBLISHED',stage:'GENERATE'},published};
+          }});
+        window.ui.sync();
+      }, noIntervention);
+      await page.locator('#inline-open').click();
+      await page.locator('#inline-panel').waitFor({state:'visible'});
+      assert.equal(await page.locator('.inline-marker').count(),0);
+      assert.deepEqual(await page.evaluate(()=>window.posts),[]);
+      assert.equal(await page.locator('#inline-more').isVisible(),false);
+      assert.equal(await page.locator('#inline-panel #inline-generate').isVisible(),true);
+      assert.match(await page.locator('#inline-content').textContent(),noIntervention ? /本节暂不需要额外提示/ : /当前页没有可展示的教学提示/);
+      await page.locator('#inline-generate').click();
+      await page.waitForFunction(()=>window.posts.length===1);
+      const [post] = await page.evaluate(()=>window.posts);
+      assert.equal(post.url,'/api/revisions/r/sections/s/inline-teaching/regenerate');
+      assert.ok(post.body.intent_id);
+      assert.equal(await page.locator('#inline-panel').evaluate(panel=>panel.contains(document.activeElement)),true);
+      await page.close();
+    }
+  } finally {await browser.close();}
+});
+
+test('tablet Inline card regenerates its selected section after the reading anchor moves to another section on the same page', async () => {
+  const browser = await chromium.launch({executablePath:process.env.READER_CHROMIUM || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',headless:true});
+  try {
+    const page = await browser.newPage();
+    await page.route('http://127.0.0.1/inline-test', route=>route.fulfill({contentType:'text/html',body:
+      '<div id="reader"><button id="guide-reopen"></button><div id="viewer" style="width:700px;height:950px"><div class="page" data-index="0" style="position:relative;width:600px;height:900px"><div class="text-overlay"></div></div></div></div>'}));
+    await page.goto('http://127.0.0.1/inline-test');
+    await loadInlineModule(page);
+    await page.evaluate(() => {
+      window.posts = []; window.anchor = {pageIndex:0,normalizedY:.75};
+      for (const id of ['a','b']) localStorage.setItem(`inline-teaching:r:${id}`,'on');
+      window.ui = createInlineUI({card:true,
+        state:{revision:{id:'r'},rendered:new Set([0]),outlineNodes:['a','b'].map((id,i)=>({outline_node_id:id,title:`节 ${id}`,kind:'SECTION',resolution_state:'RESOLVED',start_page:0,end_page:0,start_y:i*.5,end_y:(i+1)*.5}))},
+        readingAnchor:()=>window.anchor,layout:f=>f(),hideContextMenu:()=>{},
+        api:async(url,options={})=>{
+          const id = url.split('/sections/')[1].split('/')[0], y = id==='a' ? .2 : .7;
+          if (options.method) window.posts.push({id,url});
+          return {task:{id:`candidate-${id}`,state:options.method?'DRAFT':'PUBLISHED',stage:'GENERATE'},
+            published:{id:`published-${id}`,content:{items:[{id:`item-${id}`,target_id:'source',kind:'bridge',text:`教学 ${id}`}]},
+              sources:{source:{available:true,pdf_page_index:0,quad:[[.1,y],[.8,y],[.8,y+.02],[.1,y+.02]]}}}};
+        }});
+      window.ui.sync();
+    });
+    await page.locator('.inline-marker[data-section-id="b"]').click();
+    await page.locator('#inline-panel').waitFor({state:'visible'});
+    assert.match(await page.locator('#inline-content').textContent(),/教学 b/);
+    await page.evaluate(()=>{window.anchor.normalizedY=.25;document.querySelector('#viewer').dispatchEvent(new Event('scroll'));});
+    assert.equal(await page.locator('#inline-open').getAttribute('data-section-id'),'a');
+    assert.match(await page.locator('#inline-content').textContent(),/教学 b/);
+    await page.locator('#inline-generate').click();
+    await page.waitForFunction(()=>window.posts.length===1);
+    assert.deepEqual(await page.evaluate(()=>window.posts),[{id:'b',url:'/api/revisions/r/sections/b/inline-teaching/regenerate'}]);
+    assert.equal(await page.locator('#inline-panel').evaluate(panel=>panel.contains(document.activeElement)),true);
   } finally {await browser.close();}
 });

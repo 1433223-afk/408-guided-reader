@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>触控笔试写 · Guided Reader</title>
+  <link rel="stylesheet" href="/tablet-pen-check.css">
+  <script defer src="/tablet-pen-check.js"></script>
+</head>
+<body>
+  <header class="page-header">
+    <a href="/?tablet=1" class="back-link">← Reader</a>
+    <h1>触控笔试写</h1>
+    <span class="connection-state" id="connection-state">检测中</span>
+  </header>
+  <main>
+    <p class="intro">用笔写几行，试试轻重、倾斜和侧键。</p>
+    <div class="check-layout">
+      <section class="writing-area" aria-labelledby="board-title">
+        <div class="board-heading">
+          <h2 id="board-title">试写纸</h2>
+          <output id="pen-state" aria-live="polite">等待触控笔</output>
+        </div>
+        <div class="writing-board" id="writing-board">
+          <canvas id="writing-canvas" aria-label="触控笔试写区。笔可写字，手指移动纸张，双指缩放。"></canvas>
+          <div class="board-hint" id="board-hint" aria-hidden="true">在这里试写</div>
+        </div>
+        <p class="board-help">仅笔落墨 · 手指移动 · 双指缩放 <span id="paper-scale">100%</span></p>
+      </section>
+      <aside class="readings" aria-labelledby="readings-title">
+        <h2 id="readings-title">收到的输入</h2>
+        <dl>
+          <div><dt>笔识别</dt><dd id="reading-pen">尚未收到</dd></div>
+          <div><dt>压力</dt><dd id="reading-pressure">尚未收到</dd></div>
+          <div><dt>倾斜</dt><dd id="reading-tilt">尚未收到</dd></div>
+          <div><dt>侧键 / 橡皮</dt><dd id="reading-buttons">尚未收到</dd></div>
+          <div><dt>悬停</dt><dd id="reading-hover">尚未收到</dd></div>
+          <div><dt>输入中断</dt><dd id="reading-cancel">0 次</dd></div>
+          <div><dt>手指触点</dt><dd id="reading-touch">0 次</dd></div>
+        </dl>
+        <p class="check-help">再试一次：手掌先落在纸上，再用笔写字；最后用两根手指缩放纸张。</p>
+        <p class="check-note">数值不变不代表笔不支持，只说明本次尚未收到变化。</p>
+        <details>
+          <summary>采样能力</summary>
+          <p id="sampling-detail">检测中</p>
+        </details>
+        <div class="actions">
+          <button type="button" id="restart-check">重新测试</button>
+          <button type="button" id="download-report" class="primary-action">下载结果</button>
+        </div>
+        <p class="action-status" id="action-status" role="status"></p>
+      </aside>
+    </div>
+    <p class="privacy-note">这是独立能力测试，不读取教材，不写入书库。试写仅留在本页；下载文件只包含浏览器版本、能力与输入统计。</p>
+  </main>
+</body>
+</html>

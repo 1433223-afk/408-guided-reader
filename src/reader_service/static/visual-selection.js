@@ -5,7 +5,7 @@ export function normalizedRegion(start, end) {
     clamp(Math.max(start.x, end.x)), clamp(Math.max(start.y, end.y))];
 }
 
-export function createVisualSelection({viewer, toggle, hint, enabled, onSelect, onEnter}) {
+export function createVisualSelection({viewer, toggle, hint, enabled, onSelect, onEnter, touchActions = false}) {
   let active = false, drag = null, selected = null;
   const confirmButton = hint.querySelector('[data-region-confirm]');
   const cancelButton = hint.querySelector('[data-region-cancel]');
@@ -139,8 +139,38 @@ export function createVisualSelection({viewer, toggle, hint, enabled, onSelect, 
     setActive(true);
     viewer.focus({preventScroll: true});
   });
-  confirmButton.addEventListener('click', confirm);
-  cancelButton.addEventListener('click', () => { cancel(); viewer.focus({preventScroll: true}); });
+  function bindAction(button, action) {
+    let contact = null, handledTouch = false;
+    button.addEventListener('click', event => {
+      if (handledTouch && event.detail !== 0) {handledTouch = false; return;}
+      action();
+    });
+    if (!touchActions) return;
+    // Chrome can suppress the first compatibility click just after a touch
+    // drag. Complete a deliberate button tap from its pointer stream instead.
+    button.addEventListener('pointerdown', event => {
+      handledTouch = false;
+      if (event.pointerType !== 'touch' || event.button !== 0 || button.disabled) return;
+      contact = {id:event.pointerId, x:event.clientX, y:event.clientY, moved:false};
+    });
+    button.addEventListener('pointermove', event => {
+      if (contact?.id === event.pointerId && Math.hypot(event.clientX - contact.x, event.clientY - contact.y) > 10) contact.moved = true;
+    });
+    button.addEventListener('pointercancel', () => {contact = null; handledTouch = true;});
+    button.addEventListener('lostpointercapture', () => {contact = null;});
+    button.addEventListener('pointerup', event => {
+      const start = contact;
+      contact = null;
+      if (!start || start.id !== event.pointerId) return;
+      handledTouch = true;
+      if (event.cancelable) event.preventDefault();
+      const box = button.getBoundingClientRect();
+      if (!button.disabled && !start.moved && Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 10
+          && event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom) action();
+    });
+  }
+  bindAction(confirmButton, confirm);
+  bindAction(cancelButton, () => { cancel(); viewer.focus({preventScroll: true}); });
   viewer.addEventListener('pointerdown', event => {
     if (!active || event.button !== 0) return;
     const page = event.target.closest('.page');

@@ -8,7 +8,7 @@ const app = readFileSync(new URL('../src/reader_service/static/app.js', import.m
 
 // Minimal event tree with capture/bubble ordering; no layout guesses are made by
 // the DOM fake. Canvas and page-footer dimensions are deliberately different.
-function fixture() {
+function fixture({touchActions = false} = {}) {
   const selected = [], confirmationStates = [], resizeObservers = [];
   let enters = 0;
   const enabled = {value: true};
@@ -93,6 +93,7 @@ function fixture() {
   const page = new Node('page'), canvas = new Node('canvas'), overlay = new Node('overlay'), footer = new Node('footer');
   const cancelButton = new Node('button'), confirmButton = new Node('button');
   cancelButton.dataset.regionCancel = ''; confirmButton.dataset.regionConfirm = '';
+  confirmButton.getBoundingClientRect = cancelButton.getBoundingClientRect = () => ({left:10,top:20,right:110,bottom:64});
   document.append(viewer); document.append(toggle); document.append(hint); hint.append(confirmButton, cancelButton);
   viewer.append(page); page.append(canvas); page.append(overlay); page.append(footer);
   page.dataset.index = '7'; page.clientHeight = 760;
@@ -107,7 +108,7 @@ function fixture() {
     ResizeObserver: class {constructor(callback) {resizeObservers.push(callback);} observe() {}},
   });
   vm.runInContext(source.replaceAll('export function ', 'function '), context);
-  const ui = context.createVisualSelection({viewer, toggle, hint, enabled: () => enabled.value,
+  const ui = context.createVisualSelection({viewer, toggle, hint, touchActions, enabled: () => enabled.value,
     onSelect: item => {
       confirmationStates.push({active: ui.active, outlines: viewer.querySelectorAll('.visual-region-outline').length,
         hintHidden: hint.hidden, captures: viewer.captures.size});
@@ -133,6 +134,40 @@ function dragTarget(f, target, from, to) {
   f.fire(f.viewer, 'pointermove', pointer(f, ...to));
   f.fire(f.viewer, 'pointerup', pointer(f, ...to));
 }
+
+test('Tablet confirmation completes from one touch tap when Chrome suppresses the compatibility click',()=>{
+  const f=fixture({touchActions:true});f.enter();draw(f);
+  const touch={pointerType:'touch',clientX:50,clientY:40,cancelable:true};
+  f.fire(f.confirmButton,'pointerdown',touch);f.fire(f.confirmButton,'pointerup',touch);
+  assert.equal(f.selected.length,1);
+  assert.equal(f.ui.active,false);
+  f.fire(f.confirmButton,'click',{detail:1,pointerType:'touch'});
+  assert.equal(f.selected.length,1,'an optional compatibility click cannot confirm twice');
+});
+
+test('sliding or cancelling a Tablet action leaves the crop pending and keyboard confirmation still works',()=>{
+  const f=fixture({touchActions:true});f.enter();draw(f);
+  const touch={pointerType:'touch',clientX:50,clientY:40,cancelable:true};
+  f.fire(f.confirmButton,'pointerdown',touch);
+  f.fire(f.confirmButton,'pointermove',{...touch,clientX:75});
+  f.fire(f.confirmButton,'pointerup',touch);
+  f.fire(f.confirmButton,'click',{detail:1});
+  assert.equal(f.selected.length,0,'moving away and back does not activate');
+  f.fire(f.confirmButton,'pointerdown',touch);f.fire(f.confirmButton,'pointercancel',touch);
+  f.fire(f.confirmButton,'pointerup',touch);f.fire(f.confirmButton,'click',{detail:1});
+  assert.equal(f.selected.length,0);
+  assert.equal(f.ui.active,true);
+  f.fire(f.confirmButton,'click',{detail:0});
+  assert.equal(f.selected.length,1,'keyboard/programmatic click remains available');
+});
+
+test('a Tablet cancel tap discards the crop without calling onSelect',()=>{
+  const f=fixture({touchActions:true});f.enter();draw(f);
+  const touch={pointerType:'touch',clientX:50,clientY:40,cancelable:true};
+  f.fire(f.cancelButton,'pointerdown',touch);f.fire(f.cancelButton,'pointerup',touch);
+  assert.equal(f.ui.active,false);assert.equal(f.selected.length,0);
+  assert.equal(f.hint.hidden,true);
+});
 function confirm(f) {f.fire(f.confirmButton, 'click');}
 function closeEnough(actual, expected) {
   assert.equal(actual.length, expected.length);

@@ -14,9 +14,8 @@ from io import BytesIO
 from pathlib import Path
 from threading import BoundedSemaphore, Lock
 
-from PIL import Image, PngImagePlugin
-
 from reader_service.pdf_limits import MAX_RENDER_PIXELS, MAX_RENDER_SIDE, validate_render_size
+from reader_service.png_page import inspect_png, with_page_metadata
 from reader_service.visual_region import PDFIUM_RENDER_LOCK
 
 
@@ -122,8 +121,10 @@ def _atomic_write(path: Path, body: bytes) -> None:
 
 
 class TabletPageImages:
-    def __init__(self, library):
+    def __init__(self, library, *, renderer=None, encoded_renderer=False):
         self.library = library
+        self._renderer = renderer
+        self._encoded_renderer = encoded_renderer
         # v1 could contain pages rendered without their widget appearances.
         self._cache_root = library.paths.resolve('tmp/tablet-page-images-v2')
         self._cache_lock = Lock()
@@ -133,7 +134,8 @@ class TabletPageImages:
         try:
             # Tablet-only startup pays the native import cost before a reader
             # opens a book. No document, bitmap, OCR or model is initialized.
-            _load_pdfium()
+            if self._renderer is None:
+                _load_pdfium()
         except Exception as exc:
             # Keep the service usable; individual image requests can still use
             # the existing fallback if this optional native engine is missing.
@@ -178,8 +180,24 @@ class TabletPageImages:
                 self._flights.pop(key, None)
 
     def _build(self, revision_id, page_index, width, page_count):
-        image, pdf_width, pdf_height = _render_page(self.library.pdf_path(revision_id), page_index, width, page_count)
+        renderer = self._renderer or _render_page
+        rendered = renderer(self.library.pdf_path(revision_id), page_index, width, page_count)
+        if self._encoded_renderer:
+            if not isinstance(rendered, PageImage):
+                raise PageImageUnavailable('本机 PDF 引擎未返回完整的页图。')
+            try:
+                actual_width, actual_height, _ = inspect_png(rendered.body)
+                _, expected_height = _render_dimensions(rendered.pdf_width, rendered.pdf_height, width)
+                if ((actual_width, actual_height) != (width, expected_height)
+                        or (rendered.width, rendered.height) != (actual_width, actual_height)):
+                    raise ValueError('Native PNG geometry mismatch')
+                body = with_page_metadata(rendered.body, rendered.pdf_width, rendered.pdf_height)
+                return replace(rendered, body=body, cache_hit=False)
+            except (ValueError, TypeError, OverflowError, MemoryError) as exc:
+                raise PageImageUnavailable('本机 PDF 页图无效，请重新打开教材。') from exc
+        image, pdf_width, pdf_height = rendered
         try:
+            from PIL import PngImagePlugin
             metadata = PngImagePlugin.PngInfo()
             metadata.add_text(_PDF_WIDTH, repr(pdf_width))
             metadata.add_text(_PDF_HEIGHT, repr(pdf_height))
@@ -204,15 +222,26 @@ class TabletPageImages:
                 if path.stat().st_size > _CACHE_MAX_BYTES:
                     return None
                 body = path.read_bytes()
-                with Image.open(BytesIO(body)) as image:
-                    if image.format != 'PNG' or image.width != width:
+                if self._encoded_renderer:
+                    actual_width, actual_height, metadata = inspect_png(body)
+                    if actual_width != width:
                         return None
-                    pdf_width = float(image.info[_PDF_WIDTH])
-                    pdf_height = float(image.info[_PDF_HEIGHT])
+                    pdf_width = float(metadata[_PDF_WIDTH])
+                    pdf_height = float(metadata[_PDF_HEIGHT])
                     _, height = _render_dimensions(pdf_width, pdf_height, width)
-                    if image.height != height:
+                    if actual_height != height:
                         return None
-                    image.verify()
+                else:
+                    from PIL import Image
+                    with Image.open(BytesIO(body)) as image:
+                        if image.format != 'PNG' or image.width != width:
+                            return None
+                        pdf_width = float(image.info[_PDF_WIDTH])
+                        pdf_height = float(image.info[_PDF_HEIGHT])
+                        _, height = _render_dimensions(pdf_width, pdf_height, width)
+                        if image.height != height:
+                            return None
+                        image.verify()
                 result = PageImage(body, pdf_width, pdf_height, width, height, True)
                 try:
                     os.utime(path, None)
