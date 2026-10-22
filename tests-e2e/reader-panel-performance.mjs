@@ -512,6 +512,12 @@ async function probe(page, name, action, expectedState = null, observationMs = 6
     };
   });
   results.push(result);
+  if (process.env.READER_PANEL_SCREENSHOTS && ['master-open', 'guide-close'].includes(name)) {
+    const directory = path.resolve(process.env.READER_PANEL_SCREENSHOTS);
+    assert.ok(directory.toLowerCase().startsWith((path.resolve(os.tmpdir()) + path.sep).toLowerCase()));
+    await mkdir(directory, {recursive:true});
+    await page.screenshot({path:path.join(directory, `${name}.jpg`)});
+  }
   if (process.env.READER_TRACE_PROBES === '1') console.log(JSON.stringify(result));
 }
 

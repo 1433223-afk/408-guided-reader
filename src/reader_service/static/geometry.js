@@ -9,6 +9,15 @@ function validateBox(mediaBox) {
   return [x0, y0, x1, y1];
 }
 
+// Visible pages always keep their full resolution; only speculative neighbours
+// consume the remaining pixel budget (independent of CSS zoom and monitor DPI).
+export function pageRenderWindow(first, last, count, pixelsPerPage, budget = 24_000_000) {
+  const spare = Math.max(0, Math.floor(budget / Math.max(1, pixelsPerPage)) - (last - first + 1));
+  const before = Math.min(2, Math.floor(spare / 2));
+  const after = Math.min(2, spare - before);
+  return {start: Math.max(0, first - before), end: Math.min(count - 1, last + after)};
+}
+
 function rotationOf(rotation) {
   const value = ((Number(rotation) % 360) + 360) % 360;
   if (![0, 90, 180, 270].includes(value)) {

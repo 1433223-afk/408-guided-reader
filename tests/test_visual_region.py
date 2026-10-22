@@ -101,6 +101,22 @@ def test_full_page_image_stays_within_outbound_budget(service):
         assert min(image.size) > 1000
 
 
+def test_repeated_crop_reuses_pixels_but_rechecks_source_and_does_not_share_mutable_metadata(service, monkeypatch):
+    import reader_service.visual_region as visual
+    revision = _quadrants(service)
+    first = render_visual_region(service, revision['id'], 0, [.1, .1, .4, .4])
+    def unexpected(*args):
+        raise AssertionError('same immutable crop should not render again')
+    monkeypatch.setattr(visual, '_render_region', unexpected)
+    first['rect'][0] = .9
+    second = render_visual_region(service, revision['id'], 0, [.1, .1, .4, .4])
+    assert second['rect'][0] == .1
+    with service.database.connect() as c:
+        c.execute("UPDATE book_source_revisions SET status='SUPERSEDED' WHERE id=?", (revision['id'],))
+    with pytest.raises(LookupError):
+        render_visual_region(service, revision['id'], 0, [.1, .1, .4, .4])
+
+
 def test_oversized_legacy_page_is_rejected_before_render(service, monkeypatch):
     import pypdfium2 as pdfium
 

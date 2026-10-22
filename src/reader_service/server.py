@@ -311,11 +311,8 @@ def handler_factory(
                     result = outline.reading_context(context_match[1], page, y) if outline else {'chapter': None, 'section': None, 'subsection': None}
                     result['learning_counts'] = None
                     if learning and result.get('chapter'):
-                        points = learning.repository.entries(context_match[1])['points']
-                        chapter_points = [p for p in points if p['chapter_outline_node_id'] == result['chapter']['outline_node_id']]
-                        if chapter_points:
-                            result['learning_counts'] = {state: sum(p['status'] == state for p in chapter_points)
-                                                         for state in ('UNDERSTOOD', 'NOT_FULLY_CLEAR', 'UNCONFIRMED')}
+                        result['learning_counts'] = learning.repository.chapter_counts(
+                            context_match[1], result['chapter']['outline_node_id'])
 
                 except (LookupError, ValueError) as exc:
                     self._json(HTTPStatus.BAD_REQUEST, {'error': str(exc)})
@@ -1578,7 +1575,7 @@ def handler_factory(
         def _static(self, path: str, directory: Path) -> None:
             filename = {"/": "index.html", "/index.html": "index.html"}.get(path)
             if filename is None and path in (
-                "/screens.js", "/screens.css", "/app.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
+                "/screens.js", "/screens.css", "/app.js", "/pdf-session.js", "/practice-fixture.js", "/practice-knowledge.js", "/visual-selection.js", "/reading-display.js", "/assistant-navigator.js", "/assistant-render.js", "/assistant-stream.js", "/master-ui.js", "/memory-ui.js", "/guide-ui.js", "/inline-ui.js", "/inline-placement.js", "/styles.css", "/geometry.js", "/selection.js"
             ):
                 filename = path[1:]
             if filename is None:

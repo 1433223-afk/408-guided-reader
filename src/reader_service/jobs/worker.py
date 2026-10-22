@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from queue import Empty, Queue
 from typing import TYPE_CHECKING
 
 from reader_service.foundation import FoundationService
@@ -37,6 +38,8 @@ class PreparationCoordinator:
         self._wake = threading.Event()
         self._dispatch_lock = threading.Lock()
         self._threads: list[threading.Thread] = []
+        self._learning_jobs = Queue(maxsize=1)
+        self._learning_busy = False
         self._map_wake = threading.Event()
         self._map_stop = threading.Event()
         self._map_lock = threading.Lock()
@@ -56,6 +59,9 @@ class PreparationCoordinator:
                 target=self._run_map_refresh, name="outline-refresh", daemon=True,
             )
             self._map_thread.start()
+        learning_thread = threading.Thread(target=self._run_learning, name="learning-prepare", daemon=True)
+        learning_thread.start()
+        self._threads.append(learning_thread)
         for index in range(self.worker_count):
             thread = threading.Thread(
                 target=self._run,
@@ -66,7 +72,8 @@ class PreparationCoordinator:
             self._threads.append(thread)
 
     def stop(self, timeout: float = 10.0) -> None:
-        self._stop.set()
+        with self._dispatch_lock:
+            self._stop.set()
         self._wake.set()
         for thread in self._threads:
             thread.join(timeout=timeout)
@@ -156,20 +163,18 @@ class PreparationCoordinator:
     def _run(self) -> None:
         while not self._stop.is_set():
             with self._dispatch_lock:
-                job = self.jobs.claim()
+                if self._stop.is_set():
+                    return
+                # Keep the existing priority order (including prerequisite pages).
+                # Once generation is dispatched, page workers can keep reading.
+                job = self.jobs.claim(("PAGE_PREPARE",) if self._learning_busy else None)
+                if job is not None and job["job_type"] != "PAGE_PREPARE":
+                    self._learning_busy = True
+                    self._learning_jobs.put_nowait(job)
+                    continue
             if job is None:
                 self._wake.wait(0.25)
                 self._wake.clear()
-                continue
-            if job["job_type"] in {"TEACHING_GENERATE", "TEACHING_REVIEW"}:
-                if self.teaching is not None:
-                    self.teaching.run_job(job)
-                self.jobs.complete(job["id"])
-                continue
-            if job["job_type"] == "CHAPTER_PREPARE":
-                if self.knowledge is not None:
-                    self.knowledge.run_job(job)
-                self.jobs.complete(job["id"], cancelled=self._stop.is_set())
                 continue
             cancelled = False
             for page_index in range(job["page_start"], job["page_end"] + 1):
@@ -181,6 +186,31 @@ class PreparationCoordinator:
                 if not was_ready and status == "READY":
                     self._queue_map_refresh(job["book_source_revision_id"], page_index)
             self.jobs.complete(job["id"], cancelled=cancelled)
+
+    def _run_learning(self) -> None:
+        while True:
+            try:
+                job = self._learning_jobs.get(timeout=.25)
+            except Empty:
+                if self._stop.is_set():
+                    return
+                continue
+            try:
+                if self._stop.is_set():
+                    self.jobs.complete(job["id"], cancelled=True)
+                elif job["job_type"] == "CHAPTER_PREPARE":
+                    if self.knowledge is not None:
+                        self.knowledge.run_job(job)
+                    self.jobs.complete(job["id"], cancelled=self._stop.is_set())
+                else:
+                    if self.teaching is not None:
+                        self.teaching.run_job(job)
+                    self.jobs.complete(job["id"])
+            finally:
+                with self._dispatch_lock:
+                    self._learning_busy = False
+                self._learning_jobs.task_done()
+                self._wake.set()
 
     def _queue_map_refresh(self, revision_id: str, page_index: int) -> None:
         if self.outline is None:

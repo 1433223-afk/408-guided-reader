@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 
-from reader_service.agent_runtime import AgentRuntime
+from reader_service.agent_runtime import AgentRuntime, ProviderCompletion
 from reader_service.__main__ import main
 
 
@@ -40,6 +40,15 @@ def monitored(self, messages, **kwargs):
                                      "has_explanation": "official_explanation" in source,
                                      "has_correctness": "last_correct" in source,
                                      "images": images}, ensure_ascii=False) + "\n")
+    if os.environ.get('PRACTICE_VISUAL_OFFLINE') == '1':
+        assert interaction.startswith(('practice-hint:', 'master-practice:')), 'Unexpected AI call in offline smoke'
+        payload = json.loads(messages[-1]['content'][0]['text'])
+        step = len(payload.get('previous_hints', []))
+        answer = ('先想清题目涉及的基本概念。', '再对照各条件，区分操作的作用。',
+                  '最后沿题目给出的数据路径逐步核对。')[min(step, 2)]
+        if kwargs.get('stream_callback'):
+            kwargs['stream_callback'](answer)
+        return ProviderCompletion(answer, 1, None, {'provider': self.config.provider, 'model': self.config.model})
     return original(self, messages, **kwargs)
 
 

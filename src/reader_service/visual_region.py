@@ -5,6 +5,9 @@ from __future__ import annotations
 import base64
 import math
 import threading
+import copy
+import weakref
+from collections import OrderedDict
 from contextlib import closing
 from io import BytesIO
 
@@ -18,6 +21,8 @@ RENDER_DPI = 216
 MAX_IMAGE_SIDE = 2048
 MAX_IMAGE_PIXELS = 3_000_000
 MIN_IMAGE_SIDE = 16
+_REGIONS = weakref.WeakKeyDictionary()
+_REGION_LOCK = threading.RLock()
 
 
 def _region_rect(rect) -> list[float]:
@@ -52,7 +57,24 @@ def render_visual_region(library, revision_id: str, page_index: int, rect) -> di
     if type(page_index) is not int or not 0 <= page_index < revision["page_count"]:
         raise ValueError("PDF 页码无效。")
     pdf_path = library.pdf_path(revision_id)
+    stat = pdf_path.stat()
+    key = (revision["blob_sha256"], page_index, tuple(normalized), revision["page_count"],
+           stat.st_size, stat.st_mtime_ns, RENDER_DPI, MAX_IMAGE_SIDE, MAX_IMAGE_PIXELS)
+    with _REGION_LOCK:
+        cache = _REGIONS.setdefault(library, OrderedDict())
+        if key in cache:
+            cache.move_to_end(key)
+            return copy.deepcopy(cache[key])
+    result = _render_region(pdf_path, revision, page_index, normalized)
+    with _REGION_LOCK:
+        cache = _REGIONS.setdefault(library, OrderedDict())
+        cache[key] = result
+        while len(cache) > 4 or sum(len(item["image"]["data_url"]) for item in cache.values()) > 8 * 1024 * 1024:
+            cache.popitem(last=False)
+    return copy.deepcopy(result)
 
+
+def _render_region(pdf_path, revision, page_index, normalized):
     import pypdfium2 as pdfium
 
     with PDFIUM_RENDER_LOCK:

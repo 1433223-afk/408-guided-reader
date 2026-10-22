@@ -28,6 +28,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
   let entriesChapterId = undefined;
   const topicDrafts = new Map();
   const recentReasoning = new Map();
+  const messageRows = new Map();
   const tabs = document.createElement("nav");
   tabs.className = "dock-tabs";
   tabs.setAttribute("aria-label", "AI 工作区");
@@ -268,6 +269,9 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
     const nearBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 80;
     const visibleMessages=expanded ? current.messages.filter(message=>message.topic_id===selectedTopicId) : current.messages;
     const rendered = visibleMessages.map((message) => {
+      const signature = JSON.stringify([message, recentReasoning.get(message.id), practiceNumber]);
+      const previous = messageRows.get(message.id);
+      if (previous?.signature === signature) return previous.row;
       const row = document.createElement("article");
       row.dataset.messageId = message.id;
       row.className = "master-message";
@@ -299,6 +303,8 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
         actions.insertBefore(button(message.role === "user" ? "重试发送" : "重试", () => runMasterStream("retry", { message_id: message.id })),actions.querySelector('button'));
       }
       if(actions.childNodes.length) row.append(actions);
+      messageRows.set(message.id, {signature, row});
+      while(messageRows.size > 80) messageRows.delete(messageRows.keys().next().value);
       return row;
     });
     if(streamView) rendered.push(renderStreamView());
@@ -641,6 +647,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
   }
 
   function reset() {
+    messageRows.clear();
     activeStream?.abort(); activeStream=null; streamView=null; recentReasoning.clear();
     actionsPopover.hidePopover();
     ++generation;

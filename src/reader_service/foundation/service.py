@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import unicodedata
+from functools import lru_cache
 from contextlib import closing
 from pathlib import Path
 from typing import Callable
@@ -53,59 +54,66 @@ class FoundationService:
             raise ValueError("Search query must be at most 120 characters")
         if limit < 1 or limit > 100:
             raise ValueError("Search result limit must be between 1 and 100")
-        needle = self._normalize_search_text(query)
-        counts, lines = self.repository.search_snapshot(revision_id)
-        coverage = {
-            "ready_pages": counts["READY"],
-            "total_pages": revision["page_count"],
-            "complete": counts["READY"] == revision["page_count"],
-            "statuses": counts,
-        }
-        if not needle:
-            return {"query": query, "coverage": coverage, "results": [], "truncated": False}
+        with self.repository.database.connect() as connection:
+            connection.execute("BEGIN")
+            needle = self._normalize_search_text(query)
+            counts, lines = self.repository.search_snapshot(revision_id, connection=connection)
+            coverage = {
+                "ready_pages": counts["READY"],
+                "total_pages": revision["page_count"],
+                "complete": counts["READY"] == revision["page_count"],
+                "statuses": counts,
+            }
+            if not needle:
+                return {"query": query, "coverage": coverage, "results": [], "truncated": False}
 
-        pages: dict[int, list[dict]] = {}
-        for line in lines:
-            pages.setdefault(line["pdf_page_index"], []).append(line)
-        matches = []
-        truncated = False
-        for page_index, page_lines in pages.items():
-            source = "\n".join(line["text"] for line in page_lines)
-            normalized, offsets = self._normalized_with_offsets(source)
-            position = normalized.find(needle)
-            if position < 0:
-                continue
-            if len(matches) >= limit:
-                truncated = True
-                break
-            start = offsets[position]
-            end = offsets[min(position + len(needle) - 1, len(offsets) - 1)] + 1
-            snippet_start = max(0, start - 32)
-            snippet_end = min(len(source), end + 48)
-            prefix = "…" if snippet_start else ""
-            suffix = "…" if snippet_end < len(source) else ""
-            snippet = source[snippet_start:snippet_end].replace("\n", " ").strip()
-            matches.append({
-                "pdf_page_index": page_index,
-                "snippet": prefix + snippet + suffix,
-                # These are transient runtime positions nested in the search response. They are
-                # never persisted or treated as durable anchor identity.
-                "match_ranges": self._search_match_ranges(
-                    self.repository.search_page_lines(revision_id, page_index), start, end
-                ),
-            })
-        return {"query": query, "coverage": coverage, "results": matches, "truncated": truncated}
+            pages: dict[int, list[dict]] = {}
+            for line in lines:
+                pages.setdefault(line["pdf_page_index"], []).append(line)
+            matches = []
+            truncated = False
+            for page_index, page_lines in pages.items():
+                source = "\n".join(line["text"] for line in page_lines)
+                normalized, offsets = self._normalized_with_offsets(source)
+                position = normalized.find(needle)
+                if position < 0:
+                    continue
+                if len(matches) >= limit:
+                    truncated = True
+                    break
+                start = offsets[position]
+                end = offsets[min(position + len(needle) - 1, len(offsets) - 1)] + 1
+                snippet_start = max(0, start - 32)
+                snippet_end = min(len(source), end + 48)
+                prefix = "…" if snippet_start else ""
+                suffix = "…" if snippet_end < len(source) else ""
+                snippet = source[snippet_start:snippet_end].replace("\n", " ").strip()
+                matches.append({
+                    "pdf_page_index": page_index,
+                    "snippet": prefix + snippet + suffix,
+                    # These are transient runtime positions nested in the search response. They are
+                    # never persisted or treated as durable anchor identity.
+                    "match_ranges": self._search_match_ranges(
+                        self.repository.search_page_lines(revision_id, page_index, connection=connection), start, end
+                    ),
+                })
+            return {"query": query, "coverage": coverage, "results": matches, "truncated": truncated}
 
     @staticmethod
     def _normalize_search_text(value: str) -> str:
         return "".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+    @staticmethod
+    @lru_cache(maxsize=4096)
+    def _normalized_character(character):
+        return FoundationService._normalize_search_text(character)
 
     @classmethod
     def _normalized_with_offsets(cls, value: str) -> tuple[str, list[int]]:
         characters: list[str] = []
         offsets: list[int] = []
         for index, character in enumerate(value):
-            normalized = cls._normalize_search_text(character)
+            normalized = cls._normalized_character(character)
             characters.extend(normalized)
             offsets.extend([index] * len(normalized))
         return "".join(characters), offsets

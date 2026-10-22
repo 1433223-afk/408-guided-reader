@@ -37,6 +37,8 @@ python -m reader_service
 
 ## 本地启动与数据维护
 
+2026-10-22 的 [Reader 性能调查](development-reports/READER_PERFORMANCE_SURVEY.md) 已覆盖资源生命周期、Practice 重建、学习位置投影、搜索和高 DPI。[通用性能优化](development-reports/READER_PERFORMANCE_OPTIMIZATION.md) 已实现资源释放、派生结果复用、搜索连接收敛、邻页像素预算、裁图与 Master 排版复用，以及后台生成不阻塞页面准备；定向检查、真实教材 smoke 和人工验收已通过，已授权收口主线 checkpoint，Desktop 另行集成。PDF 分片对照暂不改变默认设置；未验收用于发行的 OCR 加速实验不在本轮 checkpoint 内。
+
 - 浏览器首次进入应使用服务输出的完整 `READY` 地址（含当前启动凭证）。页面会清理地址栏中的凭证，并建立本机会话；匿名裸地址不能创建会话。服务重启后旧会话失效，需要重新使用本次启动地址。不要把完整启动地址保存到日志或发给其他人。
 - 普通本地数据默认在 `%LOCALAPPDATA%\408 Guided Reader`；当前 Desktop spike 的默认目录为 `%LOCALAPPDATA%\408GuidedReaderDesktopSpike`。以实际启动参数或桌面设置显示的目录为准，不能用开发书库路径替代安装版目录。
 - 手工备份：先完整退出桌面应用或停止 Reader 服务（仅关闭网页不足以停止服务），然后复制整个数据目录到另一个备份目录。至少同时保留 `state.sqlite3` 和 `blobs/`，若存在 SQLite 的 `-wal` / `-shm` 文件也一并保留；只复制数据库不能恢复原 PDF。不要在服务仍写入时直接复制数据库文件。

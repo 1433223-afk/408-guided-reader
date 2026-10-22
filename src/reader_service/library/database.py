@@ -4,6 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from .projections import ProjectionCache
 from reader_service.learning.schema import (
     SCHEMA as LEARNING_SCHEMA,
     MASTER_REASONING_SCHEMA,
@@ -854,6 +855,7 @@ MIGRATIONS = (*MIGRATIONS, (12, LEARNING_SCHEMA), (13, SECTION_SCHEMA), (14, TEA
 class Database:
     def __init__(self, path: Path):
         self.path = path
+        self.projections = ProjectionCache(path)
 
     def initialize(self) -> None:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -1028,9 +1030,20 @@ class Database:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 10000")
+        written = set()
+
+        def track(action, table, column, database, trigger):
+            if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE):
+                written.add(table)
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(track)
         try:
             yield connection
-            connection.commit()
+            if connection.total_changes:
+                self.projections.commit(connection, written)
+            else:
+                connection.commit()
         except Exception:
             connection.rollback()
             raise

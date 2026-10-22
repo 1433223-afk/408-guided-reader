@@ -108,12 +108,15 @@ class JobRepository:
             )
             return cursor.rowcount
 
-    def claim(self) -> dict | None:
+    def claim(self, job_types: tuple[str, ...] | None = None) -> dict | None:
+        if job_types is not None and not job_types:
+            return None
+        kind_filter = '' if job_types is None else f"AND j.job_type IN ({','.join('?' for _ in job_types)})"
         timestamp = now()
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                """
+                f"""
                 SELECT j.id, j.job_type, j.book_source_revision_id,
                        j.page_start, j.page_end, j.foundation_version,
                        j.chapter_outline_node_id, j.chapter_identity_revision,
@@ -121,9 +124,10 @@ class JobRepository:
                 FROM jobs j
                 JOIN book_source_revisions r ON r.id = j.book_source_revision_id
                 WHERE j.status = 'QUEUED' AND j.cancel_requested = 0 AND r.status = 'ACTIVE'
+                {kind_filter}
                 ORDER BY j.priority DESC, j.created_at, j.page_start
                 LIMIT 1
-                """
+                """, job_types or (),
             ).fetchone()
             if row is None:
                 return None

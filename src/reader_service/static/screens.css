@@ -104,6 +104,10 @@
 #reader .toolbar button:hover,#reader .toolbar button[aria-expanded="true"],#reader .toolbar button[aria-pressed="true"] { background:#e3e8df;border-color:#94a694;color:#304d3e; }
 #reader .toolbar button:active { background:#d6e0d3; }
 #reader .toolbar button[hidden] { display:none; }
+/* Preparation text varies with background work; it must yield to reading controls. */
+#reader .toolbar button.preparation-status:not([hidden]) { display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+#reader .toolbar .inline-toolbar { min-width:0; }
+#reader .toolbar #inline-open:not([hidden]) { display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 .reader-more,.reader-more-menu { display:contents; }
 #reader .toolbar .reader-more>#reader-more-toggle { display:none; }
 @media(max-width:1320px) {

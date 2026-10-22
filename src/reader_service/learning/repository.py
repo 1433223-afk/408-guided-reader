@@ -97,14 +97,18 @@ class LearningRepository:
                     AND start_page IS NOT NULL AND start_y IS NOT NULL
                     AND end_page IS NOT NULL AND end_y IS NOT NULL
             """, (revision_id,))]
+            threads = {row["section_outline_node_id"]: row["id"] for row in c.execute(
+                "SELECT id,section_outline_node_id FROM master_threads WHERE book_source_revision_id=?",
+                (revision_id,)) if row["section_outline_node_id"]}
+            states = {row["outline_node_id"]: row["mastery_check_state"] for row in c.execute(
+                "SELECT outline_node_id,mastery_check_state FROM section_learning_states WHERE book_source_revision_id=?",
+                (revision_id,))}
             for section in sections:
                 section["knowledge_point_ids"] = [p["knowledge_point_id"] for p in points if self._in_confirmation_scope(p, section)]
                 if section["kind"] == "SECTION":
-                    scoped = {"scope_kind": "SECTION", "scope_id": section["outline_node_id"], "book_source_revision_id": revision_id}
-                    thread = self._thread(c, scoped)
-                    section["thread_id"] = thread["id"] if thread else None
-                    section["status"] = self._status(c, scoped)
-            add_display_ends(c, revision_id, points)
+                    section["thread_id"] = threads.get(section["outline_node_id"])
+                    section["status"] = states.get(section["outline_node_id"], "AVAILABLE")
+            self._display_ends(revision_id, points)
             section_counts = {}
             chapter_counts = {}
             for point in points:
@@ -146,6 +150,43 @@ class LearningRepository:
             return {"points": points, "sections": sections,
                     "topics": topics,
                     "section_counts": section_counts, "chapter_counts": chapter_counts}
+
+    def _display_ends(self, revision_id, points):
+        if not points:
+            return
+        ranges = tuple((p["knowledge_point_id"], p["start_page"], p["start_y"], p["end_page"], p["end_y"])
+                       for p in points)
+
+        def build(connection):
+            positions = [{"knowledge_point_id": row[0], "start_page": row[1], "start_y": row[2],
+                          "end_page": row[3], "end_y": row[4]} for row in ranges]
+            add_display_ends(connection, revision_id, positions)
+            return {p["knowledge_point_id"]: (p["display_end_page"], p["display_end_y"]) for p in positions}
+
+        positions = self.database.projections.get(
+            ("learning-display", revision_id, ranges),
+            {"ocr_pages", "ocr_lines", "page_labels", "book_source_revisions"}, build, self.database.connect,
+        )
+        for point in points:
+            point["display_end_page"], point["display_end_y"] = positions[point["knowledge_point_id"]]
+
+    def chapter_counts(self, revision_id, chapter_id):
+        with self.database.connect() as connection:
+            counts = {state: 0 for state in ("UNDERSTOOD", "NOT_FULLY_CLEAR", "UNCONFIRMED")}
+            rows = connection.execute("""
+                SELECT COALESCE(s.status, 'UNCONFIRMED') AS status, COUNT(*) AS count
+                FROM knowledge_points kp
+                JOIN chapter_preparations chapter USING(book_source_revision_id, chapter_outline_node_id)
+                JOIN outline_nodes node ON node.book_source_revision_id=kp.book_source_revision_id
+                    AND node.outline_node_id=kp.primary_section_id
+                LEFT JOIN kp_status s USING(knowledge_point_id)
+                WHERE kp.book_source_revision_id=? AND kp.chapter_outline_node_id=?
+                    AND chapter.status='READY' AND kp.chapter_structure_version=chapter.structure_version
+                GROUP BY COALESCE(s.status, 'UNCONFIRMED')
+            """, (revision_id, chapter_id)).fetchall()
+            for row in rows:
+                counts[row["status"]] = row["count"]
+            return counts if rows else None
 
     @staticmethod
     def _in_confirmation_scope(point, node):

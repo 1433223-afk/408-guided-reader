@@ -334,6 +334,25 @@ def test_explicit_evidence_recovery_and_no_automatic_downgrade(learning, service
             c.execute("DELETE FROM learning_events")
 
 
+def test_cached_positions_keep_live_learning_state_and_published_chapter_counts(learning):
+    f, master, _runtime, points = learning
+    revision, chapter = f['revision']['id'], f['chapter']['outline_node_id']
+    repository = master.repository
+    before = repository.entries(revision)
+    assert repository.chapter_counts(revision, chapter) == before['chapter_counts'][chapter]
+    point = points[0]['knowledge_point_id']
+    repository.understand_without_topic(revision, point)
+    after = repository.entries(revision)
+    assert repository.chapter_counts(revision, chapter) == after['chapter_counts'][chapter]
+    assert next(p for p in after['points'] if p['knowledge_point_id'] == point)['status'] == 'UNDERSTOOD'
+    assert [(p['display_end_page'], p['display_end_y']) for p in after['points']] == [
+        (p['display_end_page'], p['display_end_y']) for p in before['points']]
+    with repository.database.connect() as c:
+        c.execute('UPDATE chapter_preparations SET structure_version=structure_version+1 WHERE book_source_revision_id=?', (revision,))
+    assert repository.chapter_counts(revision, chapter) is None
+    assert repository.entries(revision)['points'] == []
+
+
 def test_first_pass_understanding_does_not_create_master_topic(learning, service):
     f, master, _runtime, points = learning
     revision = f['revision']['id']

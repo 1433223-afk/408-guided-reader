@@ -7,6 +7,7 @@ import os
 import shutil
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 from typing import BinaryIO
 
@@ -78,7 +79,6 @@ class LibraryService:
                 output.flush()
                 os.fsync(output.fileno())
 
-            page_geometry = self._validate_pdf(temporary)
             sha256 = digest.hexdigest()
             with self._mutation_lock:
                 duplicate = self.repository.find_revision_by_hash(sha256, book_id)
@@ -89,6 +89,7 @@ class LibraryService:
                     book = self.repository.get_book(duplicate["book_id"])
                     return {"duplicate": True, "book": book}
 
+                page_geometry = self._validate_pdf(temporary)
                 _, blob_created = self.blobs.commit(temporary, sha256)
                 try:
                     created_book_id, _ = self.repository.create_revision(
@@ -159,31 +160,32 @@ class LibraryService:
             if b"%%EOF" not in pdf.read():
                 raise IntakeError("The PDF is incomplete (missing end marker)")
 
-        reader = PdfReader(path, strict=True)
-        # Some publisher PDFs carry owner permissions but open with an empty
-        # user password. The reader can render these without a password.
-        if reader.is_encrypted and not reader.decrypt(""):
-            raise IntakeError("Encrypted or password-protected PDFs are not supported")
-        if not reader.pages:
-            raise IntakeError("The PDF contains no readable pages")
+            pdf.seek(0)
+            with closing(PdfReader(pdf, strict=True)) as reader:
+                # Some publisher PDFs carry owner permissions but open with an empty
+                # user password. The reader can render these without a password.
+                if reader.is_encrypted and not reader.decrypt(""):
+                    raise IntakeError("Encrypted or password-protected PDFs are not supported")
+                if not reader.pages:
+                    raise IntakeError("The PDF contains no readable pages")
 
-        pages: list[dict] = []
-        for index, page in enumerate(reader.pages):
-            box = page.mediabox
-            x0, y0, x1, y1 = map(float, (box.left, box.bottom, box.right, box.top))
-            if not all(math.isfinite(v) for v in (x0, y0, x1, y1)) or x1 <= x0 or y1 <= y0:
-                raise IntakeError(f"Page {index + 1} has invalid media-box geometry")
-            try:
-                unit = float(page.get("/UserUnit", 1))
-                if not math.isfinite(unit) or unit <= 0:
-                    raise ValueError("PDF UserUnit 无效。")
-                validate_render_size((x1 - x0) * unit, (y1 - y0) * unit)
-            except ValueError as exc:
-                raise IntakeError(f"第 {index + 1} 页：{exc}", code="PDF_PAGE_RESOURCE_LIMIT") from exc
-            rotation = int(page.get("/Rotate", 0) or 0) % 360
-            if rotation not in (0, 90, 180, 270):
-                raise IntakeError(f"Page {index + 1} has an unsupported rotation")
-            pages.append(
-                {"media_box": [x0, y0, x1, y1], "rotation": rotation}
-            )
-        return pages
+                pages: list[dict] = []
+                for index, page in enumerate(reader.pages):
+                    box = page.mediabox
+                    x0, y0, x1, y1 = map(float, (box.left, box.bottom, box.right, box.top))
+                    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)) or x1 <= x0 or y1 <= y0:
+                        raise IntakeError(f"Page {index + 1} has invalid media-box geometry")
+                    try:
+                        unit = float(page.get("/UserUnit", 1))
+                        if not math.isfinite(unit) or unit <= 0:
+                            raise ValueError("PDF UserUnit 无效。")
+                        validate_render_size((x1 - x0) * unit, (y1 - y0) * unit)
+                    except ValueError as exc:
+                        raise IntakeError(f"第 {index + 1} 页：{exc}", code="PDF_PAGE_RESOURCE_LIMIT") from exc
+                    rotation = int(page.get("/Rotate", 0) or 0) % 360
+                    if rotation not in (0, 90, 180, 270):
+                        raise IntakeError(f"Page {index + 1} has an unsupported rotation")
+                    pages.append(
+                        {"media_box": [x0, y0, x1, y1], "rotation": rotation}
+                    )
+                return pages

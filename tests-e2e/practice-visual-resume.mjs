@@ -26,6 +26,7 @@ try {
     windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: {...process.env,
       GUIDED_READER_MASTER_PROVIDER: 'deepseek', GUIDED_READER_DEEPSEEK_DISABLED: '0',
       GUIDED_READER_ZHIPU_DISABLED: '1', GUIDED_READER_OPENROUTER_DISABLED: '1',
+      ...(process.env.PRACTICE_VISUAL_OFFLINE === '1' ? {GUIDED_READER_DEEPSEEK_API_KEY: 'offline-no-egress'} : {}),
       PRACTICE_VISUAL_AUDIT: audit},
   });
   server.stderr.on('data', chunk => { stderr += chunk; });
@@ -61,10 +62,8 @@ try {
   };
   const choose = async (pdfIndex, letter) => {
     const marker = page.locator(`.page[data-index="${pdfIndex}"] .practice-choice-area[data-choice="${letter}"]`);
-    await marker.scrollIntoViewIfNeeded();
-    const box = await marker.boundingBox();
-    assert.ok(box);
-    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    // OCR stays above the hit regions so text selection remains available.
+    await marker.click({force:true});
   };
   await openBook();
   await goToPrintedPage(27);
@@ -73,6 +72,16 @@ try {
   assert.equal(await page.locator('#practice-number').innerText(), '26');
   await page.locator('#practice-hint-button').click();
   await page.waitForFunction(() => document.querySelectorAll('#practice-hint p').length === 1, undefined, {timeout: 120000});
+  if (process.env.PRACTICE_VISUAL_OFFLINE === '1') {
+    for (const count of [2, 3]) {
+      await page.locator('#practice-hint-button').click();
+      await page.waitForFunction(count => document.querySelectorAll('#practice-hint p').length === count, count);
+    }
+    if (await page.locator('#practice-favorite').getAttribute('aria-pressed') !== 'true') {
+      await page.locator('#practice-favorite').click();
+    }
+    await page.waitForFunction(() => document.querySelector('#practice-favorite').getAttribute('aria-pressed') === 'true');
+  }
   await choose(29, 'A');
   await page.locator('#viewer').press('Enter');
   await page.waitForFunction(() => /正确|不正确/.test(document.querySelector('#practice-status').textContent), undefined,
@@ -106,6 +115,21 @@ try {
   assert.equal(await page.locator('#practice-number').innerText(), '09');
   assert.equal(await page.locator('#practice-page-note').isVisible(), true);
 
+  if (process.env.PRACTICE_VISUAL_OFFLINE === '1') {
+    await page.locator('#back-to-library').click();
+    await page.locator('#library-home .memory-open').click();
+    await page.locator('#memory-library-view [data-memory-mode="practice"]').click();
+    await page.locator('.memory-book-open').first().waitFor();
+    await page.locator('.memory-book-open').filter({hasText:'组成原理'}).click();
+    await page.locator('.memory-item-open').filter({hasText:'第 26 题'}).first().click();
+    await page.getByRole('button',{name:'继续复盘',exact:true}).click();
+    await page.locator('#reader.practice-active').waitFor();
+    assert.equal(await page.locator('#practice-number').innerText(), '26');
+    assert.equal(await page.locator('#practice-favorite').getAttribute('aria-pressed'), 'true');
+    await page.locator('#master-history .assistant-answer-bubble').first().waitFor();
+    await page.locator('.page[data-index="29"]:not(.loading) canvas').waitFor();
+  }
+
   const facts = (await readFile(audit, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
   const tableHint = facts.find(item => item.kind === 'hint' && item.question === 26);
   const tableReview = facts.find(item => item.kind === 'review' && item.question === 26);
@@ -118,7 +142,8 @@ try {
   assert.equal(crossHint?.images.length, 2);
   assert.deepEqual(crossHint.pages, [228, 229]);
   assert.deepEqual(errors, []);
-  console.log('Practice visual + resume real-book browser smoke PASS', JSON.stringify(facts));
+  await page.screenshot({path:path.join(root, 'practice-resume.jpg')});
+  console.log('Practice visual + resume real-book browser smoke PASS', JSON.stringify({offline:process.env.PRACTICE_VISUAL_OFFLINE==='1',facts}));
 } finally {
   await browser?.close();
   server?.kill();

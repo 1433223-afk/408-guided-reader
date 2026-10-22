@@ -114,6 +114,26 @@ def test_existing_trial_heading_is_recognized_without_outline_rebuild(tmp_path):
     assert practice.attempt('revision', number, 'A')['last_correct'] is True
 
 
+def test_cached_answers_follow_source_updates_and_reject_deleted_books(tmp_path):
+    database = Database(tmp_path / 'state.sqlite3')
+    database.initialize()
+    _source(database)
+    practice = PracticePrototype(database)
+    number = practice.catalog('revision')[0]['questions'][0]['number']
+    assert practice.question('revision', number)['answer'] == 'A'
+    with database.connect() as connection:
+        connection.execute("UPDATE ocr_lines SET text='01. D' WHERE pdf_page_index=2 AND line_ordinal=1")
+    assert practice.attempt('revision', number, 'D')['last_correct']
+    practice.set_favorite('revision', number, True)
+    assert practice.question('revision', number)['answer'] == 'D'
+    public = practice.public_catalog('revision')[0]['questions'][0]
+    assert 'answer' not in public and 'explanation' not in public
+    with database.connect() as connection:
+        connection.execute("UPDATE book_source_revisions SET status='DELETED' WHERE id='revision'")
+    with pytest.raises(LookupError):
+        practice.question('revision', number)
+
+
 def test_later_question_type_cannot_override_a_single_choice_answer(tmp_path):
     database = Database(tmp_path / 'state.sqlite3')
     database.initialize()

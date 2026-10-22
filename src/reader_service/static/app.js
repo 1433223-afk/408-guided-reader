@@ -14,9 +14,12 @@ import { createAssistantNavigator } from "/assistant-navigator.js";
 import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, practiceChoiceAt, practiceGuideForPage, practiceSourceRegions } from "/practice-fixture.js";
 import { createPracticeKnowledge } from "/practice-knowledge.js";
 import { createVisualSelection } from "/visual-selection.js";
+import { createPdfSession } from "/pdf-session.js";
+import { pageRenderWindow } from "/geometry.js";
 import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPortraitLayout } from "/reading-display.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
+const pdfSession = createPdfSession(options => pdfjsLib.getDocument(options));
 
 const elements = Object.fromEntries(
   ["library-home", "library-empty", "import-input", "book-list", "book-count", "reader", "reader-title", "viewer", "pages", "page-number", "page-total", "previous-page", "next-page", "zoom-out", "zoom-in", "zoom-value", "reader-more", "reader-more-toggle", "reader-more-menu", "preparation-status", "printed-page-edit", "printed-page-label", "outline-toggle", "outline-panel", "outline-close", "outline-status", "outline-tree", "outline-empty", "practice-panel", "practice-close", "practice-section-title", "practice-number", "practice-status", "practice-selection", "practice-attempts", "practice-progress", "practice-question-list", "practice-favorite", "practice-review-targets", "practice-review-space", "practice-review-close", "practice-review-title", "practice-review-description", "practice-hint", "practice-hint-button", "practice-retry", "practice-review", "practice-answer", "practice-back", "practice-next", "knowledge-panel", "knowledge-close", "knowledge-title", "knowledge-status", "knowledge-prepare", "knowledge-map", "knowledge-empty", "status", "back-to-library", "search-toggle", "search-panel", "search-close", "search-form", "search-query", "search-coverage", "search-results", "search-empty", "marks-toggle", "marks-count", "marks-panel", "marks-page", "marks-list", "marks-empty", "marks-close", "assistant-toggle", "assistant-panel", "assistant-resize-handle", "assistant-expand", "assistant-title", "assistant-model", "assistant-model-lock", "assistant-close", "assistant-context-bar", "assistant-root-switcher", "assistant-back", "assistant-depth", "assistant-close-root", "assistant-breadcrumb", "assistant-children", "assistant-child-list", "assistant-scope", "assistant-first-turn", "assistant-draft-text", "assistant-start", "assistant-readiness", "assistant-turns", "assistant-empty", "assistant-follow-up", "assistant-question", "assistant-send", "assistant-answer-actions", "assistant-ask-deeper", "assistant-cancel-selection", "selection-actions", "copy-selection", "ask-selection", "save-highlight", "add-note", "cancel-selection", "note-editor", "annotation-note", "save-note"]
@@ -383,7 +386,7 @@ async function openBook(book) {
   master.refreshEntries().catch((error) => announce(error.message, true));
   refreshAssistantStatus();
   try {
-    const loading = pdfjsLib.getDocument({
+    const pdf = await pdfSession.open({
       url: `/api/revisions/${state.revision.id}/pdf`,
       httpHeaders: { "X-Reader-Token": launchToken },
       withCredentials: true,
@@ -393,7 +396,7 @@ async function openBook(book) {
       standardFontDataUrl: "/vendor/pdfjs/standard_fonts/",
       iccUrl: "/vendor/pdfjs/iccs/",
     });
-    const pdf = await loading.promise;
+    if (!pdf) return;
     if (generation !== state.generation) return;
     if (pdf.numPages !== state.revision.page_count) throw new Error("保存的 PDF 元数据与来源文件不再一致");
     await nextFrame();
@@ -404,11 +407,14 @@ async function openBook(book) {
     startPreparation().catch(error => { elements['preparation-status'].textContent = '文字准备暂时不可用'; announce(error.message, true); });
     loadBookMap();
   } catch (_error) {
+    if (generation !== state.generation) return;
+    await pdfSession.close();
     announce("无法打开这份 PDF，请重试。", true);
   }
 }
 
 function closeReader() {
+  void pdfSession.close();
   visualSelection.cancel({clear: true});
   resetPractice();
   applyDirectoryMode(null);
@@ -548,6 +554,7 @@ function buildPlaceholders() {
     return page;
   });
   elements.pages.replaceChildren(...pages);
+  state.pagePixelCost = Math.max(...[...sizes.values()].map(size => size.backingWidth * size.backingHeight));
   state.viewerLayoutWidth = elements.viewer.clientWidth;
 }
 
@@ -784,8 +791,8 @@ function updateViewport() {
   }
   setCurrentPage(bestIndex);
   renderReaderSectionHint();
-  const keepStart = Math.max(0, (first ?? 0) - 2);
-  const keepEnd = Math.min(state.pdf.numPages - 1, last + 2);
+  const {start: keepStart, end: keepEnd} = pageRenderWindow(
+    first ?? bestIndex, Math.max(first ?? bestIndex, last), state.pdf.numPages, state.pagePixelCost);
   for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
   for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys()])) {
     if (index < keepStart || index > keepEnd) clearPage(index);
@@ -865,6 +872,7 @@ function clearPage(index) {
   state.rendered.delete(index);
   const wrapper = elements.pages.children[index];
   if (wrapper) {
+    releasePageCanvas(wrapper.querySelector('canvas'), task);
     wrapper.replaceChildren();
     wrapper.classList.remove("loading");
   }
@@ -872,10 +880,20 @@ function clearPage(index) {
 }
 
 function cancelRenders() {
+  for (const canvas of elements.pages.querySelectorAll('canvas')) {
+    releasePageCanvas(canvas, state.renderTasks.get(Number(canvas.closest('.page').dataset.index)));
+  }
   state.pageRenderRequests.clear();
   for (const task of state.renderTasks.values()) task.cancel();
   state.renderTasks.clear();
   state.rendered.clear();
+}
+
+function releasePageCanvas(canvas, task) {
+  if (!canvas) return;
+  const release = () => { canvas.width = 0; canvas.height = 0; };
+  if (task) void task.promise.catch(() => {}).then(release);
+  else release();
 }
 
 function setCurrentPage(index) {
@@ -966,6 +984,7 @@ function relayoutPages(anchor = captureZoomAnchor()) {
     wrapper.classList.remove("loading");
     applyPageSize(wrapper, size, margins.get(size.cssWidth));
   });
+  state.pagePixelCost = Math.max(...[...sizes.values()].map(size => size.backingWidth * size.backingHeight));
   state.viewerLayoutWidth = elements.viewer.clientWidth;
   // Before PDF restoration, placeholders are layout only, not a reading position.
   if (state.pdf) restoreZoomAnchor(anchor);

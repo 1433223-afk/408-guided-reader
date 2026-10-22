@@ -42,16 +42,34 @@ class PracticePrototype:
         return value
 
     def catalog(self, revision_id: str) -> list[dict]:
-        with self.database.connect() as connection:
+        return self._catalog(revision_id)
+
+    def _catalog(self, revision_id, section_id=None):
+        def build(connection):
             source_sha256 = self._require_source(connection, revision_id)
-            return build_catalog(connection, revision_id, source_sha256)
+            return build_catalog(connection, revision_id, source_sha256, section_id=section_id)
+        # Always verify ownership, including cache hits after a book is deleted.
+        with self.database.connect() as connection:
+            self._require_source(connection, revision_id)
+        return self.database.projections.get(
+            ("practice", revision_id, section_id),
+            {"book_source_revisions", "outline_nodes", "ocr_pages", "ocr_lines"},
+            build, self.database.connect,
+        )
 
     def public_catalog(self, revision_id: str) -> list[dict]:
         return public_sections(self.catalog(revision_id))
 
     def question(self, revision_id: str, number: object) -> dict | None:
         number = self._number(number)
-        for section in self.catalog(revision_id):
+        locations = self.database.projections.get(
+            ("practice-locations", revision_id),
+            {"book_source_revisions", "outline_nodes", "ocr_pages", "ocr_lines"},
+            lambda _: {question["number"]: section["id"] for section in self.catalog(revision_id)
+                       for question in section["questions"]}, self.database.connect,
+        )
+        section_id = locations.get(number)
+        for section in self._catalog(revision_id, section_id) if section_id is not None else ():
             for question in section["questions"]:
                 if question["number"] == number:
                     return question
