@@ -2,7 +2,7 @@
 
 日期：2026-10-22
 
-状态：HTTPS_PUBLISHED / INSTALLED_UPDATER_UAT_PENDING
+状态：HTTPS_PUBLISHED / INSTALLED_UPDATER_PASS / USER_MANUAL_ACCEPTANCE_PASS
 
 ## 对应代码
 
@@ -31,8 +31,14 @@
 - 首次读取因三个对象权限返回 403，用户调整后重新完整核验成功；未放宽整个 Bucket 权限，签名私钥仍只在本机。beta 只切换轻量 manifest，未改其他服务器服务。
 - 发布前验证旧 manifest 的 SHA256，保留 `/var/www/desktop/latest.json.bak-pre-0.4.12-20261022` 后同目录原子切换。
 
-## 安装版验收待办
+## 安装版验收
 
-当前安装版更新前已核对为 0.4.11；已作只读 SQLite backup、integrity check，并记录 7 个 PDF blob 与非秘密模型/显示设置的 SHA256，不接触凭据内容。待用户执行真实 0.4.11 → 0.4.12 签名更新、自动重启，并确认版本、数据与日常功能后补记录。本记录不提前声称 updater E2E 已通过。
+更新前安装版已核对为 0.4.11，已作只读 SQLite backup、integrity check，并记录 7 个 PDF blob 与非秘密模型/显示设置的 SHA256，不接触凭据内容。用户执行真实 0.4.11 → 0.4.12 签名更新后，对版本、数据、四模型配置、大书翻页缩放、目录、框选、Practice 及关闭重开清单回复 **PASS**。
+
+独立核对：安装 exe ProductVersion 为 0.4.12；Core 与 app.js / pdf-session.js / ai-settings.js / reading-display.js 的 SHA256 与新构建一致。Shell 与 release exe 仅有 Tauri 预期的包型标记 `UNK → NSS` 三字节差异，替换该固定标记后其余 bytes 完全一致。
+
+日志记录完成下载和签名验证后才停止旧 Core，旧 Core exit code 0，随后新 Reader 导航成功；用户关闭重开后 Core 再次正常退出并恢复。目前仅 1 个安装目录 Shell（PID 21604）和它的 1 个 Core 子进程（PID 39156）。
+
+更新后 SQLite integrity check 为 ok；原来 7 个 PDF blob 的 SHA256、ai-models.json 和 reading-display.json 均未改变。原书目/来源各 7 条、annotations 10 条、Master messages 39 条、section learning states 3 条、Learning Memory 3 条的全部原始行保留；证据保存在本机临时目录，不进入 Git。人工使用结果与独立安装/日志/数据核对共同构成此次 updater E2E PASS。
 
 既有独立待办：旧版偶发下载运输失败、Windows 卸载登记版本元数据滞后；本次不改 updater/安装器逻辑。
