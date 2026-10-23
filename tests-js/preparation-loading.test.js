@@ -4,15 +4,17 @@ import fs from 'node:fs';
 import {runInNewContext} from 'node:vm';
 
 const source=fs.readFileSync(new URL('../src/reader_service/static/app.js',import.meta.url),'utf8');
-test('reopening a READY book reads saved state without POST or event stream',async()=>{
-  const calls=[]; let applied;
+test('reopening a READY book refreshes Practice without OCR POST or event stream',async()=>{
+  const calls=[],practiceRefreshes=[]; let applied;
   const context={state:{revision:{id:'r'},generation:1},elements:{'preparation-status':{}},
     api:async(path,options)=>{calls.push({path,options});return {pages:[{status:'READY'}]};},
     applyPreparationStatuses:pages=>{applied=pages;},
+    loadPracticeRecords:options=>practiceRefreshes.push(options.refresh),
     clearTimeout:()=>{},
     EventSource:class {constructor(){throw Error('READY book must not open stream');}}};
   await runInNewContext(source.slice(source.indexOf('function preparationFinished('),source.indexOf('function closePreparationStream()'))+'startPreparation()',context);
   assert.equal(calls.length,1);assert.equal(calls[0].options,undefined);assert.equal(applied[0].status,'READY');
+  assert.deepEqual(practiceRefreshes,[true]);
 });
 test('OCR stream reconnect refreshes progress after the bounded stream closes without rescheduling work',async()=>{
   const calls=[]; const streams=[]; const timers=[]; const labels=[];

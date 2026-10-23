@@ -45,6 +45,8 @@ python -m reader_service
 
 提交前从 Git 暂存树导出独立快照，并明确从快照 src 导入 Python：97 项相关 Node 检查和 76 项相关 Python 检查通过（42 项缓存 / Practice / 学习位置 / 搜索，34 项 Visual Region）。快照不含未提交 OCR 入口、引擎或依赖，验证两组 Reader 改动能独立成立；既有真实 PDF smoke 结果继续保留，未跑全量测试。
 
+Desktop 0.4.13 集成发现首屏延后加载与 Learning Memory 返回练习之间的并发回归，主线另行最小修复：同一 Reader 会话共享完整 Practice 加载，数据应用后等待者才继续；OCR 完成刷新和期间新增的位置保存会排队重读，换书 / 同书重开隔离旧请求。细节和定向验证见连续性能报告末节；桌面版须合入这个独立修复后重新构建，不沿用之前的冻结产物。
+
 2026-10-22 的 [Reader 性能调查](development-reports/READER_PERFORMANCE_SURVEY.md) 已覆盖资源生命周期、Practice 重建、学习位置投影、搜索和高 DPI。[通用性能优化](development-reports/READER_PERFORMANCE_OPTIMIZATION.md) 已实现资源释放、派生结果复用、搜索连接收敛、邻页像素预算、裁图与 Master 排版复用，以及后台生成不阻塞页面准备；定向检查、真实教材 smoke 和人工验收已通过，已授权收口主线 checkpoint，Desktop 另行集成。PDF 分片对照暂不改变默认设置；未验收用于发行的 OCR 加速实验不在本轮 checkpoint 内。
 
 - 浏览器首次进入应使用服务输出的完整 `READY` 地址（含当前启动凭证）。页面会清理地址栏中的凭证，并建立本机会话；匿名裸地址不能创建会话。服务重启后旧会话失效，需要重新使用本次启动地址。不要把完整启动地址保存到日志或发给其他人。

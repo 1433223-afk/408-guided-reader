@@ -134,12 +134,35 @@ try {
     await page.locator('#memory-search-toggle').click();
     await page.locator('#memory-query').fill('第 26 题');
     await page.locator('.memory-item-open').filter({hasText:'第 26 题'}).first().click();
-    await page.getByRole('button',{name:'继续复盘',exact:true}).click();
+    // Keep both Practice reads pending until the visible canvas has completed
+    // and its deferred Reader context has joined Memory's explicit await.
+    let releasePracticeReads,seenPracticeReads,practiceReadTimer;
+    const practiceReads=[],heldPracticeReads=new Promise(resolve=>{releasePracticeReads=resolve;}),
+      practiceReadsRequested=new Promise((resolve,reject)=>{
+        seenPracticeReads=resolve;
+        practiceReadTimer=setTimeout(()=>reject(Error('Practice catalog/state requests were not observed')),30000);
+      });
+    const practiceRoute=/\/api\/revisions\/[^/]+\/practice-prototype(?:\/catalog)?(?:\?.*)?$/;
+    await page.route(practiceRoute,async route=>{
+      if(route.request().method()!=='GET') {await route.continue();return;}
+      practiceReads.push(new URL(route.request().url()).pathname);
+      if(practiceReads.length===2) {clearTimeout(practiceReadTimer);seenPracticeReads();}
+      await heldPracticeReads;await route.continue();
+    });
+    try {
+      await page.getByRole('button',{name:'继续复盘',exact:true}).click();
+      await practiceReadsRequested;
+      await page.locator('.page:not(.loading) canvas').first().waitFor();
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      assert.equal(practiceReads.length,2,'deferred Reader context and Memory must share one catalog/state request pair');
+      assert.equal(await page.locator('#reader.practice-active').count(),0,'Memory must wait for the shared catalog to be applied');
+    } finally {clearTimeout(practiceReadTimer);releasePracticeReads();}
     await page.locator('#reader.practice-active').waitFor();
     assert.equal(await page.locator('#practice-number').innerText(), '26');
     assert.equal(await page.locator('#practice-favorite').getAttribute('aria-pressed'), 'true');
     await page.locator('#master-history .assistant-answer-bubble').first().waitFor();
     await page.locator('.page[data-index="29"]:not(.loading) canvas').waitFor();
+    await page.unroute(practiceRoute);
   }
 
   const facts = (await readFile(audit, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);

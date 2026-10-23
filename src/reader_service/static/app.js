@@ -167,7 +167,9 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
   if (!state.pdf || state.revision?.id !== item.book_source_revision_id) throw new Error('请重新打开原教材。');
   elements['library-home'].hidden = true;
   elements.reader.hidden = false;
+  const practice = state.practice;
   await loadPracticeRecords();
+  if (state.practice !== practice || !state.pdf) return;
   const section = PRACTICE_SECTIONS.find(candidate => candidate.questions.some(question => question.number === item.source.number));
   if (!section) throw new Error('这道题的原书练习暂不可用。');
   if (!state.practice.active || state.practice.sectionId !== section.id) enterPractice(section.id);
@@ -1195,7 +1197,10 @@ async function startPreparation(schedule = true) {
     const recoveringStatus = !!elements["preparation-status"].onclick;
     applyPreparationStatuses(saved.pages);
     if (recoveringStatus) updatePreparationLabel();
-    if (preparationFinished(saved.pages, (saved.jobs?.QUEUED || 0) + (saved.jobs?.RUNNING || 0) > 0)) return;
+    if (preparationFinished(saved.pages, (saved.jobs?.QUEUED || 0) + (saved.jobs?.RUNNING || 0) > 0)) {
+      if (saved.pages.every(p => p.status === "READY")) loadPracticeRecords({refresh: true});
+      return;
+    }
     if (schedule && saved.pages.some(p => !["READY", "FAILED"].includes(p.status))) await api(`/api/revisions/${revisionId}/preparation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1222,7 +1227,7 @@ async function startPreparation(schedule = true) {
     if (preparationFinished(payload.pages, payload.active_jobs)) {
       stream.close();
       if (state.eventSource === stream) state.eventSource = null;
-      if (payload.pages.every(p => p.status === "READY")) loadPracticeRecords();
+      if (payload.pages.every(p => p.status === "READY")) loadPracticeRecords({refresh: true});
     }
   });
   stream.onerror = () => {
@@ -1438,7 +1443,7 @@ function resetPractice() {
   state.practice = { active: false, sectionId: null, index: 0, selected: null, result: null, records: new Map(), positions: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
-    hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, catalogReady: false, pendingCatalog: null, onKnowledgePage: false };
+    hints: [], hintLoading: false, hintEpoch: 0, catalogLoading: null, catalogRefresh: false, catalogReady: false, pendingCatalog: null, onKnowledgePage: false };
   elements.reader.classList.remove("practice-active");
   elements["practice-panel"].hidden = true;
   elements["practice-hint"].hidden = true;
@@ -1467,28 +1472,46 @@ function savePracticePosition() {
   })).catch(error => announce(`练习位置未保存：${error.message}`, true));
 }
 
-async function loadPracticeRecords() {
-  const revisionId = state.revision?.id;
-  if (!revisionId) return;
-  const loadEpoch = ++state.practice.catalogLoadEpoch;
-  try {
-    await practicePositionSave;
-    const [catalog, payload] = await Promise.all([
-      api(`/api/revisions/${revisionId}/practice-prototype/catalog`),
-      api(`/api/revisions/${revisionId}/practice-prototype`),
-    ]);
-    if (state.revision?.id !== revisionId || state.practice.catalogLoadEpoch !== loadEpoch) return;
-    if (state.practice.active) state.practice.pendingCatalog = catalog.sections;
-    else replacePracticeSections(catalog.sections, state.revision.blob_sha256);
-    state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
-    state.practice.catalogReady = true;
-    state.practice.positions = new Map(Object.entries(payload.positions || {}));
-    if (state.practice.active) state.practice.positions.set(state.practice.sectionId, practiceCurrentQuestion().number);
-    updatePracticeRail();
-    renderPracticePages();
-  } catch (error) {
-    if (state.revision?.id === revisionId) announce(`练习状态暂时无法读取：${error.message}`, true);
-  }
+function loadPracticeRecords({refresh = false} = {}) {
+  const revision = state.revision, practice = state.practice, generation = state.generation;
+  if (!revision) return Promise.resolve();
+  if (refresh) practice.catalogRefresh = true;
+  if (practice.catalogLoading) return practice.catalogLoading;
+  const current = () => state.revision?.id === revision.id
+    && state.practice === practice && state.generation === generation;
+  // Initial reading and Memory navigation share the whole operation, including
+  // applying its result. OCR completion or a newer position save queues a fresh
+  // read before any waiter can continue with an outdated/empty catalog.
+  practice.catalogLoading = (async () => {
+    try {
+      let catalog, payload;
+      do {
+        practice.catalogRefresh = false;
+        const saving = practicePositionSave;
+        await saving;
+        if (!current()) return;
+        [catalog, payload] = await Promise.all([
+          api(`/api/revisions/${revision.id}/practice-prototype/catalog`),
+          api(`/api/revisions/${revision.id}/practice-prototype`),
+        ]);
+        if (!current()) return;
+        if (saving !== practicePositionSave) practice.catalogRefresh = true;
+      } while (practice.catalogRefresh);
+      if (practice.active) practice.pendingCatalog = catalog.sections;
+      else replacePracticeSections(catalog.sections, revision.blob_sha256);
+      practice.records = new Map(payload.questions.map(row => [row.number, row]));
+      practice.catalogReady = true;
+      practice.positions = new Map(Object.entries(payload.positions || {}));
+      if (practice.active) practice.positions.set(practice.sectionId, practiceCurrentQuestion().number);
+      updatePracticeRail();
+      renderPracticePages();
+    } catch (error) {
+      if (current()) announce(`练习状态暂时无法读取：${error.message}`, true);
+    } finally {
+      practice.catalogLoading = null;
+    }
+  })();
+  return practice.catalogLoading;
 }
 
 function renderPracticeNavigation() {
