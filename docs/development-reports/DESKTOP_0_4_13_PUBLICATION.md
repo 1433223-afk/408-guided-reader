@@ -2,7 +2,7 @@
 
 日期：2026-10-23
 
-状态：HTTPS_PUBLISHED / INSTALLED_UPDATER_UAT_PENDING
+状态：HTTPS_PUBLISHED / INSTALLED_UPDATER_PASS / USER_MANUAL_ACCEPTANCE_PASS
 
 ## 对应代码与验证
 
@@ -27,10 +27,16 @@
 - 独立 minisign artifact 和 trusted-comment 验签通过，manifest 的版本/URL/signature 匹配当前产物。签名私钥仍只留本机，未上传数据或凭据。
 - 经已有 owner SSH identity，以 admin 用户核对旧 0.4.12 manifest SHA256 后，保留 `/var/www/desktop/latest.json.bak-pre-0.4.13-20261023`，同目录原子切换；未修改其他服务器功能或 Bucket 配置。
 
-## 安装版验收待办
+## 安装版验收
 
 更新前安装版 ProductVersion 已独立核对为 0.4.12。已作只读 SQLite backup / integrity check，并记录 7 个 PDF blob、非秘密 AI 模型与阅读显示设置的 SHA256，不接触凭据内容。
 
-待用户执行实际 0.4.12 → 0.4.13 应用内更新、自动重启，并确认版本、首开/重开与连续翻页、目录/Notes/搜索/Practice、Memory 继续复盘、数据与四模型配置保留后补充验收。不提前声称 updater E2E 已通过。
+用户执行实际 0.4.12 → 0.4.13 应用内更新、自动重启后，对“关于”版本、首开/重开与连续翻页、目录/Notes/搜索/Practice、Memory 继续复盘、数据与四模型配置保留、关闭重开清单回复 **PASS**。
+
+独立核对安装 exe ProductVersion 为 0.4.13；Core、app.js、pdf-session.js、ai-settings.js、reading-display.js 的 SHA256 与最终构建一致。Shell 与构建只有 Tauri 预期的 NSIS 包型标记 `UNK → NSS` 三字节差异，替换该固定标记后其他 bytes 完全一致。
+
+日志 `[1792738371]` 显示下载和签名验证完成后才停止旧 Core；旧 Core 同秒 exit code 0，`[1792738382]` 新 Reader 导航成功。验收后用户关闭窗口，Core 再次正常退出且没有残留；随后正常启动安装 exe，独立观察到 1 个 Shell（PID 34936）与其 1 个 Core 子进程（PID 40712），安装路径正确。
+
+更新后 SQLite integrity check 为 ok。原 7 个 PDF blob SHA256、ai-models.json、reading-display.json 保持不变；书目/来源各 7 条、annotations 10 条、Master messages 39 条、section learning states 3 条、Learning Memory 3 条的全部原始行保留。本机前后备份、hash/count 和筛选日志留在临时目录，不进入 Git。人工使用确认与安装/日志/数据独立核对共同构成本次 updater E2E PASS。
 
 既有独立待办仍包括偶发网络运输失败、Windows 卸载登记元数据滞后；本版未修改 updater 协议或登记逻辑。
