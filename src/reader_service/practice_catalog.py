@@ -29,21 +29,36 @@ def _bounds(quad):
             max(p[0] for p in quad), max(p[1] for p in quad))
 
 
+def _line_bounds(line):
+    if "bounds" not in line:
+        quad = line["quad"] if "quad" in line else json.loads(line.pop("quad_json"))
+        line["bounds"] = _bounds(quad)
+    return line["bounds"]
+
+
 def _heading(lines, node, phrase):
     prefix = node["title"].lstrip("*").split()[0]
     return next((line for line in lines.get(node["start_page"], ())
                  if prefix in line["text"] and phrase in line["text"]), None)
 
 
+def _line_cells(line):
+    # Character cells are needed only for the entry and option hit areas.
+    # Keep other OCR rows as text/quads instead of decoding whole-book cells.
+    if "cells" not in line:
+        line["cells"] = json.loads(line.pop("cells_json"))
+    return line["cells"]
+
+
 def _exercise_entry_right(line):
     """End of the printed heading, even when OCR merges later page text into its line."""
     match = re.search(r"\*?\d+(?:\.\d+){1,3}\s*本节[习试]题\S*", line["text"])
     if match:
-        cells = [cell for cell in line["cells"]
+        cells = [cell for cell in _line_cells(line)
                  if cell[2] < match.end() and cell[3] > match.start()]
         if cells:
             return max(cell[1] for cell in cells)
-    return _bounds(line["quad"])[2]
+    return _line_bounds(line)[2]
 
 
 def _after(line, heading):
@@ -62,15 +77,16 @@ def _line_stream(pages, first, last):
 def _option_rect(line, start, end, *, has_previous=False, next_start=None):
     # Cells retain OCR character offsets and X geometry. They split A/B when
     # the OCR engine merged two printed options into one detected line.
-    cells = [cell for cell in line["cells"] if cell[3] > start and cell[2] < end]
+    line_cells = _line_cells(line)
+    cells = [cell for cell in line_cells if cell[3] > start and cell[2] < end]
     if not cells:
         return None
-    x0, y0, x1, y1 = _bounds(line["quad"])
+    x0, y0, x1, y1 = _line_bounds(line)
     x0 = min(cell[0] for cell in cells)
     x1 = max(cell[1] for cell in cells)
     right = x1 + .006
     if next_start is not None:
-        following = [cell[0] for cell in line["cells"] if cell[2] <= next_start < cell[3]]
+        following = [cell[0] for cell in line_cells if cell[2] <= next_start < cell[3]]
         if not following:
             return None
         right = min(right, min(following) - .002)
@@ -111,12 +127,12 @@ def _identity(source_sha256, section_number, printed_number):
 
 def _question_group(group, number, section, source_sha256):
     prompt = group[0]
-    prompt_y = _bounds(prompt["quad"])[1]
+    prompt_y = _line_bounds(prompt)[1]
     # OCR ordinal order can place cells from a preceding table after the
     # question heading. They remain outside this Exercise's spatial boundary.
     # A small tolerance preserves a heading split into number and text quads.
     group = [line for line in group if line["page"] != prompt["page"]
-             or _bounds(line["quad"])[1] >= prompt_y - .004]
+             or _line_bounds(line)[1] >= prompt_y - .004]
     hits = []
     option_parts = defaultdict(list)
     current_choice = None
@@ -132,7 +148,7 @@ def _question_group(group, number, section, source_sha256):
             hits.append((line, marker.group(1), rect, value))
             current_choice = marker.group(1)
             option_parts[current_choice].append(value)
-        if not markers and current_choice and .075 <= _bounds(line["quad"])[1] < .95:
+        if not markers and current_choice and .075 <= _line_bounds(line)[1] < .95:
             option_parts[current_choice].append(line["text"])
     if [choice for _, choice, _, _ in hits] != list("ABCD"):
         return None
@@ -143,14 +159,14 @@ def _question_group(group, number, section, source_sha256):
         return None
     title = section["title"]
     section_number = title.lstrip("*").split()[0]
-    source_lines = [line for line in group if .075 <= _bounds(line["quad"])[1] < .95]
+    source_lines = [line for line in group if .075 <= _line_bounds(line)[1] < .95]
     page_text = defaultdict(list)
     page_top = defaultdict(lambda: 1.0)
     page_bottom = defaultdict(float)
     for line in source_lines:
         page_text[line["page"]].append(line["text"])
-        page_top[line["page"]] = min(page_top[line["page"]], _bounds(line["quad"])[1])
-        page_bottom[line["page"]] = max(page_bottom[line["page"]], _bounds(line["quad"])[3])
+        page_top[line["page"]] = min(page_top[line["page"]], _line_bounds(line)[1])
+        page_bottom[line["page"]] = max(page_bottom[line["page"]], _line_bounds(line)[3])
     return {
         "number": _identity(source_sha256, section_number, number),
         "label": number, "sectionId": section["outline_node_id"],
@@ -246,8 +262,8 @@ def build_catalog(connection, revision_id: str, source_sha256: str, *, section_i
         " ORDER BY lines.pdf_page_index,lines.line_ordinal", parameters):
         pages[row["pdf_page_index"]].append({
             "page": row["pdf_page_index"], "ordinal": row["line_ordinal"],
-            "text": row["text"].strip(), "quad": json.loads(row["quad_json"]),
-            "cells": json.loads(row["cells_json"]),
+            "text": row["text"].strip(), "quad_json": row["quad_json"],
+            "cells_json": row["cells_json"],
         })
     sections = []
     used_ids = set()
@@ -319,7 +335,7 @@ def build_catalog(connection, revision_id: str, source_sha256: str, *, section_i
                 raise ValueError("Practice 题号发生冲突，已停止发布。")
             used_ids.add(identity)
             question.update(answer=letter, answerPage=answer_line["page"],
-                            answerY=round(_bounds(answer_line["quad"])[1], 4),
+                            answerY=round(_line_bounds(answer_line)[1], 4),
                             explanation="\n".join(line["text"] for line in explanation),
                             explanation_pages=[{"pdf_page_number": page + 1,
                                                 "ocr_text": "\n".join(line["text"] for line in explanation
@@ -330,8 +346,8 @@ def build_catalog(connection, revision_id: str, source_sha256: str, *, section_i
             sections.append({"id": _section_id(exercise),
                              "title": exercise["title"],
                              "entryPage": exercise_head["page"],
-                             "entryTop": round(_bounds(exercise_head["quad"])[1], 4),
-                             "entryBottom": round(_bounds(exercise_head["quad"])[3], 4),
+                             "entryTop": round(_line_bounds(exercise_head)[1], 4),
+                             "entryBottom": round(_line_bounds(exercise_head)[3], 4),
                              "entryLeft": round(min(.85, _exercise_entry_right(exercise_head) + .012), 4),
                              "questions": items})
     return sections

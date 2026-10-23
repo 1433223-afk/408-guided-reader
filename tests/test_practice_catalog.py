@@ -193,3 +193,26 @@ def test_scoped_catalog_matches_full_section_without_deserializing_unrelated_ocr
                text,confidence,cells_json) VALUES ('revision',100,0,'not JSON','unrelated',1,'not JSON')""",
         )
         assert build_catalog(connection, 'revision', SOURCE_SHA256, section_id='exercise') == full
+
+
+def test_full_catalog_does_not_decode_geometry_for_unrelated_body_pages(tmp_path, monkeypatch):
+    database = Database(tmp_path / 'state.sqlite3')
+    database.initialize()
+    _source(database)
+    with database.connect() as connection:
+        expected = build_catalog(connection, 'revision', SOURCE_SHA256)
+        # These are ordinary body rows after the next section heading. They
+        # should not add character-cell/quad decoding work to Practice startup.
+        for ordinal in range(1, 101):
+            _line(connection, 3, ordinal, '普通正文，与习题无关。', .25 + ordinal * .001)
+        decoded = []
+        original_loads = json.loads
+
+        def loads(value, *args, **kwargs):
+            decoded.append(value)
+            return original_loads(value, *args, **kwargs)
+
+        monkeypatch.setattr(json, 'loads', loads)
+        actual = build_catalog(connection, 'revision', SOURCE_SHA256)
+    assert actual == expected
+    assert len(decoded) < 25, 'unrelated OCR geometry was decoded for the Practice catalog'

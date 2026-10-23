@@ -10,6 +10,7 @@ import weakref
 from collections import OrderedDict
 from contextlib import closing
 from io import BytesIO
+import pypdfium2 as pdfium
 
 from reader_service.pdf_limits import validate_render_size
 
@@ -75,8 +76,6 @@ def render_visual_region(library, revision_id: str, page_index: int, rect) -> di
 
 
 def _render_region(pdf_path, revision, page_index, normalized):
-    import pypdfium2 as pdfium
-
     with PDFIUM_RENDER_LOCK:
         try:
             with closing(pdfium.PdfDocument(pdf_path)) as document:

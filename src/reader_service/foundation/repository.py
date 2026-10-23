@@ -91,12 +91,16 @@ class FoundationRepository:
         )
         return counts, [dict(row) for row in rows]
 
-    def search_page_lines(self, revision_id: str, page_index: int, *, connection=None) -> list[dict]:
+    def search_page_lines(
+        self, revision_id: str, page_index: int, *, connection=None, decode_cells: bool = True
+    ) -> list[dict]:
         """Read transient cell positions only for one READY page that actually matched."""
         if connection is None:
             with self.database.connect() as connection:
                 connection.execute("BEGIN")
-                return self.search_page_lines(revision_id, page_index, connection=connection)
+                return self.search_page_lines(
+                    revision_id, page_index, connection=connection, decode_cells=decode_cells
+                )
         rows = connection.execute(
             """
             SELECT lines.line_ordinal, lines.text, lines.cells_json
@@ -114,7 +118,8 @@ class FoundationRepository:
             {
                 "line_ordinal": row["line_ordinal"],
                 "text": row["text"],
-                "cells": json.loads(row["cells_json"]),
+                **({"cells": json.loads(row["cells_json"])} if decode_cells
+                   else {"cells_json": row["cells_json"]}),
             }
             for row in rows
         ]

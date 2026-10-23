@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {setImmediate} from 'node:timers/promises';
 
 // Run the actual Reader render lifecycle with controlled PDF reads/renders.
-const app = readFileSync(new URL('../src/reader_service/static/app.js', import.meta.url), 'utf8');
+const app = readFileSync(new URL('../src/reader_service/static/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const lifecycle = app.slice(app.indexOf('async function renderPage(index)'), app.indexOf('function setCurrentPage(index)'));
 const deferred = () => {
   let resolve;
@@ -15,16 +15,16 @@ const deferred = () => {
 
 function fixture() {
   const reads = [], renders = [], mounts = [], errors = [];
-  const wrapper = {classList: {add() {}, remove() {}}, replaceChildren(...nodes) {mounts.push(nodes);}};
+  const wrapper = {classList: {add() {}, remove() {}}, querySelector() {return null;}, replaceChildren(...nodes) {mounts.push(nodes);}};
   const state = {pdf: {getPage() {const read = deferred(); reads.push(read); return read.promise;}},
-    generation: 1, renderGeneration: 1, rendered: new Set(), renderTasks: new Map(), pageRenderRequests: new Map()};
-  const context = vm.createContext({state, elements: {pages: {children: [wrapper]}},
+    generation: 1, renderGeneration: 1, rendered: new Set(), renderTasks: new Map(), pageRenderRequests: new Map(), pageProxies: new Map()};
+  const context = vm.createContext({state, elements: {pages: {children: [wrapper], querySelectorAll() {return [];}}},
     document: {createElement() {return {style: {}, dataset: {}, getContext() {return {};}};}},
     snappedPageSize: () => ({backingWidth: 600, backingHeight: 800, cssWidth: 600, cssHeight: 800, pixelRatio: 1}),
     applyPageSize() {}, master: {renderPage() {}}, visualSelection: {render() {}}, renderGuideEntries() {}, renderPracticeOverlay() {},
-    syncPagePreparationUi() {}, ensureOverlay() {}, clearSelection() {}, announce: message => errors.push(message)});
+    syncPagePreparationUi() {}, ensureOverlay() {}, clearSelection() {}, startReaderContext() {}, scheduleViewportUpdate() {}, announce: message => errors.push(message)});
   vm.runInContext(lifecycle, context);
-  const pdfPage = {getViewport: () => ({width: 600, height: 800}), render() {
+  const pdfPage = {cleanup() {}, getViewport: () => ({width: 600, height: 800}), render() {
     const render = deferred();
     renders.push(render);
     return {promise: render.promise, cancel() {render.resolve();}};

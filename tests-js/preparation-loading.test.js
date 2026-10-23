@@ -115,7 +115,7 @@ test('selectable overlay mounts without waiting for annotation request',async()=
     elements:{pages:{children:[wrapper]}},
     api:async()=>({page:{status:'READY',lines:[]}}),
     document:{createElement:()=>({dataset:{},setAttribute(){},addEventListener(){}})},
-    inline:{renderPage(){}},renderAnnotations(){},renderSearchMatch(){},updateMarksPanel(){},
+    inline:{renderPage(){}},renderAnnotations(){},renderSearchMatch(){},updateMarksPanel(){},trimPageDataCaches(){},
     beginSelection(){},extendSelection(){},finishSelection(){},openSelectionContextMenu(){},
     beginPracticePointer(){},updatePracticeHover(){},finishPracticePointer(){},
     refreshAnnotationPage:()=>{requested=true;return new Promise(()=>{});}};

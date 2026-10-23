@@ -15,7 +15,7 @@ import { PRACTICE_SECTIONS, replacePracticeSections, practiceQuestionForPage, pr
 import { createPracticeKnowledge } from "/practice-knowledge.js";
 import { createVisualSelection } from "/visual-selection.js";
 import { createPdfSession } from "/pdf-session.js";
-import { pageRenderWindow } from "/geometry.js";
+import { pageRenderWindow, pageRenderPlan, pageViewportRange } from "/geometry.js";
 import { canvasContentBounds, createReadingDisplay, createZoomEditor, createPortraitLayout } from "/reading-display.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.mjs";
@@ -40,7 +40,7 @@ if (launchToken) {
 
 const state = {
   books: [], book: null, revision: null, pdf: null, zoom: 1,
-  currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), pageRenderRequests: new Map(), rendered: new Set(),
+  currentPage: 0, generation: 0, renderGeneration: 0, renderTasks: new Map(), pageRenderRequests: new Map(), pageProxies: new Map(), rendered: new Set(),
   scrollFrame: 0, saveTimer: 0, resizeTimer: 0, viewerLayoutWidth: 0, priorityTimer: 0,
   preparation: new Map(), overlayData: new Map(), eventSource: null,
   preparationRetryTimer: 0, preparationRetryDelay: 1000,
@@ -137,7 +137,12 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
   const books = (await api('/api/books')).books;
   const book = books.find(b => b.id === item.book_id && b.active_revision?.id === item.book_source_revision_id);
   if (!book) throw new Error('原教材当前不可用。');
-  if (state.book?.id !== book.id) { if (state.book) closeReader(); await openBook(book); }
+  if (state.book?.id !== book.id) {
+    if (state.book) closeReader();
+    const target = item.source_kind === 'MASTER' ? null
+      : {page:item.source.pdf_page_index, y:Math.min(...item.source.quads.flat().map(p => p[1]))};
+    await openBook(book, target);
+  }
   if (state.revision?.id !== item.book_source_revision_id || !state.pdf) throw new Error('请重新打开原教材。');
   if (item.source_kind === 'MASTER') {
     await master.openMemory(item.source.knowledge_point_id || item.source.section_outline_node_id, item.source_id);
@@ -155,7 +160,10 @@ const memory = createMemoryUI({ api, announce, home: () => showHome(), resume: a
   const books = (await api('/api/books')).books;
   const book = books.find(b => b.id === item.book_id && b.active_revision?.id === item.book_source_revision_id);
   if (!book) throw new Error('原教材当前不可用。');
-  if (state.book?.id !== book.id) { if (state.book) closeReader(); await openBook(book); }
+  if (state.book?.id !== book.id) {
+    if (state.book) closeReader();
+    await openBook(book, {page:item.source.pdf_page_index, y:0});
+  }
   if (!state.pdf || state.revision?.id !== item.book_source_revision_id) throw new Error('请重新打开原教材。');
   elements['library-home'].hidden = true;
   elements.reader.hidden = false;
@@ -250,8 +258,9 @@ function renderLibrary() { screens.library(state.books).catch(error => announce(
 
 async function enterReader(book, target) {
   screens.close();
-  await openBook(book);
-  if (target && state.pdf) goToPage(target.page, target.y);
+  const alreadyOpen = state.book?.id === book.id && state.pdf;
+  await openBook(book, target);
+  if (target && state.pdf && alreadyOpen) goToPage(target.page, target.y);
 }
 async function showHome() {
   screens.close();
@@ -339,22 +348,70 @@ async function removeBook(book) {
   }
 }
 
-async function openBook(book) {
+let firstPagePreviewRequest = null;
+let readerContextGeneration = -1;
+
+function startReaderContext() {
+  const generation = state.generation;
+  if (readerContextGeneration === generation) return;
+  readerContextGeneration = generation;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    if (generation !== state.generation || !state.revision) return;
+    loadPracticeRecords();
+    master.refreshEntries().catch(error => { if (generation === state.generation) announce(error.message, true); });
+    refreshAssistantStatus();
+    startPreparation().catch(error => {
+      if (generation !== state.generation) return;
+      elements['preparation-status'].textContent = '文字准备暂时不可用';
+      announce(error.message, true);
+    });
+    loadBookMap();
+  }));
+}
+
+async function showFirstPagePreview() {
+  const generation = state.generation, revision = state.revision, index = state.currentPage;
+  const wrapper = elements.pages.children[index];
+  const controller = new AbortController();
+  firstPagePreviewRequest = controller;
+  try {
+    const region = await api(`/api/revisions/${revision.id}/visual-region`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, signal:controller.signal,
+      body:JSON.stringify({pdf_page_index:index, rect:[0,0,1,1]}),
+    });
+    if (region.source_sha256 !== revision.blob_sha256 || region.pdf_page_index !== index
+        || !region.image?.data_url?.startsWith('data:image/png;base64,')) return;
+    const image = new Image();
+    image.className = 'page-preview'; image.alt = ''; image.setAttribute('aria-hidden', 'true');
+    image.src = region.image.data_url;
+    await image.decode();
+    if (controller.signal.aborted || generation !== state.generation || !wrapper.isConnected
+        || state.rendered.has(index)) return;
+    wrapper.append(image);
+  } catch { /* The normal PDF renderer remains the fallback, including locked PDFs. */ }
+  finally { if (firstPagePreviewRequest === controller) firstPagePreviewRequest = null; }
+}
+
+async function openBook(book, initialTarget = null) {
   if (state.book?.id === book.id && state.pdf) return;
+  firstPagePreviewRequest?.abort();
   visualSelection.cancel({clear: true});
   state.generation += 1;
   const generation = state.generation;
+  // These two controls are shared across openings; an old save cannot reset them.
+  elements["save-highlight"].disabled = false;
+  elements["save-note"].disabled = false;
   cancelRenders();
+  state.pageProxies.clear();
   closePreparationStream();
   resetPractice();
   applyDirectoryMode(null);
   state.book = book;
   state.revision = book.active_revision;
-  loadPracticeRecords();
   state.readerSessionId = crypto.randomUUID();
   state.assistantState = emptyAssistantState();
   state.navigationAnchorId = null;
-  state.pinnedLanding = null;
+  state.pinnedLanding = initialTarget ? {pageIndex:initialTarget.page, normalizedY:initialTarget.y ?? 0} : null;
   state.directoryCollapsed = null;
   state.directoryExpandedFor = null;
   state.assistantDraft = null;
@@ -370,7 +427,7 @@ async function openBook(book) {
   state.assistantChildRequests.clear();
   state.zoom = state.revision.position.zoom || 1;
   state.learningChapterId = null;
-  state.currentPage = state.revision.position.pdf_page_index || 0;
+  state.currentPage = initialTarget?.page ?? state.revision.position.pdf_page_index ?? 0;
   state.pdf = null;
   elements["reader-title"].textContent = book.title;
   elements["library-home"].hidden = true;
@@ -383,13 +440,17 @@ async function openBook(book) {
   buildPlaceholders();
   resetAssistantPanel();
   master.reset();
-  master.refreshEntries().catch((error) => announce(error.message, true));
-  refreshAssistantStatus();
+  applyRestoredPosition(initialTarget?.y ?? state.revision.position.normalized_offset ?? 0);
+  void showFirstPagePreview();
   try {
     const pdf = await pdfSession.open({
       url: `/api/revisions/${state.revision.id}/pdf`,
       httpHeaders: { "X-Reader-Token": launchToken },
       withCredentials: true,
+      // These local books stream quickly. Avoid racing the stream with extra
+      // ranges; retain seeking for very large files and the small-file default.
+      disableRange: state.revision.byte_size >= 32 * 1024 * 1024
+        && state.revision.byte_size <= 256 * 1024 * 1024,
       wasmUrl: "/vendor/pdfjs/wasm/",
       cMapUrl: "/vendor/pdfjs/cmaps/",
       cMapPacked: true,
@@ -401,11 +462,8 @@ async function openBook(book) {
     if (pdf.numPages !== state.revision.page_count) throw new Error("保存的 PDF 元数据与来源文件不再一致");
     await nextFrame();
     if (generation !== state.generation) return;
-    applyRestoredPosition();
     state.pdf = pdf;
     scheduleViewportUpdate();
-    startPreparation().catch(error => { elements['preparation-status'].textContent = '文字准备暂时不可用'; announce(error.message, true); });
-    loadBookMap();
   } catch (_error) {
     if (generation !== state.generation) return;
     await pdfSession.close();
@@ -414,6 +472,7 @@ async function openBook(book) {
 }
 
 function closeReader() {
+  firstPagePreviewRequest?.abort();
   void pdfSession.close();
   visualSelection.cancel({clear: true});
   resetPractice();
@@ -432,6 +491,7 @@ function closeReader() {
   state.learningChapterId = null;
   master.reset();
   state.pdf = null;
+  state.pageProxies.clear();
   state.readerSessionId = null;
   state.assistantState = emptyAssistantState();
   state.assistantDraft = null;
@@ -558,10 +618,9 @@ function buildPlaceholders() {
   state.viewerLayoutWidth = elements.viewer.clientWidth;
 }
 
-function applyRestoredPosition() {
+function applyRestoredPosition(offset = state.revision.position.normalized_offset || 0) {
   const page = elements.pages.children[state.currentPage];
   if (!page) return;
-  const offset = state.revision.position.normalized_offset || 0;
   elements.viewer.scrollTop = snapScroll(page.offsetTop + page.offsetHeight * offset);
   setCurrentPage(state.currentPage);
 }
@@ -775,26 +834,23 @@ function updateViewport() {
   }
   const top = elements.viewer.scrollTop;
   const bottom = top + elements.viewer.clientHeight;
-  let first = null;
-  let last = 0;
-  let bestIndex = 0;
-  let bestDistance = Infinity;
-  const viewportCenter = top + elements.viewer.clientHeight / 2;
-  for (const page of elements.pages.children) {
-    const index = Number(page.dataset.index);
+  const {first, last, bestIndex} = pageViewportRange(elements.pages.children.length, index => {
+    const page = elements.pages.children[index];
     const pageTop = page.offsetTop;
     const pageBottom = pageTop + page.offsetHeight + parseFloat(page.style.marginBottom || "20");
-    if (pageBottom >= top && first === null) first = index;
-    if (pageTop <= bottom) last = index;
-    const distance = Math.abs((pageTop + pageBottom) / 2 - viewportCenter);
-    if (distance < bestDistance) { bestDistance = distance; bestIndex = index; }
-  }
+    return {top:pageTop,bottom:pageBottom};
+  }, top, bottom);
   setCurrentPage(bestIndex);
   renderReaderSectionHint();
   const {start: keepStart, end: keepEnd} = pageRenderWindow(
     first ?? bestIndex, Math.max(first ?? bestIndex, last), state.pdf.numPages, state.pagePixelCost);
-  for (let index = keepStart; index <= keepEnd; index += 1) renderPage(index);
-  for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys()])) {
+  const {visible, preload} = pageRenderPlan({
+    first: first ?? bestIndex, last: Math.max(first ?? bestIndex, last), focus: bestIndex,
+    start: keepStart, end: keepEnd, rendered: state.rendered,
+  });
+  // The original page on screen must finish before speculative neighbour work.
+  for (const index of [...visible, ...preload]) renderPage(index);
+  for (const index of new Set([...state.rendered, ...state.pageRenderRequests.keys(), ...state.pageProxies.keys()])) {
     if (index < keepStart || index > keepEnd) clearPage(index);
   }
   scheduleSave();
@@ -803,6 +859,7 @@ function updateViewport() {
 
 async function renderPage(index) {
   if (!state.pdf || state.rendered.has(index) || state.pageRenderRequests.has(index)) return;
+  const pdf = state.pdf;
   const generation = state.generation;
   const renderGeneration = state.renderGeneration;
   const wrapper = elements.pages.children[index];
@@ -814,7 +871,8 @@ async function renderPage(index) {
   wrapper.classList.add("loading");
   try {
     const page = await state.pdf.getPage(index + 1);
-    if (!ownsPage()) return;
+    if (!ownsPage()) { releasePageProxy(page, index, pdf); return; }
+    state.pageProxies.set(index, page);
     const base = page.getViewport({ scale: 1 });
     const size = snappedPageSize(base.height / base.width);
     const viewport = page.getViewport({ scale: size.backingWidth / base.width });
@@ -826,7 +884,8 @@ async function renderPage(index) {
     canvas.dataset.outputScaleX = String(size.pixelRatio);
     canvas.dataset.outputScaleY = String(size.pixelRatio);
     applyPageSize(wrapper, size);
-    wrapper.replaceChildren(canvas);
+    const preview = wrapper.querySelector('.page-preview');
+    wrapper.replaceChildren(canvas, ...(preview ? [preview] : []));
     const canvasContext = canvas.getContext("2d", { alpha: false });
     canvasContext.imageSmoothingEnabled = true;
     canvasContext.imageSmoothingQuality = "high";
@@ -846,6 +905,9 @@ async function renderPage(index) {
     await task.promise;
     if (ownsPage()) {
       state.rendered.add(index);
+      wrapper.querySelector('.page-preview')?.remove();
+      startReaderContext();
+      scheduleViewportUpdate();
       master.renderPage(index);
       renderGuideEntries(index);
       renderPracticeOverlay(index);
@@ -865,6 +927,8 @@ async function renderPage(index) {
 }
 
 function clearPage(index) {
+  const page = state.pageProxies.get(index), pdf = state.pdf;
+  state.pageProxies.delete(index);
   state.pageRenderRequests.delete(index);
   const task = state.renderTasks.get(index);
   if (task) task.cancel();
@@ -877,6 +941,7 @@ function clearPage(index) {
     wrapper.classList.remove("loading");
   }
   if (state.selection?.pageIndex === index) clearSelection();
+  releasePageProxy(page, index, pdf, task);
 }
 
 function cancelRenders() {
@@ -894,6 +959,17 @@ function releasePageCanvas(canvas, task) {
   const release = () => { canvas.width = 0; canvas.height = 0; };
   if (task) void task.promise.catch(() => {}).then(release);
   else release();
+}
+
+function releasePageProxy(page, index, pdf, task) {
+  if (!page) return;
+  // PDF.js keeps display lists and decoded images after the canvas is gone.
+  // Finish cancellation first; a quick return or zoom may already reuse the page.
+  void Promise.resolve(task?.promise).catch(() => {}).then(() => {
+    if (state.pdf !== pdf || (!state.pageProxies.has(index) && !state.pageRenderRequests.has(index))) {
+      page.cleanup();
+    }
+  });
 }
 
 function setCurrentPage(index) {
@@ -986,8 +1062,8 @@ function relayoutPages(anchor = captureZoomAnchor()) {
   });
   state.pagePixelCost = Math.max(...[...sizes.values()].map(size => size.backingWidth * size.backingHeight));
   state.viewerLayoutWidth = elements.viewer.clientWidth;
-  // Before PDF restoration, placeholders are layout only, not a reading position.
-  if (state.pdf) restoreZoomAnchor(anchor);
+  // The initial original page can already be visible while PDF.js loads.
+  restoreZoomAnchor(anchor);
   scheduleViewportUpdate();
   scheduleSave();
   evaluateDirectoryMode();
@@ -1292,13 +1368,21 @@ function applyDirectoryMode(mode) {
   }
 }
 
+let directoryActiveSnapshot = null;
 function syncDirectoryActive({ reveal = false } = {}) {
   // The deepest authoritative outline item owns the highlight; its Section/Chapter
   // ancestors stay plain (the chapter is only a last-resort fallback).
   const activeId = state.currentOutlineId || state.learningChapterId;
   if (!activeId) return;
+  const tree = elements["outline-tree"];
+  // The reading point changes every scroll frame, but its directory identity
+  // usually does not. A replaced tree or an explicit reveal still refreshes it.
+  if (!reveal && directoryActiveSnapshot?.generation === state.generation
+      && directoryActiveSnapshot.activeId === activeId
+      && directoryActiveSnapshot.target?.isConnected
+      && tree.contains(directoryActiveSnapshot.target)) return;
   let active = null;
-  for (const target of elements["outline-tree"].querySelectorAll(".outline-target")) {
+  for (const target of tree.querySelectorAll(".outline-target")) {
     const isActive = target.closest("li")?.dataset.nodeId === activeId;
     target.classList.toggle("is-active", isActive);
     if (isActive) {
@@ -1308,6 +1392,7 @@ function syncDirectoryActive({ reveal = false } = {}) {
       target.removeAttribute("aria-current");
     }
   }
+  directoryActiveSnapshot = { generation: state.generation, activeId, target: active };
   active?.scrollIntoView({ block: reveal ? "center" : "nearest", inline: "nearest" });
 }
 
@@ -1353,7 +1438,7 @@ function resetPractice() {
   state.practice = { active: false, sectionId: null, index: 0, selected: null, result: null, records: new Map(), positions: new Map(), onAnswerPage: false,
     reviewOpen: false, reviewTarget: null, reviewOpening: null, reviewDockWasOpen: false,
     submitting: false, savingFavorite: false, submissionError: false, restoreZoom: null,
-    hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, pendingCatalog: null, onKnowledgePage: false };
+    hints: [], hintLoading: false, hintEpoch: 0, catalogLoadEpoch: 0, catalogReady: false, pendingCatalog: null, onKnowledgePage: false };
   elements.reader.classList.remove("practice-active");
   elements["practice-panel"].hidden = true;
   elements["practice-hint"].hidden = true;
@@ -1396,6 +1481,7 @@ async function loadPracticeRecords() {
     if (state.practice.active) state.practice.pendingCatalog = catalog.sections;
     else replacePracticeSections(catalog.sections, state.revision.blob_sha256);
     state.practice.records = new Map(payload.questions.map(row => [row.number, row]));
+    state.practice.catalogReady = true;
     state.practice.positions = new Map(Object.entries(payload.positions || {}));
     if (state.practice.active) state.practice.positions.set(state.practice.sectionId, practiceCurrentQuestion().number);
     updatePracticeRail();
@@ -1519,7 +1605,7 @@ function renderPracticeOverlay(index) {
   const wrapper = elements.pages.children[index];
   if (!wrapper) return;
   wrapper.querySelectorAll(".practice-choice-area,.practice-question-mark,.practice-current-guide,.practice-entry").forEach(node => node.remove());
-  if (!state.revision || !wrapper.querySelector("canvas")) return;
+  if (!state.revision || !state.practice.catalogReady || !wrapper.querySelector("canvas")) return;
   for (const section of PRACTICE_SECTIONS.filter(section => section.entryPage === index)) {
     const entry = document.createElement("button");
     entry.type = "button";
@@ -2353,22 +2439,28 @@ function updatePreparationLabel() {
   const ready = pages.filter((page) => page.status === "READY").length;
   const failed = pages.filter((page) => page.status === "FAILED").length;
   const output = elements["preparation-status"];
+  let text, title, className;
   if (!pages.length) {
-    output.textContent = "正在读取已保存文字层…";
-    output.className = "preparation-status";
+    text = "正在读取已保存文字层…";
+    className = "preparation-status";
   } else if (ready + failed === pages.length) {
-    output.textContent = failed ? `${ready} 页文字层 · ${failed} 页失败 · 原书为准` : "文字层已生成";
-    output.title = "OCR 处理完成不代表全文识别无误；可能存在漏字、错字，请以原 PDF 为准。";
-    output.className = `preparation-status ${failed ? "failed" : "ready"}`;
+    text = failed ? `${ready} 页文字层 · ${failed} 页失败 · 原书为准` : "文字层已生成";
+    title = "OCR 处理完成不代表全文识别无误；可能存在漏字、错字，请以原 PDF 为准。";
+    className = `preparation-status ${failed ? "failed" : "ready"}`;
   } else {
     const current = state.preparation.get(state.currentPage)?.status;
     const pageLabel = current === "READY" ? "本页可选"
       : current === "PREPARING" ? "本页识别中"
       : current === "FAILED" ? "本页文字失败" : "本页待识别";
-    output.textContent = `${pageLabel} · ${ready}/${pages.length} 页${current === "READY" ? " · 原书为准" : ""}`;
-    output.title = "原 PDF 可继续阅读；文字层优先准备当前页。OCR 可能漏字、错字，请以原书为准。";
-    output.className = `preparation-status ${current === "FAILED" ? "failed" : ""}`;
+    text = `${pageLabel} · ${ready}/${pages.length} 页${current === "READY" ? " · 原书为准" : ""}`;
+    title = "原 PDF 可继续阅读；文字层优先准备当前页。OCR 可能漏字、错字，请以原书为准。";
+    className = `preparation-status ${current === "FAILED" ? "failed" : ""}`;
   }
+  // Avoid replacing unchanged toolbar text before viewport geometry is read.
+  // Read the actual element so reconnect/retry messages can recover immediately.
+  if (output.textContent !== text) output.textContent = text;
+  if (title !== undefined && output.title !== title) output.title = title;
+  if (output.className !== className) output.className = className;
 }
 
 function schedulePreparationPriority(first, last) {
@@ -3466,7 +3558,7 @@ function createAssistantStreamView(question, pending, { showQuestion = true } = 
   answer.setAttribute("aria-live", "off");
   article.append(answer);
   pending.before(article);
-  return { article, answer, pending, content: "" };
+  return { article, answer, pending, content: "", generation: state.generation, readerSessionId: state.readerSessionId };
 }
 
 function clearAssistantStreamTransient() {
@@ -3480,6 +3572,15 @@ function appendAssistantDelta(view, content) {
   view.content += content;
   view.answer.hidden = false;
   view.answer.append(document.createTextNode(content));
+  if (!view.scrollFrame) view.scrollFrame = requestAnimationFrame(() => flushAssistantStreamScroll(view));
+}
+
+function flushAssistantStreamScroll(view) {
+  if (!view.scrollFrame) return;
+  cancelAnimationFrame(view.scrollFrame);
+  view.scrollFrame = 0;
+  if (!view.article.isConnected || view.signal?.aborted
+      || view.generation !== state.generation || view.readerSessionId !== state.readerSessionId) return;
   elements["assistant-turns"].scrollTop = elements["assistant-turns"].scrollHeight;
 }
 
@@ -3506,6 +3607,7 @@ async function runAssistantStream({
   const view = createAssistantStreamView(question, pending, { showQuestion });
   if (initialContent) appendAssistantDelta(view, initialContent);
   const controller = new AbortController();
+  view.signal = controller.signal;
   state.assistantStreamControllers.set(streamKey, controller);
   let completed = null;
   try {
@@ -4019,6 +4121,9 @@ async function saveAssistantTurn(button) {
   if (button.disabled || button.dataset.saving === "true") return;
   const readerSessionId = state.readerSessionId;
   const revisionId = state.revision?.id;
+  // Reopening keeps the revision id; pending note writes belong to one opening.
+  const generation = state.generation;
+  const currentReader = () => state.revision?.id === revisionId && state.generation === generation;
   const rootId = button.dataset.rootId;
   const nodeId = button.dataset.nodeId || null;
   const turnId = button.dataset.turnId;
@@ -4041,7 +4146,7 @@ async function saveAssistantTurn(button) {
         save_intent_id: saveIntentId,
       }),
     });
-    if (state.revision?.id !== revisionId) return;
+    if (!currentReader()) return;
     state.assistantSavedTurns.set(turnKey, payload.annotation.id);
     upsertAnnotation(payload.annotation);
     renderAnnotations(payload.annotation.pdf_page_index);
@@ -4050,12 +4155,12 @@ async function saveAssistantTurn(button) {
     announce("已保存到笔记；AI 审查会随后更新状态。");
     pollSavedExplanationReview(payload.annotation.id, payload.annotation.pdf_page_index, 0);
   } catch (error) {
-    if (state.revision?.id !== revisionId) return;
+    if (!currentReader()) return;
     button.disabled = false;
     button.textContent = "重试保存到笔记";
     announce(`保存失败：${error.message || "请稍后重试。"}`, true);
   } finally {
-    delete button.dataset.saving;
+    if (currentReader()) delete button.dataset.saving;
   }
 }
 
@@ -4067,14 +4172,17 @@ function upsertAnnotation(annotation) {
   if (existing >= 0) next[existing] = annotation;
   else next.push(annotation);
   state.annotationData.set(pageIndex, next);
+  trimPageDataCaches();
 }
 
 async function refreshAnnotationPage(pageIndex) {
   const revisionId = state.revision?.id;
+  const generation = state.generation;
   if (!revisionId) return [];
   const payload = await api(`/api/revisions/${revisionId}/annotations?page=${pageIndex}`);
-  if (state.revision?.id !== revisionId) return [];
+  if (state.revision?.id !== revisionId || state.generation !== generation) return [];
   state.annotationData.set(pageIndex, payload.annotations);
+  trimPageDataCaches();
   renderAnnotations(pageIndex);
   if (pageIndex === state.currentPage) updateMarksPanel();
   return payload.annotations;
@@ -4089,17 +4197,20 @@ function pollSavedExplanationReview(annotationId, pageIndex, attempt) {
     return;
   }
   const revisionId = state.revision?.id;
+  const generation = state.generation;
+  const currentReader = () => state.revision?.id === revisionId && state.generation === generation;
   const timer = setTimeout(async () => {
+    if (!revisionId || !currentReader()) return;
     state.assistantReviewPolls.delete(annotationId);
-    if (!revisionId || state.revision?.id !== revisionId) return;
     try {
       const values = await refreshAnnotationPage(pageIndex);
+      if (!currentReader()) return;
       const annotation = values.find((value) => value.id === annotationId);
       if (annotation?.verification_state === "PENDING") {
         pollSavedExplanationReview(annotationId, pageIndex, attempt + 1);
       }
     } catch (_error) {
-      pollSavedExplanationReview(annotationId, pageIndex, attempt + 1);
+      if (currentReader()) pollSavedExplanationReview(annotationId, pageIndex, attempt + 1);
     }
   }, delays[attempt]);
   state.assistantReviewPolls.set(annotationId, timer);
@@ -4107,6 +4218,8 @@ function pollSavedExplanationReview(annotationId, pageIndex, attempt) {
 
 async function retrySavedExplanationReview(annotation, button) {
   const revisionId = state.revision?.id;
+  const generation = state.generation;
+  const currentReader = () => state.revision?.id === revisionId && state.generation === generation;
   if (!revisionId || button.disabled) return;
   button.disabled = true;
   button.textContent = "正在重试…";
@@ -4114,11 +4227,11 @@ async function retrySavedExplanationReview(annotation, button) {
     await api(`/api/revisions/${revisionId}/annotations/${annotation.id}/review`, {
       method: "POST",
     });
-    if (state.revision?.id !== revisionId) return;
+    if (!currentReader()) return;
     announce("已重新提交 AI 审查；已保存内容不受影响。");
     pollSavedExplanationReview(annotation.id, annotation.pdf_page_index, 0);
   } catch (error) {
-    if (state.revision?.id === revisionId) {
+    if (currentReader()) {
       button.disabled = false;
       button.textContent = "重试 AI 审查";
       announce(error.message || "AI 审查未能重试。", true);
@@ -4161,6 +4274,7 @@ async function loadOverlay(index, generation) {
       if (payload.page.status !== "READY" || state.revision?.id !== revisionId || state.generation !== generation) return;
       data = payload.page;
       state.overlayData.set(index, data);
+      trimPageDataCaches();
   }
   // Mount selectable text before fetching optional annotations.
   if (!wrapper.querySelector("canvas") || wrapper.querySelector(".text-overlay")) return;
@@ -4218,14 +4332,37 @@ function renderAnnotations(index, overlay = elements.pages.children[index]?.quer
   }
 }
 
+function trimPageDataCaches() {
+  // Persisted OCR/notes can be read again. Keep recent pages without retaining
+  // the whole book's character cells in a long reading session.
+  for (const cache of [state.overlayData, state.annotationData]) {
+    for (const index of cache.keys()) {
+      if (cache.size <= 24) break;
+      if (index !== state.currentPage && index !== state.selection?.pageIndex
+          && !state.pageProxies.has(index) && !state.pageRenderRequests.has(index)) cache.delete(index);
+    }
+  }
+}
+
+let marksPanelSnapshot = null;
 function updateMarksPanel() {
-  const values = state.annotationData.get(state.currentPage) || [];
+  const annotations = state.annotationData.get(state.currentPage);
+  const open = !elements["marks-panel"].hidden;
+  // Scroll updates run every frame. Saved annotations are replaced as a group
+  // when they change; keep their existing controls and answer layout otherwise.
+  if (marksPanelSnapshot?.generation === state.generation
+      && marksPanelSnapshot.pageIndex === state.currentPage
+      && marksPanelSnapshot.annotations === annotations
+      && marksPanelSnapshot.open === open) return;
+  const snapshot = { generation: state.generation, pageIndex: state.currentPage, annotations, open };
+  const values = annotations || [];
   elements["marks-count"].textContent = String(values.length);
   elements["marks-count"].hidden = values.length === 0;
   elements["marks-toggle"].setAttribute(
     "aria-label", `本页笔记与标记${values.length ? `（${values.length}）` : ""}`,
   );
   elements["marks-page"].textContent = String(state.currentPage + 1);
+  if (!open) { marksPanelSnapshot = snapshot; return; }
   const cards = values.map((annotation) => {
     const card = document.createElement("article");
     card.className = `mark-card annotation-style-${annotation.highlight_style.toLowerCase()}`;
@@ -4340,6 +4477,7 @@ function updateMarksPanel() {
   });
   elements["marks-list"].replaceChildren(...cards);
   elements["marks-empty"].hidden = values.length > 0;
+  marksPanelSnapshot = snapshot;
 }
 
 async function deleteAnnotation(annotation) {
@@ -4347,19 +4485,23 @@ async function deleteAnnotation(annotation) {
     ? "删除这条已保存的 AI 笔记？" : "删除这条标记及其笔记？";
   if (!window.confirm(question)) return;
   const revisionId = state.revision?.id;
+  const generation = state.generation;
+  const currentReader = () => state.revision?.id === revisionId && state.generation === generation;
   if (!revisionId) return;
   try {
     await api(`/api/revisions/${revisionId}/annotations/${annotation.id}`, { method: "DELETE" });
+    if (!currentReader()) return;
     const pageIndex = annotation.pdf_page_index;
     state.annotationData.set(
       pageIndex,
       (state.annotationData.get(pageIndex) || []).filter((value) => value.id !== annotation.id),
     );
+    trimPageDataCaches();
     renderAnnotations(pageIndex);
     updateMarksPanel();
     announce("标记已删除。");
   } catch (_error) {
-    announce("标记未删除，请稍后重试。", true);
+    if (currentReader()) announce("标记未删除，请稍后重试。", true);
   }
 }
 
@@ -4425,6 +4567,25 @@ function renderSelection() {
   hideSelectionActions();
 }
 
+let selectionMenuAnchor = null;
+function selectionMenuSourceAnchor() {
+  if (!state.selection?.resolved.length) return null;
+  const marker = elements.pages.children[state.selection.pageIndex]?.querySelector(".selection-quad");
+  if (!marker) return null;
+  const { left, top, width, height } = marker.getBoundingClientRect();
+  return width > 0 && height > 0 ? { selection: state.selection, left, top, width, height } : null;
+}
+
+function handleSelectionMenuScroll() {
+  if (elements["selection-actions"].hidden) return;
+  const current = selectionMenuSourceAnchor();
+  // A late learning footer can shift document offsets while browser anchoring
+  // keeps the selected words stationary. Dismiss only when their view changes.
+  if (selectionMenuAnchor && current && current.selection === selectionMenuAnchor.selection
+      && ["left", "top", "width", "height"].every(key => Math.abs(current[key] - selectionMenuAnchor[key]) <= .5)) return;
+  hideSelectionActions();
+}
+
 function showSelectionActions(clientX, clientY) {
   if (selectionActionsDismissal) {
     const animation = selectionActionsDismissal;
@@ -4438,6 +4599,7 @@ function showSelectionActions(clientX, clientY) {
   elements["selection-actions"].querySelector(".highlight-styles").hidden = true;
   elements["save-highlight"].setAttribute("aria-expanded", "false");
   state.selectionMenuPoint = { x: clientX, y: clientY };
+  selectionMenuAnchor = selectionMenuSourceAnchor();
   elements["selection-actions"].hidden = false;
   positionSelectionActions();
 }
@@ -4494,6 +4656,7 @@ function hideSelectionActions({ animate = false } = {}) {
   elements["annotation-note"].value = "";
   document.querySelector('input[name="highlight-style"][value="YELLOW"]').checked = true;
   state.selectionMenuPoint = null;
+  selectionMenuAnchor = null;
 }
 
 function syncNativeSelection(overlay) {
@@ -4561,6 +4724,8 @@ function selectedHighlightStyle() {
 async function saveAnnotation(body = null) {
   const selection = state.selection;
   const revisionId = state.revision?.id;
+  const generation = state.generation;
+  const currentReader = () => state.revision?.id === revisionId && state.generation === generation;
   if (!selection?.resolved.length || !revisionId) return;
   elements["save-highlight"].disabled = true;
   elements["save-note"].disabled = true;
@@ -4582,19 +4747,22 @@ async function saveAnnotation(body = null) {
         highlight_style: selectedHighlightStyle(),
       }),
     });
-    if (state.revision?.id !== revisionId) return;
+    if (!currentReader()) return;
     const values = state.annotationData.get(selection.pageIndex) || [];
     state.annotationData.set(selection.pageIndex, [...values, payload.annotation]);
+    trimPageDataCaches();
     const pageIndex = selection.pageIndex;
     clearSelection();
     renderAnnotations(pageIndex);
     updateMarksPanel();
     announce(payload.annotation.body ? "笔记已保存。" : "高亮已保存。");
   } catch (_error) {
-    announce("标记未保存，请稍后重试。", true);
+    if (currentReader()) announce("标记未保存，请稍后重试。", true);
   } finally {
-    elements["save-highlight"].disabled = false;
-    elements["save-note"].disabled = false;
+    if (currentReader()) {
+      elements["save-highlight"].disabled = false;
+      elements["save-note"].disabled = false;
+    }
   }
 }
 
@@ -4995,7 +5163,7 @@ elements.viewer.addEventListener("pointerdown", () => {
 elements.viewer.addEventListener("contextmenu", (event) => {
   if (!event.defaultPrevented) hideSelectionActions();
 });
-elements.viewer.addEventListener("scroll", hideSelectionActions, { passive: true });
+elements.viewer.addEventListener("scroll", handleSelectionMenuScroll, { passive: true });
 elements.viewer.addEventListener("wheel", (event) => {
   state.pinnedLanding = null;
   if (!event.ctrlKey) return;

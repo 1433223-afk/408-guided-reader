@@ -98,6 +98,18 @@ try {
     await page.waitForFunction(index => !document.querySelector(`.page[data-index="${index}"] canvas`), record.index);
     await go(record.index); await visible(record);
   }
+  // Visit enough separated pages to evict the first saved page's OCR and mark
+  // snapshots, then verify the authoritative annotations reload with selection.
+  let originalOverlayRequests=0;
+  page.on('request',request=>{
+    const requested=new URL(request.url());
+    if(requested.pathname===`/api/revisions/${revision}/overlay` && requested.searchParams.get('page')==='19')originalOverlayRequests++;
+  });
+  for(const index of [40,70,100,130,160,200,230,260])await go(index);
+  await go(records[0].index);await visible(records[0]);
+  assert.ok(originalOverlayRequests>0,'evicted page must reload real OCR before showing saved marks');
+  await page.locator('.page[data-index="19"] .text-overlay').waitFor();
+  console.log('Bounded reading caches: saved marks and text reload after >24 visited pages PASS');
   await page.locator('#back-to-library').click(); await open();
   for (const record of records) {await go(record.index); await visible(record);}
   await page.reload(); await open();
@@ -105,6 +117,30 @@ try {
   await page.screenshot({path:path.join(root,'saved-marks.jpg')});
   assert.deepEqual(errors,[]);
   console.log('Saved marks: page recycling, book reopen and browser reload PASS');
+  const savedPage=spawnSync('python',['-c',
+    'import sqlite3,sys,json; c=sqlite3.connect(sys.argv[1]); r=c.execute("SELECT pdf_page_index FROM annotations WHERE book_source_revision_id=? AND source_kind=\'AI_SAVED\' LIMIT 1",(sys.argv[2],)).fetchone(); print(json.dumps(r[0] if r else None)); c.close()',
+    path.join(data,'state.sqlite3'),revision],{windowsHide:true,encoding:'utf8'});
+  assert.equal(savedPage.status,0,savedPage.stderr);
+  const notePage=JSON.parse(savedPage.stdout);
+  if(notePage!==null) {
+    await go(notePage);
+    if(!await page.locator('#marks-panel').isVisible())await page.locator('#marks-toggle').click();
+    await page.locator('#marks-list .mark-card-ai-saved').first().waitFor();
+    for(const open of [true,false]) {
+      if(!open)await page.locator('#marks-close').click();
+      const stable=await page.evaluate(async()=>{
+        const list=document.querySelector('#marks-list'),card=list.querySelector('.mark-card-ai-saved');
+        let replacements=0;const observer=new MutationObserver(records=>{replacements+=records.length;});
+        observer.observe(list,{childList:true});
+        const viewer=document.querySelector('#viewer'),top=viewer.scrollTop;
+        for(let frame=0;frame<30;frame++){viewer.scrollTop=top+(frame%2)*6;await new Promise(requestAnimationFrame);}
+        await new Promise(requestAnimationFrame);observer.disconnect();
+        return {same:card===list.querySelector('.mark-card-ai-saved'),replacements};
+      });
+      assert.deepEqual(stable,{same:true,replacements:0},`saved answer was rebuilt while Notes ${open?'open':'closed'}`);
+    }
+    console.log('Saved explanation: same-page scrolling preserves Notes DOM, open and closed PASS');
+  }
   if (!process.env.READER_DISPLAY_BASELINE) {
     await go(173);
     const zoom = page.locator('#zoom-value');

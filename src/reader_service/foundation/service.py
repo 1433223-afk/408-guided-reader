@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import unicodedata
 from functools import lru_cache
@@ -74,15 +75,17 @@ class FoundationService:
             truncated = False
             for page_index, page_lines in pages.items():
                 source = "\n".join(line["text"] for line in page_lines)
-                normalized, offsets = self._normalized_with_offsets(source)
+                # Scan using exactly the existing per-character normalization.
+                # Source offsets are needed only for an actual match, not every
+                # character of every page on each keystroke.
+                normalized = "".join(map(self._normalized_character, source))
                 position = normalized.find(needle)
                 if position < 0:
                     continue
                 if len(matches) >= limit:
                     truncated = True
                     break
-                start = offsets[position]
-                end = offsets[min(position + len(needle) - 1, len(offsets) - 1)] + 1
+                start, end = self._search_source_range(source, position, position + len(needle))
                 snippet_start = max(0, start - 32)
                 snippet_end = min(len(source), end + 48)
                 prefix = "…" if snippet_start else ""
@@ -94,7 +97,9 @@ class FoundationService:
                     # These are transient runtime positions nested in the search response. They are
                     # never persisted or treated as durable anchor identity.
                     "match_ranges": self._search_match_ranges(
-                        self.repository.search_page_lines(revision_id, page_index, connection=connection), start, end
+                        self.repository.search_page_lines(
+                            revision_id, page_index, connection=connection, decode_cells=False
+                        ), start, end
                     ),
                 })
             return {"query": query, "coverage": coverage, "results": matches, "truncated": truncated}
@@ -109,14 +114,16 @@ class FoundationService:
         return FoundationService._normalize_search_text(character)
 
     @classmethod
-    def _normalized_with_offsets(cls, value: str) -> tuple[str, list[int]]:
-        characters: list[str] = []
-        offsets: list[int] = []
+    def _search_source_range(cls, value: str, first: int, end: int) -> tuple[int, int]:
+        offset = 0
+        source_start = None
         for index, character in enumerate(value):
-            normalized = cls._normalized_character(character)
-            characters.extend(normalized)
-            offsets.extend([index] * len(normalized))
-        return "".join(characters), offsets
+            offset += len(cls._normalized_character(character))
+            if source_start is None and offset > first:
+                source_start = index
+            if source_start is not None and offset >= end:
+                return source_start, index + 1
+        raise ValueError("Search match is outside the source text")
 
     @staticmethod
     def _search_match_ranges(
@@ -130,8 +137,11 @@ class FoundationService:
             local_start = max(0, source_start - line_start)
             local_end = min(len(text), source_end - line_start)
             if local_end > local_start:
+                cells = line.get("cells")
+                if cells is None:
+                    cells = json.loads(line["cells_json"])
                 selected = [
-                    index for index, cell in enumerate(line["cells"])
+                    index for index, cell in enumerate(cells)
                     if int(cell[3]) > local_start and int(cell[2]) < local_end
                 ]
                 if selected:

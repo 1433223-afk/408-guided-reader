@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from io import BytesIO
 
 import pytest
@@ -111,3 +112,79 @@ def test_search_has_no_ghost_results_after_book_deletion(service):
             "SELECT COUNT(*) FROM ocr_lines WHERE book_source_revision_id = ?",
             (revision["id"],),
         ).fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(('texts', 'query', 'expected'), [
+    (['Ａ \tß', 'ﬃ Ｂ'], 'SS ffi', [(0, 3, 4), (1, 0, 1)]),
+    (['Ａ \tß', 'ﬃ Ｂ'], 'i Ｂ', [(1, 0, 3)]),
+    (['㍿'], '会社', [(0, 0, 1)]),
+    (['İ'], '\u0307', [(0, 0, 1)]),
+    (['ＣＯＭＰＵＴＥＲ　ＢＵＳ'], 'computer bus', [(0, 0, 12)]),
+    # Preserve the established per-character source normalization even for
+    # combining sequences whose whole-string NFKC would compose differently.
+    (['e\u0301'], 'é', []),
+])
+def test_search_retains_unicode_expansion_and_cross_line_cell_ranges(service, texts, query, expected):
+    _book, revision, foundation = prepared_search(service)
+    with service.database.connect() as c:
+        c.execute("UPDATE ocr_pages SET status='PREPARING' WHERE book_source_revision_id=? AND pdf_page_index=0",
+                  (revision['id'],))
+    foundation.repository.publish_page(
+        revision['id'], 0, route='OCR', foundation_version=1,
+        engine_profile='fixture:v1', lines=[line(text) for text in texts],
+    )
+    response = foundation.search(revision['id'], query)
+    if not expected:
+        assert response['results'] == []
+    else:
+        assert response['results'][0]['match_ranges'] == [
+            {'line_ordinal': ordinal, 'cell_start': start, 'cell_end': end}
+            for ordinal, start, end in expected
+        ]
+
+
+def test_search_decodes_cells_only_for_matching_lines(service, monkeypatch):
+    _book, revision, foundation = prepared_search(service)
+    with service.database.connect() as c:
+        c.execute("UPDATE ocr_pages SET status='PREPARING' WHERE book_source_revision_id=? AND pdf_page_index=0",
+                  (revision['id'],))
+    foundation.repository.publish_page(
+        revision['id'], 0, route='OCR', foundation_version=1,
+        engine_profile='fixture:v1', lines=[line('总线'), *[line('普通正文') for _ in range(100)]],
+    )
+    decoded = []
+    original_loads = json.loads
+
+    def loads(value, *args, **kwargs):
+        decoded.append(value)
+        return original_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(json, 'loads', loads)
+    result = foundation.search(revision['id'], '总线')
+    assert result['results'][0]['match_ranges'] == [
+        {'line_ordinal': 0, 'cell_start': 0, 'cell_end': 2}
+    ]
+    assert len(decoded) < 10, 'search decoded the entire matching page instead of matching rows'
+
+
+def test_search_preserves_hundred_page_limit_and_truncated_flag(service):
+    payload = make_pdf(tuple((612, 792) for _ in range(103)))
+    imported = service.intake(BytesIO(payload), content_length=len(payload), filename='many-pages.pdf')
+    revision = imported['book']['active_revision']
+    foundation = FoundationService(service, FoundationRepository(service.database), UnusedEngine)
+    foundation.ensure_revision(revision['id'])
+    for index in range(103):
+        assert foundation.repository.mark_preparing(revision['id'], index)
+        foundation.repository.publish_page(
+            revision['id'], index, route='OCR', foundation_version=1,
+            engine_profile='fixture:v1', lines=[line('总线')],
+        )
+    result = foundation.search(revision['id'], '总线')
+    assert [item['pdf_page_index'] for item in result['results']] == list(range(100))
+    assert result['truncated'] is True
+    assert all(item['match_ranges'] == [{'line_ordinal': 0, 'cell_start': 0, 'cell_end': 2}]
+               for item in result['results'])
+    result = foundation.search(revision['id'], '总线', limit=3)
+    assert len(result['results']) == 3 and result['truncated'] is True
+    with pytest.raises(ValueError, match='limit'):
+        foundation.search(revision['id'], '总线', limit=101)

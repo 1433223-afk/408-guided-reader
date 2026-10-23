@@ -37,6 +37,14 @@ python -m reader_service
 
 ## 本地启动与数据维护
 
+2026-10-22 的 [Reader 首屏显示优化](development-reports/READER_FIRST_PAINT.md) 已于 2026-10-23 人工验收通过：复用原页渲染先显示目标页，随后接上完整 PDF 与文字层；可见页优先于邻页预读。追加调查减少了中等本地文件的流式 / 分片重复读取，并将后台学习请求延后到当前页绘制完成。原页、canvas 与文字层的计时分别记录；浏览器原生对照尚未取得有效书页画面，不据此宣称追平。
+
+2026-10-23 按用户要求立即连续进行性能调查，已删除原 4 小时定时跟进。[连续使用性能跟进](development-reports/READER_CONTINUOUS_PERFORMANCE.md) 记录离屏绘制释放、阅读缓存上限、滚动与 Notes 复用、保存不等冷派生视图、冷 catalog 约 4 倍和全书搜索约 2 倍改善，以及流式回答同帧滚动合并；同时修正标记旧响应的会话边界和晚到布局误关选区菜单。四书题目与搜索完整输出对照、定向检查及真实教材 smoke 见报告。
+
+收口确认：用户已确认首屏与连续性能两组均人工验收通过，并授权创建独立 main checkpoint、推送 GitHub。本次只收录这两组实现、相关测试和报告；独立 OCR 加速实验及 website 不进入此 checkpoint，默认 OCR 不变。本对话不打包或发布 Desktop；0.4.13 集成由桌面版对话从提交树正常合并，保留四模型路由、凭据、加密 PDF、随机端口偏好与生命周期实现。
+
+提交前从 Git 暂存树导出独立快照，并明确从快照 src 导入 Python：97 项相关 Node 检查和 76 项相关 Python 检查通过（42 项缓存 / Practice / 学习位置 / 搜索，34 项 Visual Region）。快照不含未提交 OCR 入口、引擎或依赖，验证两组 Reader 改动能独立成立；既有真实 PDF smoke 结果继续保留，未跑全量测试。
+
 2026-10-22 的 [Reader 性能调查](development-reports/READER_PERFORMANCE_SURVEY.md) 已覆盖资源生命周期、Practice 重建、学习位置投影、搜索和高 DPI。[通用性能优化](development-reports/READER_PERFORMANCE_OPTIMIZATION.md) 已实现资源释放、派生结果复用、搜索连接收敛、邻页像素预算、裁图与 Master 排版复用，以及后台生成不阻塞页面准备；定向检查、真实教材 smoke 和人工验收已通过，已授权收口主线 checkpoint，Desktop 另行集成。PDF 分片对照暂不改变默认设置；未验收用于发行的 OCR 加速实验不在本轮 checkpoint 内。
 
 - 浏览器首次进入应使用服务输出的完整 `READY` 地址（含当前启动凭证）。页面会清理地址栏中的凭证，并建立本机会话；匿名裸地址不能创建会话。服务重启后旧会话失效，需要重新使用本次启动地址。不要把完整启动地址保存到日志或发给其他人。

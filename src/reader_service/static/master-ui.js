@@ -369,7 +369,16 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       if(!block) { block=reasoningBlock('',true); row.prepend(block); }
       block.querySelector('.master-reasoning-content').append(document.createTextNode(content));
     }
-    history.scrollTop=history.scrollHeight;
+    const view=streamView;
+    if(!view.scrollFrame) view.scrollFrame=requestAnimationFrame(()=>flushStreamScroll(view));
+  }
+
+  function flushStreamScroll(view=streamView) {
+    if(!view?.scrollFrame) return;
+    cancelAnimationFrame(view.scrollFrame); view.scrollFrame=0;
+    if(view!==streamView || view.generation!==generation || view.signal.aborted) return;
+    const history=el('history');
+    if(history.querySelector('[data-master-stream="true"]')?.isConnected) history.scrollTop=history.scrollHeight;
   }
 
   async function runMasterStream(action, payload) {
@@ -381,7 +390,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       await stream(`${base()}/${action}`,payload,event=>{
         if(request!==generation) return;
         if(event.type==='stage' && event.learning) {
-          current=event.learning; streamView={answer:'',reasoning:''}; sendIntent=null; el('question').value=''; render();
+          current=event.learning; streamView={answer:'',reasoning:'',generation:request,signal:controller.signal}; sendIntent=null; el('question').value=''; render();
         } else if(event.type==='stage' && event.stage==='reviewing') {
           el('status').textContent='正在审查回答…';
         } else if(event.type==='delta') appendStreamDelta('answer',event.content);
@@ -391,6 +400,7 @@ export function createMasterUI({ api, stream, revision, chapter, pages, dock, op
       if(request!==generation) return;
       if(!completed) throw new Error('Master 流式回答未正常完成；问题已保留，可以重试。');
       if(streamView?.reasoning && completed.answer_message_id) recentReasoning.set(completed.answer_message_id,streamView.reasoning);
+      flushStreamScroll();
       current=completed.learning; streamView=null; render();
       if(practiceNumber === null) await refreshEntries();
     } catch(error) {

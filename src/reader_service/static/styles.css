@@ -85,7 +85,8 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .reading-display-menu label { margin-top: 4px; border-top: 1px solid var(--line); }
 .reading-display-menu input { accent-color: var(--green); }
 .reading-display-menu label:hover { background: #dfe6dd; }
-.reader.soft-paper .page canvas { filter: brightness(.96) sepia(.13); }
+.reader.soft-paper .page :is(canvas,.page-preview) { filter: brightness(.96) sepia(.13); }
+.page > .page-preview { position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none; }
 /* Optional portrait layout: the original page keeps the horizontal space. */
 #reader.portrait-mode { grid-template-columns: minmax(0, 1fr); grid-template-rows: 68px minmax(0, 1fr); }
 #reader.portrait-mode:is(.assistant-dock-open,.guide-open,.knowledge-dock-open) { grid-template-rows: 68px minmax(0, 1fr) clamp(300px, 32vh, 540px); }

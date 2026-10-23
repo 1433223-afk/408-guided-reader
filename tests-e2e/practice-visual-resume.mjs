@@ -118,9 +118,21 @@ try {
   if (process.env.PRACTICE_VISUAL_OFFLINE === '1') {
     await page.locator('#back-to-library').click();
     await page.locator('#library-home .memory-open').click();
+    let releaseFavorites,seenFavorites;
+    const heldFavorites=new Promise(resolve=>{releaseFavorites=resolve;}),favoritesRequested=new Promise(resolve=>{seenFavorites=resolve;});
+    await page.route('**/api/practice-memory',async route=>{seenFavorites();await heldFavorites;await route.continue();});
     await page.locator('#memory-library-view [data-memory-mode="practice"]').click();
-    await page.locator('.memory-book-open').first().waitFor();
+    await favoritesRequested;
+    assert.equal(await page.locator('.memory-book-open').count(),0,'old-category books must not remain clickable during loading');
+    assert.equal(await page.locator('#memory-book-view').isVisible(),false);
+    releaseFavorites();
+    await page.locator('.memory-book-open').filter({hasText:'道收藏题'}).first().waitFor();
+    await page.unroute('**/api/practice-memory');
     await page.locator('.memory-book-open').filter({hasText:'组成原理'}).click();
+    // Memory keeps the last valid section. Locate the saved exercise across
+    // sections instead of assuming this book opens on the table question.
+    await page.locator('#memory-search-toggle').click();
+    await page.locator('#memory-query').fill('第 26 题');
     await page.locator('.memory-item-open').filter({hasText:'第 26 题'}).first().click();
     await page.getByRole('button',{name:'继续复盘',exact:true}).click();
     await page.locator('#reader.practice-active').waitFor();

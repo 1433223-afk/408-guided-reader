@@ -18,6 +18,46 @@ export function pageRenderWindow(first, last, count, pixelsPerPage, budget = 24_
   return {start: Math.max(0, first - before), end: Math.min(count - 1, last + after)};
 }
 
+export function pageRenderPlan({first, last, focus, start, end, rendered}) {
+  const nearestFirst = (a, b) => Math.abs(a - focus) - Math.abs(b - focus);
+  const visible = Array.from({length:last - first + 1}, (_, offset) => first + offset).sort(nearestFirst);
+  const preload = visible.every(index => rendered.has(index))
+    ? Array.from({length:end - start + 1}, (_, offset) => start + offset)
+      .filter(index => index < first || index > last).sort(nearestFirst)
+    : [];
+  return {visible, preload};
+}
+
+// Page positions remain in document order, including any in-flow learning
+// footer. Read current DOM bounds on demand rather than maintaining a stale index.
+export function pageViewportRange(count, getBounds, top, bottom) {
+  if (!count) return {first:null,last:0,bestIndex:0};
+  const bounds = new Map();
+  const read = index => {
+    if (!bounds.has(index)) bounds.set(index, getBounds(index));
+    return bounds.get(index);
+  };
+  const lowerBound = predicate => {
+    let low = 0, high = count;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (predicate(read(middle))) high = middle;
+      else low = middle + 1;
+    }
+    return low;
+  };
+  const first = lowerBound(page => page.bottom >= top);
+  const last = Math.max(0, lowerBound(page => page.top > bottom) - 1);
+  const center = (top + bottom) / 2;
+  let bestIndex = Math.min(count - 1, lowerBound(page => (page.top + page.bottom) / 2 >= center));
+  if (bestIndex > 0) {
+    const before = read(bestIndex - 1), current = read(bestIndex);
+    if (Math.abs((before.top + before.bottom) / 2 - center)
+        <= Math.abs((current.top + current.bottom) / 2 - center)) bestIndex -= 1;
+  }
+  return {first:first === count ? null : first,last,bestIndex};
+}
+
 function rotationOf(rotation) {
   const value = ((Number(rotation) % 360) + 360) % 360;
   if (![0, 90, 180, 270].includes(value)) {

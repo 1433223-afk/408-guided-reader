@@ -95,6 +95,9 @@ export function createMemoryUI({ api, announce, returnToSource, returnToPractice
     if (mode === next) return;
     const request = ++pageEpoch; ++detailEpoch;
     mode = next; syncModeTabs(); el('status').textContent = '正在读取…';
+    // Old-mode entries cannot be used while the new category is loading.
+    el('book-view').hidden = true; el('library-view').hidden = false;
+    el('book-list').replaceChildren();
     try { await (next === 'practice' ? refreshPractice(true) : refresh()); if(request === pageEpoch && !view.hidden) showHome(true); }
     catch(error) { if(request === pageEpoch) el('status').textContent = error.message; }
   }
