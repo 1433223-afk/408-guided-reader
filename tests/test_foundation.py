@@ -11,7 +11,7 @@ from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from reader_service.foundation import DetectedLine, FoundationRepository, FoundationService
-from reader_service.foundation.geometry import reading_order
+from reader_service.foundation.geometry import column_selection_indices, reading_order
 from reader_service.library.database import Database, MIGRATIONS
 
 from conftest import make_pdf
@@ -83,6 +83,94 @@ def test_reading_order_detects_columns_before_sorting_top_to_bottom():
     ]
 
 
+def _cells(text, x0, x1, index0=0):
+    width = x1 - x0
+    return tuple(
+        (
+            x0 + width * index / len(text),
+            x0 + width * (index + 1) / len(text),
+            index0 + index,
+            index0 + index + 1,
+        )
+        for index in range(len(text))
+    )
+
+
+def _spanning_line(text, x0, x1, y, cells):
+    return DetectedLine(
+        quad=((x0, y), (x1, y), (x1, y + 0.03), (x0, y + 0.03)),
+        text=text,
+        confidence=0.99,
+        cells=cells,
+    )
+
+
+def test_reading_order_splits_lines_joined_across_a_column_gutter():
+    header = _spanning_line("通栏标题", 0.08, 0.92, 0.04, ((0.08, 0.92, 0, 4),))
+    body = []
+    for index, y in enumerate((0.12, 0.18, 0.24, 0.30)):
+        left = f"左栏正文{index}"
+        right = f"右栏正文{index}"
+        body.append(
+            _spanning_line(
+                left + right,
+                0.08,
+                0.90,
+                y,
+                _cells(left, 0.08, 0.40) + _cells(right, 0.58, 0.90, len(left)),
+            )
+        )
+
+    ordered = reading_order([body[2], header, body[0], body[3], body[1]])
+
+    assert [line.text for line in ordered] == [
+        "通栏标题",
+        "左栏正文0",
+        "左栏正文1",
+        "左栏正文2",
+        "左栏正文3",
+        "右栏正文0",
+        "右栏正文1",
+        "右栏正文2",
+        "右栏正文3",
+    ]
+    assert all(line_x1(line) < 0.5 for line in ordered if line.text.startswith("左栏"))
+    assert all(line_x0(line) > 0.5 for line in ordered if line.text.startswith("右栏"))
+
+
+def test_column_selection_keeps_nearby_same_column_fragments():
+    spans = [(0.08, 0.20), (0.26, 0.40), (0.62, 0.90), (0.10, 0.22)]
+    assert column_selection_indices(spans, 0, 3) == [0, 1, 3]
+
+
+def test_reading_order_keeps_a_title_and_page_number_on_one_line():
+    lines = []
+    for index in range(6):
+        title = f"存储系统{index}"
+        number = f"{index + 12}"
+        lines.append(
+            _spanning_line(
+                title + number,
+                0.10,
+                0.93,
+                0.15 + index * 0.05,
+                _cells(title, 0.12, 0.46) + _cells(number, 0.88, 0.93, len(title)),
+            )
+        )
+
+    ordered = reading_order(reversed(lines))
+
+    assert [line.text for line in ordered] == [line.text for line in lines]
+
+
+def line_x0(line):
+    return min(point[0] for point in line.quad)
+
+
+def line_x1(line):
+    return max(point[0] for point in line.quad)
+
+
 def test_reading_order_puts_strongly_overlapping_row_fragments_left_to_right():
     title = DetectedLine(
         quad=((0.248, 0.368), (0.333, 0.368), (0.333, 0.386), (0.248, 0.386)),
@@ -135,7 +223,9 @@ def import_inked_pdf(service):
     )["book"]["active_revision"]
 
 
-def import_embedded_text_pdf(service, *, rotation=0, origin=(0, 0)):
+def import_embedded_text_pdf(
+    service, *, rotation=0, origin=(0, 0), crop=None, content=None
+):
     writer = PdfWriter()
     page = writer.add_blank_page(width=612, height=792)
     if origin != (0, 0):
@@ -144,6 +234,9 @@ def import_embedded_text_pdf(service, *, rotation=0, origin=(0, 0)):
         page.mediabox.upper_right = (x + 612, y + 792)
         page.cropbox.lower_left = (x, y)
         page.cropbox.upper_right = (x + 612, y + 792)
+    if crop:
+        page.cropbox.lower_left = crop[0]
+        page.cropbox.upper_right = crop[1]
     if rotation:
         page.rotate(rotation)
     font = writer._add_object(DictionaryObject(
@@ -156,10 +249,13 @@ def import_embedded_text_pdf(service, *, rotation=0, origin=(0, 0)):
     page[NameObject("/Resources")] = DictionaryObject(
         {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
     )
-    content = DecodedStreamObject()
-    content.set_data(
+    content_stream = content or (
         b"BT /F1 14 Tf 72 700 Td (Trustworthy positioned embedded text layer for selection.) Tj ET"
     )
+    if isinstance(content_stream, str):
+        content_stream = content_stream.encode()
+    content = DecodedStreamObject()
+    content.set_data(content_stream)
     page[NameObject("/Contents")] = writer._add_object(content)
     output = BytesIO()
     writer.write(output)
@@ -359,22 +455,142 @@ def test_trustworthy_positioned_text_uses_embedded_route_without_ocr(service):
     assert foundation.prepare_page(revision["id"], 0) == "READY"
     overlay = foundation.overlay(revision["id"], 0)
     assert overlay["route"] == "EMBEDDED"
-    assert overlay["engine_profile"] == "embedded-positioned-text:v2"
+    assert overlay["engine_profile"] == "embedded-positioned-text:v3"
     assert overlay["lines"] and overlay["lines"][0]["cells"]
 
 
-def test_rotated_and_non_zero_origin_embedded_text_fall_back_to_ocr(service):
-    for rotation, origin in ((90, (0, 0)), (0, (50, 100))):
-        revision = import_embedded_text_pdf(service, rotation=rotation, origin=origin)
-        calls = []
+def _quad_bounds(line):
+    xs = [point[0] for point in line["quad"]]
+    ys = [point[1] for point in line["quad"]]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def test_shifted_rotated_and_cropped_text_stays_embedded(service):
+    origin = import_embedded_text_pdf(service, origin=(50, 100))
+    rotated = import_embedded_text_pdf(service, rotation=90)
+    cropped = import_embedded_text_pdf(service, crop=((36, 36), (576, 756)))
+
+    class ForbiddenEngine:
+        def __init__(self):
+            raise AssertionError("OCR engine must not initialize for a usable embedded layer")
+
+    def prepare(revision):
         foundation = FoundationService(
-            service, FoundationRepository(service.database), lambda: FixedEngine(calls)
+            service, FoundationRepository(service.database), ForbiddenEngine
         )
         assert foundation.prepare_page(revision["id"], 0) == "READY"
         overlay = foundation.overlay(revision["id"], 0)
-        assert overlay["route"] == "OCR"
-        assert overlay["engine_profile"] == "fixture-engine:v1"
-        assert calls
+        assert overlay["route"] == "EMBEDDED"
+        assert overlay["engine_profile"] == "embedded-positioned-text:v3"
+        return overlay
+
+    shifted = prepare(origin)["lines"][0]
+    x0, y0, _x1, _y1 = _quad_bounds(shifted)
+    assert x0 < 0.08
+    assert y0 > 0.18
+
+    turned = prepare(rotated)["lines"]
+    assert turned
+    assert all(_quad_bounds(line)[0] > 0.75 for line in turned)
+    assert "Trustworthy" in "".join(line["text"] for line in turned)
+
+    inset = prepare(cropped)["lines"][0]
+    x0, y0, _x1, _y1 = _quad_bounds(inset)
+    assert 0.03 < x0 < 0.10
+    assert y0 < 0.12
+
+
+def test_row_major_dual_column_text_is_not_sent_through_ocr(service):
+    operators = []
+    for index in range(8):
+        y = 700 - index * 18
+        operators.append(
+            f"BT /F1 11 Tf 36 {y} Td (Left column sentence {index} about buses.) Tj ET"
+        )
+        operators.append(
+            f"BT /F1 11 Tf 330 {y} Td (Right column sentence {index} about cache.) Tj ET"
+        )
+    revision = import_embedded_text_pdf(service, content="\n".join(operators))
+
+    class ForbiddenEngine:
+        def __init__(self):
+            raise AssertionError("selectable dual-column text must not run RapidOCR")
+
+    foundation = FoundationService(
+        service, FoundationRepository(service.database), ForbiddenEngine
+    )
+    assert foundation.prepare_page(revision["id"], 0) == "READY"
+    overlay = foundation.overlay(revision["id"], 0)
+    texts = [line["text"] for line in overlay["lines"]]
+    assert texts == [
+        *[f"Leftcolumnsentence{index}aboutbuses." for index in range(8)],
+        *[f"Rightcolumnsentence{index}aboutcache." for index in range(8)],
+    ]
+    assert all(_quad_bounds(line)[2] < 0.5 for line in overlay["lines"][:8])
+    assert all(_quad_bounds(line)[0] > 0.5 for line in overlay["lines"][8:])
+
+    resolved = foundation.resolve_text_selection(
+        revision["id"],
+        0,
+        start={"line_ordinal": 0, "boundary": 0},
+        end={"line_ordinal": 7, "boundary": len(overlay["lines"][7]["cells"])},
+    )
+    assert "Right" not in resolved["quote"]
+    assert "Leftcolumnsentence0" in resolved["quote"]
+    assert "Leftcolumnsentence7" in resolved["quote"]
+    assert all(max(point[0] for point in quad) < 0.5 for quad in resolved["quads"])
+
+
+def test_short_embedded_text_still_uses_ocr(service):
+    revision = import_embedded_text_pdf(
+        service, content=b"BT /F1 14 Tf 72 700 Td (Hi) Tj ET"
+    )
+    calls = []
+    foundation = FoundationService(
+        service, FoundationRepository(service.database), lambda: FixedEngine(calls)
+    )
+    assert foundation.prepare_page(revision["id"], 0) == "READY"
+    overlay = foundation.overlay(revision["id"], 0)
+    assert overlay["route"] == "OCR"
+    assert calls
+
+
+def test_published_selection_does_not_jump_into_the_other_column(service):
+    revision = import_pdf(service)
+    foundation = FoundationService(
+        service, FoundationRepository(service.database), FixedEngine
+    )
+    foundation.ensure_revision(revision["id"])
+    assert foundation.repository.mark_preparing(revision["id"], 0)
+    foundation.repository.publish_page(
+        revision["id"],
+        0,
+        route="OCR",
+        foundation_version=1,
+        engine_profile="interleaved:v1",
+        lines=[
+            _spanning_line("左一", 0.08, 0.38, 0.10, _cells("左一", 0.08, 0.38)),
+            _spanning_line("右一", 0.62, 0.90, 0.10, _cells("右一", 0.62, 0.90)),
+            _spanning_line("左二", 0.08, 0.38, 0.20, _cells("左二", 0.08, 0.38)),
+        ],
+    )
+
+    stayed = foundation.resolve_text_selection(
+        revision["id"],
+        0,
+        start={"line_ordinal": 0, "boundary": 0},
+        end={"line_ordinal": 2, "boundary": 2},
+    )
+    crossed = foundation.resolve_text_selection(
+        revision["id"],
+        0,
+        start={"line_ordinal": 0, "boundary": 0},
+        end={"line_ordinal": 1, "boundary": 2},
+    )
+
+    assert stayed["quote"] == "左一\n左二"
+    assert all(max(point[0] for point in quad) < 0.5 for quad in stayed["quads"])
+    assert crossed["quote"] == "左一\n右一"
 
 
 def test_one_page_failure_does_not_block_other_pages_or_pdf_reading(service):

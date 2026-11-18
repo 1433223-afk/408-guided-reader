@@ -344,6 +344,57 @@ def test_sparse_retry_translates_provider_alignment_to_anonymous_cells():
     )
 
 
+def test_dual_column_image_is_reread_without_joining_columns():
+    class ColumnProvider:
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, image, **options):
+            self.calls.append(options)
+            _height, width = image.shape[:2]
+            if width >= 180:
+                def box(y):
+                    return ((10, y), (190, y), (190, y + 16), (10, y + 16))
+
+                return SimpleNamespace(
+                    boxes=(box(2), box(20), box(50), box(80)),
+                    txts=("通栏标题通栏", "左栏一行右栏一行", "左栏一行右栏一行", "左栏一行右栏一行"),
+                    scores=(0.95, 0.95, 0.95, 0.95),
+                    word_results=((), (), (), ()),
+                )
+            text = "左栏一行" if int(image.min()) < 15 else "右栏一行"
+            return SimpleNamespace(
+                txts=(text,), scores=(0.96,), boxes=None, word_results=None
+            )
+
+    image = np.full((120, 200, 3), 255, dtype=np.uint8)
+    image[2:12, 15:185] = 0
+    for top in (20, 50, 80):
+        image[top : top + 16, 15:85] = 0
+        image[top : top + 16, 115:185] = 30
+    provider = ColumnProvider()
+    engine = RapidOcrEngine.__new__(RapidOcrEngine)
+    engine._engine = provider
+
+    lines = engine.prepare_page(image, (200, 120))
+
+    assert [line.text for line in lines] == [
+        "通栏标题通栏",
+        "左栏一行",
+        "右栏一行",
+        "左栏一行",
+        "右栏一行",
+        "左栏一行",
+        "右栏一行",
+    ]
+    assert all(line.quad[1][0] < 0.5 for line in lines if line.text == "左栏一行")
+    assert all(line.quad[0][0] > 0.45 for line in lines if line.text == "右栏一行")
+    assert provider.calls[0]["use_det"] is True
+    assert any(call["use_det"] is False for call in provider.calls[1:])
+    assert engine.prepare_page(np.full((120, 200, 3), 255, dtype=np.uint8), (200, 120))
+    assert provider.calls[-1]["use_det"] is True
+
+
 def test_implausibly_long_quality_retry_is_rejected():
     class ImplausibleRetryProvider(SparseLineProvider):
         def __call__(self, image, **options):

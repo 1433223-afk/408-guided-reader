@@ -13,70 +13,133 @@ class EmbeddedProbe:
 
 
 def probe_embedded_text(page, width: float, height: float) -> EmbeddedProbe:
-    """Conservatively accept positioned embedded text; otherwise return no evidence."""
+    """Accept a usable embedded text layer in rendered-page coordinates.
 
-    # PDFium character boxes are in PDF user space.  The simple conversion below
-    # is exact only for an unrotated effective page box whose origin is (0, 0).
-    # Falling back to rendered-page OCR is preferable to publishing a plausible
-    # but misplaced overlay for every other case.
+    Character boxes stay in PDF user space. They are mapped through the page box
+    and clockwise rotation so the overlay matches the rendered page, including a
+    shifted crop box. Sparse, garbled, or unpositioned layers return no evidence
+    and the caller renders the page for OCR.
+    """
+
     try:
         left, bottom, right, top = map(float, page.get_bbox())
         rotation = int(page.get_rotation()) % 360
     except Exception:
         return EmbeddedProbe(False, ())
-    tolerance = 1e-4
+    if rotation not in (0, 90, 180, 270) or width <= 0 or height <= 0:
+        return EmbeddedProbe(False, ())
+    box_width = right - left
+    box_height = top - bottom
+    if rotation in (90, 270):
+        box_width, box_height = box_height, box_width
     if (
-        rotation != 0
-        or abs(left) > tolerance
-        or abs(bottom) > tolerance
-        or abs((right - left) - width) > tolerance
-        or abs((top - bottom) - height) > tolerance
+        box_width <= 0
+        or box_height <= 0
+        or abs(box_width - width) > 2
+        or abs(box_height - height) > 2
     ):
         return EmbeddedProbe(False, ())
 
-    text_page = page.get_textpage()
-    count = text_page.count_chars()
-    if count == 0:
+    try:
+        text_page = page.get_textpage()
+        count = text_page.count_chars()
+        raw = text_page.get_text_range() if count else ""
+    except Exception:
         return EmbeddedProbe(False, ())
-    raw = text_page.get_text_range()
+    if count == 0 or not raw:
+        return EmbeddedProbe(False, ())
     visible = [character for character in raw if not character.isspace()]
     replacement_ratio = raw.count("\ufffd") / max(1, len(visible))
     if len(visible) < 30 or replacement_ratio > 0.02:
         return EmbeddedProbe(False, ())
 
+    page_box = (left, bottom, right, top)
     characters = []
     positioned = 0
+    visible_seen = 0
     for index, character in enumerate(raw[:count]):
-        try:
-            left, bottom, right, top = map(float, text_page.get_charbox(index))
-        except Exception:
+        if character in "\r\n":
             characters.append((character, None))
             continue
-        if right > left and top > bottom:
-            positioned += 1
-            # This branch is guarded above: PDFium exposes bottom-left PDF
-            # coordinates on an unrotated, zero-origin effective page box.
-            # Foundation is normalized top-left display space.
-            characters.append(
-                (
-                    character,
-                    (
-                        clamp(left / width),
-                        clamp((height - top) / height),
-                        clamp(right / width),
-                        clamp((height - bottom) / height),
-                    ),
-                )
+        if character.isspace():
+            continue
+        visible_seen += 1
+        try:
+            char_left, char_bottom, char_right, char_top = map(
+                float, text_page.get_charbox(index)
             )
-        else:
-            characters.append((character, None))
-    if positioned / max(1, len(visible)) < 0.95:
+        except Exception:
+            continue
+        box = _display_char_box(
+            char_left,
+            char_bottom,
+            char_right,
+            char_top,
+            page_box,
+            rotation,
+            width,
+            height,
+        )
+        if box is None:
+            continue
+        positioned += 1
+        characters.append((character, box))
+    if positioned / max(1, visible_seen) < 0.95:
         return EmbeddedProbe(False, ())
 
     lines = _group_lines(characters)
     if not lines:
         return EmbeddedProbe(False, ())
     return EmbeddedProbe(True, tuple(reading_order(lines)))
+
+
+def _display_char_box(
+    char_left: float,
+    char_bottom: float,
+    char_right: float,
+    char_top: float,
+    page_box: tuple[float, float, float, float],
+    rotation: int,
+    width: float,
+    height: float,
+):
+    corners = (
+        (char_left, char_bottom),
+        (char_left, char_top),
+        (char_right, char_bottom),
+        (char_right, char_top),
+    )
+    points = [
+        _display_point(x, y, page_box, rotation, width, height) for x, y in corners
+    ]
+    if any(point is None for point in points):
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    x0, x1 = min(xs), max(xs)
+    y0, y1 = min(ys), max(ys)
+    if x1 - x0 < 1e-6 or y1 - y0 < 1e-6:
+        return None
+    center_x = (x0 + x1) / 2
+    center_y = (y0 + y1) / 2
+    if not -0.02 <= center_x <= 1.02 or not -0.02 <= center_y <= 1.02:
+        return None
+    return (clamp(x0), clamp(y0), clamp(x1), clamp(y1))
+
+
+def _display_point(x: float, y: float, page_box, rotation: int, width: float, height: float):
+    left, bottom, right, top = page_box
+    if rotation == 0:
+        display_x, display_y = x - left, top - y
+    elif rotation == 90:
+        display_x, display_y = y - bottom, x - left
+    elif rotation == 180:
+        display_x, display_y = right - x, y - bottom
+    else:
+        display_x, display_y = top - y, right - x
+    if width <= 0 or height <= 0:
+        return None
+    return display_x / width, display_y / height
 
 
 def _group_lines(characters) -> list[DetectedLine]:
