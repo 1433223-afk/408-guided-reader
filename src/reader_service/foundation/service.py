@@ -14,8 +14,19 @@ from reader_service.visual_region import PDFIUM_RENDER_LOCK
 
 from .contracts import OcrEngine, PagePreparationError
 from .embedded import probe_embedded_text
-from .geometry import reading_order
+from .geometry import column_selection_indices, reading_order
 from .repository import FoundationRepository
+
+
+def _line_x_span(line: dict) -> tuple[float, float]:
+    cells = line["cells"]
+    if cells:
+        return (
+            min(float(cell[0]) for cell in cells),
+            max(float(cell[1]) for cell in cells),
+        )
+    xs = [float(point[0]) for point in line["quad"]]
+    return min(xs), max(xs)
 
 
 class FoundationService:
@@ -196,7 +207,8 @@ class FoundationService:
         quads: list[list[list[float]]] = []
         global_start = None
         global_end = None
-        for line_index in range(first[0], last[0] + 1):
+        spans = [_line_x_span(line) for line in lines]
+        for line_index in column_selection_indices(spans, first[0], last[0]):
             line = lines[line_index]
             cell_start = first[1] if line_index == first[0] else 0
             cell_end = last[1] if line_index == last[0] else len(line["cells"])
@@ -329,7 +341,7 @@ class FoundationService:
                         self._validate_render_budget(width, height)
                         embedded = probe_embedded_text(page, width, height)
                         if embedded.trustworthy:
-                            return "EMBEDDED", "embedded-positioned-text:v2", list(embedded.lines)
+                            return "EMBEDDED", "embedded-positioned-text:v3", list(embedded.lines)
                         with closing(page.render(scale=self.render_dpi / 72)) as bitmap:
                             image = bitmap.to_numpy().copy()
         except PagePreparationError:

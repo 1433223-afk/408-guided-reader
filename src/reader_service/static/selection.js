@@ -75,6 +75,29 @@ export function nearestCellBoundary(line, normalizedX, normalizedY) {
   return best;
 }
 
+function lineXSpan(line) {
+  const bounds = selectableBounds(line);
+  return [bounds.x0, bounds.x1];
+}
+
+function staysInSelectionColumn(span, column) {
+  const overlap = Math.min(span[1], column[1]) - Math.max(span[0], column[0]);
+  if (overlap > 0.008) return true;
+  const separation = Math.max(span[0], column[0]) - Math.min(span[1], column[1]);
+  return separation < 0.08;
+}
+
+function columnLimited(startLine, endLine) {
+  if (!startLine || !endLine) return null;
+  const start = lineXSpan(startLine);
+  const end = lineXSpan(endLine);
+  if (start[1] - start[0] >= 0.55 || end[1] - end[0] >= 0.55) return null;
+  const overlap = Math.min(start[1], end[1]) - Math.max(start[0], end[0]);
+  const gap = Math.max(start[0], end[0]) - Math.min(start[1], end[1]);
+  if (overlap <= 0.008 && gap >= 0.08) return null;
+  return [Math.min(start[0], end[0]), Math.max(start[1], end[1])];
+}
+
 export function selectionRanges(lines, anchor, focus) {
   if (!anchor || !focus || !lines.length) return [];
   let start = anchor;
@@ -82,9 +105,14 @@ export function selectionRanges(lines, anchor, focus) {
   if (start.lineOrdinal > end.lineOrdinal || (
     start.lineOrdinal === end.lineOrdinal && start.boundary > end.boundary
   )) [start, end] = [end, start];
+  const column = columnLimited(
+    lines.find((line) => line.line_ordinal === start.lineOrdinal),
+    lines.find((line) => line.line_ordinal === end.lineOrdinal),
+  );
   const ranges = [];
   for (const line of lines) {
     if (line.line_ordinal < start.lineOrdinal || line.line_ordinal > end.lineOrdinal) continue;
+    if (column && !staysInSelectionColumn(lineXSpan(line), column)) continue;
     const cellStart = line.line_ordinal === start.lineOrdinal ? start.boundary : 0;
     const cellEnd = line.line_ordinal === end.lineOrdinal ? end.boundary : line.cells.length;
     if (cellEnd > cellStart) ranges.push({ line, cellStart, cellEnd });

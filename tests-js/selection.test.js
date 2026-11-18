@@ -105,6 +105,58 @@ test("backward selection resolves identically", () => {
   );
 });
 
+test("a drag inside one column does not collect the other column", () => {
+  const columns = [
+    {
+      line_ordinal: 0,
+      quad: [[0.08, 0.1], [0.38, 0.1], [0.38, 0.14], [0.08, 0.14]],
+      text: "左一",
+      cells: [[0.08, 0.23, 0, 1], [0.23, 0.38, 1, 2]],
+    },
+    {
+      line_ordinal: 1,
+      quad: [[0.62, 0.1], [0.9, 0.1], [0.9, 0.14], [0.62, 0.14]],
+      text: "右一",
+      cells: [[0.62, 0.76, 0, 1], [0.76, 0.9, 1, 2]],
+    },
+    {
+      line_ordinal: 2,
+      quad: [[0.08, 0.2], [0.38, 0.2], [0.38, 0.24], [0.08, 0.24]],
+      text: "左二",
+      cells: [[0.08, 0.23, 0, 1], [0.23, 0.38, 1, 2]],
+    },
+  ];
+  const stayed = resolveSelection(
+    columns,
+    { lineOrdinal: 0, boundary: 0 },
+    { lineOrdinal: 2, boundary: 2 },
+  );
+  assert.equal(resolvedText(stayed), "左一\n左二");
+  assert.ok(stayed.every((range) => range.quads[0][1][0] < 0.5));
+  const crossed = resolveSelection(
+    columns,
+    { lineOrdinal: 0, boundary: 0 },
+    { lineOrdinal: 1, boundary: 2 },
+  );
+  assert.equal(resolvedText(crossed), "左一\n右一");
+  const withNearby = resolveSelection(
+    [
+      columns[0],
+      {
+        line_ordinal: 1,
+        quad: [[0.42, 0.16], [0.5, 0.16], [0.5, 0.19], [0.42, 0.19]],
+        text: "续",
+        cells: [[0.42, 0.5, 0, 1]],
+      },
+      { ...columns[1], line_ordinal: 2 },
+      { ...columns[2], line_ordinal: 3 },
+    ],
+    { lineOrdinal: 0, boundary: 0 },
+    { lineOrdinal: 3, boundary: 2 },
+  );
+  assert.equal(resolvedText(withNearby), "左一\n续\n左二");
+});
+
 test("presentation merges only adjacent selected fragments on the same visual row", () => {
   const resolved = [
     { quads: [[[0.2, 0.1], [0.26, 0.1], [0.26, 0.12], [0.2, 0.12]]] },

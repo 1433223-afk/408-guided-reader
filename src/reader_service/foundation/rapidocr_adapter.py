@@ -6,7 +6,7 @@ from importlib.metadata import version
 from math import isfinite
 
 from .contracts import DetectedLine
-from .geometry import clamp, normalize_quad
+from .geometry import clamp, line_bounds, normalize_quad
 
 
 class RapidOcrEngine:
@@ -70,7 +70,73 @@ class RapidOcrEngine:
                     cells=cells,
                 )
             )
-        return translated
+        return self._split_image_columns(page_image, translated, (width, height))
+
+    def _split_image_columns(self, image, lines, page_size):
+        """Re-read a line whose box crosses a real column gutter.
+
+        Word cells that already record the gutter are left for reading order.
+        A full-width heading has ink in the gutter and stays one line.
+        """
+
+        gutter = _ink_gutter(image)
+        if gutter is None:
+            return lines
+        qualified = {
+            index
+            for index, line in enumerate(lines)
+            if _line_crosses_ink_gutter(image, line, gutter)
+            and not _cells_record_gutter(line, gutter)
+        }
+        if len(qualified) < 3:
+            return lines
+        split = []
+        for index, line in enumerate(lines):
+            if index not in qualified:
+                split.append(line)
+                continue
+            pieces = self._rerecognize_column_sides(image, line, gutter, page_size)
+            split.extend(pieces if pieces else [line])
+        return split
+
+    def _rerecognize_column_sides(self, image, line, gutter, page_size):
+        page_width, _page_height = page_size
+        image_height, image_width = image.shape[:2]
+        x0, y0, x1, y1 = line_bounds(line)
+        top = max(0, int(y0 * image_height) - 2)
+        bottom = min(image_height, int(y1 * image_height) + 3)
+        gutter_left = int(gutter[0] * image_width)
+        gutter_right = int(gutter[1] * image_width)
+        sides = (
+            (max(0, int(x0 * image_width) - 2), gutter_left),
+            (gutter_right, min(image_width, int(x1 * image_width) + 3)),
+        )
+        pieces = []
+        for crop_x0, crop_x1 in sides:
+            if crop_x1 - crop_x0 < 4 or bottom - top < 4:
+                return None
+            crop = image[top:bottom, crop_x0:crop_x1]
+            try:
+                result = self._engine(
+                    crop,
+                    use_det=False,
+                    use_cls=False,
+                    use_rec=True,
+                    return_word_box=True,
+                )
+                text, score = _recognition_text(result)
+            except Exception:  # noqa: BLE001 — optional column pass keeps the baseline line.
+                return None
+            if text is None:
+                return None
+            pieces.append(
+                _line_from_crop(line, text, score, crop_x0, crop_x1, page_width)
+            )
+        original = len("".join(line.text.split()))
+        recognized = sum(len("".join(piece.text.split())) for piece in pieces)
+        if original and not original * 0.5 <= recognized <= original * 1.5 + 2:
+            return None
+        return pieces
 
     def _leader_layout_retry(self, image, baseline, size):
         """Bounded overlapping bands for sparse, leader-rich layouts.
@@ -417,3 +483,142 @@ class RapidOcrEngine:
             cells.append((clamp(min(xs)), clamp(max(xs)), start, end))
             cursor = end
         return tuple(cells)
+
+
+def _ink_gutter(image):
+    """Normalized x-range of a vertical whitespace gutter with text on both sides."""
+
+    shape = getattr(image, "shape", None)
+    if not shape or len(shape) < 2:
+        return None
+    height, width = shape[:2]
+    if width < 80 or height < 40:
+        return None
+    if len(shape) == 3:
+        ink = image[:, :, :3].min(axis=2) < 200
+    else:
+        ink = image < 200
+    ink_mean = float(ink.mean())
+    if ink_mean < 0.003 or ink_mean > 0.85:
+        return None
+    column_ink = ink.mean(axis=0)
+    bins = 200
+    if width > bins:
+        edges = [int(index * width / bins) for index in range(bins + 1)]
+        column_ink = [
+            float(column_ink[edges[index] : edges[index + 1]].mean())
+            for index in range(bins)
+        ]
+        width = bins
+    else:
+        column_ink = [float(value) for value in column_ink]
+    min_gap = max(2, int(width * 0.015))
+    max_gap = max(min_gap, int(width * 0.12))
+    left_limit = int(width * 0.18)
+    right_limit = int(width * 0.82)
+    best = None
+    for gap in range(min_gap, max_gap + 1):
+        for start in range(left_limit, right_limit - gap):
+            valley = sum(column_ink[start : start + gap]) / gap
+            left_band = column_ink[max(0, start - gap * 3) : start]
+            right_band = column_ink[start + gap : start + gap * 4]
+            if not left_band or not right_band:
+                continue
+            left_level = sum(left_band) / len(left_band)
+            right_level = sum(right_band) / len(right_band)
+            if left_level < 0.03 or right_level < 0.03 or valley > 0.12:
+                continue
+            if valley > 0.45 * min(left_level, right_level):
+                continue
+            score = min(left_level, right_level) - valley
+            if best is None or score > best[0]:
+                best = (score, start, start + gap)
+    if best is None:
+        return None
+    return best[1] / width, best[2] / width
+
+
+def _line_crosses_ink_gutter(image, line, gutter) -> bool:
+    x0, y0, x1, y1 = line_bounds(line)
+    if x1 - x0 < 0.45 or x0 >= gutter[0] or x1 <= gutter[1]:
+        return False
+    image_height, image_width = image.shape[:2]
+    top = max(0, int(y0 * image_height))
+    bottom = min(image_height, max(top + 1, int(y1 * image_height) + 1))
+    left = max(0, int(x0 * image_width))
+    right = min(image_width, max(left + 1, int(x1 * image_width) + 1))
+    gutter_left = min(right, max(left, int(gutter[0] * image_width)))
+    gutter_right = min(right, max(gutter_left + 1, int(gutter[1] * image_width)))
+    if (
+        gutter_left - left < image_width * 0.12
+        or right - gutter_right < image_width * 0.12
+    ):
+        return False
+    band = image[top:bottom]
+    if getattr(band, "size", 0) == 0:
+        return False
+    if band.ndim == 3:
+        ink = band[:, :, :3].min(axis=2) < 200
+    else:
+        ink = band < 200
+    valley = ink[:, gutter_left:gutter_right]
+    left_ink = ink[:, left:gutter_left]
+    right_ink = ink[:, gutter_right:right]
+    if valley.size == 0 or left_ink.size == 0 or right_ink.size == 0:
+        return False
+    return (
+        float(valley.mean()) <= 0.15
+        and float(left_ink.mean()) >= 0.15
+        and float(right_ink.mean()) >= 0.15
+    )
+
+
+def _cells_record_gutter(line, gutter) -> bool:
+    gutter_x0, gutter_x1 = gutter
+    cells = line.cells
+    for index in range(len(cells) - 1):
+        gap_start = cells[index][1]
+        gap_end = cells[index + 1][0]
+        if gap_end - gap_start < 0.02:
+            continue
+        if min(gap_end, gutter_x1) - max(gap_start, gutter_x0) > 0:
+            return True
+    return False
+
+
+def _recognition_text(result):
+    texts = getattr(result, "txts", None)
+    scores = getattr(result, "scores", None)
+    if not texts or not scores:
+        return None, None
+    text = str(texts[0]).strip()
+    try:
+        score = float(scores[0])
+    except (TypeError, ValueError):
+        return None, None
+    if not text or not isfinite(score) or not 0 <= score <= 1:
+        return None, None
+    return text, score
+
+
+def _line_from_crop(line, text, score, crop_x0, crop_x1, page_width):
+    y0 = min(point[1] for point in line.quad)
+    y1 = max(point[1] for point in line.quad)
+    x0 = clamp(crop_x0 / page_width)
+    x1 = clamp(crop_x1 / page_width)
+    length = len(text)
+    cells = tuple(
+        (
+            clamp(x0 + (x1 - x0) * index / length),
+            clamp(x0 + (x1 - x0) * (index + 1) / length),
+            index,
+            index + 1,
+        )
+        for index in range(length)
+    )
+    return DetectedLine(
+        quad=((x0, y0), (x1, y0), (x1, y1), (x0, y1)),
+        text=text,
+        confidence=score,
+        cells=cells,
+    )
